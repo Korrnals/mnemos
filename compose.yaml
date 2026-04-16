@@ -1,0 +1,53 @@
+# AI-Brain — podman-compose deployment
+#
+# Запуск:    podman-compose up -d
+# Остановка: podman-compose down
+# Логи:      podman-compose logs -f ai-brain
+#
+# С Ollama:  podman-compose --profile ollama up -d
+
+services:
+  ai-brain:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: ai-brain
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - brain-data:/data
+      - brain-vault:/vault
+      - ./config.container.yaml:/app/config.yaml:ro
+    environment:
+      - AI_BRAIN_CONFIG=/app/config.yaml
+    # healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8787/api/v1/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Ollama for embeddings (CPU mode)
+  # Activate with: podman-compose --profile ollama up -d
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    container_name: ai-brain-ollama
+    profiles:
+      - ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    # Pull embedding model on first start
+    # After start: podman exec ai-brain-ollama ollama pull nomic-embed-text
+
+volumes:
+  brain-data:
+    driver: local
+  brain-vault:
+    driver: local
+  ollama-data:
+    driver: local

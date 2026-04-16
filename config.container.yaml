@@ -1,0 +1,27 @@
+# AI-Brain container config — paths mapped to container volumes
+brain:
+  vault_path: /vault
+  data_dir: /data
+
+embedding:
+  # Default: chromadb built-in ONNX embeddings (no torch)
+  provider: chromadb
+  # To use Ollama from host/separate container:
+  # provider: ollama
+  # model: nomic-embed-text
+  # ollama_url: http://ollama:11434
+
+search:
+  default_limit: 20
+  hybrid_alpha: 0.7
+
+api:
+  host: 0.0.0.0
+  port: 8787
+
+telegram:
+  bot_token: ""
+  allowed_users: []
+
+mcp:
+  transport: stdio

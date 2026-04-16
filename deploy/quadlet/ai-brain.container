@@ -1,0 +1,20 @@
+# Podman Quadlet — systemd unit for ai-brain container
+# Install: cp deploy/quadlet/*.container ~/.config/containers/systemd/
+# Enable:  systemctl --user daemon-reload && systemctl --user start ai-brain
+[Container]
+ContainerName=ai-brain
+Image=localhost/ai-brain:latest
+AutoUpdate=local
+
+PublishPort=8787:8787
+Volume=brain-data:/data
+Volume=brain-vault:/vault
+
+Environment=AI_BRAIN_CONFIG=/app/config.yaml
+
+[Service]
+Restart=always
+TimeoutStartSec=30
+
+[Install]
+WantedBy=default.target

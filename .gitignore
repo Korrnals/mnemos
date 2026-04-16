@@ -1,0 +1,37 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Data
+*.db
+*.sqlite
+*.sqlite3
+chroma_data/
+
+# Config with secrets
+config.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Brain vault is managed separately
+brain-vault/
+brain-vault/
+
+# VSCode hystory extension
+.history/

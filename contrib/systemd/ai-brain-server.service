@@ -1,0 +1,13 @@
+[Unit]
+Description=AI-Brain REST API + Web UI
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/LABs/AI/ai-brain/.venv/bin/brain serve
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

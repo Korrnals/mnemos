@@ -1,0 +1,57 @@
+brain:
+  vault_path: ~/brain-vault
+  data_dir: ~/.ai-brain
+
+embedding:
+  # Default: chromadb — uses built-in ONNX model (all-MiniLM-L6-v2), no torch needed
+  provider: chromadb
+  # Alternative: Ollama (CPU works fine for embeddings)
+  # provider: ollama
+  # model: nomic-embed-text
+  # ollama_url: http://localhost:11434
+  # Alternative: sentence-transformers (requires ~2GB torch)
+  # provider: sentence-transformers
+  # model: intfloat/multilingual-e5-base
+
+search:
+  default_limit: 20
+  hybrid_alpha: 0.7
+
+api:
+  host: 127.0.0.1
+  port: 8787
+
+telegram:
+  bot_token: ""
+  allowed_users: []
+
+mcp:
+  transport: stdio
+
+watcher:
+  # Directories to auto-index (used by `brain watch` when no args given)
+  paths:
+    # - ~/Projects
+    # - ~/LABs
+  ignore_dirs:
+    - .git
+    - node_modules
+    - __pycache__
+    - .venv
+    - venv
+    - dist
+    - build
+  extensions:
+    - .md
+    - .py
+    - .js
+    - .ts
+    - .yaml
+    - .yml
+    - .toml
+    - .json
+    - .txt
+    - .sh
+    - .sql
+  max_file_size_kb: 512
+  auto_scan: true
