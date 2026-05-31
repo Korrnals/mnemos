@@ -1,149 +1,38 @@
-# AI-Brain
+# Mnemos
 
-Гибридная система долговременной памяти: личная база знаний + RAG-хранилище для AI-агентов.
+> **Standalone memory & knowledge server** — fork of `ai-brain`, productionised for the GCW (GitHub Copilot Workflow) agent family.
 
-Единый «мозг», доступный из CLI, REST API, MCP-сервера (Copilot), Telegram-бота и Obsidian.
+**Status**: **M1 in progress** — project structure and M2 (TagContract) implemented. M1 git bootstrap requires one-time terminal commands (see ARCHITECTURE.md §11).
 
-## Возможности
+## What this directory is
 
-- **Obsidian-совместимое хранилище** — заметки в markdown с YAML frontmatter
-- **Семантический поиск** — vector embeddings через sentence-transformers / Ollama
-- **Полнотекстовый поиск** — FTS5 через SQLite
-- **Гибридный поиск** — Reciprocal Rank Fusion (RRF) для объединения результатов
-- **Ingestion pipeline** — импорт из URL, PDF, DOCX, plain text
-- **CLI** — быстрая работа из терминала
-- **REST API** — интеграция с любыми сервисами
-- **MCP-сервер** — нативная интеграция с GitHub Copilot и другими LLM
+- [PLAN.md](PLAN.md) — phased implementation plan (M1 → M15). Read this first.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — high-level architecture, components, data flows, decisions.
+- This `README.md` — entrypoint + status.
 
-## Быстрый старт
+## What Mnemos is (one paragraph)
 
-```bash
-# Установка
-cd ai-brain
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[all]"
+A standalone server that gives Copilot agents real long-term memory: hybrid search (vector + full-text), per-agent recall, a knowledge pipeline (raw → processing → processed → published), a policy engine for automation, and an explainability layer. Talks to Copilot via MCP (`mnemos_*` tools). Forked from the user's `ai-brain` project to keep full git attribution.
 
-# Конфигурация
-cp config.example.yaml config.yaml
-# Отредактируйте config.yaml при необходимости
+## Source / upstream
 
-# Добавить заметку
-brain add "Python: list comprehension быстрее цикла for в 2-3 раза" --tags python,performance
+- Source: `/var/home/abyss/LABs/AI/ai-brain/` (will be archived after Mnemos v1).
+- Fork strategy: full git history preserved (`git clone` + rename remote to `upstream-ai-brain`).
+- Licence: inherited from ai-brain.
 
-# Поиск
-brain search "оптимизация python"
+## Relationship to GCW
 
-# Импорт URL
-brain add --url https://docs.python.org/3/tutorial/datastructures.html --tags python,docs
+GCW ships a **stub plugin** `plugins/mnemos-integration` (see `GithubCopilotWorkflow/plugins/mnemos-integration/`) that operates in degraded file-mode until Mnemos MCP is installed. Once Mnemos is running, those skills auto-switch to MCP tools without code changes. The tag schema (`gcw:session`, `gcw:bug-pattern`, `gcw:learning`, `gcw:decision`, `gcw:rule`, `gcw:open-question`, `gcw:checkpoint`) is the contract between the two.
 
-# Синхронизация Obsidian vault
-brain sync
+## Locked decisions (from the planning session)
 
-# Статистика
-brain stats
-```
+- **Git history**: preserved via `git clone` + remote rename.
+- **LLM providers**: broad set out of the gate — Anthropic, OpenAI, Azure OpenAI, Ollama, Gemini — behind a provider abstraction in `mnemos/llm/`.
+- **Context Filter (M10)**: mandatory v1 subsystem (pre-LLM dedup/noise filtering with raw+clean dual storage).
+- **Cache Center (M11)**: deferred to v2; idempotency from M5 covers the bulk of the benefit.
+- **Knowledge Pipeline (M4)**: mandatory v1 feature. Vector index is gated on `status="published"`.
+- **Tag contract**: enforced at MCP layer with `strict_tag_contract` flag (true for new, false for legacy migrations).
 
-## CLI-команды
+## Next action
 
-| Команда | Описание |
-| --- | --- |
-| `brain add` | Добавить заметку (текст, файл, URL, stdin) |
-| `brain search` | Гибридный поиск |
-| `brain list` | Список последних записей |
-| `brain get <id>` | Получить запись по ID |
-| `brain delete <id>` | Удалить запись |
-| `brain tags` | Список тегов |
-| `brain sync` | Переиндексация Obsidian vault |
-| `brain stats` | Статистика |
-| `brain serve` | Запуск REST API сервера |
-
-## REST API
-
-Запуск: `brain serve` (по умолчанию `http://127.0.0.1:8787`)
-
-```bash
-# Добавить
-curl -X POST http://localhost:8787/api/v1/memories \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Важный факт", "tags": ["test"]}'
-
-# Поиск
-curl -X POST http://localhost:8787/api/v1/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "важный"}'
-```
-
-Swagger UI: `http://127.0.0.1:8787/docs`
-
-## MCP-сервер (Copilot)
-
-Добавьте в настройки VS Code (`.vscode/mcp.json`):
-
-```json
-{
-  "servers": {
-    "ai-brain": {
-      "command": "python",
-      "args": ["-m", "ai_brain.mcp_server"],
-      "cwd": "/path/to/ai-brain"
-    }
-  }
-}
-```
-
-Доступные инструменты для LLM:
-- `brain_search` — поиск по памяти
-- `brain_add` — добавить запись
-- `brain_get` — получить запись по ID
-- `brain_list_tags` — список тегов
-- `brain_stats` — статистика
-- `brain_ingest_url` — загрузить веб-страницу
-
-## Архитектура
-
-```
-Interfaces: CLI | Web UI | REST API | MCP | Telegram
-                    ↓
-            FastAPI (Core API)
-                    ↓
-            brain_core (MemoryManager)
-                    ↓
-    ┌───────────────┼───────────────┐
-    Obsidian Vault  ChromaDB        SQLite
-    (markdown)      (vectors)       (metadata+FTS)
-                    ↓
-            Embedding Layer
-    (sentence-transformers / Ollama)
-```
-
-Подробнее: [docs/architecture.md](docs/architecture.md)
-
-## Структура проекта
-
-```
-ai-brain/
-├── src/ai_brain/
-│   ├── __init__.py
-│   ├── config.py          # Конфигурация (YAML + env vars)
-│   ├── models.py          # Pydantic-модели данных
-│   ├── manager.py         # MemoryManager — ядро системы
-│   ├── embedding.py       # Embedding-провайдеры
-│   ├── ingestion.py       # Pipeline импорта данных
-│   ├── api.py             # FastAPI REST API
-│   ├── cli.py             # Typer CLI
-│   ├── mcp_server.py      # MCP-сервер для Copilot
-│   └── storage/
-│       ├── sqlite_store.py  # SQLite + FTS5
-│       ├── vector_store.py  # ChromaDB
-│       └── vault.py         # Obsidian vault
-├── docs/
-│   └── architecture.md
-├── config.example.yaml
-├── pyproject.toml
-└── README.md
-```
-
-## Лицензия
-
-MIT
+Start a fresh chat session for Mnemos implementation. First step: read [PLAN.md](PLAN.md), then begin **Phase M1** (Fork & Rebrand).
