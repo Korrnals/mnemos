@@ -1,0 +1,176 @@
+"""Configuration management for Mnemos."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
+
+
+class MnemosConfig(BaseModel):
+    vault_path: Path = Path("~/mnemos-vault")
+    data_dir: Path = Path("~/.mnemos")
+    db_name: str = "mnemos.db"
+    # M2: tag contract enforcement
+    strict_tag_contract: bool = True
+
+
+class EmbeddingConfig(BaseModel):
+    provider: str = "chromadb"  # chromadb | onnx | ollama | sentence-transformers
+    model: str = "all-MiniLM-L6-v2"  # HF model ID
+    onnx_file: str = "onnx/model.onnx"  # ONNX filename within HF repo
+    ollama_url: str = "http://localhost:11434"
+
+
+class SearchConfig(BaseModel):
+    default_limit: int = 20
+    hybrid_alpha: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class ApiConfig(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 8787
+
+
+class McpConfig(BaseModel):
+    transport: str = "stdio"
+
+
+class WatcherConfig(BaseModel):
+    paths: list[str] = []
+    # M8: enable path-scoped rules ingest
+    include_rules: bool = False
+    ignore_dirs: list[str] = [
+        ".git", "node_modules", "__pycache__", ".venv", "venv",
+        "dist", "build", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    ]
+    extensions: list[str] = [
+        ".md", ".py", ".js", ".ts", ".yaml", ".yml", ".toml",
+        ".json", ".txt", ".rst", ".sh", ".css", ".html", ".sql",
+    ]
+    max_file_size_kb: int = 512
+    auto_scan: bool = True
+    auto_translate: bool = False
+
+
+class LLMConfig(BaseModel):
+    """Multi-provider LLM configuration (M4 synthesis workers, M10 context filter)."""
+
+    provider: str = "ollama"  # anthropic | openai | azure_openai | ollama | gemini
+    model: str = "qwen2.5:3b"
+    # Ollama
+    ollama_url: str = "http://localhost:11434"
+    # OpenAI
+    openai_api_key: str = ""
+    openai_base_url: str = ""
+    # Azure OpenAI
+    azure_endpoint: str = ""
+    azure_api_version: str = "2024-02-01"
+    azure_deployment: str = ""
+    # Anthropic
+    anthropic_api_key: str = ""
+    # Google Gemini
+    gemini_api_key: str = ""
+    temperature: float = 0.3
+    max_tokens: int = 4096
+
+
+class AutomationConfig(BaseModel):
+    """M5 — policy engine / scheduler configuration."""
+
+    enabled: bool = True
+    # APScheduler interval for periodic tasks
+    scheduler_interval_sec: int = Field(default=300, ge=30, le=86400)
+    # Debounce after vault write events
+    event_debounce_sec: int = Field(default=45, ge=5, le=3600)
+    # Minimum raw entries required before auto-clustering triggers
+    min_raw_to_trigger: int = Field(default=3, ge=1, le=10000)
+    # Cooldown between automated pipeline runs
+    cooldown_sec: int = Field(default=180, ge=10, le=86400)
+
+
+class RuntimeConfig(BaseModel):
+    # Hard cap for CPU-bound thread pools (BLAS/OMP/ONNX/tokenizers)
+    cpu_threads: int = Field(default=4, ge=1, le=64)
+    # Uvicorn worker processes for `mnemos serve`
+    uvicorn_workers: int = Field(default=1, ge=1, le=8)
+
+
+class Settings(BaseSettings):
+    mnemos: MnemosConfig = MnemosConfig()
+    embedding: EmbeddingConfig = EmbeddingConfig()
+    search: SearchConfig = SearchConfig()
+    api: ApiConfig = ApiConfig()
+    mcp: McpConfig = McpConfig()
+    watcher: WatcherConfig = WatcherConfig()
+    llm: LLMConfig = LLMConfig()
+    automation: AutomationConfig = AutomationConfig()
+    runtime: RuntimeConfig = RuntimeConfig()
+    # M5: declarative policy rules (loaded from YAML or set programmatically)
+    policies: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {
+        "env_prefix": "MNEMOS_",
+        "env_nested_delimiter": "__",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+    }
+
+    def resolve_paths(self) -> None:
+        self.mnemos.vault_path = self.mnemos.vault_path.expanduser().resolve()
+        self.mnemos.data_dir = self.mnemos.data_dir.expanduser().resolve()
+
+    def apply_runtime_env(self) -> None:
+        """Apply conservative thread caps unless explicitly overridden by user env."""
+        threads = str(self.runtime.cpu_threads)
+        defaults = {
+            "OMP_NUM_THREADS": threads,
+            "OPENBLAS_NUM_THREADS": threads,
+            "MKL_NUM_THREADS": threads,
+            "NUMEXPR_NUM_THREADS": threads,
+            "VECLIB_MAXIMUM_THREADS": threads,
+            "BLIS_NUM_THREADS": threads,
+            "TOKENIZERS_PARALLELISM": "false",
+        }
+        for key, value in defaults.items():
+            os.environ.setdefault(key, value)
+
+    @property
+    def db_path(self) -> Path:
+        return self.mnemos.data_dir / self.mnemos.db_name
+
+
+def load_settings(config_path: str | Path | None = None) -> Settings:
+    """Load settings from YAML config file with env var overrides.
+
+    Search order:
+      1. Explicit config_path argument
+      2. MNEMOS_CONFIG env var
+      3. ./config.yaml in cwd
+      4. ~/.mnemos/config.yaml
+    """
+    if config_path is None:
+        env_config = os.environ.get("MNEMOS_CONFIG", "")
+        candidates: list[Path | None] = [
+            Path(env_config) if env_config else None,
+            Path.cwd() / "config.yaml",
+            Path.home() / ".mnemos" / "config.yaml",
+        ]
+    else:
+        candidates = [Path(config_path)]
+
+    config_data: dict[str, Any] = {}
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            with candidate.open() as fh:
+                config_data = yaml.safe_load(fh) or {}
+            break
+
+    settings = Settings(**config_data)
+    settings.resolve_paths()
+    settings.apply_runtime_env()
+    return settings

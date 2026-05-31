@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "ai-brain"
+name = "mnemos"
 version = "0.1.0"
-description = "Hybrid long-term memory system: personal knowledge base + RAG for AI agents"
+description = "Standalone memory & knowledge server for GCW agents — forked from ai-brain"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -33,9 +33,24 @@ dependencies = [
     "python-frontmatter>=1.1",
     # Utilities
     "python-dateutil>=2.9",
+    # Scheduling (M5 — policy engine / automation)
+    "apscheduler>=3.10",
 ]
 
 [project.optional-dependencies]
+anthropic = [
+    "anthropic>=0.25",
+]
+openai = [
+    "openai>=1.0",
+]
+gemini = [
+    "google-generativeai>=0.5",
+]
+azure = [
+    # Azure OpenAI uses the same openai SDK with azure endpoint config
+    "openai>=1.0",
+]
 ollama = [
     "ollama>=0.3",
 ]
@@ -44,9 +59,6 @@ sentence-transformers = [
 ]
 openvino = [
     "optimum[openvino]>=1.19",
-]
-telegram = [
-    "aiogram>=3.10",
 ]
 mcp = [
     "mcp[cli]>=1.0",
@@ -62,16 +74,18 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
     "mypy>=1.11",
+    "bandit[toml]>=1.7",
+    "pip-audit>=2.7",
 ]
 all = [
-    "ai-brain[ollama,telegram,mcp,pdf,docx,dev]",
+    "mnemos[anthropic,openai,gemini,azure,ollama,mcp,pdf,docx,dev]",
 ]
 
 [project.scripts]
-brain = "ai_brain.cli:app"
+mnemos = "mnemos.cli.main:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ai_brain"]
+packages = ["src/mnemos"]
 
 [tool.ruff]
 target-version = "py311"
@@ -88,3 +102,7 @@ asyncio_mode = "auto"
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests"]
+skips = []

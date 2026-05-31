@@ -1,0 +1,1 @@
+"""Mnemos CLI package."""

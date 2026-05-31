@@ -1,0 +1,96 @@
+"""Triggers — M5: event-driven pipeline triggers.
+
+Hooks into status transitions and vault watcher events to fire
+automated actions via the policy engine.
+
+Events:
+  - memory_saved   : new or updated memory
+  - status_changed : raw → processing → processed → published
+  - vault_write    : file written to Obsidian vault (debounced)
+
+Each trigger evaluates policy rules and executes actions.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from mnemos.models import Memory, MemoryStatus
+from mnemos.policy.engine import evaluate_rules, load_rules_from_dict
+
+if TYPE_CHECKING:
+    from mnemos.manager import MemoryManager
+
+logger = logging.getLogger(__name__)
+
+
+def _get_rules(mgr: MemoryManager) -> list:
+    """Load rules from config or empty list if none configured."""
+    raw = getattr(mgr.settings, "policies", None)
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        return load_rules_from_dict(raw)
+    return raw
+
+
+def on_memory_saved(mgr: MemoryManager, mem: Memory) -> None:
+    """Trigger fired after any memory is saved."""
+    rules = _get_rules(mgr)
+    if not rules:
+        return
+    actions = evaluate_rules(mem, rules)
+    for act in actions:
+        _execute_action(mgr, mem, act)
+
+
+def on_status_changed(
+    mgr: MemoryManager,
+    mem: Memory,
+    old_status: MemoryStatus,
+    new_status: MemoryStatus,
+) -> None:
+    """Trigger fired when a memory transitions between pipeline statuses."""
+    logger.debug(
+        "trigger: %s %s → %s",
+        mem.id[:8],
+        old_status.value,
+        new_status.value,
+    )
+    # Auto-publish on processed→published if policy allows
+    if new_status == MemoryStatus.PROCESSED:
+        rules = _get_rules(mgr)
+        actions = evaluate_rules(mem, rules)
+        for act in actions:
+            if act.action == "publish":
+                _execute_action(mgr, mem, act)
+
+
+def _execute_action(
+    mgr: MemoryManager,
+    mem: Memory,
+    act,
+) -> None:
+    """Execute a single policy action."""
+
+    action = act.action
+    if action == "publish":
+        from mnemos.pipeline.publish import publish_memory
+
+        result = publish_memory(mgr, mem.id)
+        if not result.published:
+            logger.warning("trigger: auto-publish failed for %s", mem.id[:8])
+    elif action == "archive":
+        mem.status = MemoryStatus.ARCHIVED
+        mgr.sqlite.save(mem)
+        logger.info("trigger: archived %s", mem.id[:8])
+    elif action == "alert":
+        msg = act.params.get("message", "Policy alert")
+        logger.warning("trigger: ALERT %s — %s", mem.id[:8], msg)
+    elif action == "defer":
+        logger.info("trigger: deferred %s (no action)", mem.id[:8])
+    elif action == "trigger_cluster":
+        logger.info("trigger: cluster request for project=%s", mem.project)
+    else:
+        logger.warning("trigger: unknown action '%s' for %s", action, mem.id[:8])

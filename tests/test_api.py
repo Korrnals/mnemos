@@ -1,136 +1,240 @@
-"""Tests for FastAPI REST API endpoints."""
+"""Tests for HTTP API endpoints.
 
+Covers:
+  - Health / metrics
+  - Memories CRUD (create, get, list)
+  - Search
+  - Per-agent recall
+  - Pipeline (process, synthesize, publish)
+  - DLQ (list, retry, discard)
+  - Traces
+"""
+
+from __future__ import annotations
+
+import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ai_brain.config import BrainConfig, EmbeddingConfig, Settings
+from mnemos.api import main as api_main
+from mnemos.api.main import app, lifespan
+from mnemos.config import Settings
+from mnemos.manager import MemoryManager
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    s = Settings(
-        brain=BrainConfig(
-            vault_path=tmp_path / "vault",
-            data_dir=tmp_path / "data",
-        ),
-        embedding=EmbeddingConfig(provider="chromadb"),
+def tmp_settings():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        settings = Settings(
+            mnemos={
+                "vault_path": str(tmp / "vault"),
+                "data_dir": str(tmp / "data"),
+                "db_name": "test.db",
+            },
+            embedding={"provider": "onnx"},
+        )
+        settings.resolve_paths()
+        yield settings
+
+
+@pytest.fixture
+def client(tmp_settings):
+    """Yield a TestClient with an isolated MemoryManager per test."""
+    mgr = MemoryManager(tmp_settings)
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [0.1] * 384
+    mgr._embedder = mock_embedder
+
+    # Build a fresh FastAPI app so lifespan is isolated per test
+
+    test_app = FastAPI(
+        title="Mnemos-Test",
+        version="0.1.0",
+        lifespan=lifespan,
     )
-    s.resolve_paths()
-    return s
+    # Copy all routes from the real app
+    for route in app.routes:
+        test_app.routes.append(route)
+
+    # Override get_manager to return our isolated mgr
+
+    api_main._manager = mgr
+    with TestClient(test_app) as tc:
+        yield tc
+    mgr.close()
+    api_main._manager = None
 
 
-@pytest.fixture
-def client(settings: Settings) -> TestClient:
-    with patch("ai_brain.api.get_settings", return_value=settings):
-        from ai_brain.api import app
-
-        with TestClient(app) as c:
-            yield c
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
 
 
-def test_health(client: TestClient):
-    resp = client.get("/api/v1/health")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+class TestHealth:
+    def test_health(self, client):
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_metrics(self, client):
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total" in data
+        assert "by_status" in data
 
 
-def test_stats(client: TestClient):
-    resp = client.get("/api/v1/stats")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "total_memories" in data
+# ---------------------------------------------------------------------------
+# Memories
+# ---------------------------------------------------------------------------
 
 
-def test_create_and_get_memory(client: TestClient):
-    resp = client.post("/api/v1/memories", json={
-        "content": "Test API memory",
-        "title": "API Test",
-        "tags": ["test", "api"],
-    })
-    assert resp.status_code == 201
-    memory = resp.json()
-    assert memory["content"] == "Test API memory"
-    assert memory["title"] == "API Test"
-    memory_id = memory["id"]
+class TestMemories:
+    def test_create_memory(self, client):
+        resp = client.post("/memories", json={
+            "content": "Test memory",
+            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+        })
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["content"] == "Test memory"
+        assert "project:gcw" in data["tags"]
 
-    resp = client.get(f"/api/v1/memories/{memory_id}")
-    assert resp.status_code == 200
-    assert resp.json()["id"] == memory_id
+    def test_get_memory(self, client):
+        # Create first
+        create_resp = client.post("/memories", json={
+            "content": "Fetch me",
+            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+        })
+        mem_id = create_resp.json()["id"]
 
+        resp = client.get(f"/memories/{mem_id}")
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "Fetch me"
 
-def test_list_memories(client: TestClient):
-    for i in range(3):
-        client.post("/api/v1/memories", json={"content": f"Memory {i}"})
+    def test_get_memory_404(self, client):
+        resp = client.get("/memories/nonexistent-id")
+        assert resp.status_code == 404
 
-    resp = client.get("/api/v1/memories")
-    assert resp.status_code == 200
-    assert len(resp.json()) == 3
+    def test_list_memories(self, client):
+        client.post("/memories", json={
+            "content": "One",
+            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+        })
+        client.post("/memories", json={
+            "content": "Two",
+            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+        })
 
+        resp = client.get("/memories?limit=10")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 2
 
-def test_update_memory(client: TestClient):
-    resp = client.post("/api/v1/memories", json={"content": "Original"})
-    memory_id = resp.json()["id"]
-
-    resp = client.put(f"/api/v1/memories/{memory_id}", json={
-        "content": "Updated content",
-        "tags": ["updated"],
-    })
-    assert resp.status_code == 200
-    assert resp.json()["content"] == "Updated content"
-    assert resp.json()["tags"] == ["updated"]
-
-
-def test_delete_memory(client: TestClient):
-    resp = client.post("/api/v1/memories", json={"content": "To delete"})
-    memory_id = resp.json()["id"]
-
-    resp = client.delete(f"/api/v1/memories/{memory_id}")
-    assert resp.status_code == 204
-
-    resp = client.get(f"/api/v1/memories/{memory_id}")
-    assert resp.status_code == 404
-
-
-def test_search(client: TestClient):
-    client.post("/api/v1/memories", json={
-        "content": "Python asyncio event loop",
-        "tags": ["python"],
-    })
-    client.post("/api/v1/memories", json={
-        "content": "JavaScript promises and callbacks",
-        "tags": ["javascript"],
-    })
-
-    resp = client.post("/api/v1/search", json={"query": "python async"})
-    assert resp.status_code == 200
-    results = resp.json()
-    assert len(results) >= 1
+    def test_list_memories_by_status(self, client):
+        client.post("/memories", json={
+            "content": "Raw note",
+            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+            "status": "raw",
+        })
+        resp = client.get("/memories?status=raw")
+        assert resp.status_code == 200
+        assert all(m["status"] == "raw" for m in resp.json())
 
 
-def test_tags(client: TestClient):
-    client.post("/api/v1/memories", json={
-        "content": "A", "tags": ["python", "dev"],
-    })
-    client.post("/api/v1/memories", json={
-        "content": "B", "tags": ["python"],
-    })
-
-    resp = client.get("/api/v1/tags")
-    assert resp.status_code == 200
-    tags = resp.json()
-    assert tags["python"] == 2
-    assert tags["dev"] == 1
+# ---------------------------------------------------------------------------
+# Search
+# ---------------------------------------------------------------------------
 
 
-def test_get_nonexistent(client: TestClient):
-    resp = client.get("/api/v1/memories/nonexistent-id")
-    assert resp.status_code == 404
+class TestSearch:
+    def test_search_basic(self, client):
+        client.post("/memories", json={
+            "content": "kubernetes deployment patterns",
+            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+        })
+        resp = client.post("/search", json={
+            "query": "kubernetes",
+            "limit": 10,
+        })
+        assert resp.status_code == 200
+        results = resp.json()
+        assert len(results) >= 1
+        assert any("kubernetes" in r["content"].lower() for r in results)
 
 
-def test_ui_page(client: TestClient):
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert b"AI-Brain" in resp.content
+# ---------------------------------------------------------------------------
+# Per-agent recall
+# ---------------------------------------------------------------------------
+
+
+class TestAgentRecall:
+    def test_recall_by_agent(self, client):
+        client.post("/memories", json={
+            "content": "Security review note",
+            "tags": ["project:gcw", "agent:security-reviewer", "gcw:learning"],
+        })
+        resp = client.get("/recall/agent/security-reviewer?limit=10")
+        assert resp.status_code == 200
+        results = resp.json()
+        assert len(results) >= 1
+        assert all("agent:security-reviewer" in r["tags"] for r in results)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestPipeline:
+    def test_process_empty(self, client):
+        """Process with no raw memories returns zero counts."""
+        resp = client.post("/process")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["clusters"] == 0
+
+    def test_synthesize_missing_cluster(self, client):
+        resp = client.post("/synthesize?cluster_id=fake-id")
+        assert resp.status_code == 404
+
+    def test_publish_missing_memory(self, client):
+        resp = client.post("/publish/nonexistent-id")
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# DLQ
+# ---------------------------------------------------------------------------
+
+
+class TestDLQ:
+    def test_list_empty(self, client):
+        resp = client.get("/dlq")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_discard_missing(self, client):
+        resp = client.delete("/dlq/fake-id")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Traces
+# ---------------------------------------------------------------------------
+
+
+class TestTraces:
+    def test_list_empty(self, client):
+        resp = client.get("/traces")
+        assert resp.status_code == 200
+        assert resp.json() == []
