@@ -170,9 +170,7 @@ def _stage_extract(text: str, profile: str) -> tuple[str, dict[str, Any]]:
 
         # Signal detection
         is_signal = bool(
-            _ERROR_RE.search(stripped)
-            or _WARNING_RE.search(stripped)
-            or _EXIT_RE.search(stripped)
+            _ERROR_RE.search(stripped) or _WARNING_RE.search(stripped) or _EXIT_RE.search(stripped)
         )
 
         if is_signal:
@@ -339,9 +337,7 @@ def detect_profile(text: str, hint: str | None = None) -> str:
         r"^\s*let\s+",
         r"^\s*var\s+",
     ]
-    code_hits = sum(
-        1 for pat in code_patterns for line in lines if re.search(pat, line)
-    )
+    code_hits = sum(1 for pat in code_patterns for line in lines if re.search(pat, line))
     if code_hits >= 3:
         return "code"
 

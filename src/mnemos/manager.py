@@ -137,9 +137,18 @@ class MemoryManager:
             return None
 
         update_kwargs: dict[str, Any] = {}
-        for field in ("content", "title", "tags", "memory_type", "metadata",
-                      "status", "category", "quality_score", "confidence",
-                      "cluster_id"):
+        for field in (
+            "content",
+            "title",
+            "tags",
+            "memory_type",
+            "metadata",
+            "status",
+            "category",
+            "quality_score",
+            "confidence",
+            "cluster_id",
+        ):
             val = getattr(data, field, None)
             if val is not None:
                 setattr(memory, field, val)
@@ -153,7 +162,8 @@ class MemoryManager:
             try:
                 emb = self.embedder.embed(self._embedding_text(memory))
                 self.vectors.upsert(
-                    memory.id, emb,
+                    memory.id,
+                    emb,
                     {"project": memory.project, "agent": memory.agent},
                 )
             except Exception as exc:
@@ -466,15 +476,11 @@ class MemoryManager:
                 or rip.is_multicast
                 or rip.is_unspecified
             ):
-                raise ValueError(
-                    f"URL host resolves to blocked address: {host} → {resolved}"
-                )
+                raise ValueError(f"URL host resolves to blocked address: {host} → {resolved}")
 
         return url
 
-    def ingest_url(
-        self, url: str, *, tags: list[str], project: str, agent: str
-    ) -> Memory:
+    def ingest_url(self, url: str, *, tags: list[str], project: str, agent: str) -> Memory:
         """Fetch a URL, extract main text, save as RAW memory."""
         try:
             self._validate_url(url)
@@ -573,9 +579,7 @@ class MemoryManager:
 
         Returns a summary dict for observability / CLI output.
         """
-        clusters = self.cluster(
-            project=project, agent=agent, limit=limit, **kwargs
-        )
+        clusters = self.cluster(project=project, agent=agent, limit=limit, **kwargs)
         synthesized: list[SynthesisResult] = []
         published: list[PublishResult] = []
         failed_qg: list[QualityResult] = []
@@ -638,4 +642,3 @@ class MemoryManager:
         raw = getattr(self.settings, "policies", None)
         rules = load_rules_from_dict(raw) if isinstance(raw, dict) else []
         return evaluate_rules(mem, rules)
-

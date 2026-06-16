@@ -49,9 +49,7 @@ class TraceRecorder:
                 trace.llm_done = True
                 trace.rationale_summary = "Synthesised 3 raw entries into draft."
         """
-        trace = Trace(
-            task_label=task_label, project=project, step=step, item_id=item_id
-        )
+        trace = Trace(task_label=task_label, project=project, step=step, item_id=item_id)
         t0 = time.monotonic()
         try:
             yield trace

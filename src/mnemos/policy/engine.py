@@ -31,7 +31,7 @@ class PolicyCondition(BaseModel):
     min_quality: float | None = None
     min_confidence: float | None = None
     min_source_coverage: int | None = None
-    max_age_hours: float | None = None   # memory.created_at must be within N hours
+    max_age_hours: float | None = None  # memory.created_at must be within N hours
     tags_include: list[str] = Field(default_factory=list)
     tags_exclude: list[str] = Field(default_factory=list)
 
@@ -49,7 +49,7 @@ class PolicyRule(BaseModel):
     name: str
     description: str = ""
     enabled: bool = True
-    priority: int = 0   # higher = evaluated first
+    priority: int = 0  # higher = evaluated first
     conditions: list[PolicyCondition] = Field(default_factory=list)
     actions: list[PolicyAction] = Field(default_factory=list)
 

@@ -126,45 +126,61 @@ async def list_tools() -> list[Tool]:
     _ac = _auto_collect_state["enabled"]
 
     _recall_desc = (
-        "🔄 [AUTO-COLLECT] MANDATORY: Call this at the START of EVERY conversation/session. "
-        "Restores project context from long-term memory. Without this, you lose continuity. "
-        "Also call after context window compression."
-    ) if _ac else (
-        "Recall the latest session context for a project from long-term memory. "
-        "Use at the START of every session, after context compression, "
-        "or whenever you notice gaps in project state. "
-        "Returns the most recent checkpoint with goals, progress, and decisions."
+        (
+            "🔄 [AUTO-COLLECT] MANDATORY: Call this at the START of EVERY conversation/session. "
+            "Restores project context from long-term memory. Without this, you lose continuity. "
+            "Also call after context window compression."
+        )
+        if _ac
+        else (
+            "Recall the latest session context for a project from long-term memory. "
+            "Use at the START of every session, after context compression, "
+            "or whenever you notice gaps in project state. "
+            "Returns the most recent checkpoint with goals, progress, and decisions."
+        )
     )
 
     _save_desc = (
-        "🔄 [AUTO-COLLECT] MANDATORY: Call this PROACTIVELY — after completing meaningful work, "
-        "before ending a conversation, when context is getting large, or before switching tasks. "
-        "Captures: goals, completed work, decisions, active files, architecture notes."
-    ) if _ac else (
-        "Save current session context/checkpoint to long-term memory. "
-        "Use PROACTIVELY to preserve: current goals, completed tasks, decisions made, "
-        "active file paths, architecture notes. "
-        "Call after completing significant work steps or before switching major tasks."
+        (
+            "🔄 [AUTO-COLLECT] MANDATORY: Call this PROACTIVELY — after meaningful work, "
+            "before ending a conversation, when context is large, or before switching tasks. "
+            "Captures: goals, completed work, decisions, active files, architecture notes."
+        )
+        if _ac
+        else (
+            "Save current session context/checkpoint to long-term memory. "
+            "Use PROACTIVELY to preserve: current goals, completed tasks, decisions made, "
+            "active file paths, architecture notes. "
+            "Call after completing significant work steps or before switching major tasks."
+        )
     )
 
     _add_desc = (
-        "🔄 [AUTO-COLLECT] Proactively save discoveries, patterns, decisions, gotchas, "
-        "and any reusable knowledge. Tags MUST include project:<slug>, agent:<slug>, "
-        "and at least one gcw:<subtype> tag."
-    ) if _ac else (
-        "Add a new entry to long-term memory. "
-        "Tags MUST include: project:<slug>, agent:<slug>, and gcw:<subtype>. "
-        "Valid gcw subtypes: session, bug-pattern, learning, decision, rule, "
-        "open-question, checkpoint, legacy."
+        (
+            "🔄 [AUTO-COLLECT] Proactively save discoveries, patterns, decisions, gotchas, "
+            "and any reusable knowledge. Tags MUST include project:<slug>, agent:<slug>, "
+            "and at least one gcw:<subtype> tag."
+        )
+        if _ac
+        else (
+            "Add a new entry to long-term memory. "
+            "Tags MUST include: project:<slug>, agent:<slug>, and gcw:<subtype>. "
+            "Valid gcw subtypes: session, bug-pattern, learning, decision, rule, "
+            "open-question, checkpoint, legacy."
+        )
     )
 
     _search_desc = (
-        "🔄 [AUTO-COLLECT] Search long-term memory BEFORE doing complex work — "
-        "check if relevant facts, decisions, or patterns were stored previously."
-    ) if _ac else (
-        "Search long-term memory using semantic + full-text hybrid search (RRF). "
-        "Only searches 'published' knowledge units by default. "
-        "Add status filter to query raw/processing/processed entries."
+        (
+            "🔄 [AUTO-COLLECT] Search long-term memory BEFORE doing complex work — "
+            "check if relevant facts, decisions, or patterns were stored previously."
+        )
+        if _ac
+        else (
+            "Search long-term memory using semantic + full-text hybrid search (RRF). "
+            "Only searches 'published' knowledge units by default. "
+            "Add status filter to query raw/processing/processed entries."
+        )
     )
 
     return [
@@ -405,8 +421,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         logger.exception("Tool %s failed: %s", name, exc)
         return [TextContent(type="text", text=f"❌ Error: {exc}")]
 
-    text = result if isinstance(result, str) else json.dumps(
-        result, default=str, ensure_ascii=False
+    text = (
+        result if isinstance(result, str) else json.dumps(result, default=str, ensure_ascii=False)
     )
     if reminder:
         text += reminder
@@ -426,8 +442,8 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             strict=settings.mnemos.strict_tag_contract,
         )
         # Derive denormalised fields from validated tags
-        project = next((t[len("project:"):] for t in tags if t.startswith("project:")), "")
-        agent = next((t[len("agent:"):] for t in tags if t.startswith("agent:")), "")
+        project = next((t[len("project:") :] for t in tags if t.startswith("project:")), "")
+        agent = next((t[len("agent:") :] for t in tags if t.startswith("agent:")), "")
 
         data = MemoryCreate(
             content=args["content"],
@@ -495,9 +511,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         data = MemoryCreate(content=content, tags=tags, source=MemorySource.MCP)
         memory = mgr.add(data, project=project, agent="user")
         _track_call(is_save=True)
-        instructions = (
-            _auto_collect_instructions(project) if _auto_collect_state["enabled"] else ""
-        )
+        instructions = _auto_collect_instructions(project) if _auto_collect_state["enabled"] else ""
         return f"✅ Context saved (id={memory.id}).{instructions}"
 
     # ── mnemos_recall_context ───────────────────────────────────────────────
@@ -515,9 +529,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         out = [f"# Context for project '{project}'\n"]
         for m in memories:
             out.append(f"---\n{m.effective_content()}\n")
-        instructions = (
-            _auto_collect_instructions(project) if _auto_collect_state["enabled"] else ""
-        )
+        instructions = _auto_collect_instructions(project) if _auto_collect_state["enabled"] else ""
         return "\n".join(out) + instructions
 
     # ── mnemos_list_recent ──────────────────────────────────────────────────
@@ -558,8 +570,8 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             raw_tags,
             strict=settings.mnemos.strict_tag_contract,
         )
-        project = next((t[len("project:"):] for t in tags if t.startswith("project:")), "")
-        agent = next((t[len("agent:"):] for t in tags if t.startswith("agent:")), "")
+        project = next((t[len("project:") :] for t in tags if t.startswith("project:")), "")
+        agent = next((t[len("agent:") :] for t in tags if t.startswith("agent:")), "")
         memory = mgr.ingest_url(url_clean, tags=tags, project=project, agent=agent)
         return {"id": memory.id, "title": memory.auto_title(), "url": url_clean}
 

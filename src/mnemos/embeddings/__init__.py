@@ -146,28 +146,18 @@ class ONNXHubProvider(EmbeddingProvider):
         logger.info("Loading ONNX model: %s (%s) @ revision=%s", model_id, onnx_file, revision)
 
         try:
-            model_path = hf_hub_download(
-                model_id, onnx_file, revision=revision
-            )
+            model_path = hf_hub_download(model_id, onnx_file, revision=revision)
         except Exception:
-            model_path = hf_hub_download(
-                model_id, "model.onnx", revision=revision
-            )
+            model_path = hf_hub_download(model_id, "model.onnx", revision=revision)
 
-        tokenizer_path = hf_hub_download(
-            model_id, "tokenizer.json", revision=revision
-        )
+        tokenizer_path = hf_hub_download(model_id, "tokenizer.json", revision=revision)
         self._tokenizer = Tokenizer.from_file(tokenizer_path)
         self._tokenizer.enable_truncation(max_length=max_length)
         self._tokenizer.enable_padding(length=max_length)
 
         n_threads = max(
             1,
-            int(
-                os.environ.get("MNEMOS_ORT_THREADS")
-                or os.environ.get("OMP_NUM_THREADS")
-                or "4"
-            ),
+            int(os.environ.get("MNEMOS_ORT_THREADS") or os.environ.get("OMP_NUM_THREADS") or "4"),
         )
         sess_opts = ort.SessionOptions()
         sess_opts.intra_op_num_threads = n_threads
@@ -267,4 +257,3 @@ def create_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
         f"Unknown embedding provider: {provider!r}. "
         "Valid: chromadb, ollama, onnx, sentence-transformers"
     )
-

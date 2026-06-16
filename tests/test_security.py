@@ -90,9 +90,7 @@ class TestSqlInjectionResistance:
 
     def test_update_fields_uses_param(self, manager, sample_memory) -> None:
         """UPDATE setters must use ? placeholders."""
-        ok = manager.sqlite.update_fields(
-            sample_memory.id, title="'; DROP TABLE memories; --"
-        )
+        ok = manager.sqlite.update_fields(sample_memory.id, title="'; DROP TABLE memories; --")
         assert ok is True
         # Verify table still exists
         count = manager.sqlite.count()
@@ -180,9 +178,7 @@ class TestFts5Escaping:
 class TestSqlInjectionSafe:
     """M15.2 — update_fields must reject unknown / hostile column names."""
 
-    def test_update_fields_rejects_unknown_columns(
-        self, manager, sample_memory
-    ) -> None:
+    def test_update_fields_rejects_unknown_columns(self, manager, sample_memory) -> None:
         """Field names not in the whitelist must be silently dropped."""
         # Attacker tries to overwrite the primary key or a system column.
         result = manager.sqlite.update_fields(
@@ -201,9 +197,7 @@ class TestSqlInjectionSafe:
         # And the whitelisted update DID apply.
         assert refetched.status.value == "published"
 
-    def test_update_fields_no_fstring_injection(
-        self, manager, sample_memory
-    ) -> None:
+    def test_update_fields_no_fstring_injection(self, manager, sample_memory) -> None:
         """A value with SQL-fragments must be parameterised, not concatenated."""
         # Title is in the whitelist, but the value contains a quote.
         ok = manager.sqlite.update_fields(
@@ -228,10 +222,22 @@ class TestSqlInjectionSafe:
 
         # Whitelist must contain exactly the documented columns.
         expected_keys = {
-            "status", "quality_score", "confidence", "source_coverage",
-            "cluster_id", "derived_from", "embedding_id", "clean_content",
-            "filter_profile", "filter_stats", "filter_version",
-            "title", "content", "tags", "category", "file_path",
+            "status",
+            "quality_score",
+            "confidence",
+            "source_coverage",
+            "cluster_id",
+            "derived_from",
+            "embedding_id",
+            "clean_content",
+            "filter_profile",
+            "filter_stats",
+            "filter_version",
+            "title",
+            "content",
+            "tags",
+            "category",
+            "file_path",
         }
         assert set(sqlite_store._FIELD_UPDATERS) == expected_keys
         # Every value is a static "col=?" fragment.
@@ -351,8 +357,12 @@ class TestHfHubPinning:
         captured: dict = {}
 
         def fake_init(
-            self, model_id, onnx_file="onnx/model.onnx",
-            max_length=512, *, revision=None,
+            self,
+            model_id,
+            onnx_file="onnx/model.onnx",
+            max_length=512,
+            *,
+            revision=None,
         ):
             captured["model_id"] = model_id
             captured["onnx_file"] = onnx_file
@@ -408,4 +418,3 @@ class TestSsrfBlocklist:
         # The site must be annotated as a nosec, with a justification.
         assert "nosec B104" in source
         assert "blocklist" in source.lower() or "not a bind" in source.lower()
-

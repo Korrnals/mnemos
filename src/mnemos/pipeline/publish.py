@@ -57,6 +57,7 @@ def publish_memory(
 
     # Transition status
     from datetime import UTC, datetime
+
     memory.status = MemoryStatus.PUBLISHED
     memory.updated_at = datetime.now(UTC)
     mgr.sqlite.save(memory)

@@ -226,11 +226,17 @@ class TestAgentRecallWithQuery:
 
         # Seed two memories — one published (so it can appear in vector search)
         m1 = _add_via_manager(
-            mgr, "security vulnerability in auth module", "reviewer", "gcw",
+            mgr,
+            "security vulnerability in auth module",
+            "reviewer",
+            "gcw",
             status=MemoryStatus.PUBLISHED,
         )
         _add_via_manager(
-            mgr, "refactor database schema", "architect", "gcw",
+            mgr,
+            "refactor database schema",
+            "architect",
+            "gcw",
             status=MemoryStatus.PUBLISHED,
         )
 
@@ -254,11 +260,17 @@ class TestAgentRecallWithQuery:
         mgr = tmp_manager
 
         m1 = _add_via_manager(
-            mgr, "deploy pipeline fix", "reviewer", "gcw",
+            mgr,
+            "deploy pipeline fix",
+            "reviewer",
+            "gcw",
             status=MemoryStatus.PUBLISHED,
         )
         _add_via_manager(
-            mgr, "deploy docs update", "reviewer", "docs",
+            mgr,
+            "deploy docs update",
+            "reviewer",
+            "docs",
             status=MemoryStatus.PUBLISHED,
         )
 
@@ -278,17 +290,24 @@ class TestAgentRecallWithQuery:
         mgr = tmp_manager
 
         m_reviewer = _add_via_manager(
-            mgr, "shared keyword alpha", "reviewer", "gcw",
+            mgr,
+            "shared keyword alpha",
+            "reviewer",
+            "gcw",
             status=MemoryStatus.PUBLISHED,
         )
         _add_via_manager(
-            mgr, "shared keyword alpha", "architect", "gcw",
+            mgr,
+            "shared keyword alpha",
+            "architect",
+            "gcw",
             status=MemoryStatus.PUBLISHED,
         )
 
         dummy_emb = [0.3] * 384
         mgr.vectors.upsert(
-            m_reviewer.id, dummy_emb,
+            m_reviewer.id,
+            dummy_emb,
             {"project": "gcw", "agent": "reviewer"},
         )
         mgr._embedder = MagicMock()

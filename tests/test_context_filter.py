@@ -122,9 +122,7 @@ class TestStageExtract:
 class TestStageCompress:
     def test_compresses_repeated_blocks(self):
         # Need 10+ lines to trigger compression
-        text = "\n".join(
-            ["  at module func1()"] * 5 + ["  at module func2()"] * 5 + ["Done"]
-        )
+        text = "\n".join(["  at module func1()"] * 5 + ["  at module func2()"] * 5 + ["Done"])
         result, _stats = _stage_compress(text, "log")
         assert "similar lines" in result or len(result.splitlines()) < 11
 

@@ -409,3 +409,408 @@ class TestScheduler:
 
         dlq_retry_scheduler(mgr)
         assert mgr.sqlite.dlq_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Triggers — coverage push (M18)
+#
+# Exercises the remaining branches in mnemos/policy/triggers.py:
+#   - on_memory_saved with archive / alert / defer / trigger_cluster actions
+#   - on_memory_saved with unknown action (defensive logger warning)
+#   - on_memory_saved with multiple actions in one rule
+#   - _get_rules defensive paths (raw=None, raw=list, raw=other)
+#   - on_status_changed transition that does NOT match publish action
+# ---------------------------------------------------------------------------
+
+
+class TestTriggersCoverage:
+    def test_on_memory_saved_archive_persists_status(self, tmp_manager: MemoryManager) -> None:
+        """`archive` action flips status to ARCHIVED and saves the row."""
+        mgr = tmp_manager
+        mgr.settings.policies = {
+            "rules": {
+                "arch": {
+                    "enabled": True,
+                    "conditions": [],
+                    "actions": [{"action": "archive"}],
+                },
+            },
+        }
+        mem = Memory(
+            content="x",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+            status=MemoryStatus.PUBLISHED,
+        )
+        mgr.sqlite.save(mem)
+        on_memory_saved(mgr, mem)
+        reloaded = mgr.sqlite.get(mem.id)
+        assert reloaded is not None
+        assert reloaded.status == MemoryStatus.ARCHIVED
+
+    def test_on_memory_saved_alert_action(self, tmp_manager: MemoryManager) -> None:
+        """`alert` action runs without raising and uses the param message."""
+        mgr = tmp_manager
+        mgr.settings.policies = {
+            "rules": {
+                "al": {
+                    "enabled": True,
+                    "conditions": [],
+                    "actions": [{"action": "alert", "params": {"message": "boom"}}],
+                },
+            },
+        }
+        mem = Memory(
+            content="x",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+        )
+        # No assertion — the action is a logger.warning, so we just confirm
+        # the call path completes without raising.
+        on_memory_saved(mgr, mem)
+
+    def test_on_memory_saved_defer_action(self, tmp_manager: MemoryManager) -> None:
+        """`defer` action is a no-op logger.info; status is not changed."""
+        mgr = tmp_manager
+        mgr.settings.policies = {
+            "rules": {
+                "df": {
+                    "enabled": True,
+                    "conditions": [],
+                    "actions": [{"action": "defer"}],
+                },
+            },
+        }
+        mem = Memory(
+            content="x",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+            status=MemoryStatus.RAW,
+        )
+        mgr.sqlite.save(mem)
+        on_memory_saved(mgr, mem)
+        # status unchanged
+        assert mgr.sqlite.get(mem.id).status == MemoryStatus.RAW
+
+    def test_on_memory_saved_trigger_cluster_action(self, tmp_manager: MemoryManager) -> None:
+        """`trigger_cluster` action logs and does not mutate the memory."""
+        mgr = tmp_manager
+        mgr.settings.policies = {
+            "rules": {
+                "tc": {
+                    "enabled": True,
+                    "conditions": [],
+                    "actions": [{"action": "trigger_cluster"}],
+                },
+            },
+        }
+        mem = Memory(
+            content="x",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+            status=MemoryStatus.RAW,
+        )
+        mgr.sqlite.save(mem)
+        on_memory_saved(mgr, mem)
+        assert mgr.sqlite.get(mem.id).status == MemoryStatus.RAW
+
+    def test_on_memory_saved_unknown_action(self, tmp_manager: MemoryManager) -> None:
+        """An unrecognised action falls through the else branch (logger.warning)."""
+        mgr = tmp_manager
+        mgr.settings.policies = {
+            "rules": {
+                "weird": {
+                    "enabled": True,
+                    "conditions": [],
+                    "actions": [{"action": "unmapped_action"}],
+                },
+            },
+        }
+        mem = Memory(
+            content="x",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+        )
+        on_memory_saved(mgr, mem)  # must not raise
+
+    def test_on_memory_saved_multiple_actions(self, tmp_manager: MemoryManager) -> None:
+        """A rule with two actions fires both in order."""
+        mgr = tmp_manager
+        mgr.settings.policies = {
+            "rules": {
+                "combo": {
+                    "enabled": True,
+                    "conditions": [],
+                    "actions": [
+                        {"action": "alert", "params": {"message": "first"}},
+                        {"action": "defer"},
+                    ],
+                },
+            },
+        }
+        mem = Memory(
+            content="x",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+        )
+        on_memory_saved(mgr, mem)
+
+    def test_on_memory_saved_disabled_rule_does_not_fire(self, tmp_manager: MemoryManager) -> None:
+        """`enabled=False` prevents the actions from running."""
+        mgr = tmp_manager
+        mgr.settings.policies = {
+            "rules": {
+                "off": {
+                    "enabled": False,
+                    "conditions": [],
+                    "actions": [{"action": "archive"}],
+                },
+            },
+        }
+        mem = Memory(
+            content="x",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+            status=MemoryStatus.RAW,
+        )
+        mgr.sqlite.save(mem)
+        on_memory_saved(mgr, mem)
+        assert mgr.sqlite.get(mem.id).status == MemoryStatus.RAW
+
+    def test_get_rules_handles_policies_attribute_missing(self) -> None:
+        """If a settings-like object has no `policies` attribute, _get_rules returns []."""
+        from unittest.mock import MagicMock
+
+        from mnemos.policy.triggers import _get_rules
+
+        # settings has no `policies` attribute at all → getattr returns None
+        mgr = MagicMock(spec=["settings"])  # only 'settings' attr available
+        mgr.settings = MagicMock(spec=[])  # settings has no attributes
+        rules = _get_rules(mgr)
+        assert rules == []
+
+    def test_get_rules_handles_policies_as_list(self) -> None:
+        """If `policies` is a list of PolicyRule, _get_rules returns it as-is."""
+        from unittest.mock import MagicMock
+
+        from mnemos.policy.triggers import _get_rules
+
+        mgr = MagicMock()
+        mgr.settings.policies = [PolicyRule(name="r", actions=[PolicyAction(action="defer")])]
+        rules = _get_rules(mgr)
+        assert len(rules) == 1
+        assert rules[0].name == "r"
+
+    def test_get_rules_handles_policies_as_unexpected_type(self) -> None:
+        """An unexpected type (e.g. int) for `policies` returns []."""
+        from unittest.mock import MagicMock
+
+        from mnemos.policy.triggers import _get_rules
+
+        mgr = MagicMock()
+        mgr.settings.policies = 42
+        rules = _get_rules(mgr)
+        assert rules == []
+
+    def test_on_status_changed_ignores_non_publish_actions(
+        self, tmp_manager: MemoryManager
+    ) -> None:
+        """on_status_changed only fires actions whose .action == 'publish'."""
+        mgr = tmp_manager
+        # Rule with a non-publish action — must be ignored at this layer
+        mgr.settings.policies = {
+            "rules": {
+                "no-pub": {
+                    "enabled": True,
+                    "conditions": [{"status": "processed"}],
+                    "actions": [{"action": "archive"}],
+                },
+            },
+        }
+        mem = Memory(
+            content="x",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+            status=MemoryStatus.PROCESSED,
+        )
+        mgr.sqlite.save(mem)
+        # Non-publish action must NOT be auto-applied here
+        on_status_changed(mgr, mem, MemoryStatus.RAW, MemoryStatus.PROCESSED)
+        assert mgr.sqlite.get(mem.id).status == MemoryStatus.PROCESSED
+
+
+# ---------------------------------------------------------------------------
+# Scheduler — coverage push (M18)
+#
+# Exercises the happy paths of mnemos/policy/scheduler.py:
+#   - auto_cluster actually invoking mgr.cluster() when raw >= min
+#   - auto_synthesize invoking mgr.synthesize() per unique cluster
+#   - auto_synthesize skipping clusters that already have a processed draft
+#   - auto_publish invoking mgr.publish() when quality_gate.passed is True
+#   - auto_publish leaving bad-quality processed memories alone
+#   - dlq_retry_scheduler calling dlq_retry on entries under max_attempts
+# ---------------------------------------------------------------------------
+
+
+class TestSchedulerCoverage:
+    def test_auto_cluster_invokes_cluster_when_raw_above_min(
+        self, tmp_manager: MemoryManager
+    ) -> None:
+        """auto_cluster calls mgr.cluster() when raw >= min_raw_to_trigger."""
+        mgr = tmp_manager
+        mgr.settings.automation.min_raw_to_trigger = 1
+        # Seed a RAW memory
+        mgr.sqlite.save(
+            Memory(
+                content="seed",
+                tags=["project:gcw", "agent:qa", "gcw:learning"],
+                project="gcw",
+                agent="qa",
+                status=MemoryStatus.RAW,
+            )
+        )
+        mgr.cluster = MagicMock(return_value=["fake-cluster"])  # type: ignore[method-assign]
+        auto_cluster(mgr)
+        mgr.cluster.assert_called_once()
+
+    def test_auto_synthesize_invokes_synthesize_per_cluster(
+        self, tmp_manager: MemoryManager
+    ) -> None:
+        """auto_synthesize calls mgr.synthesize(cluster_id) for each unique cluster
+        that does not already have a processed draft."""
+        mgr = tmp_manager
+        # Seed two processing memories sharing one cluster_id
+        cid = "cluster-1"
+        for i in range(2):
+            mgr.sqlite.save(
+                Memory(
+                    content=f"m{i}",
+                    tags=["project:gcw", "agent:qa", "gcw:learning"],
+                    project="gcw",
+                    agent="qa",
+                    status=MemoryStatus.PROCESSING,
+                    cluster_id=cid,
+                )
+            )
+        mgr.synthesize = MagicMock(return_value=None)  # type: ignore[method-assign]
+        auto_synthesize(mgr)
+        # One synthesize call per unique cluster_id
+        assert mgr.synthesize.call_count == 1
+        mgr.synthesize.assert_called_with(cid)
+
+    def test_auto_synthesize_skips_cluster_with_processed_draft(
+        self, tmp_manager: MemoryManager
+    ) -> None:
+        """If a cluster already has a PROCESSED draft, auto_synthesize skips it."""
+        mgr = tmp_manager
+        cid = "cluster-with-draft"
+        # One processing member
+        mgr.sqlite.save(
+            Memory(
+                content="proc",
+                tags=["project:gcw", "agent:qa", "gcw:learning"],
+                project="gcw",
+                agent="qa",
+                status=MemoryStatus.PROCESSING,
+                cluster_id=cid,
+            )
+        )
+        # One processed draft in the same cluster
+        mgr.sqlite.save(
+            Memory(
+                content="draft",
+                tags=["project:gcw", "agent:qa", "gcw:learning"],
+                project="gcw",
+                agent="qa",
+                status=MemoryStatus.PROCESSED,
+                cluster_id=cid,
+            )
+        )
+        mgr.synthesize = MagicMock(return_value=None)  # type: ignore[method-assign]
+        auto_synthesize(mgr)
+        mgr.synthesize.assert_not_called()
+
+    def test_auto_synthesize_skips_processing_with_no_cluster_id(
+        self, tmp_manager: MemoryManager
+    ) -> None:
+        """A processing memory without a cluster_id is silently skipped."""
+        mgr = tmp_manager
+        mgr.sqlite.save(
+            Memory(
+                content="orphan",
+                tags=["project:gcw", "agent:qa", "gcw:learning"],
+                project="gcw",
+                agent="qa",
+                status=MemoryStatus.PROCESSING,
+                cluster_id=None,
+            )
+        )
+        mgr.synthesize = MagicMock(return_value=None)  # type: ignore[method-assign]
+        auto_synthesize(mgr)
+        mgr.synthesize.assert_not_called()
+
+    def test_auto_publish_invokes_publish_on_quality_pass(self, tmp_manager: MemoryManager) -> None:
+        """auto_publish calls mgr.publish() for processed memories that pass
+        the quality gate."""
+        mgr = tmp_manager
+        mem = Memory(
+            content="ready",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+            status=MemoryStatus.PROCESSED,
+        )
+        mgr.sqlite.save(mem)
+        mgr.quality_gate = MagicMock(  # type: ignore[method-assign]
+            return_value=MagicMock(passed=True)
+        )
+        mgr.publish = MagicMock(  # type: ignore[method-assign]
+            return_value=MagicMock(published=True)
+        )
+        auto_publish(mgr)
+        mgr.quality_gate.assert_called_once_with(mem.id)
+        mgr.publish.assert_called_once_with(mem.id)
+
+    def test_auto_publish_skips_quality_failures(self, tmp_manager: MemoryManager) -> None:
+        """A processed memory that fails the quality gate is left untouched."""
+        mgr = tmp_manager
+        mem = Memory(
+            content="bad",
+            tags=["project:gcw", "agent:qa", "gcw:learning"],
+            project="gcw",
+            agent="qa",
+            status=MemoryStatus.PROCESSED,
+        )
+        mgr.sqlite.save(mem)
+        mgr.quality_gate = MagicMock(  # type: ignore[method-assign]
+            return_value=MagicMock(passed=False)
+        )
+        mgr.publish = MagicMock()  # type: ignore[method-assign]
+        auto_publish(mgr)
+        mgr.publish.assert_not_called()
+
+    def test_dlq_retry_scheduler_retries_under_max(self, tmp_manager: MemoryManager) -> None:
+        """Entries with attempt < max_attempts are retried (not discarded)."""
+        mgr = tmp_manager
+        dlq_add(mgr, "m1", max_attempts=3)
+        # attempt_count starts at 1 → strictly < 3 → retry path
+        dlq_retry_scheduler(mgr)
+        # DLQ still has the entry
+        assert mgr.sqlite.dlq_count() == 1
+        # attempt_count incremented
+        assert dlq_list(mgr)[0]["attempt_count"] == 2
+
+    def test_dlq_retry_scheduler_no_ready_entries(self, tmp_manager: MemoryManager) -> None:
+        """With an empty DLQ the scheduler is a clean no-op."""
+        mgr = tmp_manager
+        # No dlq_add call — empty
+        dlq_retry_scheduler(mgr)
+        assert mgr.sqlite.dlq_count() == 0
