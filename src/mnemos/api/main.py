@@ -23,6 +23,8 @@ from mnemos.models import (
     RuleRemoveRequest,
     SearchQuery,
 )
+from mnemos.sessions import SessionStore
+from mnemos.sessions.api import router as sessions_router
 
 _manager: MemoryManager | None = None
 
@@ -36,10 +38,19 @@ def get_manager() -> MemoryManager:
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    get_manager()  # warm up
-    yield
-    if _manager is not None:
-        _manager.close()
+    mgr = get_manager()  # warm up (also runs the DDL on the shared db file)
+    # M16: own SessionStore lives on app.state so the A2A router can
+    # pick it up.  Re-uses the same db_path as MemoryManager so the
+    # schema and WAL are shared.
+    settings = mgr.settings
+    store = SessionStore(settings.db_path)
+    application.state.sessions_store = store
+    try:
+        yield
+    finally:
+        store.close()
+        if _manager is not None:
+            _manager.close()
 
 
 app = FastAPI(
@@ -79,8 +90,8 @@ async def create_memory(data: MemoryCreate) -> Memory:
 
     tags = validate_tag_contract(data.tags, strict=settings.mnemos.strict_tag_contract)
     data.tags = tags
-    project = next((t[len("project:"):] for t in tags if t.startswith("project:")), "")
-    agent = next((t[len("agent:"):] for t in tags if t.startswith("agent:")), "")
+    project = next((t[len("project:") :] for t in tags if t.startswith("project:")), "")
+    agent = next((t[len("agent:") :] for t in tags if t.startswith("agent:")), "")
     return mgr.add(data, project=project, agent=agent)
 
 
@@ -296,3 +307,13 @@ async def remove_rule(data: RuleRemoveRequest) -> dict[str, Any]:
     if not result["removed"]:
         raise HTTPException(status_code=404, detail=f"Rule for {data.file_path} not found")
     return {"status": "removed", **result}
+
+
+# ── A2A Sessions API (M16) ──────────────────────────────────────────────────
+# Mounted under ``/v1`` so the existing ``/memories``, ``/recall/*`` and
+# ``/search`` routes are untouched.  The router reads its
+# ``SessionStore`` from ``app.state.sessions_store`` (set in ``lifespan``)
+# and falls back to a default ``load_settings()`` store when called
+# outside the standard app (e.g. in a unit test that builds its own
+# TestClient).
+app.include_router(sessions_router, prefix="/v1")
