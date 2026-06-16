@@ -24,7 +24,9 @@ def data_dir() -> Path:
 
 @pytest.fixture
 def vs(data_dir: Path) -> VectorStore:
-    return VectorStore(data_dir)
+    store = VectorStore(data_dir)
+    yield store
+    store.close()
 
 
 class TestVectorStore:

@@ -73,6 +73,29 @@ class TestUrlValidation:
     def test_allowed_urls_pass(self, url: str) -> None:
         assert MemoryManager._validate_url(url) == url
 
+    def test_ingest_url_does_not_follow_redirects(self, manager) -> None:
+        """SSRF: redirects must NOT be followed.
+
+        _validate_url only vets the initial host; following a 30x could
+        pivot to an unvalidated private/metadata endpoint. The httpx
+        client must be constructed with follow_redirects=False.
+        """
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.text = "body"
+            mock_client.get.return_value = mock_resp
+            mock_client_cls.return_value.__enter__.return_value = mock_client
+            with patch("trafilatura.extract", return_value="text"):
+                manager.ingest_url(
+                    "https://example.com/",
+                    tags=["project:test", "agent:test", "gcw:test"],
+                    project="test",
+                    agent="test",
+                )
+        _, kwargs = mock_client_cls.call_args
+        assert kwargs.get("follow_redirects") is False
+
 
 class TestSqlInjectionResistance:
     """Ensure dynamic SQL uses parameterised queries only."""

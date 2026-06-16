@@ -53,8 +53,10 @@ covers the AWS IPv6-mapped metadata form
   inconvenience.
 - The check is a string-level filter, not a network-level sandbox. A DNS rebinding
   attack (where `example.com` resolves to a public IP at check time, then to a
-  private IP at request time) is not covered. Mitigated by
-  `httpx.Client(follow_redirects=True, max_redirects=5)` and short timeouts.
+  private IP at request time) is not covered. Mitigated by re-resolving the host
+  in `_validate_url` (ADR-0012) and by **disabling redirect following**
+  (`httpx.Client(follow_redirects=False)`) so a 30x cannot pivot to an
+  unvalidated internal host, plus short timeouts.
 
 **Neutral**
 
