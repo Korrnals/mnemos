@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from unittest.mock import MagicMock, patch
 
@@ -80,22 +81,25 @@ class TestUrlValidation:
         pivot to an unvalidated private/metadata endpoint. The httpx
         client must be constructed with follow_redirects=False.
         """
-        with patch("httpx.Client") as mock_client_cls:
+        trafilatura_stub = MagicMock()
+        trafilatura_stub.extract.return_value = "text"
+        with (
+            patch("httpx.Client") as mock_client_cls,
+            patch.dict(sys.modules, {"trafilatura": trafilatura_stub}),
+        ):
             mock_client = MagicMock()
             mock_resp = MagicMock()
             mock_resp.text = "body"
             mock_client.get.return_value = mock_resp
             mock_client_cls.return_value.__enter__.return_value = mock_client
-            with patch("trafilatura.extract", return_value="text"):
-                manager.ingest_url(
-                    "https://example.com/",
-                    tags=["project:test", "agent:test", "gcw:test"],
-                    project="test",
-                    agent="test",
-                )
+            manager.ingest_url(
+                "https://example.com/",
+                tags=["project:test", "agent:test", "gcw:test"],
+                project="test",
+                agent="test",
+            )
         _, kwargs = mock_client_cls.call_args
         assert kwargs.get("follow_redirects") is False
-
 
 
 class TestSqlInjectionResistance:
