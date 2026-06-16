@@ -158,3 +158,18 @@ class VectorStore:
         )
         rows = conn.execute(sql, ids).fetchall()
         return {r[0]: self._unpack(r[1]).tolist() for r in rows}
+
+    # ── lifecycle ─────────────────────────────────────────────────────────
+
+    def close(self) -> None:
+        """Close the thread-local SQLite connection if one was opened.
+
+        Mirrors SQLiteStore.close(). Without this the connection cached in
+        ``threading.local`` is only released on GC, which surfaces as
+        ``ResourceWarning: unclosed database`` in tests and leaks file
+        descriptors in long-running processes.
+        """
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None

@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 
+from mnemos import __version__
 from mnemos.config import load_settings
 from mnemos.manager import MemoryManager
 from mnemos.models import (
@@ -56,7 +57,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Mnemos",
     description="Standalone memory & knowledge server for GCW agents.",
-    version="0.1.0",
+    version=__version__,
     lifespan=lifespan,
     # Bind only to loopback by default; controlled by uvicorn host arg
     docs_url="/docs",

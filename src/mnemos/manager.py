@@ -60,6 +60,7 @@ class MemoryManager:
 
     def close(self) -> None:
         self.sqlite.close()
+        self.vectors.close()
 
     # ── helpers ───────────────────────────────────────────────────────────
 
@@ -487,7 +488,12 @@ class MemoryManager:
             import httpx
             import trafilatura
 
-            with httpx.Client(follow_redirects=True, max_redirects=5) as client:
+            # SSRF: do NOT follow redirects. ``_validate_url`` only vets the
+            # initial host; an attacker-controlled public host could 30x-redirect
+            # to a private/loopback/metadata endpoint, bypassing the guard. The
+            # documented v1 posture (docs/security.md §2) is "redirects not
+            # followed". A 3xx is surfaced via raise_for_status below.
+            with httpx.Client(follow_redirects=False) as client:
                 resp = client.get(url, timeout=30)
             resp.raise_for_status()
             content = trafilatura.extract(resp.text) or resp.text[:4000]

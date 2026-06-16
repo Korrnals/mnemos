@@ -5,6 +5,26 @@ All notable changes to Mnemos (forked from ai-brain).
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **SSRF via redirects (`MemoryManager.ingest_url`)** — the HTTP client
+  followed 30x redirects (`follow_redirects=True`), letting an
+  attacker-controlled public host pivot to an internal/loopback/metadata
+  endpoint that `_validate_url` never saw. Now `follow_redirects=False`,
+  matching the documented v1 posture in `docs/security.md` §2. Regression
+  test added (`test_ingest_url_does_not_follow_redirects`). See ADR-0009.
+- **SQLite connection leak (`VectorStore`)** — the thread-local connection
+  was never closed (no `close()` method), surfacing as
+  `ResourceWarning: unclosed database` in tests and leaking file descriptors
+  in long-running processes. Added `VectorStore.close()` and wired it into
+  `MemoryManager.close()`.
+- **Version drift** — `pyproject.toml`, `mnemos.__version__`, and the FastAPI
+  app all reported `0.1.0` despite the `v0.2.0` release tag and CHANGELOG.
+  Bumped to `0.2.0`; the FastAPI app now derives its version from
+  `mnemos.__version__` to prevent future drift.
+
 ## [0.2.0] — 2026-06-16
 
 The first production hardening release. M15 closes the security and quality
