@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mnemos"
-version = "0.2.0"
+version = "0.2.1"
 description = "Standalone memory & knowledge server for GCW agents — forked from ai-brain"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -65,7 +65,7 @@ openvino = [
     "optimum[openvino]>=1.19",
 ]
 mcp = [
-    "mcp[cli]>=1.27.2",
+    "mcp[cli]>=1.0",
 ]
 pdf = [
     "pymupdf>=1.24",
