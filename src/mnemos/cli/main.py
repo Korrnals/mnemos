@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich.console import Console
@@ -17,6 +17,9 @@ from rich.table import Table
 from mnemos.config import load_settings
 from mnemos.manager import MemoryManager
 from mnemos.models import MemoryCreate, MemorySource, MemoryType
+
+if TYPE_CHECKING:
+    from mnemos.api.auth_store import AuthStore
 
 app = typer.Typer(
     name="mnemos",
@@ -181,11 +184,18 @@ def serve(
     config: str = ConfigOption,
 ) -> None:
     """Start the Mnemos HTTP API server."""
+    import os
+
     import uvicorn
 
     settings = load_settings(config)
     h = host or settings.api.host
     p = port or settings.api.port
+    # Propagate effective bind to the app process so the startup guard and
+    # AuthMiddleware see the real host/port (CLI overrides must reach
+    # load_settings() inside the worker - finding auth-1).
+    os.environ["MNEMOS_API__HOST"] = h
+    os.environ["MNEMOS_API__PORT"] = str(p)
     uvicorn.run(
         "mnemos.api.main:app",
         host=h,
@@ -246,3 +256,201 @@ def migrate(
         console.print(f"[yellow]⚠[/yellow] Errors: {len(summary['errors'])}")
     if dry_run:
         console.print("[cyan]Dry run — no changes written.[/cyan]")
+
+
+# ── auth (T-AUTH, ADR-0014) ───────────────────────────────────────────────────
+# Subcommand tree:
+#   mnemos auth token create [--name <label>] [--expires <iso8601>]
+#   mnemos auth token list
+#   mnemos auth token revoke <token_id>
+#   mnemos auth totp enroll  --token-id <id>
+#   mnemos auth totp disable --token-id <id>
+#   mnemos auth totp test    --token-id <id> --code <123456>
+
+_auth_app = typer.Typer(
+    name="auth", help="Manage API auth tokens and TOTP 2FA.", no_args_is_help=True
+)
+_token_app = typer.Typer(name="token", help="Manage bearer tokens.", no_args_is_help=True)
+_totp_app = typer.Typer(name="totp", help="Manage TOTP 2FA enrollment.", no_args_is_help=True)
+
+app.add_typer(_auth_app, name="auth")
+_auth_app.add_typer(_token_app, name="token")
+_auth_app.add_typer(_totp_app, name="totp")
+
+
+def _auth_store(config: str | None = None) -> AuthStore:
+    from mnemos.api.auth_store import AuthStore  # lazy: avoids circular deps
+
+    settings = load_settings(config)
+    settings.resolve_paths()
+    settings.mnemos.data_dir.mkdir(parents=True, exist_ok=True)
+    return AuthStore(settings.db_path)
+
+
+# importing here to satisfy mypy (used in type annotation above)
+
+
+@_token_app.command("create")
+def token_create(
+    name: str = typer.Option(None, "--name", "-n", help="Human-readable label"),
+    expires: str = typer.Option(None, "--expires", "-e", help="ISO-8601 expiry, e.g. 2027-01-01"),
+    config: str = ConfigOption,
+) -> None:
+    """Mint a new bearer token and print it ONCE."""
+    store = _auth_store(config)
+    try:
+        token_id, plaintext = store.create_token(name=name, expires_at=expires)
+    finally:
+        store.close()
+    console.print("[green]✓[/green] Token created:")
+    console.print(f"  token_id : [bold]{token_id}[/bold]")
+    console.print(f"  bearer   : [bold yellow]{plaintext}[/bold yellow]")
+    console.print("[red]Store this token now — it will not be shown again.[/red]")
+
+
+@_token_app.command("list")
+def token_list(config: str = ConfigOption) -> None:
+    """List all tokens (IDs and metadata — no secrets)."""
+    store = _auth_store(config)
+    try:
+        tokens = store.list_tokens()
+    finally:
+        store.close()
+    if not tokens:
+        console.print("[yellow]No tokens found.[/yellow]")
+        return
+    table = Table("token_id", "name", "created_at", "expires_at", "disabled_at")
+    for t in tokens:
+        table.add_row(
+            str(t.get("token_id", "")),
+            str(t.get("name") or ""),
+            str(t.get("created_at", "")),
+            str(t.get("expires_at") or ""),
+            str(t.get("disabled_at") or ""),
+        )
+    console.print(table)
+
+
+@_token_app.command("revoke")
+def token_revoke(
+    token_id: str = typer.Argument(..., help="token_id to permanently revoke"),
+    config: str = ConfigOption,
+) -> None:
+    """Permanently revoke a token."""
+    store = _auth_store(config)
+    try:
+        ok = store.revoke_token(token_id)
+    finally:
+        store.close()
+    if ok:
+        console.print(f"[green]✓[/green] Token {token_id} revoked.")
+    else:
+        console.print(f"[red]Token {token_id} not found.[/red]")
+        raise typer.Exit(1)
+
+
+@_totp_app.command("enroll")
+def totp_enroll(
+    token_id: str = typer.Option(..., "--token-id", help="token_id to enroll TOTP for"),
+    config: str = ConfigOption,
+) -> None:
+    """Generate a TOTP secret and print the provisioning URI + optional QR code."""
+    import pyotp
+
+    from mnemos.api.auth import encrypt_totp_secret
+
+    settings = load_settings(config)
+    master_key = settings.api.totp_master_key.get_secret_value()
+    if not master_key:
+        console.print(
+            "[red]MNEMOS_API__TOTP_MASTER_KEY is not set — cannot encrypt TOTP secret.[/red]"
+        )
+        raise typer.Exit(1)
+
+    totp_secret = pyotp.random_base32(32)
+    totp = pyotp.TOTP(totp_secret)
+    uri = totp.provisioning_uri(name="operator", issuer_name="mnemos")
+
+    store = _auth_store(config)
+    try:
+        row = store.get_token_by_id(token_id)
+        if row is None:
+            console.print(f"[red]Token {token_id!r} not found.[/red]")
+            raise typer.Exit(1)
+        encrypted = encrypt_totp_secret(totp_secret, master_key)
+        store.set_totp_secret(token_id, encrypted)
+    finally:
+        store.close()
+
+    console.print(f"[green]✓[/green] TOTP enrolled for {token_id}")
+    console.print(f"  otpauth URI: [bold]{uri}[/bold]")
+    try:
+        import qrcode
+
+        qr = qrcode.QRCode()
+        qr.add_data(uri)
+        qr.make(fit=True)
+        qr.print_ascii()
+    except ImportError:
+        console.print("  (install qrcode[pil] for ASCII QR display)")
+
+
+@_totp_app.command("disable")
+def totp_disable(
+    token_id: str = typer.Option(..., "--token-id", help="token_id to disable TOTP for"),
+    config: str = ConfigOption,
+) -> None:
+    """Remove the TOTP secret from a token (disables 2FA for that token)."""
+    store = _auth_store(config)
+    try:
+        row = store.get_token_by_id(token_id)
+        if row is None:
+            console.print(f"[red]Token {token_id!r} not found.[/red]")
+            raise typer.Exit(1)
+        store.clear_totp_secret(token_id)
+    finally:
+        store.close()
+    console.print(f"[green]✓[/green] TOTP disabled for {token_id}.")
+
+
+@_totp_app.command("test")
+def totp_test(
+    token_id: str = typer.Option(..., "--token-id", help="token_id to test TOTP for"),
+    code: str = typer.Option(..., "--code", help="6-digit TOTP code to verify"),
+    config: str = ConfigOption,
+) -> None:
+    """Verify a TOTP code against the enrolled secret (smoke-test for the operator)."""
+    import pyotp
+
+    from mnemos.api.auth import decrypt_totp_secret
+
+    settings = load_settings(config)
+    master_key = settings.api.totp_master_key.get_secret_value()
+    if not master_key:
+        console.print("[red]MNEMOS_API__TOTP_MASTER_KEY is not set.[/red]")
+        raise typer.Exit(1)
+
+    store = _auth_store(config)
+    try:
+        row = store.get_token_by_id(token_id)
+        if row is None:
+            console.print(f"[red]Token {token_id!r} not found.[/red]")
+            raise typer.Exit(1)
+        encrypted_blob = row.get("totp_secret_encrypted")
+        if not isinstance(encrypted_blob, bytes):
+            console.print(f"[red]TOTP not enrolled for {token_id}.[/red]")
+            raise typer.Exit(1)
+        totp_secret = decrypt_totp_secret(encrypted_blob, master_key)
+    finally:
+        store.close()
+
+    if totp_secret is None:
+        console.print("[red]Failed to decrypt TOTP secret — check master key.[/red]")
+        raise typer.Exit(1)
+
+    totp = pyotp.TOTP(totp_secret)
+    if totp.verify(code, valid_window=1):
+        console.print("[green]✓[/green] Code is valid.")
+    else:
+        console.print("[red]✗[/red] Code is invalid or expired.")
+        raise typer.Exit(1)

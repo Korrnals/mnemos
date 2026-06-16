@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -40,6 +40,22 @@ class SearchConfig(BaseModel):
 class ApiConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8787
+    # T-CORS: browser cross-origin allow-list for mnemos-eyes
+    # Default is strict - CORS disabled, no origin permitted.
+    cors_enabled: bool = False
+    cors_allow_origins: list[str] = []
+    cors_allow_credentials: bool = False
+    cors_allow_methods: list[str] = ["GET", "POST", "DELETE"]
+    cors_allow_headers: list[str] = ["Authorization", "Content-Type"]
+    # T-AUTH additions (ADR-0014) ─────────────────────────────────────────────
+    auth_enabled: bool = False  # default off — safe for loopback-only bind
+    totp_enabled: bool = False  # default off — safe for loopback-only bind
+    # env-only; never written to disk — MNEMOS_API__TOTP_MASTER_KEY
+    totp_master_key: SecretStr = SecretStr("")
+    session_ttl_sec: int = Field(default=8 * 3600, ge=300, le=24 * 3600)
+    session_pin_ip: bool = False  # bind session to creation IP
+    behind_tls_proxy: bool = False  # operator-asserted TLS termination ahead
+    trusted_proxies: list[str] = Field(default_factory=list)  # CIDRs for X-Forwarded-*
 
 
 class McpConfig(BaseModel):

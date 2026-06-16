@@ -58,11 +58,26 @@ cloud-metadata endpoints.
 - CIDR ranges: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
   `192.168.0.0/16`.
 
-**Followed redirects?** No (in v1; v2 should re-validate the redirect
-target against the same blocklist).
+**Followed redirects?** Yes, with a hard cap of 5 hops (v2 posture, T5-SSRF).
+Redirects are followed **manually** with `httpx.Client(follow_redirects=False)`.
+Every `Location` target is passed through `_validate_url` before the next
+request is issued (per-hop guard). This closes the open-redirect pivot where
+a public host returns 30x to an internal or metadata endpoint that would
+otherwise bypass the initial URL check. Exceeding the hop limit or a loop
+detection results in a fetch-failed placeholder (no exception surfaces to
+the caller).
 
 **Tests**: `tests/test_security.py::TestUrlValidation`. Includes
 `169.254.169.254` (AWS metadata) and the full RFC1918 ranges.
+
+**SSRF guard v2 additions (integration/backend-mvp)**: regression tests now
+cover obfuscated-IP encodings — decimal (`2130706433`), octal (`0177.0.0.1`),
+and hex (`0x7f000001`) representations of loopback, and the same encoding
+classes for `169.254.169.254` (metadata). A `user@host` userinfo component in
+the URL (which can mask the real host in some parsers) is also covered. The
+guard resolves hosts via `getaddrinfo` before applying the blocklist, so all
+encoding variants are normalised to real IPs before the check runs.
+See `tests/test_ssrf_redirect.py`.
 
 ---
 
@@ -203,3 +218,79 @@ contract from `.copilot/instructions/lint-and-validate.instructions.md`:
 1. Confirm it is a false positive of the tool, not of the code.
 2. One-line comment next to the suppression with the rule id and reason.
 3. Scope limited to one line / one statement / one function.
+
+---
+
+## 9. Authentication, session management, and TOTP 2FA (T-AUTH, ADR-0014)
+
+> **Status**: Implemented in `integration/backend-mvp`. Gated by
+> `api.auth_enabled` (default `false`). Not active on default loopback
+> deployments unless explicitly enabled.
+
+### 9.1 Token model
+
+Mnemos uses **opaque bearer tokens** (prefix `mnk_`, 256-bit random via
+`secrets.token_urlsafe(32)`). Only the PBKDF2-HMAC-SHA256 digest of each
+token is written to disk or SQLite (600 000 iterations, fixed salt
+`mnemos.api.auth.fernet.v1`). The plaintext is shown once at creation and
+never stored. A stolen `~/.mnemos/auth.db` or config file yields only the
+hash, not a usable bearer string.
+
+### 9.2 TOTP second factor
+
+Per-token TOTP secrets are encrypted at rest with AES-128 (Fernet) using a
+key derived from `api.totp_master_key`. The master key is **env-only**
+(`MNEMOS_API__TOTP_MASTER_KEY`) and is never written to disk. An empty
+master key is rejected at startup with a `ValueError` when
+`api.totp_enabled=true`.
+
+**Replay prevention**: a `totp_last_step` column on each token row records the
+time-step (30-second window index) of the last accepted TOTP code. A new code
+is rejected unless its time-step strictly exceeds the recorded value — a
+captured code cannot be replayed even within its validity window.
+
+### 9.3 Session lifecycle
+
+- Sessions are issued as a second opaque token after successful login (and
+  TOTP verification when enabled). TTL is `api.session_ttl_sec`
+  (default 8 h, range 300–86400 s).
+- Optional IP pinning (`api.session_pin_ip=true`): the session is bound to
+  the IP seen at creation; requests from a different IP receive 401.
+- `X-Forwarded-For` is used for IP keying **only** when the direct peer is
+  inside a `trusted_proxies` CIDR. Arbitrary XFF headers from untrusted
+  peers are ignored to prevent rate-limit bypass and IP-pinning evasion.
+- Session cookies are `HttpOnly; Secure; SameSite=Strict`. The `Secure`
+  flag is set when `api.behind_tls_proxy=true` or when
+  `X-Forwarded-Proto: https` is present from a trusted proxy.
+
+### 9.4 Middleware behaviour
+
+`AuthMiddleware` runs after CORS (CORS is outermost) and before routes:
+
+- Allows `/health`, `/auth/login`, `/auth/verify`, `/docs`, `/redoc`,
+  `/openapi.json` without a session.
+- **Fails closed**: if the API config object is absent (misconfigured
+  startup), returns HTTP 503 `{"detail": "Auth not initialised"}` for every
+  protected route instead of silently allowing through.
+- Loopback bypass: if `api.auth_enabled=false` and the request originates
+  from `127.0.0.1` or `::1`, requests pass through. Non-loopback clients
+  receive 401 even when `auth_enabled=false` (defense-in-depth against
+  future bind misconfiguration).
+
+### 9.5 CLI startup guard
+
+`mnemos serve` exports `MNEMOS_API__HOST` and `MNEMOS_API__PORT` into the
+environment before launching uvicorn. The worker's startup guard checks the
+exported host: a non-loopback bind is refused with a non-zero exit unless
+`api.auth_enabled=true`. This prevents a misconfigured "auth later" deploy
+from silently opening the API to the network.
+
+### 9.6 Tests
+
+- `tests/test_auth.py` — token creation, hash storage, login happy path,
+  TOTP enroll + verify, session lifecycle, logout.
+- `tests/test_auth_security.py` — STRIDE T1–T12 coverage; key cases:
+  non-loopback-bind refusal, CSRF / cookie-only rejection, TOTP brute-force
+  lockout, replay-after-revoke, master-key requirement.
+
+See ADR-0014 for the full threat model.

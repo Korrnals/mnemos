@@ -54,14 +54,25 @@ covers the AWS IPv6-mapped metadata form
 - The check is a string-level filter, not a network-level sandbox. A DNS rebinding
   attack (where `example.com` resolves to a public IP at check time, then to a
   private IP at request time) is not covered. Mitigated by re-resolving the host
-  in `_validate_url` (ADR-0012) and by **disabling redirect following**
-  (`httpx.Client(follow_redirects=False)`) so a 30x cannot pivot to an
-  unvalidated internal host, plus short timeouts.
+  in `_validate_url` (ADR-0012) and by the per-hop redirect guard (v2, T5-SSRF):
+  every `Location` target is validated by `_validate_url` before the next request
+  is issued. `httpx.Client(follow_redirects=False)` is retained so the library
+  never follows a redirect without the guard running first.
 
 **Neutral**
 
 - The blocklist is hard-coded. A future extension could read it from
   `~/.mnemos/ssrf_allowlist.yaml` (YAML-driven override). Not in v1.
+
+## Amendment: v2 redirect posture (T5-SSRF, 2026-06-17)
+
+Redirects are now **followed with per-hop re-validation** (max 5 hops).
+`ingest_url` implements a manual redirect loop; every `Location` header is
+resolved to an absolute URL and passed through `_validate_url` before the
+next GET. This closes the open-redirect pivot described in the Negative
+consequence above. `httpx.Client(follow_redirects=False)` is retained as
+the enforcement mechanism - it ensures no hop is skipped by the library.
+See `docs/security.md` §2 and `tests/test_ssrf_redirect.py` (23 tests).
 
 ## Alternatives considered
 
@@ -79,5 +90,6 @@ covers the AWS IPv6-mapped metadata form
   for container networking)"
 - `docs/security.md` § SSRF
 - `src/mnemos/manager.py::_validate_url` — implementation
-- `tests/test_security.py` — 11 tests
+- `tests/test_security.py` — 11 baseline tests + updated redirect test
+- `tests/test_ssrf_redirect.py` — 23 per-hop redirect tests (T5-SSRF)
 - ADR-0012 (IPv6 SSRF gap fix, M15)

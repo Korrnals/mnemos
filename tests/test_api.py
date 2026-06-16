@@ -361,3 +361,70 @@ class TestContextFilter:
         assert data["status"] == "ok"
         assert "clean_content" in data
         assert "filter_profile" in data
+
+
+# ---------------------------------------------------------------------------
+# Tags (T-TAGS)
+# ---------------------------------------------------------------------------
+
+
+class TestTags:
+    def test_empty_returns_list(self, client):
+        resp = client.get("/tags")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_counts_after_add(self, client):
+        client.post(
+            "/memories",
+            json={
+                "content": "Alpha",
+                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+            },
+        )
+        client.post(
+            "/memories",
+            json={
+                "content": "Beta",
+                "tags": ["project:gcw", "agent:reviewer", "gcw:decision"],
+            },
+        )
+        resp = client.get("/tags")
+        assert resp.status_code == 200
+        items = resp.json()
+        # Each item must have exactly "tag" and "count" keys
+        for item in items:
+            assert set(item.keys()) == {"tag", "count"}
+            assert isinstance(item["tag"], str)
+            assert isinstance(item["count"], int)
+        # project:gcw and agent:reviewer appear in both memories
+        by_tag = {item["tag"]: item["count"] for item in items}
+        assert by_tag["project:gcw"] == 2
+        assert by_tag["agent:reviewer"] == 2
+        # Tags that appear twice should come before tags that appear once
+        counts = [item["count"] for item in items]
+        assert counts == sorted(counts, reverse=True)
+
+    def test_structure_stable_order(self, client):
+        """Verify list (not dict) - order is deterministic (count desc)."""
+        for content, tag in [("A", "gcw:learning"), ("B", "gcw:learning"), ("C", "gcw:decision")]:
+            client.post(
+                "/memories",
+                json={
+                    "content": content,
+                    "tags": ["project:gcw", "agent:test", tag],
+                },
+            )
+        resp = client.get("/tags")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert isinstance(items, list)
+        # project:gcw and agent:test both appear 3 times - must be first two
+        top_counts = [it["count"] for it in items[:2]]
+        assert all(c == 3 for c in top_counts)
+        # gcw:learning appears 2 times, gcw:decision 1 time - order preserved
+        learning = next(it for it in items if it["tag"] == "gcw:learning")
+        decision = next(it for it in items if it["tag"] == "gcw:decision")
+        assert learning["count"] == 2
+        assert decision["count"] == 1
+        assert items.index(learning) < items.index(decision)
