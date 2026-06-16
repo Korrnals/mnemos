@@ -77,9 +77,9 @@ def synthesize_cluster(
 
     # 2. Idempotency / cache check — look for existing processed memory
     existing_processed = [
-        m for m in mgr.sqlite.list_by_cluster(cluster_id)
-        if m.status == MemoryStatus.PROCESSED
-        and m.metadata.get("synthesis_cache_key") == cache_key
+        m
+        for m in mgr.sqlite.list_by_cluster(cluster_id)
+        if m.status == MemoryStatus.PROCESSED and m.metadata.get("synthesis_cache_key") == cache_key
     ]
     if not force and existing_processed:
         logger.info("synthesize: cache hit for cluster %s", cluster_id[:8])
@@ -102,9 +102,7 @@ def synthesize_cluster(
         # TODO: wire real LLM provider when llm/ modules are implemented
         # For now, produce a deterministic placeholder so tests can assert
         content = f"# Synthesis of {cluster_id[:8]}\n\n"
-        content += "\n\n".join(
-            f"- {m.effective_content()[:200]}" for m in members
-        )
+        content += "\n\n".join(f"- {m.effective_content()[:200]}" for m in members)
         title = f"Synthesis: {members[0].title or members[0].content[:40]}"
         llm_called = True
         tokens_in = len(prompt.split())
@@ -133,8 +131,8 @@ def synthesize_cluster(
         cluster_id=cluster_id,
         content=content,
         title=title,
-        quality_score=0.0,   # set by quality_gate
-        confidence=0.0,      # set by quality_gate
+        quality_score=0.0,  # set by quality_gate
+        confidence=0.0,  # set by quality_gate
         source_coverage=len(members),
         model_used=model,
         prompt_version=prompt_version,
@@ -182,8 +180,7 @@ def synthesize_cluster(
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             rationale_summary=(
-                f"Draft {processed.id[:8]} from cluster"
-                f" {cluster_id[:8]} ({len(members)} sources)"
+                f"Draft {processed.id[:8]} from cluster {cluster_id[:8]} ({len(members)} sources)"
             ),
         )
     )

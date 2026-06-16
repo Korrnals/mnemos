@@ -1,6 +1,6 @@
 # 0013. M15 production hardening is the gate to declaring v1 "done"
 
-- **Status**: Accepted
+- **Status**: Verified (2026-06-16, M19 closure — see CHANGELOG 0.2.0)
 - **Date**: 2026-06-15
 - **Deciders**: abyss, GCW Tech Lead
 

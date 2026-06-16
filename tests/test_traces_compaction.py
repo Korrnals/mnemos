@@ -109,7 +109,9 @@ class TestTraceRecorder:
         """Rationale longer than 200 chars is truncated by model validator."""
         long_text = "x" * 500
         trace = Trace(
-            task_label="test", project="gcw", step="step",
+            task_label="test",
+            project="gcw",
+            step="step",
             rationale_summary=long_text,
         )
         assert len(trace.rationale_summary) <= 200

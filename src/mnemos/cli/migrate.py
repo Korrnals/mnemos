@@ -173,11 +173,11 @@ def migrate_from_ai_brain(
             try:
                 data = _migrate_memory(row)
                 project = next(
-                    (t[len("project:"):] for t in data.tags if t.startswith("project:")),
+                    (t[len("project:") :] for t in data.tags if t.startswith("project:")),
                     "legacy",
                 )
                 agent = next(
-                    (t[len("agent:"):] for t in data.tags if t.startswith("agent:")),
+                    (t[len("agent:") :] for t in data.tags if t.startswith("agent:")),
                     "unknown",
                 )
                 if not dry_run:

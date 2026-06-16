@@ -60,6 +60,7 @@ class MemoryManager:
 
     def close(self) -> None:
         self.sqlite.close()
+        self.vectors.close()
 
     # ── helpers ───────────────────────────────────────────────────────────
 
@@ -137,9 +138,18 @@ class MemoryManager:
             return None
 
         update_kwargs: dict[str, Any] = {}
-        for field in ("content", "title", "tags", "memory_type", "metadata",
-                      "status", "category", "quality_score", "confidence",
-                      "cluster_id"):
+        for field in (
+            "content",
+            "title",
+            "tags",
+            "memory_type",
+            "metadata",
+            "status",
+            "category",
+            "quality_score",
+            "confidence",
+            "cluster_id",
+        ):
             val = getattr(data, field, None)
             if val is not None:
                 setattr(memory, field, val)
@@ -153,7 +163,8 @@ class MemoryManager:
             try:
                 emb = self.embedder.embed(self._embedding_text(memory))
                 self.vectors.upsert(
-                    memory.id, emb,
+                    memory.id,
+                    emb,
                     {"project": memory.project, "agent": memory.agent},
                 )
             except Exception as exc:
@@ -466,22 +477,23 @@ class MemoryManager:
                 or rip.is_multicast
                 or rip.is_unspecified
             ):
-                raise ValueError(
-                    f"URL host resolves to blocked address: {host} → {resolved}"
-                )
+                raise ValueError(f"URL host resolves to blocked address: {host} → {resolved}")
 
         return url
 
-    def ingest_url(
-        self, url: str, *, tags: list[str], project: str, agent: str
-    ) -> Memory:
+    def ingest_url(self, url: str, *, tags: list[str], project: str, agent: str) -> Memory:
         """Fetch a URL, extract main text, save as RAW memory."""
         try:
             self._validate_url(url)
             import httpx
             import trafilatura
 
-            with httpx.Client(follow_redirects=True, max_redirects=5) as client:
+            # SSRF: do NOT follow redirects. ``_validate_url`` only vets the
+            # initial host; an attacker-controlled public host could 30x-redirect
+            # to a private/loopback/metadata endpoint, bypassing the guard. The
+            # documented v1 posture (docs/security.md §2) is "redirects not
+            # followed". A 3xx is surfaced via raise_for_status below.
+            with httpx.Client(follow_redirects=False) as client:
                 resp = client.get(url, timeout=30)
             resp.raise_for_status()
             content = trafilatura.extract(resp.text) or resp.text[:4000]
@@ -573,9 +585,7 @@ class MemoryManager:
 
         Returns a summary dict for observability / CLI output.
         """
-        clusters = self.cluster(
-            project=project, agent=agent, limit=limit, **kwargs
-        )
+        clusters = self.cluster(project=project, agent=agent, limit=limit, **kwargs)
         synthesized: list[SynthesisResult] = []
         published: list[PublishResult] = []
         failed_qg: list[QualityResult] = []
@@ -638,4 +648,3 @@ class MemoryManager:
         raw = getattr(self.settings, "policies", None)
         rules = load_rules_from_dict(raw) if isinstance(raw, dict) else []
         return evaluate_rules(mem, rules)
-

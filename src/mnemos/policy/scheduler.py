@@ -51,8 +51,7 @@ def auto_synthesize(mgr: MemoryManager) -> None:
         seen_clusters.add(cid)
         # Check if a processed draft already exists for this cluster
         existing = [
-            m for m in mgr.sqlite.list_by_cluster(cid)
-            if m.status == MemoryStatus.PROCESSED
+            m for m in mgr.sqlite.list_by_cluster(cid) if m.status == MemoryStatus.PROCESSED
         ]
         if existing:
             continue

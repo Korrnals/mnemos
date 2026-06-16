@@ -58,22 +58,22 @@ def add(
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
     if url:
-        project = next((t[len("project:"):] for t in tag_list if t.startswith("project:")), "")
-        agent = next((t[len("agent:"):] for t in tag_list if t.startswith("agent:")), "")
+        project = next((t[len("project:") :] for t in tag_list if t.startswith("project:")), "")
+        agent = next((t[len("agent:") :] for t in tag_list if t.startswith("agent:")), "")
         with console.status("Fetching URL..."):
             memory = mgr.ingest_url(url, tags=tag_list, project=project, agent=agent)
     elif file:
         text = Path(file).read_text()
         data = MemoryCreate(content=text, title=title, tags=tag_list, source=source)
-        project = next((t[len("project:"):] for t in tag_list if t.startswith("project:")), "")
-        agent = next((t[len("agent:"):] for t in tag_list if t.startswith("agent:")), "")
+        project = next((t[len("project:") :] for t in tag_list if t.startswith("project:")), "")
+        agent = next((t[len("agent:") :] for t in tag_list if t.startswith("agent:")), "")
         memory = mgr.add(data, project=project, agent=agent)
     elif content:
         data = MemoryCreate(
             content=content, title=title, tags=tag_list, source=source, memory_type=memory_type
         )
-        project = next((t[len("project:"):] for t in tag_list if t.startswith("project:")), "")
-        agent = next((t[len("agent:"):] for t in tag_list if t.startswith("agent:")), "")
+        project = next((t[len("project:") :] for t in tag_list if t.startswith("project:")), "")
+        agent = next((t[len("agent:") :] for t in tag_list if t.startswith("agent:")), "")
         memory = mgr.add(data, project=project, agent=agent)
     else:
         stdin_text = sys.stdin.read().strip()
@@ -205,6 +205,7 @@ def mcp_server_cmd(config: str = ConfigOption) -> None:
     from mnemos.mcp_server import main as mcp_main
 
     asyncio.run(mcp_main())
+
 
 # ── migrate-from-ai-brain (M13) ────────────────────────────────────────────────
 

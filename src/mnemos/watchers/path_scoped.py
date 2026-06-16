@@ -102,7 +102,7 @@ def parse_rule_file(path: Path) -> dict[str, Any]:
     # Fallback title: filename without .instructions.md suffix
     fallback_title = path.name
     if fallback_title.endswith(".instructions.md"):
-        fallback_title = fallback_title[:-len(".instructions.md")]
+        fallback_title = fallback_title[: -len(".instructions.md")]
     elif fallback_title.endswith(".md"):
         fallback_title = fallback_title[:-3]
 

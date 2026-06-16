@@ -51,12 +51,32 @@ class WatcherConfig(BaseModel):
     # M8: enable path-scoped rules ingest
     include_rules: bool = False
     ignore_dirs: list[str] = [
-        ".git", "node_modules", "__pycache__", ".venv", "venv",
-        "dist", "build", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
     ]
     extensions: list[str] = [
-        ".md", ".py", ".js", ".ts", ".yaml", ".yml", ".toml",
-        ".json", ".txt", ".rst", ".sh", ".css", ".html", ".sql",
+        ".md",
+        ".py",
+        ".js",
+        ".ts",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".json",
+        ".txt",
+        ".rst",
+        ".sh",
+        ".css",
+        ".html",
+        ".sql",
     ]
     max_file_size_kb: int = 512
     auto_scan: bool = True
