@@ -97,7 +97,6 @@ class TestUrlValidation:
         assert kwargs.get("follow_redirects") is False
 
 
-
 class TestSqlInjectionResistance:
     """Ensure dynamic SQL uses parameterised queries only."""
 
