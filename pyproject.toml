@@ -75,7 +75,7 @@ docx = [
 ]
 dev = [
     "pytest>=8.0",
-    "pytest-asyncio>=0.24",
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.0",
     "ruff>=0.15,<0.16",  # CI pins to 0.15.x to match local format
     "mypy>=1.11",
