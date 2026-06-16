@@ -63,10 +63,16 @@ def test_app_no_args_shows_help() -> None:
 def test_all_expected_commands_are_registered() -> None:
     """Every public command we ship must be in the Typer app."""
     expected = {
-        "add", "search", "recall",
-        "tags-validate", "stats", "serve",
-        "mcp-server", "migrate-from-ai-brain",
+        "add",
+        "search",
+        "recall",
+        "tags-validate",
+        "stats",
+        "serve",
+        "mcp-server",
+        "migrate-from-ai-brain",
     }
+
     # Typer: when a command has no explicit `name=...`, the registered
     # name is None and the callback's __name__ is used. Normalise.
     def _cmd_name(c: object) -> str:
@@ -77,9 +83,7 @@ def test_all_expected_commands_are_registered() -> None:
         return getattr(cb, "__name__", "") or ""
 
     registered = {_cmd_name(c) for c in app.registered_commands}
-    assert expected <= registered, (
-        f"missing commands: {expected - registered}"
-    )
+    assert expected <= registered, f"missing commands: {expected - registered}"
 
 
 # ── mnemos add ───────────────────────────────────────────────────────────────
@@ -92,7 +96,8 @@ def test_add_creates_memory(isolated_config: Path) -> None:
         [
             "add",
             "hello world",  # positional content
-            "--tags", "project:cli-smoke,agent:cli,gcw:test",
+            "--tags",
+            "project:cli-smoke,agent:cli,gcw:test",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -146,10 +151,7 @@ def test_stats_runs(isolated_config: Path) -> None:
     result = runner.invoke(app, ["stats"])
     assert result.exit_code == 0, result.output
     # Output mentions one of the known stat keys
-    assert any(
-        k in result.output.lower()
-        for k in ("total", "status", "version", "data_dir")
-    )
+    assert any(k in result.output.lower() for k in ("total", "status", "version", "data_dir"))
 
 
 # ── mnemos migrate-from-ai-brain ────────────────────────────────────────────
@@ -167,7 +169,8 @@ def test_migrate_dry_run_exits_cleanly(isolated_config: Path) -> None:
         app,
         [
             "migrate-from-ai-brain",
-            "--source", str(fake_source),
+            "--source",
+            str(fake_source),
             "--dry-run",
         ],
     )
