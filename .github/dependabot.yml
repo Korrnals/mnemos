@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  # Python dependencies via pyproject.toml
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "security"
+    # Cap concurrent Dependabot PRs so reviewers aren't drowned.
+    open-pull-requests-limit: 5
+    # Group minor+patch together so a single PR covers routine bumps.
+    groups:
+      patch-and-minor:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    # Allow-list: ignore the pinned transitive CVE closure pins; update them via
+    # the dependency-updates.md runbook so the resolver stays deterministic.
+    ignore:
+      - dependency-name: "aiohttp"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "starlette"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions version bumps
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "ci"
+      - "dependencies"
+    open-pull-requests-limit: 5

@@ -100,10 +100,13 @@ class TestHealth:
 
 class TestMemories:
     def test_create_memory(self, client):
-        resp = client.post("/memories", json={
-            "content": "Test memory",
-            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
-        })
+        resp = client.post(
+            "/memories",
+            json={
+                "content": "Test memory",
+                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["content"] == "Test memory"
@@ -111,10 +114,13 @@ class TestMemories:
 
     def test_get_memory(self, client):
         # Create first
-        create_resp = client.post("/memories", json={
-            "content": "Fetch me",
-            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
-        })
+        create_resp = client.post(
+            "/memories",
+            json={
+                "content": "Fetch me",
+                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+            },
+        )
         mem_id = create_resp.json()["id"]
 
         resp = client.get(f"/memories/{mem_id}")
@@ -126,25 +132,34 @@ class TestMemories:
         assert resp.status_code == 404
 
     def test_list_memories(self, client):
-        client.post("/memories", json={
-            "content": "One",
-            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
-        })
-        client.post("/memories", json={
-            "content": "Two",
-            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
-        })
+        client.post(
+            "/memories",
+            json={
+                "content": "One",
+                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+            },
+        )
+        client.post(
+            "/memories",
+            json={
+                "content": "Two",
+                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+            },
+        )
 
         resp = client.get("/memories?limit=10")
         assert resp.status_code == 200
         assert len(resp.json()) == 2
 
     def test_list_memories_by_status(self, client):
-        client.post("/memories", json={
-            "content": "Raw note",
-            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
-            "status": "raw",
-        })
+        client.post(
+            "/memories",
+            json={
+                "content": "Raw note",
+                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+                "status": "raw",
+            },
+        )
         resp = client.get("/memories?status=raw")
         assert resp.status_code == 200
         assert all(m["status"] == "raw" for m in resp.json())
@@ -157,14 +172,20 @@ class TestMemories:
 
 class TestSearch:
     def test_search_basic(self, client):
-        client.post("/memories", json={
-            "content": "kubernetes deployment patterns",
-            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
-        })
-        resp = client.post("/search", json={
-            "query": "kubernetes",
-            "limit": 10,
-        })
+        client.post(
+            "/memories",
+            json={
+                "content": "kubernetes deployment patterns",
+                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+            },
+        )
+        resp = client.post(
+            "/search",
+            json={
+                "query": "kubernetes",
+                "limit": 10,
+            },
+        )
         assert resp.status_code == 200
         results = resp.json()
         assert len(results) >= 1
@@ -178,10 +199,13 @@ class TestSearch:
 
 class TestAgentRecall:
     def test_recall_by_agent(self, client):
-        client.post("/memories", json={
-            "content": "Security review note",
-            "tags": ["project:gcw", "agent:security-reviewer", "gcw:learning"],
-        })
+        client.post(
+            "/memories",
+            json={
+                "content": "Security review note",
+                "tags": ["project:gcw", "agent:security-reviewer", "gcw:learning"],
+            },
+        )
         resp = client.get("/recall/agent/security-reviewer?limit=10")
         assert resp.status_code == 200
         results = resp.json()
@@ -253,12 +277,15 @@ class TestRulesIngest:
         rule_file = rules_dir / "test.instructions.md"
         rule_file.write_text("---\napplyTo: '**'\n---\n# Test Rule\nbody")
 
-        resp = client.post("/rules/ingest", json={
-            "rules_dir": str(rules_dir),
-            "project": "test",
-            "agent": "api-test",
-            "pattern": "*.instructions.md",
-        })
+        resp = client.post(
+            "/rules/ingest",
+            json={
+                "rules_dir": str(rules_dir),
+                "project": "test",
+                "agent": "api-test",
+                "pattern": "*.instructions.md",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
@@ -271,24 +298,35 @@ class TestRulesIngest:
         rule_file.write_text("---\napplyTo: '**'\n---\n# Removable\nbody")
 
         # First ingest
-        client.post("/rules/ingest", json={
-            "rules_dir": str(rules_dir),
-            "project": "test",
-            "agent": "api-test",
-        })
+        client.post(
+            "/rules/ingest",
+            json={
+                "rules_dir": str(rules_dir),
+                "project": "test",
+                "agent": "api-test",
+            },
+        )
 
         # Then remove
-        resp = client.request("DELETE", "/rules/ingest", json={
-            "file_path": str(rule_file),
-        })
+        resp = client.request(
+            "DELETE",
+            "/rules/ingest",
+            json={
+                "file_path": str(rule_file),
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "removed"
 
     def test_remove_missing_rule(self, client):
-        resp = client.request("DELETE", "/rules/ingest", json={
-            "file_path": "/nonexistent/path.rule.md",
-        })
+        resp = client.request(
+            "DELETE",
+            "/rules/ingest",
+            json={
+                "file_path": "/nonexistent/path.rule.md",
+            },
+        )
         assert resp.status_code == 404
 
 
@@ -304,12 +342,15 @@ class TestContextFilter:
 
     def test_filter_applies(self, client):
         # Create a memory with raw_content
-        resp = client.post("/memories", json={
-            "content": "Line 1\nLine 2\nLine 3",
-            "title": "Test",
-            "tags": ["project:test", "agent:api-test", "gcw:learning"],
-            "source": "cli",
-        })
+        resp = client.post(
+            "/memories",
+            json={
+                "content": "Line 1\nLine 2\nLine 3",
+                "title": "Test",
+                "tags": ["project:test", "agent:api-test", "gcw:learning"],
+                "source": "cli",
+            },
+        )
         assert resp.status_code == 201
         mem_id = resp.json()["id"]
 

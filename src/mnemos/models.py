@@ -36,7 +36,7 @@ class MemorySource(StrEnum):
     MCP = "mcp"
     OBSIDIAN = "obsidian"
     CLI = "cli"
-    RULE = "rule"            # M8: path-scoped rules ingest
+    RULE = "rule"  # M8: path-scoped rules ingest
     SYNTHESIZED = "synthesized"  # M4: output of synthesis worker
 
 
@@ -120,13 +120,10 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
     if not agent_tags:
         patchable_errors.append("missing required tag: agent:<slug> (exactly one required)")
     elif len(agent_tags) > 1:
-        fatal_errors.append(
-            f"exactly one agent: tag required, got {len(agent_tags)}: {agent_tags}"
-        )
+        fatal_errors.append(f"exactly one agent: tag required, got {len(agent_tags)}: {agent_tags}")
     elif not _AGENT_RE.match(agent_tags[0]):
         patchable_errors.append(
-            f"invalid agent: tag format '{agent_tags[0]}' "
-            "(must match agent:[a-z0-9_-]{1,64})"
+            f"invalid agent: tag format '{agent_tags[0]}' (must match agent:[a-z0-9_-]{{1,64}})"
         )
 
     # --- Require at least one gcw:* tag ---
@@ -140,7 +137,7 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
             if not _GCW_RE.match(gcw_tag):
                 patchable_errors.append(f"invalid gcw: tag format: '{gcw_tag}'")
             else:
-                subtype = gcw_tag[len("gcw:"):]
+                subtype = gcw_tag[len("gcw:") :]
                 if subtype not in GCW_TAG_SUBTYPES:
                     patchable_errors.append(
                         f"invalid gcw: subtype '{subtype}' — "
@@ -159,8 +156,7 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
 
     if strict:
         raise TagContractError(
-            "GCW tag contract violation(s):\n"
-            + "\n".join(f"  - {e}" for e in patchable_errors)
+            "GCW tag contract violation(s):\n" + "\n".join(f"  - {e}" for e in patchable_errors)
         )
 
     # Lax mode: patch the tag list rather than reject
@@ -195,11 +191,11 @@ class TagContract(BaseModel):
         subtypes: set[str] = set()
         for tag in validated:
             if tag.startswith("project:") and not self.project:
-                self.project = tag[len("project:"):]
+                self.project = tag[len("project:") :]
             elif tag.startswith("agent:") and not self.agent:
-                self.agent = tag[len("agent:"):]
+                self.agent = tag[len("agent:") :]
             elif tag.startswith("gcw:"):
-                subtypes.add(tag[len("gcw:"):])
+                subtypes.add(tag[len("gcw:") :])
         self.gcw_subtypes = frozenset(subtypes)
         return self
 
@@ -237,15 +233,15 @@ class Memory(BaseModel):
     status: MemoryStatus = MemoryStatus.RAW
     quality_score: float | None = None
     confidence: float | None = None
-    source_coverage: int | None = None   # number of distinct source URLs/paths in cluster
+    source_coverage: int | None = None  # number of distinct source URLs/paths in cluster
     cluster_id: str | None = None
     derived_from: list[str] = Field(default_factory=list)  # source Memory ids
-    embedding_id: str | None = None   # ChromaDB id; set when status = published
+    embedding_id: str | None = None  # ChromaDB id; set when status = published
 
     # ── Context Filter (M10) ───────────────────────────────────────────────
     # Fields present from day 1; filter logic wired in M10.
     # Invariant: raw_content is never mutated after first write.
-    raw_content: str | None = None    # immutable source payload (logs, HTML, etc.)
+    raw_content: str | None = None  # immutable source payload (logs, HTML, etc.)
     clean_content: str | None = None  # filtered projection for model-facing flows
     filter_profile: str | None = None  # log | terminal | code | docs | web | default
     filter_stats: dict[str, Any] | None = None  # token + dedup reduction stats
@@ -341,11 +337,11 @@ class SearchQuery(BaseModel):
     memory_type: MemoryType | None = None
     status: MemoryStatus | None = None
     project: str | None = None
-    agent: str | None = None            # M3: per-agent filter
+    agent: str | None = None  # M3: per-agent filter
     current_file_path: str | None = None  # M8: file-context boost
     limit: int = 20
-    hybrid_alpha: float | None = None   # override config default
-    include_raw: bool = False           # M10: drill-down to raw_content
+    hybrid_alpha: float | None = None  # override config default
+    include_raw: bool = False  # M10: drill-down to raw_content
 
 
 # ── Per-agent recall (M3) ──────────────────────────────────────────────────────
@@ -356,7 +352,7 @@ class AgentRecallQuery(BaseModel):
 
     agent: str
     project: str | None = None
-    query: str | None = None   # if None: return most recent N entries for agent
+    query: str | None = None  # if None: return most recent N entries for agent
     limit: int = 20
     include_raw: bool = False
 
@@ -378,10 +374,10 @@ class Trace(BaseModel):
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    task_label: str          # cluster | synthesize | publish | recall
+    task_label: str  # cluster | synthesize | publish | recall
     project: str
     step: str
-    item_id: str | None = None   # Memory id being processed
+    item_id: str | None = None  # Memory id being processed
     llm_called: bool = False
     llm_done: bool = False
     cache_hit: bool = False
@@ -435,7 +431,7 @@ class ClusterResult(BaseModel):
 
     cluster_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     memory_ids: list[str] = Field(default_factory=list)
-    centroid: list[float] | None = None   # mean embedding of cluster members
+    centroid: list[float] | None = None  # mean embedding of cluster members
     representative_id: str | None = None  # id of the most central memory
 
 
@@ -476,4 +472,3 @@ class PublishResult(BaseModel):
     published: bool
     vector_indexed: bool = False
     previous_status: str = ""
-

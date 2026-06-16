@@ -93,7 +93,7 @@ class VectorStore:
         for start in range(0, len(rows), batch_size):
             conn.executemany(
                 "INSERT OR REPLACE INTO embeddings(id, vector, metadata) VALUES (?,?,?)",
-                rows[start: start + batch_size],
+                rows[start : start + batch_size],
             )
         conn.commit()
 
@@ -138,9 +138,7 @@ class VectorStore:
     def has(self, memory_id: str) -> bool:
         conn = self._conn()
         return bool(
-            conn.execute(
-                "SELECT 1 FROM embeddings WHERE id=? LIMIT 1", (memory_id,)
-            ).fetchone()
+            conn.execute("SELECT 1 FROM embeddings WHERE id=? LIMIT 1", (memory_id,)).fetchone()
         )
 
     def count(self) -> int:

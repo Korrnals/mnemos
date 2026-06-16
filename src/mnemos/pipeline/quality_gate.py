@@ -60,16 +60,8 @@ def evaluate_quality(
 
     # Resolve thresholds from config or overrides
     cfg = mgr.settings
-    mq = (
-        min_quality
-        if min_quality is not None
-        else getattr(cfg, "min_quality", 0.6)
-    )
-    mc = (
-        min_confidence
-        if min_confidence is not None
-        else getattr(cfg, "min_confidence", 0.6)
-    )
+    mq = min_quality if min_quality is not None else getattr(cfg, "min_quality", 0.6)
+    mc = min_confidence if min_confidence is not None else getattr(cfg, "min_confidence", 0.6)
     msc = (
         min_source_coverage
         if min_source_coverage is not None
@@ -89,11 +81,7 @@ def evaluate_quality(
         failures.append(f"source_coverage {sc} < {msc}")
 
     passed = not failures
-    rationale = (
-        "All thresholds met."
-        if passed
-        else "; ".join(failures)
-    )[:200]
+    rationale = ("All thresholds met." if passed else "; ".join(failures))[:200]
 
     result = QualityResult(
         passed=passed,

@@ -35,9 +35,7 @@ description: 'Test rule description'
 
 This is the body of the rule.
 """
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".instructions.md", delete=False
-    ) as fh:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".instructions.md", delete=False) as fh:
         fh.write(content)
         fh.flush()
         yield Path(fh.name)
@@ -66,9 +64,7 @@ applyTo:
 
 Body here.
 """
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".instructions.md", delete=False
-        ) as fh:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".instructions.md", delete=False) as fh:
             fh.write(content)
             path = Path(fh.name)
 
@@ -80,9 +76,7 @@ Body here.
 
     def test_no_frontmatter(self):
         content = "# No Frontmatter\n\nJust body."
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".instructions.md", delete=False
-        ) as fh:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".instructions.md", delete=False) as fh:
             fh.write(content)
             path = Path(fh.name)
 
@@ -198,9 +192,7 @@ class TestBatchIngest:
     def test_skips_missing_directory(self, manager):
         from mnemos.watchers.path_scoped import ingest_path_scoped_rules
 
-        results = ingest_path_scoped_rules(
-            manager, Path("/nonexistent/path"), project="test"
-        )
+        results = ingest_path_scoped_rules(manager, Path("/nonexistent/path"), project="test")
         assert results == []
 
 

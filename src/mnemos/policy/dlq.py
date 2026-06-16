@@ -49,9 +49,7 @@ def dlq_list(
     limit: int = 100,
 ) -> list[dict[str, object]]:
     """List DLQ entries."""
-    return mgr.sqlite.dlq_list(
-        task_label=task_label, ready_only=ready_only, limit=limit
-    )
+    return mgr.sqlite.dlq_list(task_label=task_label, ready_only=ready_only, limit=limit)
 
 
 def dlq_retry(

@@ -257,8 +257,11 @@ class TestQualityGate:
         mgr.sqlite.save(mem)
 
         qg = evaluate_quality(
-            mgr, mem.id,
-            min_quality=0.6, min_confidence=0.6, min_source_coverage=2,
+            mgr,
+            mem.id,
+            min_quality=0.6,
+            min_confidence=0.6,
+            min_source_coverage=2,
         )
         assert qg.passed is True
         assert qg.failures == []

@@ -87,6 +87,12 @@ class VaultManager:
             post = frontmatter.load(str(file_path))
         except (ValueError, TypeError, KeyError, OSError):
             return None
+        # python-frontmatter can raise yaml.scanner.ScannerError /
+        # yaml.parser.ParserError on malformed YAML — these inherit from
+        # yaml.YAMLError which is NOT a ValueError, so we catch them
+        # explicitly. (M18: regression test for invalid YAML frontmatter.)
+        except Exception:
+            return None
 
         # `python-frontmatter` exposes `post.metadata` as `Any` (untyped
         # library stub). For our Mnemos/Obsidian vault contract the metadata
