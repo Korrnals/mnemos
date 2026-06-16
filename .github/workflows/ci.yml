@@ -45,10 +45,17 @@ jobs:
         run: pip install --upgrade uv
 
       - name: Create venv and install project + dev extras
+        # Pin ruff in CI to match what `make verify` runs locally. The
+        # `ruff>=0.6` spec in pyproject.toml gives a moving target — newer
+        # ruff versions reformat existing files differently, which made
+        # the first CI run fail on `ruff format --check` for 24 files
+        # (none of which had been changed in the PR). Pinning to the same
+        # major.minor version local dev uses keeps CI deterministic.
         run: |
           uv venv
           source .venv/bin/activate
           uv pip install -e ".[dev]"
+          uv pip install "ruff>=0.15,<0.16"
 
       - name: Lint (ruff)
         run: source .venv/bin/activate && ruff check src/ tests/
