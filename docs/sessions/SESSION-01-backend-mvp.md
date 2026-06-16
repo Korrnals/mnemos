@@ -32,14 +32,25 @@ This is the **gating dependency** for `mnemos-eyes` task T6 (real data + login).
 4. **MCP-tool dispatch smoke-test** (`mcp_server.py` is at 0% coverage).
 5. **v2 SSRF guard:** per-hop redirect re-validation in `ingest_url`.
 
-## 3. ⚠️ Prerequisite — merge PR #5 first
+## 3. 🔴 Prerequisite — reconcile `feat/m15-production-hardening` → `main`
 
-The M19 code-review fixes live in local branch **`fix/code-review-resource-leaks`**
-(PR #5) and are **NOT yet in `origin/main`** as of 2026-06-17. The **v2 SSRF**
-task (T5) builds directly on the v1 SSRF fix (`follow_redirects=False`) from PR #5.
+**Investigated 2026-06-17. The released `main` (tag `v0.2.0`) is missing the
+M15 hardening AND the M19 code-review fixes.** Specifically:
 
-**First action of this session:** verify PR #5 status; if open, get it reviewed
-and merged (or rebase this work on top of it). Do not start T5 before PR #5 lands.
+- PR #5 **was merged**, but its base was **`feat/m15-production-hardening`**,
+  not `main`. That branch never reached `main`.
+- Therefore `origin/main` **still has the High-severity SSRF**:
+  `src/mnemos/manager.py` uses `follow_redirects=True` (line ~490). It also
+  lacks `VectorStore.close()`.
+- Divergence is clean: `origin/feat/m15-production-hardening` is **exactly 2
+  commits ahead of `origin/main`**, and `main` has **0** commits the branch
+  lacks. The fix (`follow_redirects=False`) is confirmed present on the branch.
+
+**First action of this session (T0):** open and merge a PR
+`feat/m15-production-hardening → main`. It is a clean merge that lands the live
+SSRF remedy + `VectorStore.close()`. This is **security-urgent** — the released
+v0.2.0 is exploitable until it merges. Only after T0 does the **v2 SSRF** task
+(T5) make sense, since it extends the v1 `follow_redirects=False` posture.
 
 ## 4. Context to restore (read first)
 
@@ -56,7 +67,7 @@ and merged (or rebase this work on top of it). Do not start T5 before PR #5 land
 
 | # | Task | Owner | Depends on |
 | --- | --- | --- | --- |
-| **T0** | Merge PR #5 (or rebase this session on it). | `@GCW: Tech Lead` + `@GCW: Code Reviewer` | — |
+| **T0** | **Security-urgent.** Open + merge `feat/m15-production-hardening → main` (2 commits ahead, clean) to land the live SSRF fix + `VectorStore.close()`. | `@GCW: Tech Lead` + `@GCW: Code Reviewer` | — |
 | **T-THREAT** | Threat model for the GUI access: local-desktop vs remote/mobile; decide where 2FA is mandatory; token format, storage, rotation; rate-limiting. Output: short ADR. | `@GCW: Senior Security Engineer` | — |
 | **T-AUTH** | Implement auth: token-based API auth + **TOTP 2FA for remote/mobile**; login/verify endpoints; protect all read endpoints. Tests. | `@GCW: Senior System Engineer` | T-THREAT |
 | **T-CORS** | Add configurable CORS allow-list (env/config driven; default = none/strict). Tests. | `@GCW: Senior System Engineer` | — |
