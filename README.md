@@ -1,5 +1,7 @@
 # Mnemos
 
+[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml)
+
 > **Standalone memory & knowledge server** — fork of `ai-brain`, productionised for the GCW (GitHub Copilot Workflow) agent family.
 
 **Status**: **M1–M15 complete** — 209 tests passing, `make verify` green. Production-ready.
