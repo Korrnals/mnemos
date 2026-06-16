@@ -46,11 +46,12 @@ M15 hardening AND the M19 code-review fixes.** Specifically:
   commits ahead of `origin/main`**, and `main` has **0** commits the branch
   lacks. The fix (`follow_redirects=False`) is confirmed present on the branch.
 
-**First action of this session (T0):** open and merge a PR
-`feat/m15-production-hardening → main`. It is a clean merge that lands the live
-SSRF remedy + `VectorStore.close()`. This is **security-urgent** — the released
-v0.2.0 is exploitable until it merges. Only after T0 does the **v2 SSRF** task
-(T5) make sense, since it extends the v1 `follow_redirects=False` posture.
+**First action of this session (T0):** review and merge **PR #16**
+(`feat/m15-production-hardening → main`, already open). It is a clean merge that
+lands the live SSRF remedy + `VectorStore.close()`. This is **security-urgent**
+— the released v0.2.0 is exploitable until it merges. Only after T0 does the **v2
+SSRF** task (T5) make sense, since it extends the v1 `follow_redirects=False`
+posture. After merge: tag `v0.2.1`, and retarget the 9 dependabot PRs to `main`.
 
 ## 4. Context to restore (read first)
 
@@ -67,7 +68,7 @@ v0.2.0 is exploitable until it merges. Only after T0 does the **v2 SSRF** task
 
 | # | Task | Owner | Depends on |
 | --- | --- | --- | --- |
-| **T0** | **Security-urgent.** Open + merge `feat/m15-production-hardening → main` (2 commits ahead, clean) to land the live SSRF fix + `VectorStore.close()`. | `@GCW: Tech Lead` + `@GCW: Code Reviewer` | — |
+| **T0** | **Security-urgent.** Review + merge **PR #16** (`feat/m15-production-hardening → main`, open; 2 commits ahead, clean) — lands the live SSRF fix + `VectorStore.close()`. Then tag `v0.2.1` + retarget 9 dependabot PRs to `main`. | `@GCW: Tech Lead` + `@GCW: Code Reviewer` | — |
 | **T-THREAT** | Threat model for the GUI access: local-desktop vs remote/mobile; decide where 2FA is mandatory; token format, storage, rotation; rate-limiting. Output: short ADR. | `@GCW: Senior Security Engineer` | — |
 | **T-AUTH** | Implement auth: token-based API auth + **TOTP 2FA for remote/mobile**; login/verify endpoints; protect all read endpoints. Tests. | `@GCW: Senior System Engineer` | T-THREAT |
 | **T-CORS** | Add configurable CORS allow-list (env/config driven; default = none/strict). Tests. | `@GCW: Senior System Engineer` | — |
