@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import frontmatter
 
@@ -84,10 +85,14 @@ class VaultManager:
             return None
         try:
             post = frontmatter.load(str(file_path))
-        except Exception:
+        except (ValueError, TypeError, KeyError, OSError):
             return None
 
-        meta = post.metadata
+        # `python-frontmatter` exposes `post.metadata` as `Any` (untyped
+        # library stub). For our Mnemos/Obsidian vault contract the metadata
+        # is always a YAML mapping, so the cast is sound — it lets mypy
+        # treat the subsequent `.get(...)` calls as dict[str, Any] access.
+        meta = cast("dict[str, Any]", post.metadata)
         content = post.content
         if not content.strip():
             return None

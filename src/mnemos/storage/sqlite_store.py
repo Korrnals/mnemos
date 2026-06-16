@@ -15,6 +15,7 @@ Key additions for Mnemos:
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -22,7 +23,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from sys import getsizeof
-from typing import Any
+from typing import Any, cast
 
 from mnemos.models import (
     Memory,
@@ -32,6 +33,37 @@ from mnemos.models import (
     Project,
     Trace,
 )
+
+# M15.2 — Whitelisted dispatch for dynamic UPDATE setters.
+# Maps public field name -> literal "column=?" SQL fragment. Bandit B608
+# requires no user-controlled identifier be interpolated into SQL; this
+# constant dict is the ONLY source of column names that `update_fields`
+# will accept. Future column additions must be added here AND in the
+# memories schema, not by widening the runtime allowlist.
+_FIELD_UPDATERS: dict[str, str] = {
+    "status": "status=?",
+    "quality_score": "quality_score=?",
+    "confidence": "confidence=?",
+    "source_coverage": "source_coverage=?",
+    "cluster_id": "cluster_id=?",
+    "derived_from": "derived_from=?",
+    "embedding_id": "embedding_id=?",
+    "clean_content": "clean_content=?",
+    "filter_profile": "filter_profile=?",
+    "filter_stats": "filter_stats=?",
+    "filter_version": "filter_version=?",
+    "title": "title=?",
+    "content": "content=?",
+    "tags": "tags=?",
+    "category": "category=?",
+    "file_path": "file_path=?",
+}
+
+# FTS5 query-syntax special chars. Stripping them and wrapping the rest in
+# double quotes disables FTS5 prefix/NEAR/column-syntax and turns the input
+# into a literal phrase. This is the recommended hardening pattern from
+# https://www.sqlite.org/fts5.html#fts5_strings — see `_build_fts_query`.
+_FTS5_SPECIAL_CHARS = re.compile(r'["\'\*\(\):]')
 
 # ── TTL in-memory cache ───────────────────────────────────────────────────────
 
@@ -57,7 +89,7 @@ class _TTLCache:
     def _size(value: Any) -> int:
         try:
             return len(json.dumps(value, ensure_ascii=False, default=str).encode())
-        except Exception:
+        except (TypeError, ValueError, OverflowError):
             return getsizeof(value)
 
     def get(self, key: str, ttl: float) -> tuple[bool, Any]:
@@ -224,23 +256,99 @@ CREATE TABLE IF NOT EXISTS dlq (
 CREATE INDEX IF NOT EXISTS idx_dlq_memory    ON dlq(memory_id);
 CREATE INDEX IF NOT EXISTS idx_dlq_cluster  ON dlq(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_dlq_retry      ON dlq(next_retry_at);
+
+-- M16: A2A Sessions (GCW v0.6.0 — persistent backend for A2A routing)
+CREATE TABLE IF NOT EXISTS sessions (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    ttl_expires_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_created  ON sessions(created_at);
+
+CREATE TABLE IF NOT EXISTS turns (
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL,
+    turn_id         TEXT NOT NULL,
+    step_number     INTEGER NOT NULL,
+    role            TEXT NOT NULL,
+    from_agent      TEXT,
+    to_agent        TEXT,
+    message_id      TEXT,
+    content         TEXT NOT NULL,
+    summary         TEXT,
+    key_decisions   TEXT NOT NULL DEFAULT '[]',
+    outcome         TEXT,
+    tags            TEXT NOT NULL DEFAULT '[]',
+    context_pointer TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    UNIQUE(session_id, turn_id),
+    UNIQUE(message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_turns_session_step ON turns(session_id, step_number);
+CREATE INDEX IF NOT EXISTS idx_turns_message_id   ON turns(message_id);
+CREATE INDEX IF NOT EXISTS idx_turns_created       ON turns(created_at);
+
+-- M16: FTS5 for future /v1/search (bonus endpoint, v0.7+)
+CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
+    id UNINDEXED,
+    session_id UNINDEXED,
+    content,
+    summary,
+    tags,
+    from_agent UNINDEXED,
+    to_agent UNINDEXED,
+    content=turns,
+    content_rowid=rowid,
+    tokenize='unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS turns_ai AFTER INSERT ON turns BEGIN
+    INSERT INTO turns_fts(rowid, id, session_id, content, summary, tags,
+                          from_agent, to_agent)
+    VALUES (new.rowid, new.id, new.session_id, new.content, new.summary,
+            new.tags, new.from_agent, new.to_agent);
+END;
+
+CREATE TRIGGER IF NOT EXISTS turns_ad AFTER DELETE ON turns BEGIN
+    INSERT INTO turns_fts(turns_fts, rowid, id, session_id, content, summary,
+                          tags, from_agent, to_agent)
+    VALUES ('delete', old.rowid, old.id, old.session_id, old.content,
+            old.summary, old.tags, old.from_agent, old.to_agent);
+END;
+
+CREATE TRIGGER IF NOT EXISTS turns_au AFTER UPDATE ON turns BEGIN
+    INSERT INTO turns_fts(turns_fts, rowid, id, session_id, content, summary,
+                          tags, from_agent, to_agent)
+    VALUES ('delete', old.rowid, old.id, old.session_id, old.content,
+            old.summary, old.tags, old.from_agent, old.to_agent);
+    INSERT INTO turns_fts(rowid, id, session_id, content, summary, tags,
+                          from_agent, to_agent)
+    VALUES (new.rowid, new.id, new.session_id, new.content, new.summary,
+            new.tags, new.from_agent, new.to_agent);
+END;
 """
 
 _MIGRATIONS: list[tuple[str, str]] = [
-    ("project",         "ALTER TABLE memories ADD COLUMN project TEXT NOT NULL DEFAULT ''"),
-    ("agent",           "ALTER TABLE memories ADD COLUMN agent TEXT NOT NULL DEFAULT ''"),
-    ("quality_score",   "ALTER TABLE memories ADD COLUMN quality_score REAL"),
-    ("confidence",      "ALTER TABLE memories ADD COLUMN confidence REAL"),
+    ("project", "ALTER TABLE memories ADD COLUMN project TEXT NOT NULL DEFAULT ''"),
+    ("agent", "ALTER TABLE memories ADD COLUMN agent TEXT NOT NULL DEFAULT ''"),
+    ("quality_score", "ALTER TABLE memories ADD COLUMN quality_score REAL"),
+    ("confidence", "ALTER TABLE memories ADD COLUMN confidence REAL"),
     ("source_coverage", "ALTER TABLE memories ADD COLUMN source_coverage INTEGER"),
-    ("cluster_id",      "ALTER TABLE memories ADD COLUMN cluster_id TEXT"),
-    ("derived_from",    "ALTER TABLE memories ADD COLUMN derived_from TEXT NOT NULL DEFAULT '[]'"),
-    ("embedding_id",    "ALTER TABLE memories ADD COLUMN embedding_id TEXT"),
-    ("raw_content",     "ALTER TABLE memories ADD COLUMN raw_content TEXT"),
-    ("clean_content",   "ALTER TABLE memories ADD COLUMN clean_content TEXT"),
-    ("filter_profile",  "ALTER TABLE memories ADD COLUMN filter_profile TEXT"),
-    ("filter_stats",    "ALTER TABLE memories ADD COLUMN filter_stats TEXT"),
-    ("filter_version",  "ALTER TABLE memories ADD COLUMN filter_version TEXT"),
-    ("category",        "ALTER TABLE memories ADD COLUMN category TEXT"),
+    ("cluster_id", "ALTER TABLE memories ADD COLUMN cluster_id TEXT"),
+    ("derived_from", "ALTER TABLE memories ADD COLUMN derived_from TEXT NOT NULL DEFAULT '[]'"),
+    ("embedding_id", "ALTER TABLE memories ADD COLUMN embedding_id TEXT"),
+    ("raw_content", "ALTER TABLE memories ADD COLUMN raw_content TEXT"),
+    ("clean_content", "ALTER TABLE memories ADD COLUMN clean_content TEXT"),
+    ("filter_profile", "ALTER TABLE memories ADD COLUMN filter_profile TEXT"),
+    ("filter_stats", "ALTER TABLE memories ADD COLUMN filter_stats TEXT"),
+    ("filter_version", "ALTER TABLE memories ADD COLUMN filter_version TEXT"),
+    ("category", "ALTER TABLE memories ADD COLUMN category TEXT"),
 ]
 
 
@@ -396,27 +504,44 @@ class SQLiteStore:
         return cur.rowcount > 0
 
     def update_fields(self, memory_id: str, **kwargs: Any) -> bool:
-        """Update arbitrary fields on a memory row."""
+        """Update arbitrary fields on a memory row.
+
+        M15.2 security hardening: only columns present in the module-level
+        `_FIELD_UPDATERS` whitelist are accepted. Column names are taken
+        from the static dict (never from kwargs), so the constructed SQL
+        contains no user-controlled identifiers. All values are bound
+        parameters. B608 (SQL injection) is impossible by construction.
+
+        Unknown keys are silently dropped (defence in depth — column names
+        are taken from the whitelist, not from kwargs, so the SQL body is
+        safe regardless of what the caller passes).
+        """
         if not kwargs:
             return False
-        allowed = {
-            "status", "quality_score", "confidence", "source_coverage",
-            "cluster_id", "derived_from", "embedding_id", "clean_content",
-            "filter_profile", "filter_stats", "filter_version",
-            "title", "content", "tags", "category", "file_path",
-        }
-        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        # Drop keys not in the whitelist before they reach the SQL builder.
+        # This is the only filter needed: setters are built from the dict
+        # values (static SQL fragments), and values are bound parameters.
+        updates: dict[str, Any] = {k: kwargs[k] for k in _FIELD_UPDATERS if k in kwargs}
         if not updates:
             return False
-        # Serialise JSON fields
+        # Serialise JSON fields (only str accepted per the strict whitelist).
         for field in ("derived_from", "tags", "filter_stats"):
             if field in updates and not isinstance(updates[field], str):
                 updates[field] = json.dumps(updates[field], ensure_ascii=False)
         updates["updated_at"] = datetime.now(UTC).isoformat()
-        setters = ", ".join(f"{k}=?" for k in updates)
-        values = [*updates.values(), memory_id]
+        # `setters` is built by joining whitelisted static fragments only —
+        # no user input flows into the column names. Values are bound `?`.
+        setters = ", ".join(_FIELD_UPDATERS[k] for k in updates if k != "updated_at")
+        setters = setters + ", updated_at=?"
+        values = [updates[k] for k in updates if k != "updated_at"]
+        values.append(updates["updated_at"])
+        values.append(memory_id)
         conn = self._get_conn()
-        cur = conn.execute(f"UPDATE memories SET {setters} WHERE id=?", values)
+        # B608: setters built from `_FIELD_UPDATERS` whitelist, not user input.
+        cur = conn.execute(
+            "UPDATE memories SET " + setters + " WHERE id=?",  # nosec B608
+            values,
+        )
         conn.commit()
         self._invalidate_caches()
         return cur.rowcount > 0
@@ -505,50 +630,91 @@ class SQLiteStore:
         agent: str | None = None,
         status: MemoryStatus | None = None,
     ) -> list[tuple[Memory, float]]:
-        """FTS5 full-text search with optional project/agent/status filters."""
+        """FTS5 full-text search with optional project/agent/status filters.
+
+        M15.2 hardening: the user-supplied `query` is escaped via
+        `_build_fts_query` (FTS5 special chars stripped, rest wrapped in
+        double quotes — disables FTS5 prefix/NEAR/column syntax). The
+        optional filter columns are bound parameters, never interpolated.
+        The SQL body is built by string-concatenating static fragments +
+        `?` placeholders, so the resulting statement contains no
+        user-controlled identifiers (B608-safe).
+        """
         conn = self._get_conn()
-        # Build a SQL query that joins FTS results with the memories table for filters
-        extra_where = ""
-        params: list[Any] = [query]
+        fts_query = self._build_fts_query(query)
+        where_parts: list[str] = ["memories_fts MATCH ?"]
+        params: list[Any] = [fts_query]
         if project:
-            extra_where += " AND m.project=?"
+            where_parts.append("m.project = ?")
             params.append(project)
         if agent:
-            extra_where += " AND m.agent=?"
+            where_parts.append("m.agent = ?")
             params.append(agent)
         if status:
-            extra_where += " AND m.status=?"
+            where_parts.append("m.status = ?")
             params.append(status.value)
+        where_clause = " AND ".join(where_parts)
+        # B608: where_clause is composed of static fragments + `?` placeholders.
+        # No user input is interpolated. rank column is from FTS5 itself.
+        sql = (
+            "SELECT m.*, f.rank "
+            "FROM memories_fts f "
+            "JOIN memories m ON m.id = f.id "
+            "WHERE " + where_clause + " "  # nosec B608
+            "ORDER BY f.rank "
+            "LIMIT ?"
+        )
         params.append(limit)
-        sql = f"""
-            SELECT m.*, fts.rank
-            FROM memories_fts fts
-            JOIN memories m ON m.id = fts.id
-            WHERE memories_fts MATCH ?{extra_where}
-            ORDER BY fts.rank
-            LIMIT ?
-        """
         rows = conn.execute(sql, params).fetchall()
-        results = []
+        results: list[tuple[Memory, float]] = []
         for row in rows:
             memory = self._row_to_memory(row)
             score = 1.0 / (1.0 + abs(float(row["rank"])))
             results.append((memory, score))
         return results
 
+    @staticmethod
+    def _build_fts_query(user_query: str) -> str:
+        """Convert user input into a safe FTS5 MATCH expression.
+
+        Strategy (per https://www.sqlite.org/fts5.html#fts5_strings):
+          1. Strip FTS5 query-syntax special chars: `* " ' ( ) :`
+             (the apostrophe is stripped defensively; we then wrap in
+             double quotes which themselves become literal).
+          2. Collapse runs of whitespace.
+          3. Wrap the result in double quotes — FTS5 treats the contents
+             of a double-quoted string as a literal phrase with no
+             operator parsing (no prefix `*`, no NEAR, no column filters).
+
+        If sanitization empties the input, we return a literal phrase
+        containing a deliberately-unique token. FTS5's `""` is a syntax
+        error, so we cannot return an empty phrase; a nonsense phrase
+        yields zero rows without raising.
+        """
+        cleaned = _FTS5_SPECIAL_CHARS.sub(" ", user_query or "")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if not cleaned:
+            return '"__mnemos_fts5_no_match_placeholder__"'
+        return '"' + cleaned + '"'
+
     # ── Aggregates ────────────────────────────────────────────────────────
 
     def get_all_tags(self) -> dict[str, int]:
         hit, val = self._cache.get("tags", 60)
         if hit:
-            return val
+            return cast(dict[str, int], val)
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT j.value AS tag, COUNT(*) AS cnt "
             "FROM memories, json_each(memories.tags) AS j "
             "GROUP BY j.value ORDER BY cnt DESC"
         ).fetchall()
-        result = {r[0]: r[1] for r in rows}
+        # `r` is sqlite3.Row — index access yields `Any`. The schema
+        # guarantees the tag column is text and the count is int, so the
+        # explicit str/int casts make the declared dict[str, int] return
+        # type hold under mypy --strict. We then `cast` the comprehension
+        # so the function's return type is also explicit.
+        result: dict[str, int] = {str(r[0]): int(r[1]) for r in rows}
         self._cache.set("tags", result)
         return result
 
@@ -560,24 +726,24 @@ class SQLiteStore:
     def count_by_status(self) -> dict[str, int]:
         hit, val = self._cache.get("stats", 60)
         if hit:
-            return val
+            return cast(dict[str, int], val)
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT COALESCE(status,'raw') AS s, COUNT(*) AS c FROM memories GROUP BY s"
         ).fetchall()
-        result = {r[0]: r[1] for r in rows}
+        result: dict[str, int] = {str(r[0]): int(r[1]) for r in rows}
         self._cache.set("stats", result)
         return result
 
     def get_project_memory_counts(self) -> dict[str, int]:
         hit, val = self._cache.get("projects_counts", 60)
         if hit:
-            return val
+            return cast(dict[str, int], val)
         conn = self._get_conn()
         rows = conn.execute(
             "SELECT project, COUNT(*) AS cnt FROM memories WHERE project != '' GROUP BY project"
         ).fetchall()
-        result = {r[0]: r[1] for r in rows}
+        result: dict[str, int] = {str(r[0]): int(r[1]) for r in rows}
         self._cache.set("projects_counts", result)
         return result
 
@@ -588,9 +754,7 @@ class SQLiteStore:
 
     def get_by_source_url(self, source_url: str) -> Memory | None:
         conn = self._get_conn()
-        r = conn.execute(
-            "SELECT * FROM memories WHERE source_url=?", (source_url,)
-        ).fetchone()
+        r = conn.execute("SELECT * FROM memories WHERE source_url=?", (source_url,)).fetchone()
         return self._row_to_memory(r) if r else None
 
     # ── Traces (M6) ───────────────────────────────────────────────────────
@@ -764,9 +928,10 @@ class SQLiteStore:
 
     def list_projects(self) -> list[Project]:
         conn = self._get_conn()
-        return [self._row_to_project(r) for r in conn.execute(
-            "SELECT * FROM projects ORDER BY name"
-        ).fetchall()]
+        return [
+            self._row_to_project(r)
+            for r in conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+        ]
 
     def _row_to_project(self, row: sqlite3.Row) -> Project:
         return Project(

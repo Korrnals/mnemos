@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
+from typing import cast
 
 import numpy as np
 
@@ -85,15 +86,17 @@ class OllamaProvider(EmbeddingProvider):
         self._dim: int | None = None
 
     def embed(self, text: str) -> list[float]:
+        # The `response` payload is `Any` (ollama SDK stubs); the inner
+        # `embeddings[0]` is always list[float] for our `input=str` call.
         response = self._client.embed(model=self._model, input=text)
-        vec = response["embeddings"][0]
+        vec: list[float] = response["embeddings"][0]
         if self._dim is None:
             self._dim = len(vec)
         return vec
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         response = self._client.embed(model=self._model, input=texts)
-        vecs = response["embeddings"]
+        vecs: list[list[float]] = response["embeddings"]
         if self._dim is None and vecs:
             self._dim = len(vecs[0])
         return vecs
@@ -122,19 +125,38 @@ class ONNXHubProvider(EmbeddingProvider):
         model_id: str,
         onnx_file: str = "onnx/model.onnx",
         max_length: int = 512,
+        *,
+        revision: str | None = None,
     ) -> None:
         import onnxruntime as ort
         from huggingface_hub import hf_hub_download
         from tokenizers import Tokenizer
 
-        logger.info("Loading ONNX model: %s (%s)", model_id, onnx_file)
+        # M15.2: pin HF Hub revision (commit SHA or tag) to mitigate CWE-494
+        # (download of code without integrity check). B615 requires `revision=`
+        # be passed to every `hf_hub_download()` call. Operators MUST set
+        # `EmbeddingConfig.hf_revision` explicitly when changing `model_id`.
+        if not revision:
+            raise ValueError(
+                "ONNXHubProvider requires an explicit `revision` "
+                "(set EmbeddingConfig.hf_revision or pass `revision=` directly) "
+                "to pin the HuggingFace Hub download. This mitigates supply-chain "
+                "risk (CWE-494)."
+            )
+        logger.info("Loading ONNX model: %s (%s) @ revision=%s", model_id, onnx_file, revision)
 
         try:
-            model_path = hf_hub_download(model_id, onnx_file)
+            model_path = hf_hub_download(
+                model_id, onnx_file, revision=revision
+            )
         except Exception:
-            model_path = hf_hub_download(model_id, "model.onnx")
+            model_path = hf_hub_download(
+                model_id, "model.onnx", revision=revision
+            )
 
-        tokenizer_path = hf_hub_download(model_id, "tokenizer.json")
+        tokenizer_path = hf_hub_download(
+            model_id, "tokenizer.json", revision=revision
+        )
         self._tokenizer = Tokenizer.from_file(tokenizer_path)
         self._tokenizer.enable_truncation(max_length=max_length)
         self._tokenizer.enable_padding(length=max_length)
@@ -165,15 +187,23 @@ class ONNXHubProvider(EmbeddingProvider):
         encodings = self._tokenizer.encode_batch(texts)
         input_ids = np.array([e.ids for e in encodings], dtype=np.int64)
         attention_mask = np.array([e.attention_mask for e in encodings], dtype=np.int64)
-        inputs: dict = {"input_ids": input_ids, "attention_mask": attention_mask}
+        # Explicit type arg: tokenizers.Tokenizer.encode_batch returns Any
+        # per the (untyped) huggingface_hub/tokenizers stubs.
+        inputs: dict[str, np.ndarray] = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
         if "token_type_ids" in self._model_inputs:
             inputs["token_type_ids"] = np.zeros_like(input_ids)
-        outputs = self._session.run(None, inputs)
+        # `ort.InferenceSession.run` is untyped in the onnxruntime stubs;
+        # the first output is the (batch, seq, dim) tensor by convention.
+        outputs = cast(list[np.ndarray], self._session.run(None, inputs))
         token_embs = outputs[0]  # (batch, seq, dim)
         mask = attention_mask[:, :, np.newaxis].astype(np.float32)
         summed = np.sum(token_embs * mask, axis=1) / np.maximum(np.sum(mask, axis=1), 1e-9)
         norms = np.linalg.norm(summed, axis=1, keepdims=True)
-        return summed / np.maximum(norms, 1e-9)
+        result: np.ndarray = summed / np.maximum(norms, 1e-9)
+        return result
 
     def embed(self, text: str) -> list[float]:
         return [float(x) for x in self._infer([text])[0]]
@@ -200,10 +230,15 @@ class SentenceTransformerProvider(EmbeddingProvider):
         self._dim = self._model.get_sentence_embedding_dimension() or 384
 
     def embed(self, text: str) -> list[float]:
-        return self._model.encode(text).tolist()
+        # sentence-transformers `.encode()` returns `Any` (untyped lib);
+        # the contract is `np.ndarray` of shape (dim,). tolist() yields
+        # list[float] — cast keeps mypy from complaining about the Any.
+        arr = cast(np.ndarray, self._model.encode(text))
+        return cast(list[float], arr.tolist())
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return self._model.encode(texts).tolist()
+        arr = cast(np.ndarray, self._model.encode(texts))
+        return cast(list[list[float]], arr.tolist())
 
     @property
     def dimension(self) -> int:
@@ -221,7 +256,11 @@ def create_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
     if provider == "ollama":
         return OllamaProvider(cfg.model, cfg.ollama_url)
     if provider in ("onnx", "onnxhub"):
-        return ONNXHubProvider(cfg.model, onnx_file=cfg.onnx_file)
+        return ONNXHubProvider(
+            cfg.model,
+            onnx_file=cfg.onnx_file,
+            revision=cfg.hf_revision,
+        )
     if provider in ("sentence-transformers", "st"):
         return SentenceTransformerProvider(cfg.model)
     raise ValueError(

@@ -14,10 +14,15 @@ Each trigger evaluates policy rules and executes actions.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from mnemos.models import Memory, MemoryStatus
-from mnemos.policy.engine import evaluate_rules, load_rules_from_dict
+from mnemos.policy.engine import (
+    PolicyAction,
+    PolicyRule,
+    evaluate_rules,
+    load_rules_from_dict,
+)
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
@@ -25,14 +30,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_rules(mgr: MemoryManager) -> list:
+def _get_rules(mgr: MemoryManager) -> list[PolicyRule]:
     """Load rules from config or empty list if none configured."""
     raw = getattr(mgr.settings, "policies", None)
     if raw is None:
-        return []
+        # An empty `[]` literal narrows to list[Never] which is not
+        # assignable to list[PolicyRule]. Annotating the local as
+        # list[PolicyRule] makes the function-scope narrowing work
+        # without resorting to `cast`.
+        empty: list[PolicyRule] = []
+        return empty
     if isinstance(raw, dict):
         return load_rules_from_dict(raw)
-    return raw
+    # `raw` came from `getattr(mgr.settings, "policies", None)` which is
+    # typed `Any` in absence of a settings overload — narrow defensively.
+    if isinstance(raw, list):
+        return cast(list[PolicyRule], raw)
+    return []
 
 
 def on_memory_saved(mgr: MemoryManager, mem: Memory) -> None:
@@ -70,7 +84,7 @@ def on_status_changed(
 def _execute_action(
     mgr: MemoryManager,
     mem: Memory,
-    act,
+    act: PolicyAction,
 ) -> None:
     """Execute a single policy action."""
 

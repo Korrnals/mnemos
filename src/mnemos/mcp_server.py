@@ -117,7 +117,11 @@ def _auto_collect_instructions(project: str) -> str:
 # ── Tool listing ───────────────────────────────────────────────────────────────
 
 
-@server.list_tools()
+# mcp SDK uses runtime decorators (Server.list_tools / Server.call_tool) that
+# are not annotated in the upstream stub, so mypy --strict flags them as
+# untyped. The decorator is the documented public API of mcp.server, so we
+# narrow the suppression to the decorator only.
+@server.list_tools()  # type: ignore[untyped-decorator]
 async def list_tools() -> list[Tool]:
     _ac = _auto_collect_state["enabled"]
 
@@ -388,7 +392,7 @@ async def list_tools() -> list[Tool]:
 # ── Tool call handler ──────────────────────────────────────────────────────────
 
 
-@server.call_tool()
+@server.call_tool()  # type: ignore[untyped-decorator]  # see note on @server.list_tools
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     _track_call(is_save=(name == "mnemos_save_context"))
     reminder = _checkpoint_reminder()

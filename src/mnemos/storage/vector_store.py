@@ -14,6 +14,7 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -42,9 +43,13 @@ class VectorStore:
         conn.commit()
 
     def _conn(self) -> sqlite3.Connection:
+        # `getattr(..., default=None)` returns `Any`; the truthy check is
+        # the runtime guard. After the guard the attribute is the cached
+        # Connection. We cast back to sqlite3.Connection so the declared
+        # return type holds — mypy --strict enforces this.
         if not getattr(self._local, "conn", None):
             self._local.conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        return self._local.conn
+        return cast(sqlite3.Connection, self._local.conn)
 
     # ── pack / unpack ─────────────────────────────────────────────────────
 
@@ -62,7 +67,7 @@ class VectorStore:
         self,
         memory_id: str,
         embedding: list[float],
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         conn = self._conn()
         conn.execute(
@@ -75,11 +80,11 @@ class VectorStore:
         self,
         ids: list[str],
         embeddings: list[list[float]],
-        metadatas: list[dict] | None = None,
+        metadatas: list[dict[str, Any]] | None = None,
         *,
         batch_size: int = 500,
     ) -> None:
-        metas = metadatas or [{} for _ in ids]
+        metas: list[dict[str, Any]] = metadatas or [{} for _ in ids]
         rows = [
             (i, self._pack(e), json.dumps(m))
             for i, e, m in zip(ids, embeddings, metas, strict=True)
@@ -139,14 +144,19 @@ class VectorStore:
         )
 
     def count(self) -> int:
-        return self._conn().execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
+        # `fetchone()[0]` is `Any` (sqlite3.Row); COUNT(*) is always int.
+        row = self._conn().execute("SELECT COUNT(*) FROM embeddings").fetchone()
+        return int(row[0]) if row else 0
 
     def get_embeddings(self, ids: list[str]) -> dict[str, list[float]]:
         if not ids:
             return {}
         conn = self._conn()
-        placeholders = ",".join("?" * len(ids))
-        rows = conn.execute(
-            f"SELECT id, vector FROM embeddings WHERE id IN ({placeholders})", ids
-        ).fetchall()
+        # placeholders is a static join of literal "?" characters; ids are bound
+        # via parameter substitution, so no user input reaches the SQL string.
+        placeholders = ",".join(["?"] * len(ids))
+        sql = (
+            "SELECT id, vector FROM embeddings WHERE id IN (" + placeholders + ")"  # nosec B608
+        )
+        rows = conn.execute(sql, ids).fetchall()
         return {r[0]: self._unpack(r[1]).tolist() for r in rows}

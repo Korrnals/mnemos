@@ -104,15 +104,17 @@ def cluster_raw_memories(
         seed = unassigned.pop()
         cluster = [seed]
         seed_vec = embeddings[seed]
-        # Normalise once
-        seed_norm = np.linalg.norm(seed_vec)
+        # Normalise once. np.linalg.norm returns np.floating[Any], so we
+        # explicitly annotate as float — mypy --strict does not narrow
+        # np.floating in equality branches.
+        seed_norm: float = float(np.linalg.norm(seed_vec))
         if seed_norm == 0:
             seed_norm = 1.0
 
         to_remove: set[int] = set()
         for idx in unassigned:
             vec = embeddings[idx]
-            vec_norm = np.linalg.norm(vec)
+            vec_norm: float = float(np.linalg.norm(vec))
             if vec_norm == 0:
                 vec_norm = 1.0
             sim = float(np.dot(seed_vec, vec) / (seed_norm * vec_norm))
@@ -136,7 +138,7 @@ def cluster_raw_memories(
         cluster_id = _seed_uuid(c_hash)
 
         # Pick representative = closest to centroid
-        centroid_norm = np.linalg.norm(centroid)
+        centroid_norm: float = float(np.linalg.norm(centroid))
         if centroid_norm == 0:
             centroid_norm = 1.0
         closest_idx = max(
