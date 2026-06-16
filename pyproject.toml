@@ -65,7 +65,7 @@ openvino = [
     "optimum[openvino]>=1.19",
 ]
 mcp = [
-    "mcp[cli]>=1.0",
+    "mcp[cli]>=1.27.2",
 ]
 pdf = [
     "pymupdf>=1.24",
