@@ -224,7 +224,24 @@ def migrate(
     config: str = ConfigOption,
 ) -> None:
     """Migrate existing ai-brain data to Mnemos format. (M13)"""
-    console.print("[bold yellow]Migration tool not yet implemented (M13 pending).[/bold yellow]")
-    console.print(f"  source: {source}")
-    console.print(f"  vault:  {vault}")
-    console.print(f"  dry-run: {dry_run}")
+    from mnemos.cli.migrate import migrate_from_ai_brain
+
+    settings = load_settings(config)
+    db_path = source / "ai_brain.db"
+    vault_path = vault if vault.exists() else None
+
+    with console.status("[bold green]Migrating ai-brain → Mnemos..."):
+        summary = migrate_from_ai_brain(
+            db_path,
+            vault_path,
+            dry_run=dry_run,
+            settings=settings,
+        )
+
+    console.print(f"[green]✓[/green] Memories migrated: {summary['memories_migrated']}")
+    if vault_path:
+        console.print(f"[green]✓[/green] Vault files migrated: {summary['vault_files_migrated']}")
+    if summary["errors"]:
+        console.print(f"[yellow]⚠[/yellow] Errors: {len(summary['errors'])}")
+    if dry_run:
+        console.print("[cyan]Dry run — no changes written.[/cyan]")

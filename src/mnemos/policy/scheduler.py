@@ -12,7 +12,7 @@ All intervals are configurable via AutomationConfig.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from mnemos.models import MemoryStatus
 
@@ -84,9 +84,14 @@ def dlq_retry_scheduler(mgr: MemoryManager) -> None:
 
     ready = dlq_list(mgr, ready_only=True, limit=20)
     for entry in ready:
-        dlq_id = entry["id"]
-        attempt = entry["attempt_count"]
-        max_attempts = entry["max_attempts"]
+        # `dlq_list` returns dict[str, object] (untyped column values).
+        # The two ints we need (attempt_count, max_attempts) are guaranteed
+        # ints by the SQLite schema (dlq rows). `int(...)` does not accept
+        # the bare `object` per mypy --strict, so we cast the value to int
+        # explicitly (the schema is the single source of truth).
+        dlq_id = str(entry["id"])
+        attempt = int(cast(int, entry["attempt_count"]))
+        max_attempts = int(cast(int, entry["max_attempts"]))
         if attempt >= max_attempts:
             logger.warning("scheduler: dlq %s max retries reached, discarding", dlq_id[:8])
             dlq_discard(mgr, dlq_id)
