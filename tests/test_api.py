@@ -238,3 +238,85 @@ class TestTraces:
         resp = client.get("/traces")
         assert resp.status_code == 200
         assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Path-scoped rules ingest (M8)
+# ---------------------------------------------------------------------------
+
+
+class TestRulesIngest:
+    def test_ingest_rules(self, client, tmp_path):
+        # Create a temporary .instructions.md file
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        rule_file = rules_dir / "test.instructions.md"
+        rule_file.write_text("---\napplyTo: '**'\n---\n# Test Rule\nbody")
+
+        resp = client.post("/rules/ingest", json={
+            "rules_dir": str(rules_dir),
+            "project": "test",
+            "agent": "api-test",
+            "pattern": "*.instructions.md",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["processed"] == 1
+
+    def test_remove_rule(self, client, tmp_path):
+        rules_dir = tmp_path / "rules"
+        rules_dir.mkdir()
+        rule_file = rules_dir / "removable.instructions.md"
+        rule_file.write_text("---\napplyTo: '**'\n---\n# Removable\nbody")
+
+        # First ingest
+        client.post("/rules/ingest", json={
+            "rules_dir": str(rules_dir),
+            "project": "test",
+            "agent": "api-test",
+        })
+
+        # Then remove
+        resp = client.request("DELETE", "/rules/ingest", json={
+            "file_path": str(rule_file),
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "removed"
+
+    def test_remove_missing_rule(self, client):
+        resp = client.request("DELETE", "/rules/ingest", json={
+            "file_path": "/nonexistent/path.rule.md",
+        })
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Context Filter (M10)
+# ---------------------------------------------------------------------------
+
+
+class TestContextFilter:
+    def test_filter_missing_memory(self, client):
+        resp = client.post("/filter/nonexistent-id", json={})
+        assert resp.status_code == 404
+
+    def test_filter_applies(self, client):
+        # Create a memory with raw_content
+        resp = client.post("/memories", json={
+            "content": "Line 1\nLine 2\nLine 3",
+            "title": "Test",
+            "tags": ["project:test", "agent:api-test", "gcw:learning"],
+            "source": "cli",
+        })
+        assert resp.status_code == 201
+        mem_id = resp.json()["id"]
+
+        # Apply filter
+        resp = client.post(f"/filter/{mem_id}", json={"profile": "default"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "clean_content" in data
+        assert "filter_profile" in data
