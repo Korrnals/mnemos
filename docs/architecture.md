@@ -1,8 +1,8 @@
-# AI-Brain — Архитектура системы
+# Mnemos — Архитектура системы
 
 ## Обзор
 
-AI-Brain — гибридная система долговременной памяти: личная база знаний + RAG-хранилище для AI-агентов. Единый «мозг», доступный из CLI, Web UI, API, MCP-сервера, Telegram-бота и Obsidian.
+Mnemos — гибридная система долговременной памяти: личная база знаний + RAG-хранилище для AI-агентов. Единая память, доступная из CLI, Web UI, API, MCP-сервера, Telegram-бота и Obsidian.
 
 ## Ключевые принципы
 
@@ -202,9 +202,9 @@ updated: 2026-04-10T12:00:00
 
 ```yaml
 # config.yaml
-brain:
-  vault_path: ~/brain-vault          # Obsidian vault
-  data_dir: ~/.ai-brain              # ChromaDB + SQLite
+mnemos:
+  vault_path: ~/mnemos-vault         # Obsidian vault
+  data_dir: ~/.mnemos                # ChromaDB + SQLite
 
 embedding:
   provider: sentence-transformers    # sentence-transformers | ollama | openai

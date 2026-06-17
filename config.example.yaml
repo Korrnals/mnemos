@@ -1,6 +1,6 @@
-brain:
-  vault_path: ~/brain-vault
-  data_dir: ~/.ai-brain
+mnemos:
+  vault_path: ~/mnemos-vault
+  data_dir: ~/.mnemos
 
 embedding:
   # Default: chromadb — uses built-in ONNX model (all-MiniLM-L6-v2), no torch needed

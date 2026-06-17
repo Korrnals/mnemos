@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Mnemos (forked from ai-brain).
+All notable changes to Mnemos.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -181,7 +181,7 @@ PRs cannot regress the green state.
 ### Changed
 - Renamed all `brain_*` MCP tools → `mnemos_*`.
 - Renamed CLI entry point `brain` → `mnemos`.
-- Default paths: `~/.ai-brain/` → `~/.mnemos/`, `~/brain-vault/` → `~/mnemos-vault/`.
+- Default paths: `~/.mnemos/` for data, `~/mnemos-vault/` for Obsidian sync.
 - Env vars: `AI_BRAIN_*` → `MNEMOS_*`.
 
 ### Deprecated

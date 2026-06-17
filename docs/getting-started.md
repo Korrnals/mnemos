@@ -231,9 +231,9 @@ See [api-reference.md](api-reference.md) for every endpoint, request body, and r
 
 ---
 
-## Migrate from ai-brain
+## Migrate from legacy ai-brain
 
-If you have an existing `ai-brain` install (`~/.ai-brain/ai_brain.db` + `~/brain-vault/`), Mnemos can lift it in one command.
+If you have an existing legacy `ai-brain` install (`~/.ai-brain/ai_brain.db` + `~/brain-vault/`), Mnemos can import it in one command.
 
 ### Dry-run first
 

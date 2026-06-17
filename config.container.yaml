@@ -1,5 +1,5 @@
-# AI-Brain container config — paths mapped to container volumes
-brain:
+# Mnemos container config — paths mapped to container volumes
+mnemos:
   vault_path: /vault
   data_dir: /data
 

@@ -331,8 +331,8 @@ mnemos migrate-from-ai-brain [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--source` | `~/.ai-brain` | ai-brain data directory (must contain `ai_brain.db`). |
-| `--vault` | `~/brain-vault` | ai-brain vault directory (Obsidian mirror). |
+| `--source` | `~/.mnemos` | Mnemos data directory (must contain `mnemos.db`). |
+| `--vault` | `~/mnemos-vault` | Mnemos vault directory (Obsidian mirror). |
 | `--dry-run` | `false` | Show what would be migrated, write nothing. |
 | `--config / -c` | — | Path to `config.yaml`. |
 
