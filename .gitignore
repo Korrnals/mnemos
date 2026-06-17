@@ -34,4 +34,4 @@ brain-vault/
 brain-vault/
 
 # VSCode hystory extension
-.history/
+.history/.coverage

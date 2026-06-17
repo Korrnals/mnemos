@@ -6,17 +6,25 @@ Loopback-bound by default (127.0.0.1) — do not expose externally without auth.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
 
 from mnemos import __version__
-from mnemos.config import Settings, load_settings
+from mnemos.api.auth import router as auth_router
+from mnemos.api.auth_store import AuthStore
+from mnemos.api.middleware import AuthMiddleware
+from mnemos.api.rate_limit import limiter
+from mnemos.config import ApiConfig, Settings, load_settings
 from mnemos.manager import MemoryManager
 from mnemos.models import (
     AgentRecallQuery,
@@ -30,7 +38,8 @@ from mnemos.models import (
 from mnemos.sessions import SessionStore
 from mnemos.sessions.api import router as sessions_router
 
-_logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+_logger = logger  # backward-compat alias used by CORS/tags code paths
 _manager: MemoryManager | None = None
 
 
@@ -73,19 +82,80 @@ def get_manager() -> MemoryManager:
     return _manager
 
 
+# ── Startup guard (ADR-0014 §Trust zones) ─────────────────────────────────────
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host in {"localhost", "ip6-localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _check_non_loopback_auth(api_cfg: ApiConfig) -> None:
+    """Exit non-zero if a non-loopback bind is attempted without required auth config.
+
+    Enforced at startup so a misconfigured ``auth_enabled: false`` server never
+    becomes reachable from the network without credentials.
+    """
+    if _is_loopback_host(api_cfg.host):
+        return
+
+    missing: list[str] = []
+    if not api_cfg.auth_enabled:
+        missing.append("api.auth_enabled=true")
+    if not api_cfg.totp_enabled:
+        missing.append("api.totp_enabled=true")
+    if not api_cfg.behind_tls_proxy:
+        missing.append("api.behind_tls_proxy=true")
+
+    if missing:
+        print(
+            f"FATAL: non-loopback bind ({api_cfg.host!r}) requires: "
+            + ", ".join(missing)
+            + ".  See docs/security.md for the remote setup guide.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    # TOTP enabled but master key missing → refuse to start
+    if api_cfg.totp_enabled and not api_cfg.totp_master_key.get_secret_value():
+        print(
+            "FATAL: api.totp_enabled=true but MNEMOS_API__TOTP_MASTER_KEY is not set.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     mgr = get_manager()  # warm up (also runs the DDL on the shared db file)
+    settings = mgr.settings
+
+    # T-AUTH: startup guard — must run before any state is exposed.
+    _check_non_loopback_auth(settings.api)
+
+    # Expose API config on app.state so AuthMiddleware can read it without
+    # calling load_settings() on every request.
+    application.state.api_config = settings.api
+
     # M16: own SessionStore lives on app.state so the A2A router can
     # pick it up.  Re-uses the same db_path as MemoryManager so the
     # schema and WAL are shared.
-    settings = mgr.settings
     store = SessionStore(settings.db_path)
     application.state.sessions_store = store
+
+    # T-AUTH: AuthStore on app.state for auth router and middleware.
+    auth_store = AuthStore(settings.db_path)
+    application.state.auth_store = auth_store
+
     try:
         yield
     finally:
         store.close()
+        auth_store.close()
         if _manager is not None:
             _manager.close()
 
@@ -99,6 +169,13 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# T-AUTH: rate limiter state + exception handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+
+# T-AUTH: auth middleware (runs after CORS, before routes)
+app.add_middleware(AuthMiddleware)
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
@@ -375,6 +452,9 @@ async def remove_rule(data: RuleRemoveRequest) -> dict[str, Any]:
 # TestClient).
 app.include_router(sessions_router, prefix="/v1")
 
+# ── Auth API (T-AUTH, ADR-0014) ───────────────────────────────────────────────
+app.include_router(auth_router)
+
 # Apply CORS middleware based on current settings.
 # Middleware must be registered before the first request (i.e., here at module
 # load time).  Starlette raises RuntimeError if add_middleware is called after
@@ -385,7 +465,7 @@ app.include_router(sessions_router, prefix="/v1")
 # MERGE CONTRACT with feat/api-auth (AuthMiddleware): Starlette applies
 # middleware in REVERSE order of registration (last added = outermost).  CORS
 # MUST be the outermost layer so that pre-flight ``OPTIONS`` requests are
-# answered before AuthMiddleware can reject them as unauthenticated.  When the
-# two branches merge, register CORS AFTER ``app.add_middleware(AuthMiddleware)``
-# (i.e. this call stays at the bottom, below the auth middleware).
+# answered before AuthMiddleware can reject them as unauthenticated.
+# ``app.add_middleware(AuthMiddleware)`` is registered earlier (just after app
+# construction); this call stays at the bottom so CORS wraps it as outermost.
 _setup_cors(app, load_settings())
