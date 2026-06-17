@@ -284,7 +284,11 @@ async def list_tags() -> list[TagCount]:
     """Return all tags with their memory counts, sorted by count descending."""
     mgr = get_manager()
     raw: dict[str, int] = mgr.list_tags()
-    return [TagCount(tag=t, count=c) for t, c in raw.items()]
+    # Sort explicitly here rather than relying on the storage-layer ORDER BY
+    # surviving the dict round-trip / cache: count descending, then tag
+    # ascending as a stable, deterministic tie-breaker.
+    ordered = sorted(raw.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [TagCount(tag=t, count=c) for t, c in ordered]
 
 
 # ── Traces (M6) ────────────────────────────────────────────────────────────────
