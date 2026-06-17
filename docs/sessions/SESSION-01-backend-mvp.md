@@ -9,7 +9,7 @@
 - **Repo path:** `/var/home/abyss/LABs/AI/mnemos`
 - **Session owner / orchestrator:** `@GCW: Tech Lead`
 - **Specialists:** `@GCW: Senior Security Engineer`, `@GCW: Senior System Engineer`, `@GCW: Senior QA Engineer`
-- **Status:** 🟡 Ready, but see the **PR #5 prerequisite** in §3
+- **Status:** � **Complete** — all tasks delivered to `main` (HEAD `d2f2025`), CI green. See §10 Outcome.
 - **Companion session:** `mnemos-eyes` L1 viewer — see `../mnemos-eyes/docs/sessions/SESSION-01-l1-viewer.md`
 
 ---
@@ -96,15 +96,42 @@ posture. After merge: tag `v0.2.1`, and retarget the 9 dependabot PRs to `main`.
 
 ## 8. Definition of done
 
-- [ ] PR #5 merged into `origin/main`.
-- [ ] Auth enforced on all read endpoints; 2FA path for remote; tests green.
-- [ ] CORS allow-list configurable; default strict; tests green.
-- [ ] `GET /tags` returns tags+counts; tests green.
-- [ ] `mcp_server.py` covered by a dispatch smoke-test (off 0%).
-- [ ] SSRF re-validated per redirect hop; metadata-IP pivot regression test passes.
-- [ ] `make verify` green; CHANGELOG `[Unreleased]` updated; docs synced.
+- [x] PR #5 prerequisite reconciled into `origin/main` (the SSRF v1 fix +
+      `VectorStore.close()` were already present on `main` via release `1.0.0`;
+      T0 verified, no separate merge needed).
+- [x] Auth enforced on all read endpoints; 2FA/TOTP path for remote; tests green.
+- [x] CORS allow-list configurable; default strict; tests green.
+- [x] `GET /tags` returns tags+counts; tests green.
+- [x] `mcp_server.py` covered by a dispatch smoke-test (off 0%) **and** routing
+      asserts the correct manager method (mcp-3).
+- [x] SSRF re-validated per redirect hop; metadata-IP pivot regression test passes.
+- [x] `make verify` green; CHANGELOG `[Unreleased]` updated; docs synced.
 
 ## 9. Handoff to the GUI session
 
 When **T-AUTH + T-CORS** are merged, notify the `mnemos-eyes` session: its
 task **T6** (wire `HttpAdapter` to the real API + login flow) is unblocked.
+
+**T-AUTH and T-CORS are merged → `mnemos-eyes` T6 is UNBLOCKED.**
+
+## 10. Outcome (closed 2026-06-17)
+
+All session goals delivered to `main` (HEAD `d2f2025`, CI green). Final gate on
+main: ruff / ruff format / mypy --strict / bandit clean, **449 tests passing**,
+coverage **86.52%**.
+
+| Task | Delivered via | Notes |
+| --- | --- | --- |
+| T0 (SSRF v1 + `close()`) | release `1.0.0` (pre-session) | Verified already on `main`; no separate merge needed |
+| T-THREAT | ADR-0014 | Threat model + trust zones; startup guard requires auth+TOTP+TLS off-loopback |
+| T-AUTH | PR #19 → #24 | Opaque `mnk_` bearer (SHA-256), TOTP 2FA; review fixes auth-1..8 |
+| T-CORS | PR #20 → #24 | Configurable allow-list, strict default; registered outermost (after auth) |
+| T-TAGS | PR #21 → #24 | `GET /tags` list + counts, explicit sort |
+| T4-MCP | PR #22 → #24 | `mcp_server.py` 0% → 86%; routing asserts correct method (mcp-3, PR #26) |
+| T5-SSRF | PR #23 → #24 | Per-hop `_validate_url`, max 5 hops, `follow_redirects=False` kept |
+| Hardening | PR #25 | auth-9 (revoked column split), auth-12 (absolute session cap) |
+
+Delivery: 5 feature branches → integration PR #24 (merged) → 2 post-merge
+hardening PRs (#25 auth-9/12, #26 mcp-3). All 5 source PRs auto-closed as merged.
+Docs synced: CHANGELOG `[Unreleased]`, `config.example.yaml`, `api-reference.md`,
+`security.md`, ADR-0014 as-built notes.
