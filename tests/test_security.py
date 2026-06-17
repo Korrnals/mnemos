@@ -75,11 +75,15 @@ class TestUrlValidation:
         assert MemoryManager._validate_url(url) == url
 
     def test_ingest_url_does_not_follow_redirects(self, manager) -> None:
-        """SSRF: redirects must NOT be followed.
+        """SSRF: redirects are followed per-hop with re-validation (v2 guard).
 
-        _validate_url only vets the initial host; following a 30x could
-        pivot to an unvalidated private/metadata endpoint. The httpx
-        client must be constructed with follow_redirects=False.
+        httpx.Client must still be constructed with follow_redirects=False so
+        the library never skips the per-hop _validate_url guard. Redirects are
+        followed manually in ingest_url; every Location target is validated
+        before the next request is issued. This test verifies the constructor
+        argument because that flag is the enforcement mechanism for the loop.
+
+        Updated from v1 (no-follow) to v2 (per-hop re-validation) in T5-SSRF.
         """
         trafilatura_stub = MagicMock()
         trafilatura_stub.extract.return_value = "text"

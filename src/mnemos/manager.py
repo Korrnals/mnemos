@@ -38,6 +38,10 @@ from mnemos.storage.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
+# Hard cap on redirect hops for per-hop SSRF re-validation (v2 posture).
+# Each hop is validated by _validate_url before the next request is issued.
+_MAX_REDIRECTS: int = 5
+
 
 class MemoryManager:
     """Central coordinator for all memory operations."""
@@ -482,23 +486,61 @@ class MemoryManager:
         return url
 
     def ingest_url(self, url: str, *, tags: list[str], project: str, agent: str) -> Memory:
-        """Fetch a URL, extract main text, save as RAW memory."""
+        """Fetch a URL, extract main text, save as RAW memory.
+
+        Redirects (3xx) are followed manually with a hard cap of ``_MAX_REDIRECTS``
+        hops. Every redirect target is passed through ``_validate_url`` before
+        the next request is issued (per-hop SSRF guard, v2). This closes the
+        open-redirect pivot where a public host returns 30x to an internal or
+        metadata endpoint that would otherwise bypass the initial URL check.
+
+        ``httpx.Client(follow_redirects=False)`` is retained so the library
+        never follows a redirect without our guard running first.
+        """
         try:
-            self._validate_url(url)
+            from urllib.parse import urljoin
+
             import httpx
             import trafilatura
 
-            # SSRF: do NOT follow redirects. ``_validate_url`` only vets the
-            # initial host; an attacker-controlled public host could 30x-redirect
-            # to a private/loopback/metadata endpoint, bypassing the guard. The
-            # documented v1 posture (docs/security.md §2) is "redirects not
-            # followed". A 3xx is surfaced via raise_for_status below.
+            self._validate_url(url)
+
+            # Per-hop SSRF re-validation (v2): follow redirects manually so
+            # every Location target is checked by _validate_url before the
+            # next request is issued. follow_redirects=False on the client
+            # ensures httpx never silently skips the guard.
+            current_url = url
+            visited: set[str] = set()
+            redirects = 0
+
             with httpx.Client(follow_redirects=False) as client:
-                resp = client.get(url, timeout=30)
+                resp = client.get(current_url, timeout=30)
+                visited.add(current_url)
+
+                while resp.status_code in {301, 302, 303, 307, 308}:
+                    redirects += 1
+                    if redirects > _MAX_REDIRECTS:
+                        raise ValueError(
+                            f"Too many redirects fetching {url} (max {_MAX_REDIRECTS})"
+                        )
+                    location = resp.headers.get("location", "")
+                    if not location:
+                        raise ValueError(f"Redirect from {current_url} missing Location header")
+                    next_url = urljoin(current_url, location)
+                    # Core per-hop guard: validate the redirect target BEFORE
+                    # following. Catches the pivot: public host -> 169.254.x
+                    # or any private/loopback/metadata endpoint.
+                    self._validate_url(next_url)
+                    if next_url in visited:
+                        raise ValueError(f"Redirect loop detected at {next_url}")
+                    visited.add(next_url)
+                    current_url = next_url
+                    resp = client.get(current_url, timeout=30)
+
             resp.raise_for_status()
             content = trafilatura.extract(resp.text) or resp.text[:4000]
         except Exception as exc:
-            logger.warning("URL fetch failed: %s — using placeholder", exc)
+            logger.warning("URL fetch failed: %s - using placeholder", exc)
             content = f"URL: {url}\n[fetch failed: {exc}]"
 
         data = MemoryCreate(
