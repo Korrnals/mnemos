@@ -58,8 +58,14 @@ cloud-metadata endpoints.
 - CIDR ranges: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
   `192.168.0.0/16`.
 
-**Followed redirects?** No (in v1; v2 should re-validate the redirect
-target against the same blocklist).
+**Followed redirects?** Yes, with a hard cap of 5 hops (v2 posture, T5-SSRF).
+Redirects are followed **manually** with `httpx.Client(follow_redirects=False)`.
+Every `Location` target is passed through `_validate_url` before the next
+request is issued (per-hop guard). This closes the open-redirect pivot where
+a public host returns 30x to an internal or metadata endpoint that would
+otherwise bypass the initial URL check. Exceeding the hop limit or a loop
+detection results in a fetch-failed placeholder (no exception surfaces to
+the caller).
 
 **Tests**: `tests/test_security.py::TestUrlValidation`. Includes
 `169.254.169.254` (AWS metadata) and the full RFC1918 ranges.
