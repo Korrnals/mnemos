@@ -40,6 +40,13 @@ class SearchConfig(BaseModel):
 class ApiConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8787
+    # T-CORS: browser cross-origin allow-list for mnemos-eyes
+    # Default is strict - CORS disabled, no origin permitted.
+    cors_enabled: bool = False
+    cors_allow_origins: list[str] = []
+    cors_allow_credentials: bool = False
+    cors_allow_methods: list[str] = ["GET", "POST", "DELETE"]
+    cors_allow_headers: list[str] = ["Authorization", "Content-Type"]
 
 
 class McpConfig(BaseModel):

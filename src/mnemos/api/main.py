@@ -6,15 +6,17 @@ Loopback-bound by default (127.0.0.1) — do not expose externally without auth.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
+from starlette.middleware.cors import CORSMiddleware
 
 from mnemos import __version__
-from mnemos.config import load_settings
+from mnemos.config import Settings, load_settings
 from mnemos.manager import MemoryManager
 from mnemos.models import (
     AgentRecallQuery,
@@ -28,7 +30,40 @@ from mnemos.models import (
 from mnemos.sessions import SessionStore
 from mnemos.sessions.api import router as sessions_router
 
+_logger = logging.getLogger(__name__)
 _manager: MemoryManager | None = None
+
+
+def _setup_cors(application: FastAPI, settings: Settings) -> None:
+    """Add CORSMiddleware when CORS is enabled and origins are configured.
+
+    Strict default: if cors_enabled=False or cors_allow_origins is empty,
+    no middleware is added and no cross-origin request is permitted.
+
+    Security invariant: allow_origins=["*"] combined with
+    allow_credentials=True is forbidden by the Fetch/CORS specification
+    (a credential-bearing wildcard response is rejected by all compliant
+    browsers and signals a misconfiguration).  This combination raises
+    ValueError at startup rather than silently shipping a broken config.
+    """
+    cfg = settings.api
+    if not cfg.cors_enabled or not cfg.cors_allow_origins:
+        return
+    if "*" in cfg.cors_allow_origins and cfg.cors_allow_credentials:
+        raise ValueError(
+            "CORS misconfiguration: cors_allow_origins=['*'] combined with "
+            "cors_allow_credentials=True is forbidden by the CORS spec. "
+            "Either restrict cors_allow_origins to explicit origins or set "
+            "cors_allow_credentials=False."
+        )
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=cfg.cors_allow_origins,
+        allow_credentials=cfg.cors_allow_credentials,
+        allow_methods=cfg.cors_allow_methods,
+        allow_headers=cfg.cors_allow_headers,
+    )
+    _logger.info("CORS enabled for %d origin(s)", len(cfg.cors_allow_origins))
 
 
 def get_manager() -> MemoryManager:
@@ -339,3 +374,18 @@ async def remove_rule(data: RuleRemoveRequest) -> dict[str, Any]:
 # outside the standard app (e.g. in a unit test that builds its own
 # TestClient).
 app.include_router(sessions_router, prefix="/v1")
+
+# Apply CORS middleware based on current settings.
+# Middleware must be registered before the first request (i.e., here at module
+# load time).  Starlette raises RuntimeError if add_middleware is called after
+# the app has started, so this CANNOT be moved into ``lifespan``.  Tests that
+# need custom CORS settings must call _setup_cors(test_app, settings) on their
+# own test_app before TestClient.
+#
+# MERGE CONTRACT with feat/api-auth (AuthMiddleware): Starlette applies
+# middleware in REVERSE order of registration (last added = outermost).  CORS
+# MUST be the outermost layer so that pre-flight ``OPTIONS`` requests are
+# answered before AuthMiddleware can reject them as unauthenticated.  When the
+# two branches merge, register CORS AFTER ``app.add_middleware(AuthMiddleware)``
+# (i.e. this call stays at the bottom, below the auth middleware).
+_setup_cors(app, load_settings())
