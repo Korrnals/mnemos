@@ -20,6 +20,25 @@ search:
 api:
   host: 127.0.0.1
   port: 8787
+  # --- Authentication (T-AUTH, ADR-0014) ---
+  auth_enabled: false             # set true to enforce token auth on all routes
+  totp_enabled: false             # set true to require TOTP 2FA after token login
+  # totp_master_key is env-only — set via MNEMOS_API__TOTP_MASTER_KEY; required when totp_enabled=true
+  session_ttl_sec: 28800          # session lifetime in seconds (range 300–86400; default 8 h)
+  session_pin_ip: false           # bind session token to the creation client IP
+  behind_tls_proxy: false         # set true when TLS terminates upstream (required for non-loopback bind)
+  trusted_proxies: []             # CIDRs whose X-Forwarded-For is trusted, e.g. ["10.0.0.0/8"]
+  # --- CORS (T-CORS, ADR-0014) ---
+  cors_enabled: false             # set true to enable CORS response headers
+  cors_allow_origins: []          # allowed origins, e.g. ["http://localhost:5173"]
+  cors_allow_credentials: false   # allow cookies/auth headers cross-origin (cannot combine with origins=["*"])
+  cors_allow_methods:             # HTTP methods exposed to cross-origin requests
+    - GET
+    - POST
+    - DELETE
+  cors_allow_headers:             # request headers exposed to cross-origin requests
+    - Authorization
+    - Content-Type
 
 telegram:
   bot_token: ""

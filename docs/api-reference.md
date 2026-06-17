@@ -16,6 +16,10 @@ mnemos serve --host 127.0.0.1 --port 8000
 
 > **Default bind is `127.0.0.1`.** Do not expose this port to a public network without putting a reverse proxy with authentication in front. See [security.md](security.md) for the threat model.
 
+> **Authentication** — when `api.auth_enabled=true`, all routes except `/health`, `/auth/login`, `/auth/verify`, `/docs`, `/redoc`, and `/openapi.json` require a valid session token (either `Authorization: Bearer <session>` header or the `mnemos_session` cookie; the header takes precedence). Use `POST /auth/login` to obtain a session. See the [Authentication](#authentication) section below.
+
+> **CORS** — disabled by default. When `api.cors_enabled=true`, the CORS middleware is registered as the outermost layer so OPTIONS preflight requests are answered before auth. Set `cors_allow_origins` to an explicit list of allowed origins; combining `["*"]` with `cors_allow_credentials=true` is rejected at startup.
+
 For the same capabilities over other transports, see [mcp-tools.md](mcp-tools.md) (MCP) and [cli-reference.md](cli-reference.md) (CLI). For higher-level context, see [architecture.md](architecture.md). The A2A contract is also documented in [a2a-sessions.md](a2a-sessions.md) (link to the design rationale).
 
 ---
@@ -39,8 +43,104 @@ For the same capabilities over other transports, see [mcp-tools.md](mcp-tools.md
 | `201` | Created (POST that inserts a row) |
 | `400` | Bad request (e.g. trying to publish a non-`processed` memory) |
 | `404` | Not found (memory_id, cluster_id, dlq_id, session_id, turn_id) |
+| `401` | Unauthorised (missing or invalid session token; only when `api.auth_enabled=true`) |
 | `422` | Unprocessable entity (Pydantic validation failure on the request body) |
 | `500` | Internal server error (see server logs) |
+| `503` | Auth not initialised (fail-closed: AuthMiddleware is active but config is absent) |
+
+---
+
+## Authentication
+
+> **Gated by `api.auth_enabled`.** All four endpoints are mounted at `/auth`. When `api.auth_enabled=false` (default) these routes still exist but the middleware does not enforce credentials on other routes.
+
+The auth model uses **opaque bearer tokens** (prefix `mnk_`) with optional TOTP 2FA. Tokens are stored as PBKDF2-HMAC-SHA256 digests; the plaintext is shown once at `mnemos auth token create` and never again. Sessions are issued after a successful login (+ TOTP verify when `api.totp_enabled=true`) and carry the same `Authorization: Bearer <session>` shape.
+
+### `POST /auth/login` — begin session
+
+**Request body**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `token` | string | **yes** | Opaque bearer token (`mnk_...`). |
+
+**Response 200 — TOTP disabled**
+
+```json
+{
+  "session": "mnk_session_...",
+  "expires_at": "2026-06-18T02:00:00+00:00"
+}
+```
+
+**Response 200 — TOTP enabled**
+
+```json
+{
+  "challenge_id": "chal_a1b2c3d4",
+  "ttl_sec": 120
+}
+```
+
+When TOTP is enabled the session is **not** issued here; call `POST /auth/verify` next with the `challenge_id` and the 6-digit TOTP code.
+
+**Errors**
+
+| Code | Cause |
+|------|-------|
+| `401` | Unknown token or disabled token. |
+| `429` | Rate limit exceeded (5 req / min per IP or per token hash). |
+
+### `POST /auth/verify` — complete TOTP challenge
+
+**Request body**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `challenge_id` | string | **yes** | From the `POST /auth/login` response. |
+| `code` | string | **yes** | 6-digit TOTP code. |
+
+**Response 200**
+
+```json
+{
+  "session": "mnk_session_...",
+  "expires_at": "2026-06-18T02:00:00+00:00"
+}
+```
+
+Also sets `Set-Cookie: mnemos_session=...; HttpOnly; Secure; SameSite=Strict`.
+
+**Errors**
+
+| Code | Cause |
+|------|-------|
+| `401` | Invalid or expired challenge, wrong TOTP code. |
+| `429` | Rate limit exceeded (5 req / min per challenge). |
+
+### `POST /auth/logout` — invalidate session
+
+Requires a valid session (header or cookie). Deletes the server-side session row and clears the cookie.
+
+**Response 200**
+
+```json
+{"ok": true}
+```
+
+### `GET /auth/me` — current session info
+
+Requires a valid session.
+
+**Response 200**
+
+```json
+{
+  "token_id": "tok_...",
+  "totp": false,
+  "expires_at": "2026-06-18T02:00:00+00:00"
+}
+```
 
 ---
 
@@ -70,6 +170,37 @@ Prometheus-style metrics (M5 observability). Currently returns the same shape as
   "by_status": {"raw": 5, "processing": 0, "processed": 12, "published": 120, "archived": 5},
   "vectors": 120
 }
+```
+
+---
+
+## Tags
+
+### `GET /tags` — list tags with counts
+
+Returns every distinct tag in the memories store with its usage count.
+
+**Response 200** — array of tag objects
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tag` | string | Full tag string (e.g. `project:mnemos`). |
+| `count` | int | Number of memories carrying this tag. |
+
+Sorted by `count` descending; ties are broken by `tag` ascending (alphabetical).
+
+**Example**
+
+```bash
+curl -s http://127.0.0.1:8000/tags
+```
+
+```json
+[
+  {"tag": "project:mnemos", "count": 142},
+  {"tag": "agent:tech-writer", "count": 58},
+  {"tag": "gcw:learning", "count": 41}
+]
 ```
 
 ---
@@ -633,8 +764,8 @@ npx @openapitools/openapi-generator-cli generate \
 - [architecture.md](architecture.md) — system shape and data model
 - [a2a-sessions.md](a2a-sessions.md) — A2A contract and design rationale
 - [tag-contract.md](tag-contract.md) — M2 schema enforced by `POST /memories`
-- [security.md](security.md) — SSRF guard, secrets hygiene, request-boundary rules
+- [security.md](security.md) — SSRF guard, secrets hygiene, auth model, request-boundary rules
 
 ---
 
-_Last updated: 2026-06-16_
+_Last updated: 2026-06-17_

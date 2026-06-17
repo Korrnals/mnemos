@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Token auth + TOTP 2FA (ADR-0014)** — opt-in `AuthMiddleware` gated by
+  `api.auth_enabled`. Four new endpoints (`POST /auth/login`,
+  `POST /auth/verify`, `POST /auth/logout`, `GET /auth/me`) support opaque
+  bearer tokens and per-token TOTP (RFC 6238 via `pyotp`). New `ApiConfig`
+  keys: `auth_enabled`, `totp_enabled`, `totp_master_key` (env-only via
+  `MNEMOS_API__TOTP_MASTER_KEY`), `session_ttl_sec`, `session_pin_ip`,
+  `behind_tls_proxy`, `trusted_proxies`. See
+  [docs/api-reference.md](docs/api-reference.md#authentication) and ADR-0014.
+- **CORS support** — new `ApiConfig` keys: `cors_enabled`,
+  `cors_allow_origins`, `cors_allow_credentials`, `cors_allow_methods`,
+  `cors_allow_headers`. CORS middleware is the outermost layer so OPTIONS
+  preflight is answered before auth. Combining `allow_origins=["*"]` with
+  `allow_credentials=True` raises `ValueError` at startup (forbidden by the
+  Fetch/CORS spec). See ADR-0014.
+- **`GET /tags`** — returns the list of distinct tags with usage counts,
+  sorted by count descending then tag ascending as a tie-break.
+- **MCP tool dispatch smoke tests** — MCP tool dispatch / routing now has
+  smoke-test coverage.
+
+### Security
+
+- **PBKDF2 token hashing** — bearer tokens are stored as PBKDF2-HMAC-SHA256
+  digests (600 000 iterations, fixed salt `mnemos.api.auth.fernet.v1`);
+  plaintext is shown once at creation and never persisted. (ADR-0014)
+- **Fail-closed auth middleware** — `AuthMiddleware` returns HTTP 503
+  `{"detail": "Auth not initialised"}` when the API config object is absent,
+  rather than silently allowing through. (ADR-0014)
+- **Trusted-proxy XFF gating** — `X-Forwarded-For` is honoured for
+  rate-limit keying and session-IP pinning only when the direct peer's IP
+  falls inside a configured `trusted_proxies` CIDR; XFF headers from
+  untrusted peers are ignored entirely. (ADR-0014)
+- **TOTP replay prevention** — a per-token `totp_last_step` column records
+  the time-step of the last accepted TOTP code; a subsequent code is rejected
+  unless its time-step strictly exceeds the recorded value. (ADR-0014)
+- **CLI non-loopback bind guard** — `mnemos serve` exports
+  `MNEMOS_API__HOST` and `MNEMOS_API__PORT` before launching uvicorn; the
+  worker's startup guard refuses a non-loopback bind unless
+  `api.auth_enabled=true`. (ADR-0014)
+- **Obfuscated-IP / userinfo SSRF regression coverage** — SSRF guard v2
+  adds regression tests for decimal, octal, and hex encodings of loopback
+  and `169.254.169.254` (AWS / GCP metadata) addresses and for `user@host`
+  userinfo masking on redirects; all encodings are blocked via
+  `getaddrinfo` resolution before the request is issued. (ADR-0009)
+
 ## [0.2.1] — 2026-06-17
 
 ### Fixed

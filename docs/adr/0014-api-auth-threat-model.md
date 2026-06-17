@@ -164,7 +164,7 @@ the "rate-limit bypass via forged header" class.
 | T3 | **CSRF (browser SPA)** | mnemos-eyes runs in a browser; another tab POSTs to the API | Session cookie is `SameSite=Strict`; **state-changing endpoints additionally require the `Authorization: Bearer <session>` header**, which a cross-origin attacker cannot read or set on a cookie-only request. Cookie alone is insufficient for mutations |
 | T4 | **Brute force on TOTP** | Attacker has stolen the bearer, guesses 6 digits | Rate limit + 3-failure auto-disable of the token |
 | T5 | **Brute force on bearer tokens** | Attacker enumerates 256-bit space | Computationally infeasible; rate limit is belt-and-braces |
-| T6 | **Replay of TOTP code** | Attacker captures a verify request | `challenge_id` is single-use server-side; `pyotp.verify` rejects already-used codes within the window via the challenge invalidation |
+| T6 | **Replay of TOTP code** | Attacker captures a verify request | `challenge_id` is single-use server-side; replay of a code within its validity window is additionally blocked by the per-token `totp_last_step` column (a candidate code's time-step must strictly exceed the last accepted step). See "Implementation notes — as built". |
 | T7 | **Replay of session token** | Attacker captures an authenticated request | TLS on remote prevents capture; session bound to creation IP (optional, configurable `api.session_pin_ip`) |
 | T8 | **SSRF (recap)** | `mnemos_ingest_url` | Already mitigated, ADR-0009 + ADR-0012 |
 | T9 | **CORS bypass** | Malicious site fetches user data | Allow-list (T-CORS) is **defense in depth**, not a security boundary. T3 mitigation is the real defense |
@@ -186,6 +186,65 @@ Therefore the auth layer (this ADR) **never relies on CORS for security**.
 Every state-changing endpoint independently requires `Authorization: Bearer
 <session>`. CORS becomes useful only to reduce noise and to make accidental
 cross-origin reads fail loudly in development.
+
+## Implementation notes — as built (`integration/backend-mvp`)
+
+This subsection records the specific implementation choices made during
+T-AUTH delivery. Where the ADR said "PBKDF2" or "constant-time" without
+specifying parameters, these are the settled values.
+
+### Token hashing
+
+Tokens are hashed with **PBKDF2-HMAC-SHA256 at 600 000 iterations** using
+the fixed salt string `mnemos.api.auth.fernet.v1` (UTF-8 encoded). The
+iteration count follows the OWASP 2024 recommendation for PBKDF2-HMAC-SHA256.
+The hash is stored as a hex digest in `auth_tokens.token_sha256`.
+
+### Master-key validation at startup
+
+An empty `api.totp_master_key` when `api.totp_enabled=true` raises a
+`ValueError` at process startup, preventing silent TOTP secret exposure.
+The check is part of `ApiConfig` model validation (Pydantic `@model_validator`
+or equivalent) so the server never reaches the listen loop in an insecure
+state.
+
+### TOTP replay prevention
+
+A `totp_last_step` integer column was added to `auth_tokens`. It stores the
+TOTP time-step index (Unix timestamp // 30) of the last accepted code. A
+new code is accepted only when `current_step > totp_last_step`; equality
+(same window) is rejected. The column is `NULL` until the first successful
+TOTP verification. This is stricter than `pyotp.verify(valid_window=1)`
+alone, which would accept the same code twice within its window.
+
+### Fail-closed middleware
+
+`AuthMiddleware` accesses `request.state.api_config` (injected at
+application startup) to determine whether auth is active. If the attribute
+is absent — which can happen only due to a startup ordering bug — the
+middleware returns **HTTP 503** `{"detail": "Auth not initialised"}` for
+every protected route rather than silently allowing the request through.
+This is a **fail-closed** posture consistent with ADR-0013's production
+hardening principles.
+
+### X-Forwarded-For gating
+
+`X-Forwarded-For` is consumed **only** when the direct peer's IP (from
+`request.client.host`) is covered by a CIDR in `api.trusted_proxies`. If
+`trusted_proxies` is empty (the default), XFF is always ignored and the
+raw client IP is used for rate-limit keying and session-IP pinning. This
+closes the "rate-limit bypass via forged XFF" class described in the STRIDE
+table (T7).
+
+### CLI environment propagation
+
+`mnemos serve` sets `MNEMOS_API__HOST` and `MNEMOS_API__PORT` in the OS
+environment before `uvicorn.run(...)` (or the equivalent subprocess exec).
+The worker's `@app.on_event("startup")` guard reads these values and calls
+`sys.exit(1)` with an explanatory message if the bind address is non-loopback
+and `api.auth_enabled` is `False`. This mirrors the design intent described
+in the Decision section but adds the concrete environment-variable mechanism
+rather than relying solely on in-process config validation.
 
 ## Implementation contract for T-AUTH
 
