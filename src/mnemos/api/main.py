@@ -357,6 +357,14 @@ app.include_router(sessions_router, prefix="/v1")
 # Apply CORS middleware based on current settings.
 # Middleware must be registered before the first request (i.e., here at module
 # load time).  Starlette raises RuntimeError if add_middleware is called after
-# the app has started.  Tests that need custom CORS settings must call
-# _setup_cors(test_app, settings) on their own test_app before TestClient.
+# the app has started, so this CANNOT be moved into ``lifespan``.  Tests that
+# need custom CORS settings must call _setup_cors(test_app, settings) on their
+# own test_app before TestClient.
+#
+# MERGE CONTRACT with feat/api-auth (AuthMiddleware): Starlette applies
+# middleware in REVERSE order of registration (last added = outermost).  CORS
+# MUST be the outermost layer so that pre-flight ``OPTIONS`` requests are
+# answered before AuthMiddleware can reject them as unauthenticated.  When the
+# two branches merge, register CORS AFTER ``app.add_middleware(AuthMiddleware)``
+# (i.e. this call stays at the bottom, below the auth middleware).
 _setup_cors(app, load_settings())
