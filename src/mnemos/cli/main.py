@@ -184,11 +184,18 @@ def serve(
     config: str = ConfigOption,
 ) -> None:
     """Start the Mnemos HTTP API server."""
+    import os
+
     import uvicorn
 
     settings = load_settings(config)
     h = host or settings.api.host
     p = port or settings.api.port
+    # Propagate effective bind to the app process so the startup guard and
+    # AuthMiddleware see the real host/port (CLI overrides must reach
+    # load_settings() inside the worker - finding auth-1).
+    os.environ["MNEMOS_API__HOST"] = h
+    os.environ["MNEMOS_API__PORT"] = str(p)
     uvicorn.run(
         "mnemos.api.main:app",
         host=h,

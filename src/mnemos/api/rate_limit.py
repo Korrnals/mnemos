@@ -11,21 +11,18 @@ from __future__ import annotations
 from slowapi import Limiter
 from starlette.requests import Request
 
+from mnemos.api.client_ip import resolve_client_ip
+
 
 def _rate_key(request: Request) -> str:
     """Key function for slowapi.
 
-    Uses ``X-Forwarded-For`` only when ``api.trusted_proxies`` is explicitly
-    configured (ADR-0014 §rate-limiting).  Falls back to the ASGI-level
-    ``request.client.host``.
+    XFF is honoured only when the immediate peer is inside a configured
+    ``api.trusted_proxies`` CIDR; otherwise the peer IP itself is used
+    (finding auth-4 - untrusted peers must not be able to spoof XFF).
     """
     api_config = getattr(getattr(request.app, "state", None), "api_config", None)
-    if api_config is not None and api_config.trusted_proxies:
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()
-    client = request.client
-    return client.host if client else "unknown"
+    return resolve_client_ip(request, api_config)
 
 
 limiter: Limiter = Limiter(key_func=_rate_key)

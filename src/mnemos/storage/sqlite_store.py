@@ -343,7 +343,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     expires_at            TEXT,
     disabled_at           TEXT,
     failure_count         INTEGER NOT NULL DEFAULT 0,
-    totp_failure_count    INTEGER NOT NULL DEFAULT 0
+    totp_failure_count    INTEGER NOT NULL DEFAULT 0,
+    totp_last_step        INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS auth_sessions (

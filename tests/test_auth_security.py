@@ -451,3 +451,209 @@ class TestTotpSecretStorage:
             assert result2 == totp_secret
         finally:
             store.close()
+
+
+# ---------------------------------------------------------------------------
+# auth-1: CLI host/port env propagation reaches the startup guard
+# ---------------------------------------------------------------------------
+
+
+class TestCliHostPropagation:
+    def test_env_host_override_triggers_startup_guard(self, monkeypatch):
+        """Setting MNEMOS_API__HOST=0.0.0.0 (as the CLI now does) must cause
+        load_settings() to see a non-loopback bind, so the startup guard
+        SystemExits when auth is disabled (finding auth-1)."""
+        from mnemos.config import load_settings as _load_settings
+
+        monkeypatch.setenv("MNEMOS_API__HOST", "0.0.0.0")
+        monkeypatch.delenv("MNEMOS_API__AUTH_ENABLED", raising=False)
+        monkeypatch.delenv("MNEMOS_API__TOTP_ENABLED", raising=False)
+        monkeypatch.delenv("MNEMOS_API__BEHIND_TLS_PROXY", raising=False)
+        # Force fresh load (no config.yaml in cwd that overrides)
+        settings = _load_settings(config_path="/nonexistent/path-for-test.yaml")
+        assert settings.api.host == "0.0.0.0"
+        with pytest.raises(SystemExit) as exc_info:
+            _check_non_loopback_auth(settings.api)
+        assert exc_info.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# auth-3: login failure increments + token lockout via /auth/login
+# ---------------------------------------------------------------------------
+
+
+class TestLoginFailureLockout:
+    def test_repeated_bad_login_locks_token(self, tmp_settings):
+        """Finding auth-3: a bad bearer attempt on a real token_id must trip
+        the login-failure counter. Combined with the existing
+        ``LOGIN_LOCKOUT_THRESHOLD`` enforcement in
+        ``increment_login_failure``, that is sufficient to bound brute-force
+        attempts on a known token.
+
+        We exercise the HTTP path within the per-minute rate-limit budget
+        (5/min on /auth/login) to prove the endpoint wires the failure
+        accounting, then assert the store-level lockout fires at threshold.
+        """
+        from mnemos.api.auth_store import LOGIN_LOCKOUT_THRESHOLD
+
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            token_id, plaintext = store.create_token()
+            # Make the token inactive so login takes the failure-path
+            store.revoke_token(token_id)
+
+            # 3 HTTP attempts (under the 5/min rate-limit budget) - each
+            # one must take the auth-3 failure-increment branch.
+            for _ in range(3):
+                r = tc.post("/auth/login", json={"token": plaintext})
+                assert r.status_code == 401
+
+            row = store.get_token_by_id(token_id)
+            assert row is not None
+            assert int(row["failure_count"]) == 3, (
+                "auth-3 wiring broken: /auth/login did not increment failure_count"
+            )
+
+            # Continue past threshold via the store to confirm lockout fires.
+            for _ in range(LOGIN_LOCKOUT_THRESHOLD - 3):
+                store.increment_login_failure(token_id)
+            row = store.get_token_by_id(token_id)
+            assert row is not None
+            assert int(row["failure_count"]) >= LOGIN_LOCKOUT_THRESHOLD
+            assert not store.is_token_active(row)
+        _cleanup(mgr)
+
+
+# ---------------------------------------------------------------------------
+# auth-4: rate-limit XFF spoof from untrusted peer is ignored
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimitXffTrust:
+    def test_untrusted_peer_xff_ignored(self):
+        """Finding auth-4: when the immediate peer is NOT inside
+        ``trusted_proxies``, X-Forwarded-For must not change the rate-limit
+        key (otherwise a remote attacker pegs the bucket of an arbitrary
+        IP)."""
+
+        from starlette.datastructures import Address, Headers
+
+        from mnemos.api.rate_limit import _rate_key
+
+        # Trusted proxy CIDR is 10.0.0.0/8; the actual ASGI peer is 1.2.3.4
+        api_cfg = ApiConfig(trusted_proxies=["10.0.0.0/8"])
+        request = MagicMock()
+        request.app.state.api_config = api_cfg
+        request.client = Address("1.2.3.4", 12345)
+        request.headers = Headers({"X-Forwarded-For": "8.8.8.8"})
+        # Peer is untrusted => XFF must be ignored, key == peer
+        assert _rate_key(request) == "1.2.3.4"
+
+        # Now the peer IS trusted => XFF wins
+        request.client = Address("10.0.0.5", 12345)
+        assert _rate_key(request) == "8.8.8.8"
+
+
+# ---------------------------------------------------------------------------
+# auth-5: TOTP code replay rejected within valid_window
+# ---------------------------------------------------------------------------
+
+
+class TestTotpReplay:
+    def test_totp_code_cannot_be_reused(self, tmp_settings):
+        """Finding auth-5: the same TOTP code (and any older one inside the
+        verify window) must be rejected once it has been accepted."""
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        master_key = "replay-test-master-key-XYZ"
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            token_id, plaintext = store.create_token()
+            totp_secret = pyotp.random_base32(32)
+            encrypted = encrypt_totp_secret(totp_secret, master_key)
+            store.set_totp_secret(token_id, encrypted)
+
+            import mnemos.api.auth as auth_mod
+
+            orig = auth_mod.load_settings
+
+            def patch(path=None):  # type: ignore[misc]
+                s = Settings(
+                    mnemos={
+                        "vault_path": str(tmp_settings.mnemos.vault_path),
+                        "data_dir": str(tmp_settings.mnemos.data_dir),
+                        "db_name": tmp_settings.mnemos.db_name,
+                    },
+                    embedding={"provider": "onnx"},
+                    api={"host": "127.0.0.1", "port": 8787, "totp_master_key": master_key},
+                )
+                s.resolve_paths()
+                return s
+
+            auth_mod.load_settings = patch  # type: ignore[assignment]
+            try:
+                # First verify: succeed
+                r1 = tc.post("/auth/login", json={"token": plaintext})
+                cid1 = r1.json()["challenge_id"]
+                code = pyotp.TOTP(totp_secret).now()
+                r2 = tc.post("/auth/verify", json={"challenge_id": cid1, "code": code})
+                assert r2.status_code == 200
+                assert store.get_totp_last_step(token_id) is not None
+
+                # Issue a fresh challenge and replay the SAME code
+                r3 = tc.post("/auth/login", json={"token": plaintext})
+                cid2 = r3.json()["challenge_id"]
+                r4 = tc.post("/auth/verify", json={"challenge_id": cid2, "code": code})
+                assert r4.status_code == 401
+                assert "already used" in r4.json()["detail"].lower()
+            finally:
+                auth_mod.load_settings = orig  # type: ignore[assignment]
+        _cleanup(mgr)
+
+
+# ---------------------------------------------------------------------------
+# auth-6: session pinning uses the client IP from XFF, not the proxy
+# ---------------------------------------------------------------------------
+
+
+class TestSessionPinningBehindProxy:
+    def test_pinning_uses_xff_when_behind_trusted_proxy(self):
+        """Finding auth-6: when ``behind_tls_proxy`` is True and the peer is a
+        trusted proxy, the resolved client IP must be the XFF entry, not the
+        proxy's own address. Session pinning would otherwise be a no-op."""
+        from starlette.datastructures import Address, Headers
+
+        from mnemos.api.client_ip import resolve_client_ip
+
+        api_cfg = ApiConfig(
+            behind_tls_proxy=True,
+            trusted_proxies=["10.0.0.0/8"],
+        )
+        request = MagicMock()
+        request.client = Address("10.0.0.5", 12345)
+        request.headers = Headers({"X-Forwarded-For": "203.0.113.42, 10.0.0.5"})
+        assert resolve_client_ip(request, api_cfg) == "203.0.113.42"
+
+        # Peer not in trusted_proxies => XFF is untrusted, return peer
+        request.client = Address("198.51.100.7", 12345)
+        assert resolve_client_ip(request, api_cfg) == "198.51.100.7"
+
+
+# ---------------------------------------------------------------------------
+# auth-8: empty master key is refused
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyMasterKey:
+    def test_encrypt_with_empty_master_key_raises(self):
+        """Finding auth-8: an empty master key must not silently derive a
+        publicly known Fernet key."""
+        secret = pyotp.random_base32(32)
+        with pytest.raises(ValueError, match="non-empty"):
+            encrypt_totp_secret(secret, "")
+
+    def test_fernet_with_empty_master_key_raises(self):
+        from mnemos.api.auth import _fernet
+
+        with pytest.raises(ValueError, match="non-empty"):
+            _fernet("")

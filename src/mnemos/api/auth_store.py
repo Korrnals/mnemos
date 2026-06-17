@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     expires_at            TEXT,
     disabled_at           TEXT,
     failure_count         INTEGER NOT NULL DEFAULT 0,
-    totp_failure_count    INTEGER NOT NULL DEFAULT 0
+    totp_failure_count    INTEGER NOT NULL DEFAULT 0,
+    totp_last_step        INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -85,7 +86,20 @@ class AuthStore:
         self._conn.execute("PRAGMA foreign_keys=ON")
         with self._lock:
             self._conn.executescript(_AUTH_DDL)
+            self._ensure_columns()
             self._conn.commit()
+
+    def _ensure_columns(self) -> None:
+        """Idempotently add columns introduced after the initial DDL.
+
+        ``CREATE TABLE IF NOT EXISTS`` does NOT add new columns to an
+        existing table, so columns added in later revisions need an
+        explicit ALTER on first open.
+        """
+        cur = self._conn.execute("PRAGMA table_info(auth_tokens)")
+        existing = {row["name"] for row in cur.fetchall()}
+        if "totp_last_step" not in existing:
+            self._conn.execute("ALTER TABLE auth_tokens ADD COLUMN totp_last_step INTEGER")
 
     # ── Token management ──────────────────────────────────────────────────────
 
@@ -267,6 +281,28 @@ class AuthStore:
             self._conn.execute(
                 "UPDATE auth_tokens SET totp_secret_encrypted = NULL WHERE token_id = ?",
                 (token_id,),
+            )
+            self._conn.commit()
+
+    def get_totp_last_step(self, token_id: str) -> int | None:
+        """Return the last TOTP step index accepted for this token (auth-5)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT totp_last_step FROM auth_tokens WHERE token_id = ?",
+                (token_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        value = row["totp_last_step"]
+        return int(value) if value is not None else None
+
+    def set_totp_last_step(self, token_id: str, step: int) -> None:
+        """Record the last successfully verified TOTP step (auth-5 replay guard)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE auth_tokens SET totp_last_step = ? WHERE token_id = ?",
+                (int(step), token_id),
             )
             self._conn.commit()
 

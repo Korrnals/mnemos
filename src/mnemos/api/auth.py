@@ -16,16 +16,24 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import time
 from typing import Any
 
 import pyotp
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from mnemos.api.auth_store import AuthStore
+from mnemos.api.auth_store import (
+    LOGIN_LOCKOUT_THRESHOLD,
+    TOTP_LOCKOUT_THRESHOLD,
+    AuthStore,
+)
+from mnemos.api.client_ip import resolve_client_ip
 from mnemos.api.rate_limit import limiter
-from mnemos.config import load_settings
+from mnemos.config import ApiConfig, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +54,32 @@ class VerifyRequest(BaseModel):
 
 # ── Crypto helpers ────────────────────────────────────────────────────────────
 
+# Fixed application salt for KDF (finding auth-7). The master key is the
+# real secret; a fixed salt is acceptable here because key derivation must
+# be DETERMINISTIC - the same master key has to decrypt previously stored
+# TOTP secrets across process restarts. The KDF still raises the cost of
+# brute-forcing a weak master key from a stolen ciphertext by ~600k SHA256
+# rounds versus the previous single SHA256.
+_FERNET_KDF_SALT = b"mnemos.api.auth.fernet.v1"
+_FERNET_KDF_ITERATIONS = 600_000
+
 
 def _fernet(master_key: str) -> Fernet:
-    """Derive a Fernet key from the master key string via SHA-256."""
-    key_bytes = hashlib.sha256(master_key.encode()).digest()
+    """Derive a Fernet key from the master key string via PBKDF2-HMAC-SHA256.
+
+    Raises ``ValueError`` on an empty master key (finding auth-8) - silently
+    deriving a key from "" would let a misconfigured deployment encrypt
+    secrets with a publicly known key.
+    """
+    if not master_key:
+        raise ValueError("TOTP master key must be non-empty")
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=_FERNET_KDF_SALT,
+        iterations=_FERNET_KDF_ITERATIONS,
+    )
+    key_bytes = kdf.derive(master_key.encode())
     return Fernet(base64.urlsafe_b64encode(key_bytes))
 
 
@@ -76,9 +106,14 @@ def _get_auth_store(request: Request) -> AuthStore:
     return store
 
 
-def _get_client_ip(request: Request) -> str:
-    client = request.client
-    return client.host if client else "unknown"
+def _get_client_ip(request: Request, api_cfg: ApiConfig | None = None) -> str:
+    """Resolve the request's trusted client IP for session pinning (auth-6).
+
+    Honours ``api.trusted_proxies`` + ``X-Forwarded-For`` only when the
+    immediate peer is itself a trusted proxy - otherwise the peer IP is
+    used. Returns ``"unknown"`` only when no peer is available at all.
+    """
+    return resolve_client_ip(request, api_cfg)
 
 
 def _session_from_request(request: Request) -> str | None:
@@ -112,7 +147,15 @@ async def login(
     token_row = store.get_token_by_hash(sha256)
 
     if token_row is None or not store.is_token_active(token_row):
-        # Constant-time-ish rejection — no timing oracle on hash vs. active check.
+        # Finding auth-3: record the failure and trigger lockout when the
+        # bearer hash matches a real token. Unknown-token attempts cannot
+        # be keyed (no token_id) - that is an accepted limitation.
+        if token_row is not None:
+            token_id = str(token_row["token_id"])
+            count = store.increment_login_failure(token_id)
+            if count >= LOGIN_LOCKOUT_THRESHOLD:
+                logger.warning("auth.login: lockout triggered for token_id=[REDACTED]")
+        # Constant-time-ish rejection - no timing oracle on hash vs. active check.
         raise HTTPException(status_code=401, detail="Invalid or inactive token")
 
     token_id = str(token_row["token_id"])
@@ -125,7 +168,7 @@ async def login(
         return {"challenge_id": challenge_id, "ttl_sec": 120}
 
     # No TOTP — issue session directly (loopback / auth-only mode)
-    client_ip = _get_client_ip(request) if settings.session_pin_ip else None
+    client_ip = _get_client_ip(request, settings) if settings.session_pin_ip else None
     session_plaintext, expires_at = store.create_session(
         token_id=token_id,
         ttl_sec=settings.session_ttl_sec,
@@ -176,20 +219,36 @@ async def verify(
         raise HTTPException(status_code=500, detail="TOTP configuration error")
 
     totp = pyotp.TOTP(totp_secret)
+    # Finding auth-5: defeat replay within ``valid_window`` by tracking the
+    # step index of the last accepted code. ``totp.verify`` checks the
+    # current step +/- ``valid_window``; once it accepts, we record the
+    # current step and refuse any subsequent code whose candidate step is
+    # less-or-equal. Using the current step (not the matched step) is a
+    # safe conservative choice: it forecloses replay of the just-used code
+    # AND of any older code still inside the window.
     if not totp.verify(payload.code, valid_window=1):
         attempts = store.increment_challenge_attempts(payload.challenge_id)
         if attempts >= 5:
             store.invalidate_challenge(payload.challenge_id)
         totp_failures = store.increment_totp_failure(token_id)
-        if totp_failures >= 3:
+        if totp_failures >= TOTP_LOCKOUT_THRESHOLD:
             logger.warning("auth.verify: TOTP brute-force lockout (token=[REDACTED])")
         raise HTTPException(status_code=401, detail="Invalid TOTP code")
+
+    current_step = int(time.time()) // 30
+    last_step = store.get_totp_last_step(token_id)
+    if last_step is not None and current_step <= last_step:
+        # The code (or an older one inside the window) has already been
+        # used. Treat as a verification failure and account for it.
+        store.increment_totp_failure(token_id)
+        raise HTTPException(status_code=401, detail="TOTP code already used")
+    store.set_totp_last_step(token_id, current_step)
 
     # Success
     store.invalidate_challenge(payload.challenge_id)
     store.reset_failures(token_id)
 
-    client_ip = _get_client_ip(request) if settings.session_pin_ip else None
+    client_ip = _get_client_ip(request, settings) if settings.session_pin_ip else None
     session_plaintext, expires_at = store.create_session(
         token_id=token_id,
         ttl_sec=settings.session_ttl_sec,

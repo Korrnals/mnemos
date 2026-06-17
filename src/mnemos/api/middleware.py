@@ -39,6 +39,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from mnemos.api.auth_store import AuthStore
+from mnemos.api.client_ip import resolve_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +89,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # 2. Load auth config from app state (set in lifespan)
         api_config = getattr(request.app.state, "api_config", None)
         if api_config is None:
-            # No config available — permissive fallback (test environments that
-            # skip lifespan setup).
-            return await _call_next(request)
+            # Fail closed - finding auth-2. Tests that build a bare app
+            # MUST attach an api_config to app.state (loopback ApiConfig is
+            # fine) so the middleware can make a trust-zone decision.
+            logger.error("auth: request rejected - app.state.api_config not initialised")
+            return _json_response('{"detail":"Auth not initialised"}', 503)
 
         # 3. Trust-zone resolution
         if not api_config.auth_enabled:
@@ -123,8 +126,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return _json_response('{"detail":"Auth service unavailable"}', 503)
 
         session = auth_store.get_session_by_hash(session_hash)
-        client = request.client
-        client_ip = client.host if client else None
+        # Finding auth-6: when behind a TLS proxy AND the peer is a trusted
+        # proxy, derive client IP from the validated X-Forwarded-For header
+        # rather than the proxy IP itself. Otherwise the pinned IP would be
+        # the proxy IP and pinning would be a no-op against an attacker
+        # behind the same proxy.
+        if api_config.behind_tls_proxy:
+            client_ip: str | None = resolve_client_ip(request, api_config)
+        else:
+            client = request.client
+            client_ip = client.host if client else None
 
         if session is None or not auth_store.is_session_valid(
             session,
