@@ -657,3 +657,228 @@ class TestEmptyMasterKey:
 
         with pytest.raises(ValueError, match="non-empty"):
             _fernet("")
+
+
+# ---------------------------------------------------------------------------
+# auth-9: disabled_at column is no longer type-overloaded
+# ---------------------------------------------------------------------------
+
+
+class TestRevokedColumnSplit:
+    """Finding auth-9: revocation lives in its own boolean column ``revoked``;
+    ``disabled_at`` is now exclusively an ISO-8601 timestamp (or NULL) used by
+    the temporary-lockout machinery."""
+
+    def test_revoke_sets_revoked_flag_not_literal(self, tmp_settings):
+        store = AuthStore(tmp_settings.db_path)
+        try:
+            token_id, _ = store.create_token()
+            assert store.revoke_token(token_id) is True
+            row = store.get_token_by_id(token_id)
+            assert row is not None
+            assert int(row["revoked"]) == 1
+            assert row["disabled_at"] != "permanent"
+            assert row["disabled_at"] is None
+            assert store.is_token_active(row) is False
+        finally:
+            store.close()
+
+    def test_temporary_lockout_still_works_and_auto_clears(self, tmp_settings):
+        """A timestamp in ``disabled_at`` triggers a 15-min lockout, then
+        auto-clears via ``is_token_active`` once the window elapses. ``revoked``
+        must remain 0 throughout."""
+        from datetime import UTC, datetime, timedelta
+
+        from mnemos.api.auth_store import LOCKOUT_MINUTES
+
+        store = AuthStore(tmp_settings.db_path)
+        try:
+            token_id, _ = store.create_token()
+            # Simulate a fresh lockout: disabled_at = now
+            now = datetime.now(UTC)
+            store._conn.execute(
+                "UPDATE auth_tokens SET disabled_at = ? WHERE token_id = ?",
+                (now.isoformat(), token_id),
+            )
+            store._conn.commit()
+            row = store.get_token_by_id(token_id)
+            assert row is not None
+            assert int(row["revoked"]) == 0
+            assert store.is_token_active(row) is False
+
+            # Simulate an expired lockout: disabled_at older than the window
+            expired = (now - timedelta(minutes=LOCKOUT_MINUTES + 1)).isoformat()
+            store._conn.execute(
+                "UPDATE auth_tokens SET disabled_at = ? WHERE token_id = ?",
+                (expired, token_id),
+            )
+            store._conn.commit()
+            row2 = store.get_token_by_id(token_id)
+            assert row2 is not None
+            assert store.is_token_active(row2) is True  # auto-clears
+            cleared = store.get_token_by_id(token_id)
+            assert cleared is not None
+            assert cleared["disabled_at"] is None
+            assert int(cleared["revoked"]) == 0
+        finally:
+            store.close()
+
+    def test_legacy_permanent_literal_migrated(self, tmp_settings):
+        """A legacy row written before auth-9 (``disabled_at = 'permanent'``)
+        must be migrated to ``revoked = 1, disabled_at = NULL`` on the next
+        ``AuthStore`` open. We simulate the pre-auth-9 schema (no ``revoked``
+        column) so ``_ensure_columns`` exercises the one-shot migration."""
+        import sqlite3
+        from datetime import UTC, datetime
+
+        db_path = tmp_settings.db_path
+        # Build the legacy auth_tokens schema by hand — no ``revoked`` column.
+        raw = sqlite3.connect(str(db_path))
+        raw.execute(
+            "CREATE TABLE auth_tokens ("
+            "token_id TEXT PRIMARY KEY, "
+            "token_sha256 TEXT NOT NULL UNIQUE, "
+            "name TEXT, "
+            "totp_secret_encrypted BLOB, "
+            "created_at TEXT NOT NULL, "
+            "expires_at TEXT, "
+            "disabled_at TEXT, "
+            "failure_count INTEGER NOT NULL DEFAULT 0, "
+            "totp_failure_count INTEGER NOT NULL DEFAULT 0, "
+            "totp_last_step INTEGER"
+            ")"
+        )
+        legacy_id = "tid_legacy01"
+        raw.execute(
+            "INSERT INTO auth_tokens "
+            "(token_id, token_sha256, name, created_at, disabled_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (legacy_id, "deadbeef" * 8, "legacy", datetime.now(UTC).isoformat(), "permanent"),
+        )
+        raw.commit()
+        raw.close()
+
+        # Open through AuthStore — _ensure_columns must ALTER and migrate.
+        store = AuthStore(db_path)
+        try:
+            row = store.get_token_by_id(legacy_id)
+            assert row is not None
+            assert int(row["revoked"]) == 1
+            assert row["disabled_at"] is None
+            assert store.is_token_active(row) is False
+        finally:
+            store.close()
+
+    def test_no_permanent_literal_in_runtime_paths(self):
+        """Defensive: the runtime comparison and write paths must not contain
+        the legacy ``'permanent'`` literal. The one-shot data migration in
+        ``_ensure_columns`` is allowed to reference it as a detector."""
+        import inspect
+
+        from mnemos.api.auth_store import AuthStore
+
+        for fn in (AuthStore.is_token_active, AuthStore.revoke_token):
+            src = inspect.getsource(fn)
+            assert "'permanent'" not in src
+            assert '"permanent"' not in src
+
+
+# ---------------------------------------------------------------------------
+# auth-12: absolute session lifetime cap
+# ---------------------------------------------------------------------------
+
+
+class TestAbsoluteSessionLifetime:
+    """Finding auth-12: a session is invalid once it is older than
+    ``MAX_SESSION_LIFETIME_SEC`` from ``created_at``, even if ``expires_at``
+    has been slid forward by ``touch_session``."""
+
+    def test_aged_session_invalid_even_with_future_expires(self, tmp_settings):
+        from datetime import UTC, datetime, timedelta
+
+        from mnemos.api.auth_store import MAX_SESSION_LIFETIME_SEC, hash_token
+
+        store = AuthStore(tmp_settings.db_path)
+        try:
+            token_id, _ = store.create_token()
+            plaintext, _ = store.create_session(token_id, ttl_sec=3600)
+            sha = hash_token(plaintext)
+
+            # Backdate created_at past the absolute cap; keep expires_at in
+            # the future to prove the cap wins over the sliding TTL.
+            now = datetime.now(UTC)
+            old_created = (now - timedelta(seconds=MAX_SESSION_LIFETIME_SEC + 60)).isoformat()
+            future_exp = (now + timedelta(hours=1)).isoformat()
+            store._conn.execute(
+                "UPDATE auth_sessions SET created_at = ?, expires_at = ? WHERE session_sha256 = ?",
+                (old_created, future_exp, sha),
+            )
+            store._conn.commit()
+
+            row = store.get_session_by_hash(sha)
+            assert row is not None
+            assert store.is_session_valid(row) is False
+        finally:
+            store.close()
+
+    def test_touch_session_clamps_to_absolute_cap(self, tmp_settings):
+        from datetime import UTC, datetime, timedelta
+
+        from mnemos.api.auth_store import MAX_SESSION_LIFETIME_SEC, hash_token
+
+        store = AuthStore(tmp_settings.db_path)
+        try:
+            token_id, _ = store.create_token()
+            plaintext, _ = store.create_session(token_id, ttl_sec=60)
+            sha = hash_token(plaintext)
+
+            # Backdate created_at to within 1 minute of the cap.
+            now = datetime.now(UTC)
+            created = now - timedelta(seconds=MAX_SESSION_LIFETIME_SEC - 60)
+            store._conn.execute(
+                "UPDATE auth_sessions SET created_at = ? WHERE session_sha256 = ?",
+                (created.isoformat(), sha),
+            )
+            store._conn.commit()
+
+            # Ask touch_session for a 1-hour slide; it must clamp.
+            store.touch_session(sha, ttl_sec=3600)
+            row = store.get_session_by_hash(sha)
+            assert row is not None
+            new_exp = datetime.fromisoformat(str(row["expires_at"]))
+            cap = created + timedelta(seconds=MAX_SESSION_LIFETIME_SEC)
+            assert new_exp <= cap + timedelta(seconds=1)
+
+            # Once we push created_at past the cap, the session is rejected
+            # even though expires_at was just refreshed.
+            store._conn.execute(
+                "UPDATE auth_sessions SET created_at = ? WHERE session_sha256 = ?",
+                ((now - timedelta(seconds=MAX_SESSION_LIFETIME_SEC + 5)).isoformat(), sha),
+            )
+            store._conn.commit()
+            row2 = store.get_session_by_hash(sha)
+            assert row2 is not None
+            assert store.is_session_valid(row2) is False
+        finally:
+            store.close()
+
+    def test_fresh_session_slides_normally(self, tmp_settings):
+        from datetime import datetime
+
+        from mnemos.api.auth_store import hash_token
+
+        store = AuthStore(tmp_settings.db_path)
+        try:
+            token_id, _ = store.create_token()
+            plaintext, expires_iso = store.create_session(token_id, ttl_sec=60)
+            sha = hash_token(plaintext)
+            before = datetime.fromisoformat(expires_iso)
+
+            store.touch_session(sha, ttl_sec=3600)
+            row = store.get_session_by_hash(sha)
+            assert row is not None
+            after = datetime.fromisoformat(str(row["expires_at"]))
+            assert after > before  # slid forward
+            assert store.is_session_valid(row) is True
+        finally:
+            store.close()

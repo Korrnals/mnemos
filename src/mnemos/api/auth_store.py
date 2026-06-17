@@ -27,6 +27,8 @@ LOGIN_LOCKOUT_THRESHOLD = 10
 TOTP_LOCKOUT_THRESHOLD = 3
 CHALLENGE_MAX_ATTEMPTS = 5
 CHALLENGE_TTL_SEC = 120
+# auth-12: absolute session cap (7 days) regardless of sliding refresh.
+MAX_SESSION_LIFETIME_SEC = 7 * 24 * 3600
 
 # DDL is idempotent — running it alongside _DB_SCHEMA in sqlite_store.py is safe.
 _AUTH_DDL = """
@@ -40,7 +42,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     disabled_at           TEXT,
     failure_count         INTEGER NOT NULL DEFAULT 0,
     totp_failure_count    INTEGER NOT NULL DEFAULT 0,
-    totp_last_step        INTEGER
+    totp_last_step        INTEGER,
+    revoked               INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -100,6 +103,17 @@ class AuthStore:
         existing = {row["name"] for row in cur.fetchall()}
         if "totp_last_step" not in existing:
             self._conn.execute("ALTER TABLE auth_tokens ADD COLUMN totp_last_step INTEGER")
+        if "revoked" not in existing:
+            self._conn.execute(
+                "ALTER TABLE auth_tokens ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0"
+            )
+            # auth-9 one-shot data migration: retire the legacy literal that
+            # used to overload disabled_at. Runs exactly once per database,
+            # right after the column is added.
+            self._conn.execute("UPDATE auth_tokens SET revoked = 1 WHERE disabled_at = 'permanent'")
+            self._conn.execute(
+                "UPDATE auth_tokens SET disabled_at = NULL WHERE disabled_at = 'permanent'"
+            )
 
     # ── Token management ──────────────────────────────────────────────────────
 
@@ -131,7 +145,7 @@ class AuthStore:
         """Return all tokens (hash and secret fields excluded)."""
         with self._lock:
             cur = self._conn.execute(
-                "SELECT token_id, name, created_at, expires_at, disabled_at, "
+                "SELECT token_id, name, created_at, expires_at, disabled_at, revoked, "
                 "failure_count, totp_failure_count "
                 "FROM auth_tokens ORDER BY created_at"
             )
@@ -160,9 +174,9 @@ class AuthStore:
     def is_token_active(self, token_row: dict[str, object]) -> bool:
         """Return ``True`` iff the token is neither permanently revoked nor
         currently in a temporary lockout, nor expired."""
-        disabled_at = token_row.get("disabled_at")
-        if disabled_at == "permanent":
+        if token_row.get("revoked"):
             return False
+        disabled_at = token_row.get("disabled_at")
         if disabled_at is not None:
             try:
                 disabled_dt = datetime.fromisoformat(str(disabled_at))
@@ -260,7 +274,7 @@ class AuthStore:
         """Permanently revoke a token.  Returns ``True`` if the row existed."""
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE auth_tokens SET disabled_at = 'permanent' WHERE token_id = ?",
+                "UPDATE auth_tokens SET revoked = 1 WHERE token_id = ?",
                 (token_id,),
             )
             self._conn.commit()
@@ -417,24 +431,50 @@ class AuthStore:
         client_ip: str | None = None,
         session_pin_ip: bool = False,
     ) -> bool:
-        """Return ``True`` iff the session is unexpired (and IP-pinned if configured)."""
+        """Return ``True`` iff the session is unexpired (and IP-pinned if configured).
+
+        auth-12: also rejects sessions older than ``MAX_SESSION_LIFETIME_SEC``
+        from ``created_at``, regardless of how often ``touch_session`` slid
+        ``expires_at`` forward.
+        """
         try:
             expires = datetime.fromisoformat(str(session_row["expires_at"]))
+            created = datetime.fromisoformat(str(session_row["created_at"]))
         except ValueError:
             return False
-        if datetime.now(UTC) > expires:
+        now = datetime.now(UTC)
+        if now > expires:
+            return False
+        if now > created + timedelta(seconds=MAX_SESSION_LIFETIME_SEC):
             return False
         return not session_pin_ip or client_ip is None or session_row.get("client_ip") == client_ip
 
     def touch_session(self, sha256_hex: str, ttl_sec: int) -> None:
-        """Slide the session TTL forward (refresh on each authenticated request)."""
-        new_expires = (datetime.now(UTC) + timedelta(seconds=ttl_sec)).isoformat()
-        now_iso = datetime.now(UTC).isoformat()
+        """Slide the session TTL forward (refresh on each authenticated request).
+
+        auth-12: the new ``expires_at`` is clamped so it can never exceed
+        ``created_at + MAX_SESSION_LIFETIME_SEC``.
+        """
+        now = datetime.now(UTC)
         with self._lock:
+            cur = self._conn.execute(
+                "SELECT created_at FROM auth_sessions WHERE session_sha256 = ?",
+                (sha256_hex,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return
+            try:
+                created = datetime.fromisoformat(str(row["created_at"]))
+            except ValueError:
+                return
+            absolute_cap = created + timedelta(seconds=MAX_SESSION_LIFETIME_SEC)
+            sliding = now + timedelta(seconds=ttl_sec)
+            new_expires = min(sliding, absolute_cap)
             self._conn.execute(
                 "UPDATE auth_sessions SET last_seen_at = ?, expires_at = ? "
                 "WHERE session_sha256 = ?",
-                (now_iso, new_expires, sha256_hex),
+                (now.isoformat(), new_expires.isoformat(), sha256_hex),
             )
             self._conn.commit()
 
