@@ -1,7 +1,9 @@
-.PHONY: help install test lint format typecheck security coverage clean verify security-reminder update-chromadb update-deps
+.PHONY: help install bootstrap check-venv test lint format typecheck security coverage clean verify security-reminder update-chromadb update-deps
 
 help:
 	@echo "Mnemos development commands"
+	@echo "  make bootstrap  - Create .venv and install project (editable) + dev extras"
+	@echo "  make check-venv - Verify .venv editable install resolves to ./src"
 	@echo "  make install    - Install with dev dependencies"
 	@echo "  make test       - Run pytest suite"
 	@echo "  make lint       - Run ruff linter"
@@ -51,6 +53,22 @@ coverage:
 
 verify: lint test security security-reminder
 	@echo "✅ All verification checks passed"
+
+bootstrap:
+	@echo "🔧 Creating .venv and installing mnemos (editable) + dev extras..."
+	python -m venv .venv
+	.venv/bin/python -m pip install --upgrade pip
+	.venv/bin/python -m pip install -e ".[dev]"
+	@echo "✅ Bootstrap complete — activate with: source .venv/bin/activate"
+
+check-venv:
+	@if [ -x .venv/bin/python ]; then \
+		.venv/bin/python -c "import mnemos, pathlib, sys; got=pathlib.Path(mnemos.__file__).resolve(); want=(pathlib.Path.cwd()/'src/mnemos/__init__.py').resolve(); sys.exit(0 if got == want else 1)" \
+			&& echo "✅ .venv editable install resolves to ./src" \
+			|| { echo '⚠️  .venv is stale: mnemos does not import from ./src (project moved or venv built elsewhere). Run: make bootstrap'; exit 1; }; \
+	else \
+		echo "ℹ️  No .venv found — run: make bootstrap"; \
+	fi
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache dist/ *.egg-info
