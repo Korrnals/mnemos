@@ -1,190 +1,186 @@
-# Mnemos — Архитектура системы
+# Mnemos — System Architecture
 
 **🌐 Language / Язык:** English · [Русский](../../ru/architecture/overview.md)
 
-## Обзор
+## Overview
 
-Mnemos — гибридная система долговременной памяти: личная база знаний + RAG-хранилище для AI-агентов. Единая память, доступная из CLI, Web UI, API, MCP-сервера, Telegram-бота и Obsidian.
+Mnemos is a hybrid long-term memory system: a personal knowledge base and
+RAG store for AI agents. Primary access surfaces: CLI, HTTP API, MCP server,
+and an Obsidian-compatible vault. A Web UI is planned as a separate project
+(mnemos-eyes).
 
-## Ключевые принципы
+## Core Principles
 
-- **Markdown-first**: человеко-читаемые заметки в формате Obsidian (YAML frontmatter + markdown)
-- **Семантический поиск**: vector embeddings поверх текстовых данных
-- **Гибридный поиск**: full-text search + vector similarity, ранжирование по релевантности
-- **Модульность**: ядро отделено от интерфейсов, каждый интерфейс — тонкий адаптер
-- **Local-first**: всё работает локально, без обязательных облачных зависимостей
-- **Расширяемость**: плагинная система для источников данных и интерфейсов
+- **Markdown-first**: human-readable notes in Obsidian format (YAML frontmatter + markdown)
+- **Semantic search**: vector embeddings over text data
+- **Hybrid search**: full-text search + vector similarity, relevance-ranked results
+- **Modularity**: core decoupled from interfaces; each interface is a thin adapter
+- **Local-first**: everything works locally, no mandatory cloud dependencies
+- **Extensibility**: plugin system for data sources and interfaces
 
 ---
 
-## Архитектура (слои)
+## Architecture (Layers)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    ИНТЕРФЕЙСЫ                            │
-│  ┌─────┐ ┌───────┐ ┌──────┐ ┌─────┐ ┌────────────────┐ │
-│  │ CLI │ │Web UI │ │ API  │ │ MCP │ │ Telegram Bot   │ │
-│  │Typer│ │Svelte │ │ REST │ │Srv  │ │ aiogram        │ │
-│  └──┬──┘ └───┬───┘ └──┬───┘ └──┬──┘ └───────┬────────┘ │
-│     │        │        │        │             │          │
-├─────┴────────┴────────┴────────┴─────────────┴──────────┤
-│                    FastAPI (Core API)                     │
-│            GET/POST /memories, /search, /ingest          │
-├──────────────────────────────────────────────────────────┤
-│                    ЯДРО (brain_core)                      │
+│                    INTERFACES                            │
+│  ┌─────┐  ┌──────────────────────┐  ┌──────┐  ┌─────┐  │
+│  │ CLI │  │  Web UI              │  │ API  │  │ MCP │  │
+│  │Typer│  │  (planned,           │  │ REST │  │ Srv │  │
+│  │     │  │   mnemos-eyes)       │  │      │  │     │  │
+│  └──┬──┘  └──────────┬───────────┘  └──┬───┘  └──┬──┘  │
+│     │               │               │          │       │
+├─────┴───────────────┴───────────────┴──────────┴───────┤
+│                    FastAPI (Core API)                    │
+│            GET/POST /memories, /search, /ingest         │
+├─────────────────────────────────────────────────────────┤
+│                    CORE (brain_core)                     │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ │
 │  │MemoryManager │ │ SearchEngine │ │IngestionPipeline │ │
 │  │  CRUD ops    │ │ hybrid search│ │  parse & embed   │ │
 │  └──────┬───────┘ └──────┬───────┘ └────────┬─────────┘ │
 │         │                │                   │           │
 ├─────────┴────────────────┴───────────────────┴──────────┤
-│                    ХРАНИЛИЩЕ                              │
+│                    STORAGE                               │
 │  ┌────────────────┐  ┌───────────────┐  ┌─────────────┐ │
 │  │ Obsidian Vault │  │  ChromaDB     │  │  SQLite     │ │
 │  │ (markdown)     │  │  (vectors)    │  │  (metadata) │ │
 │  └────────────────┘  └───────────────┘  └─────────────┘ │
-├──────────────────────────────────────────────────────────┤
-│                    EMBEDDING                              │
-│  sentence-transformers (local) / Ollama / OpenAI API     │
-└──────────────────────────────────────────────────────────┘
+├─────────────────────────────────────────────────────────┤
+│                    EMBEDDING                             │
+│  sentence-transformers (local) / Ollama / OpenAI API    │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Компоненты
+## Components
 
-### 1. Хранилище (Storage Layer)
+### 1. Storage Layer
 
-| Компонент | Назначение | Технология |
+| Component | Purpose | Technology |
 | --- | --- | --- |
-| Obsidian Vault | Человеко-читаемые заметки, markdown + frontmatter | Файловая система |
-| ChromaDB | Векторные эмбеддинги для семантического поиска | ChromaDB (persistent) |
-| SQLite | Метаданные, теги, связи, история, кэш | SQLite + aiosqlite |
+| Obsidian Vault | Human-readable notes, markdown + frontmatter | Filesystem |
+| ChromaDB | Vector embeddings for semantic search | ChromaDB (persistent) |
+| SQLite | Metadata, tags, relationships, history, cache | SQLite + aiosqlite |
 
-**Obsidian-совместимость**:
-- Каждая «память» — markdown-файл с YAML frontmatter (tags, source, created, etc.)
-- Поддержка `[[wiki-links]]` и тегов `#tag`
-- Vault-директория настраивается в конфиге
-- Файловый watcher отслеживает изменения и переиндексирует
+**Obsidian compatibility**:
+- Each "memory" is a markdown file with YAML frontmatter (tags, source, created, etc.)
+- Supports `[[wiki-links]]` and `#tag` notation
+- Vault directory is configurable
+- File watcher monitors changes and re-indexes
 
 ### 2. Embedding Layer
 
-- **По умолчанию**: `sentence-transformers/all-MiniLM-L6-v2` (быстро, ~80MB)
-- **Для русского**: `intfloat/multilingual-e5-base` или `cointegrated/rubert-tiny2`
-- **Опционально**: Ollama embeddings, OpenAI API
-- Embedding-провайдер настраивается через конфиг
-- Кэширование эмбеддингов для избежания повторных вычислений
+- **Default**: `sentence-transformers/all-MiniLM-L6-v2` (fast, ~80 MB)
+- **For Russian**: `intfloat/multilingual-e5-base` or `cointegrated/rubert-tiny2`
+- **Optional**: Ollama embeddings, OpenAI API
+- Embedding provider configured via config file
+- Embedding caching to avoid repeated computation
 
-### 3. Ядро (brain_core)
+### 3. Core (brain_core)
 
 #### MemoryManager
-- CRUD для записей памяти (create, read, update, delete)
-- Автоматическая генерация эмбеддингов при создании/обновлении
-- Синхронизация: markdown-файл ↔ ChromaDB ↔ SQLite
-- Теги, категории, приоритеты, TTL (время жизни записи)
+- CRUD for memory entries (create, read, update, delete)
+- Automatic embedding generation on create / update
+- Sync: markdown file ↔ ChromaDB ↔ SQLite
+- Tags, categories, priorities, TTL (entry lifetime)
 
 #### SearchEngine
-- **Семантический поиск**: vector similarity через ChromaDB
-- **Полнотекстовый поиск**: FTS5 через SQLite
-- **Гибридный поиск**: RRF (Reciprocal Rank Fusion) для объединения результатов
-- Фильтрация по тегам, датам, источникам, типам
+- **Semantic search**: vector similarity via ChromaDB
+- **Full-text search**: FTS5 via SQLite
+- **Hybrid search**: RRF (Reciprocal Rank Fusion) to combine results
+- Filtering by tags, dates, sources, types
 
 #### IngestionPipeline
-- Парсинг входящих данных из разных источников
-- Чанкинг длинных документов (RecursiveCharacterTextSplitter)
-- Дедупликация (по хешу контента + cosine similarity)
-- Автоматическое извлечение тегов и метаданных
+- Parsing incoming data from different sources
+- Chunking long documents (RecursiveCharacterTextSplitter)
+- Deduplication (by content hash + cosine similarity)
+- Automatic tag and metadata extraction
 
-### 4. Источники данных (Ingestors)
+### 4. Data Sources (Ingestors)
 
-| Источник | Метод | Формат |
+| Source | Method | Format |
 | --- | --- | --- |
-| Ручной ввод | CLI / API / Web | Текст / markdown |
+| Manual input | CLI / API | Text / Markdown |
 | Obsidian vault | File watcher (watchdog) | Markdown + frontmatter |
-| Веб-страницы | URL → trafilatura/BeautifulSoup | HTML → чистый текст |
-| Файлы | Загрузка через API | PDF, TXT, MD, DOCX |
-| Telegram | Бот (aiogram) → API | Сообщения, файлы |
-| LLM-чаты | MCP / экспорт | Диалоги |
+| Web pages | URL → trafilatura/BeautifulSoup | HTML → clean text |
+| Files | Upload via API | PDF, TXT, MD, DOCX |
+| LLM chats | MCP / export | Dialogues |
 
-### 5. Интерфейсы
+### 5. Interfaces
 
 #### CLI (Typer)
 ```bash
-brain add "Заметка о важном"                    # быстрое добавление
-brain add --file ./document.pdf                  # из файла
-brain search "как настроить nginx"               # семантический поиск
-brain search --tags python,devops --limit 10     # фильтрация
-brain ingest --url https://example.com           # парсинг URL
-brain list --recent 20                           # последние записи
-brain tags                                       # все теги
-brain sync                                       # полная переиндексация
-brain serve                                      # запуск API-сервера
+mnemos add "Note about something important" --tags project:mnemos agent:user gcw:learning   # quick add
+mnemos add --file ./document.pdf --tags project:mnemos agent:user gcw:learning              # from a file
+mnemos add --url https://example.com --tags project:research agent:user gcw:learning        # ingest a URL
+mnemos search "how to configure nginx"             # hybrid search (FTS5 + vector + RRF)
+mnemos search "CVE" --project mnemos --limit 20    # project-scoped search
+mnemos recall --agent tech-writer --limit 20       # recent entries for an agent (M3)
+mnemos stats                                       # store statistics
+mnemos serve                                       # start the HTTP API
+mnemos mcp-server                                  # start the MCP server (stdio)
 ```
 
 #### REST API (FastAPI)
 ```
-POST   /api/v1/memories          — создать запись
-GET    /api/v1/memories           — список (с пагинацией)
-GET    /api/v1/memories/{id}      — получить запись
-PUT    /api/v1/memories/{id}      — обновить
-DELETE /api/v1/memories/{id}      — удалить
-POST   /api/v1/search             — гибридный поиск
-POST   /api/v1/ingest             — загрузка/парсинг
-GET    /api/v1/tags               — список тегов
-POST   /api/v1/sync               — переиндексация
+POST   /api/v1/memories          — create entry
+GET    /api/v1/memories           — list (with pagination)
+GET    /api/v1/memories/{id}      — get entry
+PUT    /api/v1/memories/{id}      — update
+DELETE /api/v1/memories/{id}      — delete
+POST   /api/v1/search             — hybrid search
+POST   /api/v1/ingest             — upload / parse
+GET    /api/v1/tags               — list tags
+POST   /api/v1/sync               — re-index
 GET    /api/v1/health              — healthcheck
 ```
 
-#### MCP-сервер
-Инструменты для Copilot/LLM-агентов:
-- `brain_search` — семантический поиск по памяти
-- `brain_add` — добавить новую запись
-- `brain_get` — получить запись по ID
-- `brain_list_tags` — список тегов
-- `brain_ingest_url` — загрузить веб-страницу
+#### MCP Server
+Tools for Copilot / LLM agents:
+- `brain_search` — semantic search over memory
+- `brain_add` — add a new entry
+- `brain_get` — get entry by ID
+- `brain_list_tags` — list tags
+- `brain_ingest_url` — load a web page
 
-#### Telegram Bot (aiogram)
-- Отправить текст → сохранить как заметку
-- Отправить URL → парсить и сохранить
-- Отправить файл → извлечь текст и сохранить
-- `/search запрос` → семантический поиск
-- `/tags` → список тегов
-- `/recent` → последние записи
+#### Web UI (planned — mnemos-eyes)
 
-#### Web UI
-- Будет реализован позже (Svelte/React)
-- Dashboard: статистика, последние записи, облако тегов
-- Поиск с фильтрами
-- Редактор заметок
+A separate frontend project. Status: in development. Planned features:
+- Dashboard: statistics, recent entries, tag cloud
+- Search with filters
+- Note editor
 
 ---
 
-## Структура данных
+## Data Model
 
-### Memory (запись памяти)
+### Memory (entry)
 
 ```python
 class Memory:
     id: str              # UUID
-    content: str         # основной текст
-    title: str | None    # заголовок (авто или ручной)
-    tags: list[str]      # теги
-    source: str          # источник: manual, telegram, web, file, mcp, obsidian
+    content: str         # main text
+    title: str | None    # title (auto or manual)
+    tags: list[str]      # tags
+    source: str          # source: manual, web, file, mcp, obsidian
     source_url: str | None
     memory_type: str     # note, fact, snippet, bookmark, conversation
     created_at: datetime
     updated_at: datetime
     embedding: list[float] | None
-    metadata: dict       # дополнительные данные
-    file_path: str | None  # путь к markdown-файлу в vault
+    metadata: dict       # additional data
+    file_path: str | None  # path to markdown file in vault
 ```
 
-### Markdown-файл (Obsidian)
+### Markdown file (Obsidian)
 
 ```markdown
 ---
 id: 550e8400-e29b-41d4-a716-446655440000
-title: Настройка nginx reverse proxy
+title: Configuring nginx reverse proxy
 tags: [nginx, devops, linux]
 source: web
 source_url: https://example.com/nginx-guide
@@ -193,14 +189,14 @@ created: 2026-04-10T12:00:00
 updated: 2026-04-10T12:00:00
 ---
 
-# Настройка nginx reverse proxy
+# Configuring nginx reverse proxy
 
-Основной контент заметки...
+Main note content...
 ```
 
 ---
 
-## Конфигурация
+## Configuration
 
 ```yaml
 # config.yaml
@@ -216,15 +212,11 @@ embedding:
 
 search:
   default_limit: 20
-  hybrid_alpha: 0.7                  # вес семантического поиска (0=FTS, 1=vector)
+  hybrid_alpha: 0.7                  # semantic search weight (0=FTS, 1=vector)
 
 api:
   host: 0.0.0.0
   port: 8787
-
-telegram:
-  bot_token: ...
-  allowed_users: []                  # пустой = все
 
 mcp:
   transport: stdio                   # stdio | sse
@@ -232,32 +224,31 @@ mcp:
 
 ---
 
-## Путь развития
+## Roadmap
 
-### Фаза 1 — MVP ✦ (текущая)
-- [x] Архитектура и модели данных
+### Phase 1 — MVP ✦ (current)
+- [x] Architecture and data models
 - [ ] Core: MemoryManager + ChromaDB + SQLite
 - [ ] Embedding layer (sentence-transformers)
-- [ ] Гибридный поиск
+- [ ] Hybrid search
 - [ ] CLI (add, search, list, tags)
 - [ ] Obsidian vault sync (read/write)
 - [ ] REST API (FastAPI)
 
-### Фаза 2 — Интеграции
-- [ ] MCP-сервер для Copilot
-- [ ] Telegram-бот
+### Phase 2 — Integrations
+- [ ] MCP server for Copilot
 - [ ] Web scraping (ingest URLs)
-- [ ] PDF/DOCX парсинг
+- [ ] PDF/DOCX parsing
 
-### Фаза 3 — Продвинутые фичи
-- [ ] Web UI
-- [ ] Автокатегоризация (LLM-powered)
-- [ ] Граф связей между записями
-- [ ] Автосаммаризация длинных документов
-- [ ] Периодическая консолидация (merge похожих записей)
-- [ ] Экспорт/импорт
+### Phase 3 — Advanced features
+- [ ] Web UI (mnemos-eyes)
+- [ ] Auto-categorisation (LLM-powered)
+- [ ] Relationship graph between entries
+- [ ] Auto-summarisation of long documents
+- [ ] Periodic consolidation (merge similar entries)
+- [ ] Export / Import
 
-### Фаза 4 — Масштабирование
-- [ ] Миграция на PostgreSQL + pgvector (опционально)
+### Phase 4 — Scaling
+- [ ] Migration to PostgreSQL + pgvector (optional)
 - [ ] Multi-user support
-- [ ] Шифрование хранилища
+- [ ] Storage encryption

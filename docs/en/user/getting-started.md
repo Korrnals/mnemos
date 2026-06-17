@@ -108,7 +108,7 @@ Mnemos automatically:
 
 The tag contract is documented in [tag-contract.md](tag-contract.md). The short version: every memory needs **exactly one** `project:<slug>`, **exactly one** `agent:<slug>`, and **at least one** `gcw:<subtype>` (e.g. `gcw:learning`, `gcw:bug-pattern`, `gcw:decision`).
 
-> **Note.** Newly added memories start in the `raw` state. The vector search index only includes `published` memories. To move a memory to `published`, run the pipeline (see [install runbook](../admin/runbooks/install.md)) or use the HTTP API `POST /process` (see [http-api.md](http-api.md#trigger-pipeline)).
+> **Note.** Newly added memories start in the `raw` state. The vector search index only includes `published` memories. To move a memory to `published`, run the pipeline (see [install runbook](../admin/runbooks/install.md)) or use the HTTP API `POST /process` (see [http-api.md](http-api.md#knowledge-pipeline-m4)).
 
 ---
 
@@ -170,6 +170,8 @@ This is the same data the MCP tool [`mnemos_agent_recall`](mcp-tools.md#mnemos_a
 ## Run the MCP server
 
 The MCP server speaks stdio JSON-RPC — VS Code Copilot talks to it directly. **It is the primary integration surface for GCW agents.**
+
+> The `mcp` package is an optional extra — install it first with `pip install -e ".[mcp]"` (or `uv pip install -e ".[mcp]"`).
 
 ```bash
 mnemos mcp-server
