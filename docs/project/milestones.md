@@ -1,8 +1,10 @@
 # Milestones
 
+*Historical artifact — English only.*
+
 > **Why this is not in the README.** The M1 → M15 ledger is project history, not a product description — it changes shape every release and belongs in the docs, not at the entry point. The README points here for anyone who wants the implementation timeline.
 
-Mnemos is a fork of [`ai-brain`](../README.md#source-upstream-license) — see [ADR 0001](adr/0001-fork-from-ai-brain.md) for the fork decision. This page is the running ledger of milestone work since that fork.
+Mnemos is a fork of [`ai-brain`](../../README.md#source-upstream-license) — see [ADR 0001](adr/0001-fork-from-ai-brain.md) for the fork decision. This page is the running ledger of milestone work since that fork.
 
 ## Status legend
 
@@ -38,6 +40,6 @@ Mnemos is a fork of [`ai-brain`](../README.md#source-upstream-license) — see [
 
 ## Evolution
 
-The M-numbering is the implementation contract; the [ADR set](adr/) is the design contract. When in doubt about *why* a milestone made the choices it made, read the matching ADR. The current architectural shape is captured in [docs/architecture.md](architecture.md); the data model is in §2, the state machines in §3.
+The M-numbering is the implementation contract; the [ADR set](adr/) is the design contract. When in doubt about *why* a milestone made the choices it made, read the matching ADR. The current architectural shape is captured in [architecture overview](../en/architecture/overview.md); the data model is in §2, the state machines in §3.
 
 A new milestone (M18+) opens only when a senior agent raises a task ticket under [tasks/](https://github.com/Korrnals/mnemos/tree/main/tasks) and the planning session locks the scope.

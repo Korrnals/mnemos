@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+*Historical artifact — English only.*
+
 This directory contains the architectural decisions for Mnemos, recorded as
 ADRs (Architecture Decision Records) following the
 [Michael Nygard lightweight template](https://github.com/joelparkerhenderson/architecture_decision_records).
@@ -67,6 +69,6 @@ Mnemos — vector gating, context filter, cache deferral, embedding choice.
 - `tasks/AUDIT.md` — current state of the codebase (input to many ADRs).
 - `tasks/tech-lead/TL-001-coordination.md` — coordination across the work that
   produced several of these decisions.
-- `docs/architecture.md` — system architecture; ADRs explain the *why*, this
+- `docs/en/architecture/overview.md` — system architecture; ADRs explain the *why*, this
   document explains the *what*.
-- `docs/security.md` — threat model; ADR-0009 and 0012 are the SSRF decisions.
+- `docs/en/admin/security.md` — threat model; ADR-0009 and 0012 are the SSRF decisions.

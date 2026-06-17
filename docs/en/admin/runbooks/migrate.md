@@ -1,5 +1,7 @@
 # Runbook: Migrate from ai-brain
 
+**🌐 Language / Язык:** English · [Русский](../../../ru/admin/runbooks/migrate.md)
+
 ## Overview
 
 Migrate your existing ai-brain data (SQLite DB + vault) into Mnemos format.

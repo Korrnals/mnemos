@@ -1,5 +1,7 @@
 # Runbook: Install Mnemos
 
+**🌐 Language / Язык:** English · [Русский](../../../ru/admin/runbooks/install.md)
+
 ## Prerequisites
 
 - Python 3.12+

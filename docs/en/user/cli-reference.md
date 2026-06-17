@@ -1,12 +1,14 @@
 # CLI Reference
 
+**🌐 Language / Язык:** English · [Русский](../../ru/user/cli-reference.md)
+
 > Complete reference for the `mnemos` command-line tool.
 
-The CLI is a thin Typer-based wrapper around [`MemoryManager`](architecture.md#memorymanager). It uses Rich for table / colour output and is the most convenient way to interact with Mnemos from a shell.
+The CLI is a thin Typer-based wrapper around [`MemoryManager`](../architecture/overview.md#memorymanager). It uses Rich for table / colour output and is the most convenient way to interact with Mnemos from a shell.
 
 The full set of subcommands is defined in `src/mnemos/cli/main.py`. This page mirrors what the source actually exposes — every example here is runnable on a clean install.
 
-For a step-by-step first run, see [getting-started.md](getting-started.md). For programmatic access, see [mcp-tools.md](mcp-tools.md) and [api-reference.md](api-reference.md).
+For a step-by-step first run, see [getting-started.md](getting-started.md). For programmatic access, see [mcp-tools.md](mcp-tools.md) and [http-api.md](http-api.md).
 
 ---
 
@@ -147,7 +149,7 @@ mnemos search "CVE" --project mnemos --limit 20
 mnemos search "decision" --limit 50
 ```
 
-For tag-filtered or raw-content search, use the HTTP API `POST /search` (see [api-reference.md#search](api-reference.md#search)).
+For tag-filtered or raw-content search, use the HTTP API `POST /search` (see [http-api.md#search](http-api.md#search)).
 
 ---
 
@@ -260,7 +262,7 @@ mnemos serve [OPTIONS]
 
 The server uses `uvicorn[standard]` (HTTP/1.1 + WebSockets). The number of workers comes from `settings.runtime.uvicorn_workers`.
 
-> **Security.** The default bind is `127.0.0.1`. Do not expose this port to a public network without putting a reverse proxy with authentication in front. See [security.md](security.md).
+> **Security.** The default bind is `127.0.0.1`. Do not expose this port to a public network without putting a reverse proxy with authentication in front. See [security.md](../admin/security.md).
 
 ### Examples
 
@@ -275,7 +277,7 @@ mnemos serve --host 0.0.0.0 --port 8000
 mnemos serve --host 127.0.0.1 --port 9000 --config /etc/mnemos/config.yaml
 ```
 
-The full HTTP API surface is documented in [api-reference.md](api-reference.md). The Swagger UI is served at `http://HOST:PORT/docs`.
+The full HTTP API surface is documented in [http-api.md](http-api.md). The Swagger UI is served at `http://HOST:PORT/docs`.
 
 ---
 
@@ -384,10 +386,10 @@ The CLI does not return non-zero for "no results" — `mnemos search` exits 0 wi
 
 - [getting-started.md](getting-started.md) — first-run walkthrough
 - [mcp-tools.md](mcp-tools.md) — the same capabilities exposed over MCP
-- [api-reference.md](api-reference.md) — the same capabilities exposed over HTTP
+- [http-api.md](http-api.md) — the same capabilities exposed over HTTP
 - [tag-contract.md](tag-contract.md) — the tag schema enforced here
-- [runbooks/migrate.md](runbooks/migrate.md) — operational migration guide
-- [architecture.md](architecture.md) — system shape
+- [runbooks/migrate.md](../admin/runbooks/migrate.md) — operational migration guide
+- [architecture overview](../architecture/overview.md) — system shape
 
 ---
 

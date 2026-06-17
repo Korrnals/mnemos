@@ -1,5 +1,7 @@
 # 0003. Knowledge Pipeline: gate vector indexing on `status="published"`
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-05-15
 - **Deciders**: abyss, GCW Tech Lead

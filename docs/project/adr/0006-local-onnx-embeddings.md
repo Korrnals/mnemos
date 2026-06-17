@@ -1,5 +1,7 @@
 # 0006. Use local ONNX embeddings (privacy + offline by default)
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-05-15
 - **Deciders**: abyss, GCW Tech Lead

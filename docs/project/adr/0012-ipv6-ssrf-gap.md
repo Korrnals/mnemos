@@ -1,5 +1,7 @@
 # 0012. Fix IPv6 SSRF gap in `_validate_url` (M15)
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-06-15
 - **Deciders**: abyss, GCW Senior Security Engineer

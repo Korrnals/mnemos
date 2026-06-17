@@ -1,5 +1,7 @@
 # 0005. Cache Center is deferred to v2 (idempotency from M5 covers v1)
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted (decision: defer)
 - **Date**: 2026-05-15
 - **Deciders**: abyss, GCW Tech Lead

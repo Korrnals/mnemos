@@ -1,5 +1,7 @@
 # Mnemos — Security Posture (M15.2)
 
+**🌐 Language / Язык:** English · [Русский](../../ru/admin/security.md)
+
 > **Owner**: GCW Senior Security Engineer
 > **Status**: Active — last reviewed 2026-06-15
 > **Scope**: Mnemos memory & knowledge server (forked from ai-brain)

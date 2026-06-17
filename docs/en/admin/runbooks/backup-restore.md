@@ -1,5 +1,7 @@
 # Runbook: Backup & Restore
 
+**🌐 Language / Язык:** English · [Русский](../../../ru/admin/runbooks/backup-restore.md)
+
 ## Backup
 
 ### Full backup

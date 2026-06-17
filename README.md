@@ -82,7 +82,7 @@ flowchart TB
     AC -.->|"checkpoint reminder"| MCP
 ```
 
-A more thorough walkthrough — data model, state machines, security boundaries, operational concerns — lives in [docs/architecture.md](docs/architecture.md).
+A more thorough walkthrough — data model, state machines, security boundaries, operational concerns — lives in [docs/en/architecture/overview.md](docs/en/architecture/overview.md).
 
 ## Quick start
 
@@ -96,7 +96,7 @@ mnemos add --content "First memory — use uv, not pip" \
 mnemos search "uv vs pip" --limit 5
 ```
 
-That's the whole loop: install, write, find. For a step-by-step first run including the MCP and HTTP servers, see [docs/getting-started.md](docs/getting-started.md).
+That's the whole loop: install, write, find. For a step-by-step first run including the MCP and HTTP servers, see [docs/en/user/getting-started.md](docs/en/user/getting-started.md).
 
 ## Three surfaces, one core
 
@@ -104,38 +104,38 @@ The same MemoryManager powers all three interfaces — pick the one that fits th
 
 | Surface | Use it when… | Reference |
 |---------|--------------|-----------|
-| **CLI** — `mnemos …` | You live in a shell, want fast ad-hoc add/search, or are scripting cron jobs | [docs/cli-reference.md](docs/cli-reference.md) |
-| **HTTP** — `mnemos serve` | You have a non-MCP client (a web UI, a Telegram bot, a CI runner) | [docs/api-reference.md](docs/api-reference.md) |
-| **MCP** — `mnemos mcp-server` | You are VS Code Copilot or any MCP-aware agent; this is the path the GCW family takes | [docs/mcp-tools.md](docs/mcp-tools.md) |
+| **CLI** — `mnemos …` | You live in a shell, want fast ad-hoc add/search, or are scripting cron jobs | [docs/en/user/cli-reference.md](docs/en/user/cli-reference.md) |
+| **HTTP** — `mnemos serve` | You have a non-MCP client (a web UI, a Telegram bot, a CI runner) | [docs/en/user/http-api.md](docs/en/user/http-api.md) |
+| **MCP** — `mnemos mcp-server` | You are VS Code Copilot or any MCP-aware agent; this is the path the GCW family takes | [docs/en/user/mcp-tools.md](docs/en/user/mcp-tools.md) |
 
-The MCP surface also exposes the **A2A Sessions API** (M16) — a persistent backend for multi-step agent conversations. Five endpoints (`POST /v1/sessions`, append-turn, range-load, …) so GCW can survive restarts without losing context. See [docs/a2a-sessions.md](docs/a2a-sessions.md).
+The MCP surface also exposes the **A2A Sessions API** (M16) — a persistent backend for multi-step agent conversations. Five endpoints (`POST /v1/sessions`, append-turn, range-load, …) so GCW can survive restarts without losing context. See [docs/en/architecture/a2a-sessions.md](docs/en/architecture/a2a-sessions.md).
 
 ## Documentation
 
 | Page | What it covers |
 |------|----------------|
-| [docs/index.md](docs/index.md) | Top-level docs landing — where to go next |
-| [docs/getting-started.md](docs/getting-started.md) | First run: install → first memory → first search → MCP / HTTP |
-| [docs/architecture.md](docs/architecture.md) | System shape, data model, state machines, security boundaries |
-| [docs/cli-reference.md](docs/cli-reference.md) | Every `mnemos` subcommand with flags, defaults, examples |
-| [docs/mcp-tools.md](docs/mcp-tools.md) | Every `mnemos_*` tool exposed to VS Code Copilot |
-| [docs/api-reference.md](docs/api-reference.md) | Every HTTP endpoint (memory CRUD + A2A Sessions, M16) |
-| [docs/a2a-sessions.md](docs/a2a-sessions.md) | Agent-to-agent conversation contract (M16) |
-| [docs/tag-contract.md](docs/tag-contract.md) | The `project:` / `agent:` / `gcw:` schema enforced on every memory |
-| [docs/security.md](docs/security.md) | Threat model, SSRF guard, FTS5 escape, HF Hub pinning |
-| [docs/runbooks/](docs/runbooks/) | Install, migrate, backup / restore, dependency updates |
-| [docs/adr/](docs/adr/) | Architectural decision records — the *why* behind the design choices |
-| [docs/milestones.md](docs/milestones.md) | Milestone ledger with status legend |
+| [docs/README.md](docs/README.md) | Documentation landing — language picker (EN / RU) |
+| [docs/en/user/getting-started.md](docs/en/user/getting-started.md) | First run: install → first memory → first search → MCP / HTTP |
+| [docs/en/architecture/overview.md](docs/en/architecture/overview.md) | System shape, data model, state machines, security boundaries |
+| [docs/en/user/cli-reference.md](docs/en/user/cli-reference.md) | Every `mnemos` subcommand with flags, defaults, examples |
+| [docs/en/user/mcp-tools.md](docs/en/user/mcp-tools.md) | Every `mnemos_*` tool exposed to VS Code Copilot |
+| [docs/en/user/http-api.md](docs/en/user/http-api.md) | Every HTTP endpoint (memory CRUD + A2A Sessions, M16) |
+| [docs/en/architecture/a2a-sessions.md](docs/en/architecture/a2a-sessions.md) | Agent-to-agent conversation contract (M16) |
+| [docs/en/user/tag-contract.md](docs/en/user/tag-contract.md) | The `project:` / `agent:` / `gcw:` schema enforced on every memory |
+| [docs/en/admin/security.md](docs/en/admin/security.md) | Threat model, SSRF guard, FTS5 escape, HF Hub pinning |
+| [docs/en/admin/runbooks/](docs/en/admin/runbooks/) | Install, migrate, backup / restore, dependency updates |
+| [docs/project/adr/](docs/project/adr/) | Architectural decision records — the *why* behind the design choices |
+| [docs/project/milestones.md](docs/project/milestones.md) | Milestone ledger with status legend |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes — Keep a Changelog format |
 
 ## Relationship to the GCW agent family
 
-Mnemos is the standalone backing store for the **GCW (GitHub Copilot Workflow)** senior-agent team. The GCW repo ships a thin stub plugin (`plugins/mnemos-integration`) that runs in a degraded file-mode until Mnemos is reachable; once the MCP server is up, the stub transparently switches to `mnemos_*` tools without code changes. The shared contract is the [tag schema](docs/tag-contract.md) — `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>` — that every memory entry must carry.
+Mnemos is the standalone backing store for the **GCW (GitHub Copilot Workflow)** senior-agent team. The GCW repo ships a thin stub plugin (`plugins/mnemos-integration`) that runs in a degraded file-mode until Mnemos is reachable; once the MCP server is up, the stub transparently switches to `mnemos_*` tools without code changes. The shared contract is the [tag schema](docs/en/user/tag-contract.md) — `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>` — that every memory entry must carry.
 
 ## Source, upstream, license
 
 - **Source**: this repository, [github.com/Korrnals/mnemos](https://github.com/Korrnals/mnemos).
-- **Upstream**: forked from `ai-brain` on 2026-05-15 with full git history preserved (see [ADR 0001](docs/adr/0001-fork-from-ai-brain.md)).
+- **Upstream**: forked from `ai-brain` on 2026-05-15 with full git history preserved (see [ADR 0001](docs/project/adr/0001-fork-from-ai-brain.md)).
 - **License**: MIT (inherited from ai-brain; see [pyproject.toml](pyproject.toml)).
 
 ## Contributing

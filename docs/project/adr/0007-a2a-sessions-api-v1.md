@@ -1,5 +1,7 @@
 # 0007. A2A Sessions API: 5 minimal endpoints with summary-mode default
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-06-15
 - **Deciders**: abyss, GCW Agent Architect (requesting team), Mnemos Tech Lead

@@ -1,7 +1,9 @@
 # CI/CD Runbook
 
+**🌐 Language / Язык:** English · [Русский](../../../ru/admin/runbooks/ci-cd.md)
+
 > **Scope**: How to operate, debug, and extend the GitHub Actions CI pipeline
-> for Mnemos. Source of truth: [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
+> for Mnemos. Source of truth: [`.github/workflows/ci.yml`](../../../../.github/workflows/ci.yml).
 
 ---
 
@@ -143,7 +145,7 @@ Each of these has a follow-up issue. Until they're closed, the
 
 ## Dependabot
 
-Configuration: [`.github/dependabot.yml`](../../.github/dependabot.yml).
+Configuration: [`.github/dependabot.yml`](../../../../.github/dependabot.yml).
 
 | Ecosystem | Schedule | PR limit | Labels |
 |---|---|---|---|
@@ -153,7 +155,7 @@ Configuration: [`.github/dependabot.yml`](../../.github/dependabot.yml).
 Patch + minor updates are grouped into a single PR per run to reduce
 reviewer load. Major-version updates are intentionally excluded for
 `aiohttp` and `starlette` — those pins exist to close transitive CVEs
-([ADR-0008](../adr/0008-sql-injection-via-fstring.md) family) and
+([ADR-0008](../../../project/adr/0008-sql-injection-via-fstring.md) family) and
 require the runbook in
 [`dependency-updates.md`](dependency-updates.md) to bump safely.
 

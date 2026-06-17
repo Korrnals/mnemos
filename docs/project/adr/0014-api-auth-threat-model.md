@@ -1,5 +1,7 @@
 # 0014. API authentication & TOTP 2FA — threat model
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-06-17
 - **Deciders**: abyss, GCW Senior Security Engineer, GCW Tech Lead

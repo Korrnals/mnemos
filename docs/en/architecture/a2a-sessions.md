@@ -1,5 +1,7 @@
 # A2A Sessions API (M16 — GCW v0.6.0)
 
+**🌐 Language / Язык:** English · [Русский](../../ru/architecture/a2a-sessions.md)
+
 > **Status**: Implemented in Mnemos M16
 > **Audience**: GCW agents / MCP gcw-orchestrator
 > **Base URL**: `http://localhost:8787/v1/` (loopback by default)

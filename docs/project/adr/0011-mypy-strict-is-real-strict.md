@@ -1,5 +1,7 @@
 # 0011. `mypy --strict` is the production-readiness gate, not a check-the-box lint
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-06-15
 - **Deciders**: abyss, GCW Senior System Engineer, GCW Tech Lead

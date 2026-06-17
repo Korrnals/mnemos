@@ -1,10 +1,12 @@
 # Getting Started
 
+**🌐 Language / Язык:** English · [Русский](../../ru/user/getting-started.md)
+
 > Complete first-run guide for Mnemos — from install to your first memory, search, and agent recall.
 
 This page walks you through a working Mnemos install, your first memory, your first search, and your first MCP / HTTP server start. Every command in this document is runnable on a clean Linux / macOS / WSL2 box.
 
-For higher-level context, see [architecture.md](architecture.md). For every CLI subcommand, see [cli-reference.md](cli-reference.md). For every MCP tool, see [mcp-tools.md](mcp-tools.md). For every HTTP endpoint, see [api-reference.md](api-reference.md).
+For higher-level context, see [architecture overview](../architecture/overview.md). For every CLI subcommand, see [cli-reference.md](cli-reference.md). For every MCP tool, see [mcp-tools.md](mcp-tools.md). For every HTTP endpoint, see [http-api.md](http-api.md).
 
 ---
 
@@ -56,7 +58,7 @@ uv pip install -e ".[anthropic]"   # Anthropic Claude
 uv pip install -e ".[gemini]"     # Google Gemini
 ```
 
-The default provider is `ollama` pointing at `http://localhost:11434`. See [architecture.md](architecture.md#llm-providers) for the full provider matrix.
+The default provider is `ollama` pointing at `http://localhost:11434`. See [architecture overview](../architecture/overview.md#llm-providers) for the full provider matrix.
 
 ---
 
@@ -80,7 +82,7 @@ The `verify` target runs, in order:
 
 A clean run ends with `✅ All verification checks passed`.
 
-If `pip-audit` complains about a pinned CVE, see [runbooks/dependency-updates.md](runbooks/dependency-updates.md) for the weekly-review workflow.
+If `pip-audit` complains about a pinned CVE, see [dependency-updates runbook](../admin/runbooks/dependency-updates.md) for the weekly-review workflow.
 
 ---
 
@@ -106,7 +108,7 @@ Mnemos automatically:
 
 The tag contract is documented in [tag-contract.md](tag-contract.md). The short version: every memory needs **exactly one** `project:<slug>`, **exactly one** `agent:<slug>`, and **at least one** `gcw:<subtype>` (e.g. `gcw:learning`, `gcw:bug-pattern`, `gcw:decision`).
 
-> **Note.** Newly added memories start in the `raw` state. The vector search index only includes `published` memories. To move a memory to `published`, run the pipeline (see [runbooks/install.md](runbooks/install.md)) or use the HTTP API `POST /process` (see [api-reference.md](api-reference.md#trigger-pipeline)).
+> **Note.** Newly added memories start in the `raw` state. The vector search index only includes `published` memories. To move a memory to `published`, run the pipeline (see [install runbook](../admin/runbooks/install.md)) or use the HTTP API `POST /process` (see [http-api.md](http-api.md#trigger-pipeline)).
 
 ---
 
@@ -136,7 +138,7 @@ Useful flags:
 | `--limit N` / `-l N` | Max results (default 10) |
 | `--project P` / `-p P` | Restrict to a project slug |
 
-For programmatic access with more options (vector weight, raw content, tag filter), use the HTTP API — see [api-reference.md#search](api-reference.md#search).
+For programmatic access with more options (vector weight, raw content, tag filter), use the HTTP API — see [http-api.md#search](http-api.md#search).
 
 ---
 
@@ -218,7 +220,7 @@ mnemos serve --host 127.0.0.1 --port 8000
 | `http://127.0.0.1:8000/openapi.json` | OpenAPI 3.1 schema |
 | `http://127.0.0.1:8000/v1/sessions` | A2A sessions API (M16) |
 
-> **Security.** The default bind is `127.0.0.1`. Do not expose this port to a network without putting a reverse proxy with authentication in front. Mnemos is not designed as a public service — see [security.md](security.md) for the threat model.
+> **Security.** The default bind is `127.0.0.1`. Do not expose this port to a network without putting a reverse proxy with authentication in front. Mnemos is not designed as a public service — see [security.md](../admin/security.md) for the threat model.
 
 Smoke-test it:
 
@@ -227,7 +229,7 @@ curl -s http://127.0.0.1:8000/health | jq
 # {"status":"ok"}
 ```
 
-See [api-reference.md](api-reference.md) for every endpoint, request body, and response shape.
+See [http-api.md](http-api.md) for every endpoint, request body, and response shape.
 
 ---
 
@@ -260,7 +262,7 @@ The migrator:
 
 ## Configuration
 
-Mnemos reads `config.yaml` from the current directory or `~/.mnemos/config.yaml`. See [config.example.yaml](../config.example.yaml) for the full schema. The most useful knobs:
+Mnemos reads `config.yaml` from the current directory or `~/.mnemos/config.yaml`. See [config.example.yaml](../../../config.example.yaml) for the full schema. The most useful knobs:
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
@@ -284,7 +286,7 @@ MNEMOS_SEARCH__HYBRID_ALPHA=0.5 mnemos search "deployment"
 
 ### `make verify` fails on `pip-audit`
 
-You probably hit a pinned CVE. The most common is `CVE-2026-45829` in `chromadb 1.5.9`. The current policy is to **ignore it with audit** and re-check weekly. See [runbooks/dependency-updates.md](runbooks/dependency-updates.md) for the workflow.
+You probably hit a pinned CVE. The most common is `CVE-2026-45829` in `chromadb 1.5.9`. The current policy is to **ignore it with audit** and re-check weekly. See [dependency-updates runbook](../admin/runbooks/dependency-updates.md) for the workflow.
 
 ### First model download is slow
 
@@ -321,13 +323,13 @@ Your virtualenv is not active. Run `source .venv/bin/activate` (or the equivalen
 |-----------------|------|
 | See every CLI subcommand | [cli-reference.md](cli-reference.md) |
 | See every MCP tool Copilot can call | [mcp-tools.md](mcp-tools.md) |
-| See every HTTP endpoint | [api-reference.md](api-reference.md) |
-| Understand the system shape | [architecture.md](architecture.md) |
+| See every HTTP endpoint | [http-api.md](http-api.md) |
+| Understand the system shape | [architecture overview](../architecture/overview.md) |
 | Read the tag schema | [tag-contract.md](tag-contract.md) |
-| Read the A2A sessions contract | [a2a-sessions.md](a2a-sessions.md) |
-| Run an operational task | [runbooks/](runbooks/) |
-| Review security boundaries | [security.md](security.md) |
-| See why a decision was made | [adr/](adr/) |
+| Read the A2A sessions contract | [a2a-sessions.md](../architecture/a2a-sessions.md) |
+| Run an operational task | [admin/runbooks/install.md](../admin/runbooks/install.md) |
+| Review security boundaries | [security.md](../admin/security.md) |
+| See why a decision was made | [project/adr/](../../project/adr/) |
 
 ---
 

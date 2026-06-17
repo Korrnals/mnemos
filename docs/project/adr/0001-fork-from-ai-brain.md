@@ -1,5 +1,7 @@
 # 0001. Fork ai-brain into a standalone Mnemos product
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-05-15
 - **Deciders**: abyss (project owner), GCW Chief of Staff

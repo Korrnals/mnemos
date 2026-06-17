@@ -1,5 +1,7 @@
 # SESSION: mnemos — Backend MVP for mnemos-eyes (Auth + CORS + hardening)
 
+*Historical artifact — English only.*
+
 > **How to start this session:** tell the agent
 > _"проинициализируй сессию из `docs/sessions/SESSION-01-backend-mvp.md`"_.
 > The agent (acting as `@GCW: Tech Lead`) reads this file, restores context,

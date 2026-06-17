@@ -1,5 +1,7 @@
 # HTTP API Reference
 
+**🌐 Language / Язык:** English · [Русский](../../ru/user/http-api.md)
+
 > Complete reference for the Mnemos HTTP API — memory CRUD, search, pipeline, DLQ, context filter, traces, path-scoped rules, and the A2A Sessions API (M16).
 
 The HTTP server is a FastAPI app served by Uvicorn. Start it with:
@@ -14,13 +16,13 @@ mnemos serve --host 127.0.0.1 --port 8000
 | ReDoc | `http://HOST:PORT/redoc` |
 | OpenAPI 3.1 schema | `http://HOST:PORT/openapi.json` |
 
-> **Default bind is `127.0.0.1`.** Do not expose this port to a public network without putting a reverse proxy with authentication in front. See [security.md](security.md) for the threat model.
+> **Default bind is `127.0.0.1`.** Do not expose this port to a public network without putting a reverse proxy with authentication in front. See [security.md](../admin/security.md) for the threat model.
 
 > **Authentication** — when `api.auth_enabled=true`, all routes except `/health`, `/auth/login`, `/auth/verify`, `/docs`, `/redoc`, and `/openapi.json` require a valid session token (either `Authorization: Bearer <session>` header or the `mnemos_session` cookie; the header takes precedence). Use `POST /auth/login` to obtain a session. See the [Authentication](#authentication) section below.
 
 > **CORS** — disabled by default. When `api.cors_enabled=true`, the CORS middleware is registered as the outermost layer so OPTIONS preflight requests are answered before auth. Set `cors_allow_origins` to an explicit list of allowed origins; combining `["*"]` with `cors_allow_credentials=true` is rejected at startup.
 
-For the same capabilities over other transports, see [mcp-tools.md](mcp-tools.md) (MCP) and [cli-reference.md](cli-reference.md) (CLI). For higher-level context, see [architecture.md](architecture.md). The A2A contract is also documented in [a2a-sessions.md](a2a-sessions.md) (link to the design rationale).
+For the same capabilities over other transports, see [mcp-tools.md](mcp-tools.md) (MCP) and [cli-reference.md](cli-reference.md) (CLI). For higher-level context, see [architecture overview](../architecture/overview.md). The A2A contract is also documented in [a2a-sessions.md](../architecture/a2a-sessions.md) (link to the design rationale).
 
 ---
 
@@ -211,7 +213,7 @@ curl -s http://127.0.0.1:8000/tags
 
 M2 tag contract is enforced server-side. The endpoint derives `project` and `agent` from your tags and stores them as denormalised columns for fast filtering.
 
-**Request body** — see [MemoryCreate](architecture.md#data-model)
+**Request body** — see [MemoryCreate](../architecture/overview.md#data-model)
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
@@ -602,7 +604,7 @@ curl -s -X POST http://127.0.0.1:8000/rules/ingest \
 
 ## A2A Sessions API (M16)
 
-> Mounted under `/v1`. The contract is described in detail in [a2a-sessions.md](a2a-sessions.md); this section is the HTTP surface.
+> Mounted under `/v1`. The contract is described in detail in [a2a-sessions.md](../architecture/a2a-sessions.md); this section is the HTTP surface.
 
 All five endpoints share the same error semantics:
 
@@ -761,10 +763,10 @@ npx @openapitools/openapi-generator-cli generate \
 
 - [mcp-tools.md](mcp-tools.md) — same capabilities over MCP
 - [cli-reference.md](cli-reference.md) — same capabilities over the CLI
-- [architecture.md](architecture.md) — system shape and data model
-- [a2a-sessions.md](a2a-sessions.md) — A2A contract and design rationale
+- [architecture overview](../architecture/overview.md) — system shape and data model
+- [a2a-sessions.md](../architecture/a2a-sessions.md) — A2A contract and design rationale
 - [tag-contract.md](tag-contract.md) — M2 schema enforced by `POST /memories`
-- [security.md](security.md) — SSRF guard, secrets hygiene, auth model, request-boundary rules
+- [security.md](../admin/security.md) — SSRF guard, secrets hygiene, auth model, request-boundary rules
 
 ---
 

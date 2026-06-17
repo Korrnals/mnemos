@@ -1,5 +1,7 @@
 # Mnemos — Архитектура системы
 
+**🌐 Language / Язык:** English · [Русский](../../ru/architecture/overview.md)
+
 ## Обзор
 
 Mnemos — гибридная система долговременной памяти: личная база знаний + RAG-хранилище для AI-агентов. Единая память, доступная из CLI, Web UI, API, MCP-сервера, Telegram-бота и Obsidian.

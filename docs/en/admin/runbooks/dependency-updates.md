@@ -1,5 +1,7 @@
 # Runbook: Dependency Updates & CVE Reminder
 
+**🌐 Language / Язык:** English · [Русский](../../../ru/admin/runbooks/dependency-updates.md)
+
 ## Why this exists
 
 `chromadb` currently has ignored `CVE-2026-45829` because there is no upstream fixed release yet.
@@ -56,7 +58,7 @@ make verify
 ## Remove temporary CVE ignore when fixed
 
 When `pip-audit` confirms fix is available and installed:
-1. Edit [Makefile](Makefile)
+1. Edit [Makefile](../../../../Makefile)
 2. In target `security`, remove `--ignore-vuln CVE-2026-45829`
 3. In target `security-reminder`, remove warning lines
 4. Run:

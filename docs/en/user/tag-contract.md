@@ -1,5 +1,7 @@
 # Tag Contract
 
+**🌐 Language / Язык:** English · [Русский](../../ru/user/tag-contract.md)
+
 Mnemos enforces a structured tag schema on every memory entry. This document
 describes the contract, the set of valid values, and migration guidance.
 

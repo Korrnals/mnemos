@@ -1,12 +1,14 @@
 # MCP Tools Reference
 
+**🌐 Language / Язык:** English · [Русский](../../ru/user/mcp-tools.md)
+
 > Complete reference for the `mnemos_*` tools exposed by the Mnemos MCP server (`mnemos mcp-server`).
 
 Mnemos speaks the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) over **stdio JSON-RPC 2.0**. VS Code Copilot and any MCP-aware client can call the tools listed here.
 
 The server is defined in `src/mnemos/mcp_server.py`. Every tool below is registered with the `@server.list_tools()` decorator and dispatched by `call_tool()`.
 
-For a quick start on wiring it into VS Code, see [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server). For programmatic access, the same capabilities are also available over HTTP — see [api-reference.md](api-reference.md). For the tag schema enforced by most tools, see [tag-contract.md](tag-contract.md).
+For a quick start on wiring it into VS Code, see [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server). For programmatic access, the same capabilities are also available over HTTP — see [http-api.md](http-api.md). For the tag schema enforced by most tools, see [tag-contract.md](tag-contract.md).
 
 ---
 
@@ -90,12 +92,12 @@ Create a new memory entry. The MCP layer enforces the GCW tag contract ([M2](tag
 | Error | Cause |
 |-------|-------|
 | `❌ Tag contract violation: ...` | Missing `project:`, `agent:`, or `gcw:` tag. |
-| `❌ Error: ...` | SQLite write failure, vault write failure, or embed failure (the latter is non-fatal — see [architecture.md](architecture.md#vector-store)). |
+| `❌ Error: ...` | SQLite write failure, vault write failure, or embed failure (the latter is non-fatal — see [architecture overview](../architecture/overview.md#vector-store)). |
 
 ### Related
 
 - Tag schema: [tag-contract.md](tag-contract.md)
-- HTTP equivalent: [`POST /memories`](api-reference.md#create-memory)
+- HTTP equivalent: [`POST /memories`](http-api.md#create-memory)
 - CLI equivalent: [`mnemos add`](cli-reference.md#add)
 
 ---
@@ -154,7 +156,7 @@ Hybrid search: FTS5 (full-text) + vector + Reciprocal Rank Fusion. Only `publish
 
 ### Related
 
-- HTTP equivalent: [`POST /search`](api-reference.md#search)
+- HTTP equivalent: [`POST /search`](http-api.md#search)
 - CLI equivalent: [`mnemos search`](cli-reference.md#search)
 
 ---
@@ -214,7 +216,7 @@ When `query` is omitted, the tool returns recent entries (recency-ordered). When
 
 ### Related
 
-- HTTP equivalent: [`GET /recall/agent/{name}`](api-reference.md#agent-recall)
+- HTTP equivalent: [`GET /recall/agent/{name}`](http-api.md#agent-recall)
 - CLI equivalent: [`mnemos recall --agent <slug>`](cli-reference.md#recall)
 
 ---
@@ -277,7 +279,7 @@ In **auto-collect mode** (`MNEMOS_AUTO_COLLECT=1`), a `## 🔄 Auto-Collect Mode
 ### Related
 
 - `mnemos_save_context` — the matching writer
-- [architecture.md#session-context](architecture.md#session-context)
+- [architecture.md#session-context](../architecture/overview.md#session-context)
 
 ---
 
@@ -457,8 +459,8 @@ Fetch a web page, extract its main content (via `trafilatura`), and save it as a
 ### Related
 
 - CLI equivalent: [`mnemos add --url <URL>`](cli-reference.md#add)
-- HTTP equivalent: [`POST /memories` with manual content](api-reference.md#create-memory)
-- Security: [security.md](security.md#ssrf-guard)
+- HTTP equivalent: [`POST /memories` with manual content](http-api.md#create-memory)
+- Security: [security.md](../admin/security.md#ssrf-guard)
 
 ---
 
@@ -666,11 +668,11 @@ Full reference: [tag-contract.md](tag-contract.md).
 ## See also
 
 - [getting-started.md](getting-started.md) — wiring `mcp.json` and the first call
-- [api-reference.md](api-reference.md) — the same capabilities over HTTP
+- [http-api.md](http-api.md) — the same capabilities over HTTP
 - [cli-reference.md](cli-reference.md) — the same capabilities over the CLI
 - [tag-contract.md](tag-contract.md) — M2 schema enforced by `mnemos_add`
-- [security.md](security.md) — SSRF guard, secrets hygiene
-- [architecture.md#mcp-server](architecture.md#mcp-server) — server lifecycle
+- [security.md](../admin/security.md) — SSRF guard, secrets hygiene
+- [architecture overview](../architecture/overview.md#mcp-server) — server lifecycle
 
 ---
 

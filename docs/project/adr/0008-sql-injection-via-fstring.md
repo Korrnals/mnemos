@@ -1,5 +1,7 @@
 # 0008. SQL injection via f-string is fixed via whitelisted dispatch (M15)
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-06-15
 - **Deciders**: abyss, GCW Senior Security Engineer, GCW Senior DBA

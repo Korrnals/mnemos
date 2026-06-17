@@ -1,5 +1,7 @@
 # 0004. Context Filter is a mandatory v1 feature (raw + clean dual storage)
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-05-15
 - **Deciders**: abyss, GCW Tech Lead

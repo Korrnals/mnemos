@@ -1,5 +1,7 @@
 # 0002. GCW tag contract is strict by default at the MCP layer
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-05-15
 - **Deciders**: abyss, GCW Agent Architect

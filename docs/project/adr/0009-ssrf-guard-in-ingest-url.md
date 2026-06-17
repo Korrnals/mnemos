@@ -1,5 +1,7 @@
 # 0009. SSRF guard at the `mnemos_ingest_url` boundary
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-06-15
 - **Deciders**: abyss, GCW Senior Security Engineer

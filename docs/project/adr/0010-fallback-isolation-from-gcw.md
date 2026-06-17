@@ -1,5 +1,7 @@
 # 0010. GCW A2A is a "best-effort, not a hard dependency" backend
 
+*Historical artifact — English only.*
+
 - **Status**: Accepted
 - **Date**: 2026-06-15
 - **Deciders**: abyss, GCW Agent Architect, Mnemos Tech Lead
