@@ -359,3 +359,74 @@ def test_redirect_loop_produces_placeholder(manager: MemoryManager) -> None:
         mock_cls.return_value.__enter__.return_value = mock_client
         mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
     assert "[fetch failed:" in mem.content
+
+
+# ---------------------------------------------------------------------------
+# (h) Obfuscated IPv4 encodings (decimal / octal / hex) are BLOCKED
+# ---------------------------------------------------------------------------
+# These collapse to loopback / metadata addresses at resolve time. _validate_url
+# resolves the host through the SAME getaddrinfo the real connection uses, so an
+# encoding that a resolver folds into 127.0.0.1 is rejected as loopback, while
+# one no resolver recognises raises "could not be resolved" -- either way the
+# request is refused (CWE-918 defence-in-depth).
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "2130706433",  # decimal for 127.0.0.1
+        "0177.0.0.1",  # octal first octet -> 127.0.0.1
+        "0x7f.0.0.1",  # hex first octet -> 127.0.0.1
+        "017700000001",  # full octal 127.0.0.1
+    ],
+)
+def test_obfuscated_ipv4_loopback_blocked(manager: MemoryManager, host: str) -> None:
+    """Decimal/octal/hex encodings of 127.0.0.1 must not pass _validate_url."""
+    with pytest.raises(ValueError):
+        MemoryManager._validate_url(f"http://{host}/")
+
+
+def test_redirect_to_decimal_metadata_blocked(manager: MemoryManager) -> None:
+    """A redirect Location using the decimal encoding of a private IP is blocked."""
+    # 2852039166 = 169.254.169.254 (AWS metadata) in decimal notation.
+    redir = _mock_resp(302, location="http://2852039166/")
+    trafilatura_stub = _stub_trafilatura()
+    with (
+        patch("httpx.Client") as mock_cls,
+        patch.dict(sys.modules, {"trafilatura": trafilatura_stub}),
+    ):
+        mock_client = MagicMock()
+        mock_client.get.return_value = redir
+        mock_cls.return_value.__enter__.return_value = mock_client
+        mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
+    assert "[fetch failed:" in mem.content
+
+
+# ---------------------------------------------------------------------------
+# (i) userinfo in the Location must not fool host extraction
+# ---------------------------------------------------------------------------
+# Attack: "http://trusted.example@169.254.169.254/" -- a naive parser that
+# treats the part before "@" as the host would connect to the metadata IP while
+# logging "trusted.example". urlparse correctly returns the post-"@" authority
+# as the host, so _validate_url checks the REAL target and blocks it.
+
+
+def test_userinfo_does_not_mask_blocked_host(manager: MemoryManager) -> None:
+    """A benign-looking userinfo prefix must not bypass host validation."""
+    with pytest.raises(ValueError):
+        MemoryManager._validate_url("http://trusted.example@169.254.169.254/")
+
+
+def test_redirect_with_userinfo_to_metadata_blocked(manager: MemoryManager) -> None:
+    """A redirect whose Location hides a metadata IP behind userinfo is blocked."""
+    redir = _mock_resp(302, location="http://api.public.test@169.254.169.254/latest/meta-data/")
+    trafilatura_stub = _stub_trafilatura()
+    with (
+        patch("httpx.Client") as mock_cls,
+        patch.dict(sys.modules, {"trafilatura": trafilatura_stub}),
+    ):
+        mock_client = MagicMock()
+        mock_client.get.return_value = redir
+        mock_cls.return_value.__enter__.return_value = mock_client
+        mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
+    assert "[fetch failed:" in mem.content
