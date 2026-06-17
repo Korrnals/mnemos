@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 
 from mnemos import __version__
 from mnemos.config import load_settings
@@ -268,6 +269,22 @@ async def apply_filter(memory_id: str, data: FilterRequest) -> dict[str, Any]:
     if result["status"] == "error":
         raise HTTPException(status_code=404, detail=result["error"])
     return result
+
+
+# ── Tags aggregate (T-TAGS) ─────────────────────────────────────────────────
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
+@app.get("/tags", response_model=list[TagCount])
+async def list_tags() -> list[TagCount]:
+    """Return all tags with their memory counts, sorted by count descending."""
+    mgr = get_manager()
+    raw: dict[str, int] = mgr.list_tags()
+    return [TagCount(tag=t, count=c) for t, c in raw.items()]
 
 
 # ── Traces (M6) ────────────────────────────────────────────────────────────────
