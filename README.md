@@ -3,7 +3,7 @@
 
 > **A memory & knowledge server for AI agents** — named after the Titaness, built for the GCW agent family.
 
-[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-0.2.0-blueviolet)](CHANGELOG.md)
+[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.0-blueviolet)](CHANGELOG.md)
 
 ```text
     ╔══════════════════════════════════════════════════════════════╗

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-17
+
 ### Added
 
 - **Token auth + TOTP 2FA (ADR-0014)** — opt-in `AuthMiddleware` gated by
