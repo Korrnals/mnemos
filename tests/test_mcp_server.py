@@ -90,9 +90,9 @@ async def test_routing_all_tools_recognized(tool_name: str) -> None:
     ):
         result = await _dispatch(tool_name, _TOOL_ARGS[tool_name])
 
-    assert not (
-        isinstance(result, str) and result.startswith("Unknown tool:")
-    ), f"Tool {tool_name!r} was not recognized by _dispatch - routing is broken"
+    assert not (isinstance(result, str) and result.startswith("Unknown tool:")), (
+        f"Tool {tool_name!r} was not recognized by _dispatch - routing is broken"
+    )
 
 
 # ---------------------------------------------------------------------------
