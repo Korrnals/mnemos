@@ -3,7 +3,7 @@
 
 > **A memory & knowledge server for AI agents** — named after the Titaness, built for the GCW agent family.
 
-[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.0-blueviolet)](CHANGELOG.md)
+[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.1-blueviolet)](CHANGELOG.md)
 
 ```text
     ╔══════════════════════════════════════════════════════════════╗
@@ -141,6 +141,8 @@ Mnemos is the standalone backing store for the **GCW (GitHub Copilot Workflow)**
 ## Contributing
 
 PRs welcome. Read [PLAN.md](PLAN.md) for the current roadmap, browse the open tasks in [tasks/](tasks/), and follow the conventions in the [docs/](docs/) set. Run `make verify` before opening a PR.
+
+The Git workflow for this repo (branching model, Conventional Commits, PR rules, merge strategy) is documented in [`.github/instructions/git-workflow-mnemos.instructions.md`](.github/instructions/git-workflow-mnemos.instructions.md). The short version: `feat/*` → `dev-<stage>` → `release/X.Y.Z` → `main`; `main` accepts only `release/*` and `hotfix/*` PRs.
 
 ---
 
