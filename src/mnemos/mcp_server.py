@@ -118,10 +118,12 @@ def _auto_collect_instructions(project: str) -> str:
 
 
 # mcp SDK uses runtime decorators (Server.list_tools / Server.call_tool) that
-# are not annotated in the upstream stub, so mypy --strict flags them as
-# untyped. The decorator is the documented public API of mcp.server, so we
-# narrow the suppression to the decorator only.
-@server.list_tools()  # type: ignore[untyped-decorator]
+# are not annotated in the upstream stub. mypy --strict flags them as untyped
+# decorators/calls, but ONLY when the optional `mcp` extra is installed — so an
+# inline `type: ignore[...]` would be "unused" in CI (which type-checks without
+# mcp) and trip `warn_unused_ignores`. The relaxation is therefore scoped to
+# this module via [[tool.mypy.overrides]] in pyproject.toml instead.
+@server.list_tools()
 async def list_tools() -> list[Tool]:
     _ac = _auto_collect_state["enabled"]
 
@@ -408,7 +410,7 @@ async def list_tools() -> list[Tool]:
 # ── Tool call handler ──────────────────────────────────────────────────────────
 
 
-@server.call_tool()  # type: ignore[untyped-decorator]  # see note on @server.list_tools
+@server.call_tool()  # see module note on @server.list_tools / pyproject mypy override
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     _track_call(is_save=(name == "mnemos_save_context"))
     reminder = _checkpoint_reminder()

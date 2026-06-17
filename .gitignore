@@ -7,6 +7,19 @@ build/
 .eggs/
 *.egg
 
+# Test / type / lint caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
 # Virtual environments
 .venv/
 venv/
@@ -29,10 +42,11 @@ config.yaml
 .DS_Store
 Thumbs.db
 
-# Brain vault is managed separately
-brain-vault/
-brain-vault/
+# Mnemos vault is managed separately
+mnemos-vault/
 
-# VSCode hystory extension
+# Generated reports
+bandit-report.json
+
+# VSCode local history extension
 .history/
-.history/.coverage
