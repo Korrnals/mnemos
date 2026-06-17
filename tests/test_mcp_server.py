@@ -48,6 +48,27 @@ _TOOL_ARGS: dict[str, dict] = {
     "mnemos_watch_stop": {},
 }
 
+# ---------------------------------------------------------------------------
+# Routing assertions map (mcp-3 finding)
+# tool_name -> (expected_manager_method, [forbidden_manager_methods])
+# Covers all tools with a unique 1:1 manager method.
+# mnemos_save_context (shares mgr.add) and mnemos_auto_collect_status
+# (no manager data method) are handled in dedicated tests below.
+# ---------------------------------------------------------------------------
+_ROUTING_MAP: dict[str, tuple[str, list[str]]] = {
+    "mnemos_add": ("add", ["search", "list_recent", "recall_context"]),
+    "mnemos_search": ("search", ["add", "list_recent", "agent_recall"]),
+    "mnemos_agent_recall": ("agent_recall", ["search", "add", "recall_context"]),
+    "mnemos_recall_context": ("recall_context", ["search", "add", "agent_recall"]),
+    "mnemos_list_recent": ("list_recent", ["search", "add", "list_tags"]),
+    "mnemos_list_tags": ("list_tags", ["search", "list_recent", "stats"]),
+    "mnemos_stats": ("stats", ["search", "list_tags", "list_recent"]),
+    "mnemos_ingest_url": ("ingest_url", ["add", "search", "list_recent"]),
+    "mnemos_watch_start": ("watch_start", ["watch_stop", "watch_status", "search"]),
+    "mnemos_watch_stop": ("watch_stop", ["watch_start", "watch_status", "search"]),
+    "mnemos_watch_status": ("watch_status", ["watch_start", "watch_stop", "search"]),
+}
+
 
 def _make_mock_manager() -> MagicMock:
     """Return a MagicMock MemoryManager with safe stub return values for all methods."""
@@ -150,3 +171,74 @@ async def test_list_tools_contract() -> None:
         assert expected_name in registered, (
             f"Tool {expected_name!r} defined in _TOOL_ARGS but missing from list_tools()"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 4 - positive routing: each tool invokes the correct manager method (mcp-3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tool_name", sorted(_ROUTING_MAP.keys()))
+async def test_routing_invokes_correct_manager_method(tool_name: str) -> None:
+    """_dispatch must call the expected manager method and not a sibling (mcp-3)."""
+    expected_method, forbidden_methods = _ROUTING_MAP[tool_name]
+    mock_mgr = _make_mock_manager()
+    with (
+        patch("mnemos.mcp_server.get_manager", return_value=mock_mgr),
+        patch(
+            "mnemos.mcp_server.validate_tag_contract",
+            side_effect=lambda tags, **_kw: tags,
+        ),
+    ):
+        await _dispatch(tool_name, _TOOL_ARGS[tool_name])
+
+    getattr(mock_mgr, expected_method).assert_called_once()
+    for forbidden in forbidden_methods:
+        getattr(mock_mgr, forbidden).assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 5 - save_context -> mgr.add edge (not search / recall_context) (mcp-3)
+# ---------------------------------------------------------------------------
+
+
+async def test_save_context_routes_to_add_not_search() -> None:
+    """mnemos_save_context must route to mgr.add - not mgr.search or mgr.recall_context."""
+    mock_mgr = _make_mock_manager()
+    with (
+        patch("mnemos.mcp_server.get_manager", return_value=mock_mgr),
+        patch(
+            "mnemos.mcp_server.validate_tag_contract",
+            side_effect=lambda tags, **_kw: tags,
+        ),
+    ):
+        await _dispatch("mnemos_save_context", _TOOL_ARGS["mnemos_save_context"])
+
+    mock_mgr.add.assert_called_once()
+    mock_mgr.search.assert_not_called()
+    mock_mgr.recall_context.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 6 - auto_collect_status reads no manager data methods (mcp-3)
+# ---------------------------------------------------------------------------
+
+
+async def test_auto_collect_status_touches_no_manager_data_method() -> None:
+    """mnemos_auto_collect_status must read only module-level state - zero mgr data method calls."""
+    mock_mgr = _make_mock_manager()
+    with patch("mnemos.mcp_server.get_manager", return_value=mock_mgr):
+        await _dispatch("mnemos_auto_collect_status", _TOOL_ARGS["mnemos_auto_collect_status"])
+
+    data_methods = [
+        "add",
+        "search",
+        "agent_recall",
+        "recall_context",
+        "list_recent",
+        "list_tags",
+        "stats",
+        "ingest_url",
+    ]
+    for method_name in data_methods:
+        getattr(mock_mgr, method_name).assert_not_called()
