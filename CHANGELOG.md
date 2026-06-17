@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP tool dispatch smoke tests** — MCP tool dispatch / routing now has
   smoke-test coverage.
 
+### Fixed
+
+- **`config.example.yaml` repair** — the example config had a stale `brain:` root
+  key (vs. the current `mnemos:` root), stale default paths (`~/brain-vault`,
+  `~/.ai-brain`), and a `telegram:` block that is not part of the current
+  schema. All three caused strict `Settings` validation to fail on first run.
+  The file now loads successfully under strict validation and matches the
+  runtime schema. ([`config.example.yaml`](config.example.yaml))
+
 ### Security
 
 - **PBKDF2 token hashing** — bearer tokens are stored as PBKDF2-HMAC-SHA256

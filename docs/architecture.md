@@ -1,8 +1,10 @@
-# AI-Brain — Архитектура системы
+# Mnemos — Архитектура системы
+
+> **Примечание.** Этот документ сохранён из pre-fork эпохи ai-brain и частично обновлён после ребрендинга. Актуальная архитектура на уровне компонентов описана в [README.md](../README.md). Данная страница полезна как исторический контекст и описание структуры данных.
 
 ## Обзор
 
-AI-Brain — гибридная система долговременной памяти: личная база знаний + RAG-хранилище для AI-агентов. Единый «мозг», доступный из CLI, Web UI, API, MCP-сервера, Telegram-бота и Obsidian.
+Mnemos — гибридная система долговременной памяти: личная база знаний + RAG-хранилище для AI-агентов. Единый «мозг», доступный из CLI, HTTP API и MCP-сервера.
 
 ## Ключевые принципы
 
@@ -17,7 +19,7 @@ AI-Brain — гибридная система долговременной па
 
 ## Архитектура (слои)
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    ИНТЕРФЕЙСЫ                            │
 │  ┌─────┐ ┌───────┐ ┌──────┐ ┌─────┐ ┌────────────────┐ │
@@ -73,7 +75,7 @@ AI-Brain — гибридная система долговременной па
 - Embedding-провайдер настраивается через конфиг
 - Кэширование эмбеддингов для избежания повторных вычислений
 
-### 3. Ядро (brain_core)
+### 3. Ядро (MemoryManager)
 
 #### MemoryManager
 - CRUD для записей памяти (create, read, update, delete)
@@ -101,26 +103,25 @@ AI-Brain — гибридная система долговременной па
 | Obsidian vault | File watcher (watchdog) | Markdown + frontmatter |
 | Веб-страницы | URL → trafilatura/BeautifulSoup | HTML → чистый текст |
 | Файлы | Загрузка через API | PDF, TXT, MD, DOCX |
-| Telegram | Бот (aiogram) → API | Сообщения, файлы |
 | LLM-чаты | MCP / экспорт | Диалоги |
 
 ### 5. Интерфейсы
 
 #### CLI (Typer)
 ```bash
-brain add "Заметка о важном"                    # быстрое добавление
-brain add --file ./document.pdf                  # из файла
-brain search "как настроить nginx"               # семантический поиск
-brain search --tags python,devops --limit 10     # фильтрация
-brain ingest --url https://example.com           # парсинг URL
-brain list --recent 20                           # последние записи
-brain tags                                       # все теги
-brain sync                                       # полная переиндексация
-brain serve                                      # запуск API-сервера
+mnemos add "Заметка о важном"                   # быстрое добавление
+mnemos add --file ./document.pdf                 # из файла
+mnemos search "как настроить nginx"              # семантический поиск
+mnemos search --tags python,devops --limit 10    # фильтрация
+mnemos ingest --url https://example.com          # парсинг URL
+mnemos recall --agent getting-started            # записи по агенту
+mnemos tags                                      # все теги
+mnemos mcp-server                                # MCP-сервер для Copilot
+mnemos serve                                     # запуск API-сервера
 ```
 
 #### REST API (FastAPI)
-```
+```text
 POST   /api/v1/memories          — создать запись
 GET    /api/v1/memories           — список (с пагинацией)
 GET    /api/v1/memories/{id}      — получить запись
@@ -134,20 +135,12 @@ GET    /api/v1/health              — healthcheck
 ```
 
 #### MCP-сервер
-Инструменты для Copilot/LLM-агентов:
-- `brain_search` — семантический поиск по памяти
-- `brain_add` — добавить новую запись
-- `brain_get` — получить запись по ID
-- `brain_list_tags` — список тегов
-- `brain_ingest_url` — загрузить веб-страницу
-
-#### Telegram Bot (aiogram)
-- Отправить текст → сохранить как заметку
-- Отправить URL → парсить и сохранить
-- Отправить файл → извлечь текст и сохранить
-- `/search запрос` → семантический поиск
-- `/tags` → список тегов
-- `/recent` → последние записи
+Инструменты для Copilot/LLM-агентов (полный список: [mcp-tools.md](mcp-tools.md)):
+- `mnemos_search` — семантический поиск по памяти
+- `mnemos_add` — добавить новую запись
+- `mnemos_get` — получить запись по ID
+- `mnemos_list_tags` — список тегов
+- `mnemos_ingest_url` — загрузить веб-страницу
 
 #### Web UI
 - Будет реализован позже (Svelte/React)
@@ -167,7 +160,7 @@ class Memory:
     content: str         # основной текст
     title: str | None    # заголовок (авто или ручной)
     tags: list[str]      # теги
-    source: str          # источник: manual, telegram, web, file, mcp, obsidian
+    source: str          # источник: manual, web, file, mcp, obsidian
     source_url: str | None
     memory_type: str     # note, fact, snippet, bookmark, conversation
     created_at: datetime
@@ -200,32 +193,31 @@ updated: 2026-04-10T12:00:00
 
 ## Конфигурация
 
+> Полный аннотированный пример — [config.example.yaml](../config.example.yaml). Переопределение через env-переменные вида `MNEMOS_SECTION__KEY=value`.
+
 ```yaml
-# config.yaml
-brain:
-  vault_path: ~/brain-vault          # Obsidian vault
-  data_dir: ~/.ai-brain              # ChromaDB + SQLite
+# config.yaml  —  минимальный пример
+mnemos:
+  vault_path: ~/mnemos-vault         # Obsidian vault
+  data_dir: ~/.mnemos                # SQLite + vector index
 
 embedding:
-  provider: sentence-transformers    # sentence-transformers | ollama | openai
-  model: intfloat/multilingual-e5-base
-  # ollama_url: http://localhost:11434
-  # openai_api_key: ...
+  provider: chromadb                 # chromadb (default) | ollama | sentence-transformers
 
 search:
   default_limit: 20
   hybrid_alpha: 0.7                  # вес семантического поиска (0=FTS, 1=vector)
 
 api:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8787
 
-telegram:
-  bot_token: ...
-  allowed_users: []                  # пустой = все
-
 mcp:
-  transport: stdio                   # stdio | sse
+  transport: stdio
+
+watcher:
+  paths: []
+  auto_scan: true
 ```
 
 ---
