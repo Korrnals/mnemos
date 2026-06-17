@@ -332,6 +332,40 @@ CREATE TRIGGER IF NOT EXISTS turns_au AFTER UPDATE ON turns BEGIN
     VALUES (new.rowid, new.id, new.session_id, new.content, new.summary,
             new.tags, new.from_agent, new.to_agent);
 END;
+
+-- T-AUTH: bearer tokens, session tokens, TOTP challenges (ADR-0014)
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    token_id              TEXT PRIMARY KEY,
+    token_sha256          TEXT NOT NULL UNIQUE,
+    name                  TEXT,
+    totp_secret_encrypted BLOB,
+    created_at            TEXT NOT NULL,
+    expires_at            TEXT,
+    disabled_at           TEXT,
+    failure_count         INTEGER NOT NULL DEFAULT 0,
+    totp_failure_count    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    session_sha256 TEXT PRIMARY KEY,
+    token_id       TEXT NOT NULL REFERENCES auth_tokens(token_id) ON DELETE CASCADE,
+    created_at     TEXT NOT NULL,
+    expires_at     TEXT NOT NULL,
+    last_seen_at   TEXT NOT NULL,
+    client_ip      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auth_challenges (
+    challenge_id TEXT PRIMARY KEY,
+    token_id     TEXT NOT NULL REFERENCES auth_tokens(token_id) ON DELETE CASCADE,
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    attempts     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_sha256      ON auth_tokens(token_sha256);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires   ON auth_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_challenges_expires ON auth_challenges(expires_at);
 """
 
 _MIGRATIONS: list[tuple[str, str]] = [
