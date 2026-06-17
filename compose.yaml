@@ -1,29 +1,34 @@
-# AI-Brain — podman-compose deployment
+# Mnemos — podman-compose deployment
 #
 # Запуск:    podman-compose up -d
 # Остановка: podman-compose down
-# Логи:      podman-compose logs -f ai-brain
+# Логи:      podman-compose logs -f mnemos
 #
 # С Ollama:  podman-compose --profile ollama up -d
+#
+# Обязательно: экспортируй MNEMOS_API__TOTP_MASTER_KEY перед запуском:
+#   export MNEMOS_API__TOTP_MASTER_KEY=<generated-key>
 
 services:
-  ai-brain:
+  mnemos:
     build:
       context: .
       dockerfile: Containerfile
-    container_name: ai-brain
+    container_name: mnemos
     restart: unless-stopped
     ports:
       - "8787:8787"
     volumes:
-      - brain-data:/data
-      - brain-vault:/vault
+      - mnemos-data:/data
+      - mnemos-vault:/vault
       - ./config.container.yaml:/app/config.yaml:ro
     environment:
-      - AI_BRAIN_CONFIG=/app/config.yaml
-    # healthcheck
+      - MNEMOS_CONFIG=/app/config.yaml
+      # REQUIRED: startup guard refuses to start without this (fail-closed).
+      # Set in shell before running compose or in a .env file (never hardcode).
+      - MNEMOS_API__TOTP_MASTER_KEY=${MNEMOS_API__TOTP_MASTER_KEY:?set MNEMOS_API__TOTP_MASTER_KEY}
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8787/api/v1/health').raise_for_status()"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8787/health').raise_for_status()"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -33,7 +38,7 @@ services:
   # Activate with: podman-compose --profile ollama up -d
   ollama:
     image: docker.io/ollama/ollama:latest
-    container_name: ai-brain-ollama
+    container_name: mnemos-ollama
     profiles:
       - ollama
     restart: unless-stopped
@@ -42,12 +47,12 @@ services:
     volumes:
       - ollama-data:/root/.ollama
     # Pull embedding model on first start
-    # After start: podman exec ai-brain-ollama ollama pull nomic-embed-text
+    # After start: podman exec mnemos-ollama ollama pull nomic-embed-text
 
 volumes:
-  brain-data:
+  mnemos-data:
     driver: local
-  brain-vault:
+  mnemos-vault:
     driver: local
   ollama-data:
     driver: local

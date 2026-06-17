@@ -1,0 +1,50 @@
+# Kubernetes-style pod manifest for Podman
+# Usage: podman kube play deploy/kube/mnemos-pod.yaml
+# Stop:  podman kube down deploy/kube/mnemos-pod.yaml
+#
+# REQUIRED before apply: create the mnemos-secrets Secret with the TOTP key:
+#   kubectl create secret generic mnemos-secrets \
+#     --from-literal=totp-master-key=<generated-key>
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mnemos
+  labels:
+    app: mnemos
+spec:
+  containers:
+    - name: api
+      image: localhost/mnemos:latest
+      ports:
+        - containerPort: 8787
+          hostPort: 8787
+          protocol: TCP
+      env:
+        - name: MNEMOS_CONFIG
+          value: /app/config.yaml
+        # REQUIRED: startup guard refuses to start without this (fail-closed).
+        # Operator must create Secret mnemos-secrets with key totp-master-key.
+        - name: MNEMOS_API__TOTP_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mnemos-secrets
+              key: totp-master-key
+      volumeMounts:
+        - name: mnemos-data
+          mountPath: /data
+        - name: mnemos-vault
+          mountPath: /vault
+      resources:
+        limits:
+          memory: "2Gi"
+          cpu: "2"
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+  volumes:
+    - name: mnemos-data
+      persistentVolumeClaim:
+        claimName: mnemos-data
+    - name: mnemos-vault
+      persistentVolumeClaim:
+        claimName: mnemos-vault

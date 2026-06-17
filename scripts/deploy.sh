@@ -1,17 +1,17 @@
 #!/bin/bash
-# AI-Brain: container deployment helper
+# Mnemos: container deployment helper
 # Usage: ./scripts/deploy.sh [command]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-IMAGE_NAME="localhost/ai-brain:latest"
+IMAGE_NAME="localhost/mnemos:latest"
 
 cd "$PROJECT_DIR"
 
 usage() {
     cat <<EOF
-AI-Brain container deployment
+Mnemos container deployment
 
 Usage: $0 <command>
 
@@ -25,7 +25,7 @@ Commands:
   kube-down      Stop kube deployment
   quadlet        Install systemd quadlet unit
   shell          Open shell in running container
-  cli <args>     Run brain CLI in container
+  cli <args>     Run mnemos CLI in container
   status         Show container status
 
 EOF
@@ -39,8 +39,8 @@ cmd_build() {
 
 cmd_up() {
     podman-compose up -d
-    echo "AI-Brain API: http://localhost:8787"
-    echo "Swagger UI:   http://localhost:8787/docs"
+    echo "Mnemos API: http://localhost:8787"
+    echo "Swagger UI: http://localhost:8787/docs"
 }
 
 cmd_down() {
@@ -48,15 +48,15 @@ cmd_down() {
 }
 
 cmd_logs() {
-    podman-compose logs -f ai-brain
+    podman-compose logs -f mnemos
 }
 
 cmd_up_ollama() {
     podman-compose --profile ollama up -d
     echo "Pulling nomic-embed-text model..."
-    podman exec ai-brain-ollama ollama pull nomic-embed-text
+    podman exec mnemos-ollama ollama pull nomic-embed-text
     echo ""
-    echo "AI-Brain API: http://localhost:8787"
+    echo "Mnemos API: http://localhost:8787"
     echo "Ollama:       http://localhost:11434"
     echo ""
     echo "Update config.container.yaml:"
@@ -66,40 +66,40 @@ cmd_up_ollama() {
 
 cmd_kube_up() {
     # Ensure volumes exist
-    podman volume create brain-data 2>/dev/null || true
-    podman volume create brain-vault 2>/dev/null || true
-    podman kube play deploy/kube/ai-brain-pod.yaml
-    echo "AI-Brain API: http://localhost:8787"
+    podman volume create mnemos-data 2>/dev/null || true
+    podman volume create mnemos-vault 2>/dev/null || true
+    podman kube play deploy/kube/mnemos-pod.yaml
+    echo "Mnemos API: http://localhost:8787"
 }
 
 cmd_kube_down() {
-    podman kube down deploy/kube/ai-brain-pod.yaml
+    podman kube down deploy/kube/mnemos-pod.yaml
 }
 
 cmd_quadlet() {
     local target_dir="$HOME/.config/containers/systemd"
     mkdir -p "$target_dir"
-    cp deploy/quadlet/ai-brain.container "$target_dir/"
+    cp deploy/quadlet/mnemos.container "$target_dir/"
     systemctl --user daemon-reload
     echo "Quadlet installed. Start with:"
-    echo "  systemctl --user start ai-brain"
-    echo "  systemctl --user enable ai-brain  # autostart"
+    echo "  systemctl --user start mnemos"
+    echo "  systemctl --user enable mnemos  # autostart"
 }
 
 cmd_shell() {
-    podman exec -it ai-brain /bin/bash
+    podman exec -it mnemos /bin/bash
 }
 
 cmd_cli() {
-    podman exec ai-brain brain "$@"
+    podman exec mnemos mnemos "$@"
 }
 
 cmd_status() {
     echo "=== Containers ==="
-    podman ps --filter name=ai-brain --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    podman ps --filter name=mnemos --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
     echo ""
     echo "=== Volumes ==="
-    podman volume ls --filter name=brain
+    podman volume ls --filter name=mnemos
 }
 
 case "${1:-}" in

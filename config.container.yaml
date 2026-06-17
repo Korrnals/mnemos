@@ -1,5 +1,5 @@
-# AI-Brain container config — paths mapped to container volumes
-brain:
+# Mnemos container config — paths mapped to container volumes
+mnemos:
   vault_path: /vault
   data_dir: /data
 
@@ -18,10 +18,18 @@ search:
 api:
   host: 0.0.0.0
   port: 8787
-
-telegram:
-  bot_token: ""
-  allowed_users: []
+  # SECURITY: the container binds 0.0.0.0, so the startup guard in
+  # src/mnemos/api/main.py (_check_non_loopback_auth) REQUIRES all three
+  # flags below to be true AND env MNEMOS_API__TOTP_MASTER_KEY to be
+  # non-empty — container will refuse to start without them (fail-closed).
+  # Supply MNEMOS_API__TOTP_MASTER_KEY at runtime (EnvironmentFile or
+  # compose environment block); do NOT hardcode it here.
+  # behind_tls_proxy: true also asserts TLS terminates upstream — operators
+  # MUST front the published port with a TLS-terminating reverse proxy
+  # (or only publish on a trusted internal network).
+  auth_enabled: true
+  totp_enabled: true
+  behind_tls_proxy: true
 
 mcp:
   transport: stdio

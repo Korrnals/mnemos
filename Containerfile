@@ -1,10 +1,10 @@
-# AI-Brain container
-# Build: podman build -t ai-brain .
-# Run:   podman run -v brain-data:/data -v brain-vault:/vault -p 8787:8787 ai-brain
+# Mnemos container
+# Build: podman build -t mnemos .
+# Run:   podman run -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 mnemos
 FROM docker.io/library/python:3.12-slim AS base
 
-LABEL maintainer="ai-brain"
-LABEL description="AI-Brain: hybrid long-term memory system"
+LABEL maintainer="mnemos"
+LABEL description="Mnemos: hybrid long-term memory system"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -31,9 +31,9 @@ RUN mkdir -p /data /vault
 COPY config.example.yaml /app/config.yaml
 
 # Override paths for container layout
-ENV AI_BRAIN_CONFIG=/app/config.yaml
+ENV MNEMOS_CONFIG=/app/config.yaml
 
 EXPOSE 8787
 
-# Default: API server
-CMD ["python", "-m", "uvicorn", "ai_brain.api:app", "--host", "0.0.0.0", "--port", "8787"]
+# Use CLI entrypoint so host/port propagate correctly to the ASGI worker
+CMD ["mnemos", "serve", "--config", "/app/config.yaml"]

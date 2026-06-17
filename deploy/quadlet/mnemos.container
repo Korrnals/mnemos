@@ -1,0 +1,25 @@
+# Podman Quadlet — systemd unit for mnemos container
+# Install: cp deploy/quadlet/*.container ~/.config/containers/systemd/
+# Enable:  systemctl --user daemon-reload && systemctl --user start mnemos
+[Container]
+ContainerName=mnemos
+Image=localhost/mnemos:latest
+AutoUpdate=local
+
+PublishPort=8787:8787
+Volume=mnemos-data:/data
+Volume=mnemos-vault:/vault
+
+Environment=MNEMOS_CONFIG=/app/config.yaml
+# REQUIRED: startup guard refuses to start without MNEMOS_API__TOTP_MASTER_KEY.
+# Provide via EnvironmentFile= pointing to a secrets file (never hardcode).
+# Example: EnvironmentFile=%h/.config/mnemos/secrets.env
+# The secrets.env file must contain: MNEMOS_API__TOTP_MASTER_KEY=<generated-key>
+# Environment=MNEMOS_API__TOTP_MASTER_KEY=
+
+[Service]
+Restart=always
+TimeoutStartSec=30
+
+[Install]
+WantedBy=default.target
