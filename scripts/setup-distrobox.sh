@@ -1,16 +1,16 @@
 #!/bin/bash
-# AI-Brain: setup dedicated distrobox container
+# Mnemos: setup dedicated distrobox container
 # Run from host: ./scripts/setup-distrobox.sh
 set -euo pipefail
 
-CONTAINER_NAME="ai-brain"
+CONTAINER_NAME="mnemos"
 IMAGE="docker.io/library/ubuntu:24.04"
-BRAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+MNEMOS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "=== AI-Brain: Creating distrobox container ==="
+echo "=== Mnemos: Creating distrobox container ==="
 echo "Container: $CONTAINER_NAME"
 echo "Image:     $IMAGE"
-echo "Project:   $BRAIN_DIR"
+echo "Project:   $MNEMOS_DIR"
 echo ""
 
 # Create container if it doesn't exist
@@ -31,7 +31,7 @@ echo "=== Setting up Python environment inside container ==="
 # Run setup inside the container
 distrobox enter "$CONTAINER_NAME" -- bash -c "
     set -euo pipefail
-    cd '$BRAIN_DIR'
+    cd '$MNEMOS_DIR'
 
     echo '--- Installing system packages ---'
     sudo apt-get update -qq
@@ -41,7 +41,7 @@ distrobox enter "$CONTAINER_NAME" -- bash -c "
     python3 -m venv .venv
     source .venv/bin/activate
 
-    echo '--- Installing ai-brain (core, no torch) ---'
+    echo '--- Installing mnemos (core, no torch) ---'
     pip install -e '.[dev]'
 
     echo '--- Copying default config ---'
@@ -51,18 +51,18 @@ distrobox enter "$CONTAINER_NAME" -- bash -c "
     fi
 
     echo '--- Creating vault directory ---'
-    mkdir -p ~/brain-vault
-    mkdir -p ~/.ai-brain
+    mkdir -p ~/mnemos-vault
+    mkdir -p ~/.mnemos
 
     echo ''
     echo '============================================='
-    echo '  AI-Brain setup complete!'
+    echo '  Mnemos setup complete!'
     echo '============================================='
     echo ''
     echo 'Usage:'
     echo '  distrobox enter $CONTAINER_NAME'
-    echo '  cd $BRAIN_DIR && source .venv/bin/activate'
-    echo '  brain --help'
+    echo '  cd $MNEMOS_DIR && source .venv/bin/activate'
+    echo '  mnemos --help'
     echo ''
     echo 'Or run as container:'
     echo '  podman-compose up -d'

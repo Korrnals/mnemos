@@ -1,27 +1,27 @@
 # Kubernetes-style pod manifest for Podman
-# Usage: podman kube play deploy/kube/ai-brain-pod.yaml
-# Stop:  podman kube down deploy/kube/ai-brain-pod.yaml
+# Usage: podman kube play deploy/kube/mnemos-pod.yaml
+# Stop:  podman kube down deploy/kube/mnemos-pod.yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ai-brain
+  name: mnemos
   labels:
-    app: ai-brain
+    app: mnemos
 spec:
   containers:
     - name: api
-      image: localhost/ai-brain:latest
+      image: localhost/mnemos:latest
       ports:
         - containerPort: 8787
           hostPort: 8787
           protocol: TCP
       env:
-        - name: AI_BRAIN_CONFIG
+        - name: MNEMOS_CONFIG
           value: /app/config.yaml
       volumeMounts:
-        - name: brain-data
+        - name: mnemos-data
           mountPath: /data
-        - name: brain-vault
+        - name: mnemos-vault
           mountPath: /vault
       resources:
         limits:
@@ -31,9 +31,9 @@ spec:
           memory: "512Mi"
           cpu: "500m"
   volumes:
-    - name: brain-data
+    - name: mnemos-data
       persistentVolumeClaim:
-        claimName: brain-data
-    - name: brain-vault
+        claimName: mnemos-data
+    - name: mnemos-vault
       persistentVolumeClaim:
-        claimName: brain-vault
+        claimName: mnemos-vault

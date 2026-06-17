@@ -116,8 +116,7 @@ jobs:
         run: buildah bud -t mnemos:test .
 
       - name: Smoke test — mnemos CLI inside container
-        # NOTE: The Containerfile is still mid-rebrand (still references ai-brain).
-        # When the rebrand lands, change this to `buildah run mnemos-test -- mnemos --help`.
         run: |
           buildah from --name mnemos-test mnemos:test
+          buildah run mnemos-test -- mnemos --help
           buildah run mnemos-test -- python -c "import sys; print('python', sys.version.split()[0])"

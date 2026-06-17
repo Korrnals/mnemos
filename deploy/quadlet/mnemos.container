@@ -1,0 +1,20 @@
+# Podman Quadlet — systemd unit for mnemos container
+# Install: cp deploy/quadlet/*.container ~/.config/containers/systemd/
+# Enable:  systemctl --user daemon-reload && systemctl --user start mnemos
+[Container]
+ContainerName=mnemos
+Image=localhost/mnemos:latest
+AutoUpdate=local
+
+PublishPort=8787:8787
+Volume=mnemos-data:/data
+Volume=mnemos-vault:/vault
+
+Environment=MNEMOS_CONFIG=/app/config.yaml
+
+[Service]
+Restart=always
+TimeoutStartSec=30
+
+[Install]
+WantedBy=default.target

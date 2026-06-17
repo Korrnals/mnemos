@@ -1,12 +1,12 @@
 [Unit]
-Description=AI-Brain File Watcher
+Description=Mnemos — Memory & Knowledge Server (HTTP API)
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/LABs/AI/ai-brain/.venv/bin/brain watch
+ExecStart=%h/LABs/AI/mnemos/.venv/bin/mnemos serve
 Restart=on-failure
-RestartSec=10
+RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

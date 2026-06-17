@@ -18,6 +18,29 @@ search:
 api:
   host: 0.0.0.0
   port: 8787
+  # --- Authentication (optional for container, required for 0.0.0.0 bind) ---
+  auth_enabled: true             # set false for loopback testing, must be true for 0.0.0.0
+  totp_enabled: true             # require TOTP 2FA for all logins
+  # totp_master_key: env-only via MNEMOS_API__TOTP_MASTER_KEY (K8s secret or compose env)
+  session_ttl_sec: 28800         # 8 hours
+  session_pin_ip: true           # bind session to client IP
+  behind_tls_proxy: true         # TLS terminates upstream (Caddy, nginx, etc.)
+  trusted_proxies:               # CIDRs whose X-Forwarded-For is trusted
+    - "10.0.0.0/8"               # private IP range
+    - "172.16.0.0/12"            # private IP range
+  # --- CORS (for browser clients) ---
+  cors_enabled: true             # enable CORS for remote clients
+  cors_allow_origins:
+    - "http://localhost:5173"    # Vite dev server (dev only)
+    - "http://localhost:3000"    # other dev servers
+  cors_allow_credentials: true   # allow cookies cross-origin
+  cors_allow_methods:
+    - GET
+    - POST
+    - DELETE
+  cors_allow_headers:
+    - Authorization
+    - Content-Type
 
 telegram:
   bot_token: ""

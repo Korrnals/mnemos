@@ -1,6 +1,6 @@
 {
   "errors": [],
-  "generated_at": "2026-06-16T11:01:19Z",
+  "generated_at": "2026-06-17T06:23:06Z",
   "metrics": {
     "_totals": {
       "CONFIDENCE.HIGH": 0,
@@ -11,9 +11,9 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 5651,
+      "loc": 6817,
       "nosec": 0,
-      "skipped_tests": 4
+      "skipped_tests": 5
     },
     "src/mnemos/__init__.py": {
       "CONFIDENCE.HIGH": 0,
@@ -41,6 +41,45 @@
       "nosec": 0,
       "skipped_tests": 0
     },
+    "src/mnemos/api/auth.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 213,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "src/mnemos/api/auth_store.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 430,
+      "nosec": 0,
+      "skipped_tests": 1
+    },
+    "src/mnemos/api/client_ip.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 49,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
     "src/mnemos/api/main.py": {
       "CONFIDENCE.HIGH": 0,
       "CONFIDENCE.LOW": 0,
@@ -50,7 +89,33 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 231,
+      "loc": 328,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "src/mnemos/api/middleware.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 110,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "src/mnemos/api/rate_limit.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 19,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -89,7 +154,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 184,
+      "loc": 346,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -115,7 +180,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 149,
+      "loc": 161,
       "nosec": 0,
       "skipped_tests": 0
     },
@@ -193,7 +258,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 509,
+      "loc": 540,
       "nosec": 0,
       "skipped_tests": 1
     },
@@ -453,7 +518,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 814,
+      "loc": 846,
       "nosec": 0,
       "skipped_tests": 2
     },
@@ -479,7 +544,7 @@
       "SEVERITY.LOW": 0,
       "SEVERITY.MEDIUM": 0,
       "SEVERITY.UNDEFINED": 0,
-      "loc": 123,
+      "loc": 134,
       "nosec": 0,
       "skipped_tests": 1
     },
