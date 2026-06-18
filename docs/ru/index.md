@@ -117,6 +117,7 @@ mnemos mcp-server
 ## Администрирование / Эксплуатация
 
 - [Runbook: Установка](admin/runbooks/install.md) *(Wave 2)*
+- [Runbook: Контейнерное развёртывание](admin/runbooks/container-deployment.md) — сборка, залитие, compose, podman, Kubernetes, quadlet.
 - [Runbook: Миграция из ai-brain](admin/runbooks/migrate.md) *(Wave 2)*
 - [Runbook: Резервное копирование и восстановление](admin/runbooks/backup-restore.md) *(Wave 2)*
 - [Runbook: Обновление зависимостей](admin/runbooks/dependency-updates.md) *(Wave 2)*

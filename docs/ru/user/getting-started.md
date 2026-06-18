@@ -47,6 +47,17 @@ pip install -e ".[dev]"
 
 Экстра `[dev]` добавляет `pytest`, `ruff`, `mypy`, `bandit` и `pip-audit` для запуска полного набора проверок.
 
+### Опции установки
+
+`pip install -e ".[dev]"` — точка `.` и есть сам пакет (`mnemos`); `[dev]` и `[mcp]` — **опциональные экстры**. Имя пакета в команде не отсутствует.
+
+| Метод | Команда |
+|-------|--------|
+| Editable dev (рекомендуется для контрибьюторов) | `pip install -e ".[dev,mcp]"` |
+| Из исходников, версионированный | `pip install ".[mcp]"` |
+| Released wheel | `pip install https://github.com/Korrnals/mnemos/releases/download/v1.1.1/mnemos-1.1.1-py3-none-any.whl` |
+| Контейнер | `podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 --env MNEMOS_API__TOTP_MASTER_KEY=<key> ghcr.io/korrnals/mnemos:1.1.1` — см. [container-deployment.md](../admin/runbooks/container-deployment.md) |
+
 ### Опциональные экстры LLM-провайдеров
 
 Mnemos умеет вызывать внешние LLM для синтеза (M4) и контекстного фильтра (M10). Устанавливайте только нужное:

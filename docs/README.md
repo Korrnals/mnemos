@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/mnemos-banner.svg" alt="Mnemos — memory &amp; knowledge server for AI agents" width="100%">
+</p>
+
 # Mnemos Documentation / Документация Mnemos
 
 **[🇬🇧 English](en/index.md)** · **[🇷🇺 Русский](ru/index.md)**

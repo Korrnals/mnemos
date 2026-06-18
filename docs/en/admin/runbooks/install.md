@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.11+
 - `uv` (recommended) or `pip`
 - Optional: `ollama` for local embeddings
 
@@ -40,12 +40,13 @@ embedding:
 
 ## Start MCP server
 
-Add to VS Code `settings.json`:
+Add to your VS Code **User** or **Workspace** `mcp.json`:
 
-```json
+```jsonc
 {
-  "mcpServers": {
+  "servers": {
     "mnemos": {
+      "type": "stdio",
       "command": "mnemos",
       "args": ["mcp-server"]
     }
@@ -57,6 +58,24 @@ Add to VS Code `settings.json`:
 
 ```bash
 mnemos serve  # uvicorn on 127.0.0.1:8787
+```
+
+## Container
+
+For full container deployment (compose, Kubernetes, systemd quadlet), see
+[container-deployment.md](container-deployment.md).
+
+Quick single-container start using the released image:
+
+```bash
+podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 \
+  --env MNEMOS_API__TOTP_MASTER_KEY=<your-key> ghcr.io/korrnals/mnemos:1.1.1
+```
+
+Or with compose from the repo root:
+
+```bash
+podman-compose up -d
 ```
 
 ## Verify

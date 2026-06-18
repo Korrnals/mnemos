@@ -1,0 +1,90 @@
+name: Release
+
+# Tag-only trigger — does not run on regular branch pushes or pull requests.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# Least-privilege: wheel upload needs contents:write; ghcr push needs packages:write.
+# Both use the built-in GITHUB_TOKEN — no external secret required.
+permissions:
+  contents: write
+  packages: write
+
+# One release pipeline per tag; cancel any duplicate run on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-dist:
+    name: Build wheel + sdist and attach to GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Sanity-gate — tag version must match pyproject.toml
+        # Prevents publishing a release when the tag (e.g. v1.2.0) does not
+        # match the declared package version in pyproject.toml (e.g. 1.1.1).
+        # Fail loudly here rather than ship a mis-labelled wheel.
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PYPROJECT_VERSION=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          echo "Tag version   : $TAG_VERSION"
+          echo "pyproject.toml: $PYPROJECT_VERSION"
+          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "ERROR: tag v${TAG_VERSION} does not match pyproject.toml version ${PYPROJECT_VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Install build frontend
+        run: pip install build
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Publish artifacts to GitHub Release
+        # softprops/action-gh-release reads GITHUB_TOKEN from the environment
+        # automatically; the contents:write permission declared above is sufficient.
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+  build-push-image:
+    name: Build and push container image to ghcr.io
+    # Runs in parallel with build-dist — both depend only on the tag, not each other.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      # Rootless buildah: no Docker daemon, no privileged mode.
+      # Matches the build-container job in ci.yml exactly.
+      - name: Install buildah
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends buildah
+
+      - name: Compute image coordinates
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/korrnals/mnemos" >> "$GITHUB_ENV"
+
+      - name: Build image (versioned + latest tags)
+        run: buildah bud -t $IMAGE:$VERSION -t $IMAGE:latest -f Containerfile .
+
+      - name: Log in to GitHub Container Registry
+        # packages:write (declared above) is sufficient — no external secret needed.
+        run: buildah login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} ghcr.io
+
+      - name: Push versioned tag
+        run: buildah push $IMAGE:$VERSION
+
+      - name: Push latest tag
+        run: buildah push $IMAGE:latest

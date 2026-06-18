@@ -4,7 +4,7 @@
 
 ## Предварительные требования
 
-- Python 3.12+
+- Python 3.11+
 - `uv` (рекомендуется) или `pip`
 - Опционально: `ollama` для локальных embeddings
 
@@ -40,12 +40,13 @@ embedding:
 
 ## Запуск MCP-сервера
 
-Добавить в `settings.json` VS Code:
+Добавить в VS Code **User** или **Workspace** `mcp.json`:
 
-```json
+```jsonc
 {
-  "mcpServers": {
+  "servers": {
     "mnemos": {
+      "type": "stdio",
       "command": "mnemos",
       "args": ["mcp-server"]
     }
@@ -57,6 +58,24 @@ embedding:
 
 ```bash
 mnemos serve  # uvicorn на 127.0.0.1:8787
+```
+
+## Контейнер
+
+Полное контейнерное развёртывание (compose, Kubernetes, systemd quadlet) — см.
+[ранбук container-deployment.md](container-deployment.md).
+
+Быстрый запуск одиночного контейнера из готового образа:
+
+```bash
+podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 \
+  --env MNEMOS_API__TOTP_MASTER_KEY=<your-key> ghcr.io/korrnals/mnemos:1.1.1
+```
+
+Или через compose из корня репозитория:
+
+```bash
+podman-compose up -d
 ```
 
 ## Проверка

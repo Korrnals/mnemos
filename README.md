@@ -1,7 +1,11 @@
 <!-- markdownlint-disable MD041 -->
+<p align="center">
+  <img src="docs/assets/mnemos-banner.svg" alt="Mnemos — memory &amp; knowledge server for AI agents" width="100%">
+</p>
+
 # Mnemos
 
-> **A memory & knowledge server for AI agents** — named after the Titaness, built for the GCW agent family.
+> **A memory &amp; knowledge server for AI agents** — named after the Titaness, built for the GCW agent family.
 
 [![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.1-blueviolet)](CHANGELOG.md)
 
@@ -98,6 +102,9 @@ mnemos search "uv vs pip" --limit 5
 
 That's the whole loop: install, write, find. For a step-by-step first run including the MCP and HTTP servers, see [docs/en/user/getting-started.md](docs/en/user/getting-started.md).
 
+> **Install options.** The repo install above is the fastest for development.
+> Mnemos 1.1.1 is also available as a [released wheel](https://github.com/Korrnals/mnemos/releases/download/v1.1.1/mnemos-1.1.1-py3-none-any.whl) (`pip install <url>`) and as a [container image](https://ghcr.io/korrnals/mnemos) (`ghcr.io/korrnals/mnemos:1.1.1`) — see [docs/en/admin/runbooks/container-deployment.md](docs/en/admin/runbooks/container-deployment.md).
+
 ## Three surfaces, one core
 
 The same MemoryManager powers all three interfaces — pick the one that fits the client.
@@ -105,7 +112,7 @@ The same MemoryManager powers all three interfaces — pick the one that fits th
 | Surface | Use it when… | Reference |
 |---------|--------------|-----------|
 | **CLI** — `mnemos …` | You live in a shell, want fast ad-hoc add/search, or are scripting cron jobs | [docs/en/user/cli-reference.md](docs/en/user/cli-reference.md) |
-| **HTTP** — `mnemos serve` | You have a non-MCP client (a web UI, a Telegram bot, a CI runner) | [docs/en/user/http-api.md](docs/en/user/http-api.md) |
+| **HTTP** — `mnemos serve` | You have a non-MCP client (a web dashboard, a mobile app, a CI runner) | [docs/en/user/http-api.md](docs/en/user/http-api.md) |
 | **MCP** — `mnemos mcp-server` | You are VS Code Copilot or any MCP-aware agent; this is the path the GCW family takes | [docs/en/user/mcp-tools.md](docs/en/user/mcp-tools.md) |
 
 The MCP surface also exposes the **A2A Sessions API** (M16) — a persistent backend for multi-step agent conversations. Five endpoints (`POST /v1/sessions`, append-turn, range-load, …) so GCW can survive restarts without losing context. See [docs/en/architecture/a2a-sessions.md](docs/en/architecture/a2a-sessions.md).
@@ -124,6 +131,7 @@ The MCP surface also exposes the **A2A Sessions API** (M16) — a persistent bac
 | [docs/en/user/tag-contract.md](docs/en/user/tag-contract.md) | The `project:` / `agent:` / `gcw:` schema enforced on every memory |
 | [docs/en/admin/security.md](docs/en/admin/security.md) | Threat model, SSRF guard, FTS5 escape, HF Hub pinning |
 | [docs/en/admin/runbooks/](docs/en/admin/runbooks/) | Install, migrate, backup / restore, dependency updates |
+| [docs/en/admin/runbooks/container-deployment.md](docs/en/admin/runbooks/container-deployment.md) | Build, push, compose, podman, Kubernetes, quadlet — full container deploy guide |
 | [docs/project/adr/](docs/project/adr/) | Architectural decision records — the *why* behind the design choices |
 | [docs/project/milestones.md](docs/project/milestones.md) | Milestone ledger with status legend |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes — Keep a Changelog format |

@@ -115,6 +115,7 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 ## Admin / Ops
 
 - [Runbooks — Install](admin/runbooks/install.md) — first-run operational checklist.
+- [Runbooks — Container Deployment](admin/runbooks/container-deployment.md) — build, push, compose, podman, Kubernetes, quadlet.
 - [Runbooks — Migrate](admin/runbooks/migrate.md) — import from legacy `ai-brain`.
 - [Runbooks — Backup & Restore](admin/runbooks/backup-restore.md) — backup, point-in-time recovery.
 - [Runbooks — Dependency Updates](admin/runbooks/dependency-updates.md) — CVE triage + weekly review.

@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 1280 360"
+     preserveAspectRatio="xMidYMid meet" role="img"
+     aria-labelledby="mnemos-title mnemos-desc">
+  <title id="mnemos-title">Mnemos — memory &amp; knowledge server for AI agents</title>
+  <desc id="mnemos-desc">Named after Mnemosyne, the Titaness of memory and mother of the nine Muses.
+    A classical wordmark beside a constellation of nine glowing nodes — at once the Muses
+    and a graph of memory nodes — framed by a Greek meander accent.</desc>
+
+  <defs>
+    <!-- Night-indigo cosmos background -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#0d1026"/>
+      <stop offset="0.5" stop-color="#161a3a"/>
+      <stop offset="1"   stop-color="#0a0c1f"/>
+    </linearGradient>
+    <radialGradient id="vignette" cx="0.32" cy="0.5" r="0.85">
+      <stop offset="0"   stop-color="#1d224d" stop-opacity="0.55"/>
+      <stop offset="1"   stop-color="#0a0c1f" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Gold for the wordmark and classical accents -->
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"    stop-color="#f3d795"/>
+      <stop offset="0.45" stop-color="#d8b96a"/>
+      <stop offset="1"    stop-color="#b8923c"/>
+    </linearGradient>
+
+    <!-- Node glows: gold (Muses) and a cool machine-cyan accent -->
+    <radialGradient id="glowGold" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0"   stop-color="#f6dca0" stop-opacity="0.95"/>
+      <stop offset="0.4" stop-color="#d8b96a" stop-opacity="0.55"/>
+      <stop offset="1"   stop-color="#d8b96a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowCyan" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0"   stop-color="#9af2e8" stop-opacity="0.95"/>
+      <stop offset="0.4" stop-color="#5fd0c5" stop-opacity="0.5"/>
+      <stop offset="1"   stop-color="#5fd0c5" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.4"/>
+    </filter>
+
+    <!-- Greek meander (key) fret band -->
+    <pattern id="meander" width="40" height="20" patternUnits="userSpaceOnUse">
+      <path d="M2 18 V2 H30 V18 H12 V9 H22"
+            fill="none" stroke="#d8b96a" stroke-width="2" stroke-opacity="0.55"/>
+    </pattern>
+
+    <style>
+      .word { font-family: Georgia, 'Times New Roman', 'DejaVu Serif', serif;
+              font-weight: 700; }
+      .sub  { font-family: Georgia, 'Times New Roman', 'DejaVu Serif', serif;
+              font-style: italic; }
+      .kick { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+              font-weight: 600; }
+    </style>
+  </defs>
+
+  <!-- Backdrop -->
+  <rect width="1280" height="360" fill="url(#bg)"/>
+  <rect width="1280" height="360" fill="url(#vignette)"/>
+
+  <!-- Meander accents, top & bottom -->
+  <rect x="64" y="40"  width="1152" height="20" fill="url(#meander)"/>
+  <rect x="64" y="300" width="1152" height="20" fill="url(#meander)"/>
+  <line x1="64" y1="36"  x2="1216" y2="36"  stroke="url(#gold)" stroke-width="1.5" stroke-opacity="0.7"/>
+  <line x1="64" y1="324" x2="1216" y2="324" stroke="url(#gold)" stroke-width="1.5" stroke-opacity="0.7"/>
+
+  <!-- Faint fluted column hint on the far left (antiquity) -->
+  <g stroke="#d8b96a" stroke-opacity="0.12" stroke-width="2">
+    <line x1="92"  y1="74" x2="92"  y2="286"/>
+    <line x1="100" y1="74" x2="100" y2="286"/>
+    <line x1="108" y1="74" x2="108" y2="286"/>
+  </g>
+
+  <!-- Constellation of the nine Muses == graph of memory nodes (right third) -->
+  <g stroke="#cdd6f2" stroke-opacity="0.28" stroke-width="1.2">
+    <line x1="915" y1="112" x2="1000" y2="76"/>
+    <line x1="1000" y1="76" x2="1082" y2="120"/>
+    <line x1="1082" y1="120" x2="1162" y2="96"/>
+    <line x1="915" y1="112" x2="942" y2="190"/>
+    <line x1="1000" y1="76" x2="1026" y2="166"/>
+    <line x1="1082" y1="120" x2="1110" y2="202"/>
+    <line x1="1162" y1="96" x2="1186" y2="176"/>
+    <line x1="942" y1="190" x2="1026" y2="166"/>
+    <line x1="1026" y1="166" x2="1110" y2="202"/>
+    <line x1="1110" y1="202" x2="1186" y2="176"/>
+    <line x1="1026" y1="166" x2="1060" y2="256"/>
+    <line x1="1110" y1="202" x2="1060" y2="256"/>
+    <line x1="942" y1="190" x2="1060" y2="256"/>
+  </g>
+
+  <!-- Node halos -->
+  <g>
+    <circle cx="915"  cy="112" r="17" fill="url(#glowGold)"/>
+    <circle cx="1000" cy="76"  r="20" fill="url(#glowCyan)"/>
+    <circle cx="1082" cy="120" r="17" fill="url(#glowGold)"/>
+    <circle cx="1162" cy="96"  r="15" fill="url(#glowGold)"/>
+    <circle cx="942"  cy="190" r="18" fill="url(#glowCyan)"/>
+    <circle cx="1026" cy="166" r="22" fill="url(#glowGold)"/>
+    <circle cx="1110" cy="202" r="17" fill="url(#glowGold)"/>
+    <circle cx="1186" cy="176" r="15" fill="url(#glowCyan)"/>
+    <circle cx="1060" cy="256" r="18" fill="url(#glowGold)"/>
+  </g>
+  <!-- Node cores -->
+  <g fill="#f6dca0" filter="url(#soft)">
+    <circle cx="915"  cy="112" r="3.4"/>
+    <circle cx="1000" cy="76"  r="3.8" fill="#bdf3ec"/>
+    <circle cx="1082" cy="120" r="3.4"/>
+    <circle cx="1162" cy="96"  r="3.0"/>
+    <circle cx="942"  cy="190" r="3.6" fill="#bdf3ec"/>
+    <circle cx="1026" cy="166" r="4.2"/>
+    <circle cx="1110" cy="202" r="3.4"/>
+    <circle cx="1186" cy="176" r="3.0" fill="#bdf3ec"/>
+    <circle cx="1060" cy="256" r="3.6"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="120" y="208" class="word" font-size="150"
+        letter-spacing="8" fill="url(#gold)">MNEMOS</text>
+
+  <!-- Etymology line: Greek original in parentheses, italic, small, with em-dash gloss -->
+  <text x="128" y="244" class="sub" font-size="22"
+        letter-spacing="1.5" fill="#eef1f8" fill-opacity="0.78">
+    <tspan font-style="italic">(</tspan><tspan>μνημοσύνη</tspan><tspan font-style="italic"> — memory, remembrance)</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="128" y="272" class="sub" font-size="28"
+        letter-spacing="2" fill="#d8b96a" fill-opacity="0.85">memory for machines</text>
+
+  <!-- Function kicker -->
+  <text x="128" y="300" class="kick" font-size="16.5"
+        letter-spacing="5" fill="#9aa6cf">MEMORY &amp; KNOWLEDGE SERVER  ·  CLI · HTTP · MCP</text>
+</svg>

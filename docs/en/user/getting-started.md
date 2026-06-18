@@ -47,6 +47,17 @@ pip install -e ".[dev]"
 
 The `[dev]` extra adds `pytest`, `ruff`, `mypy`, `bandit`, and `pip-audit` so you can run the full verification suite.
 
+### Install options
+
+`pip install -e ".[dev]"` — the `.` is the package itself (`mnemos`); `[dev]` and `[mcp]` are **optional extras**. You are not missing a package name.
+
+| Method | Command |
+|--------|---------|
+| Editable dev (recommended for contributors) | `pip install -e ".[dev,mcp]"` |
+| From source, versioned | `pip install ".[mcp]"` |
+| Released wheel | `pip install https://github.com/Korrnals/mnemos/releases/download/v1.1.1/mnemos-1.1.1-py3-none-any.whl` |
+| Container | `podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 --env MNEMOS_API__TOTP_MASTER_KEY=<key> ghcr.io/korrnals/mnemos:1.1.1` — see [container-deployment.md](../admin/runbooks/container-deployment.md) |
+
 ### Optional LLM provider extras
 
 Mnemos can call external LLMs for synthesis (M4) and the context filter (M10). Install only what you need:
