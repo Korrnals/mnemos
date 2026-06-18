@@ -12,12 +12,15 @@
 #   --venv PATH         Create a venv at PATH and install there (default: ~/.mnemos-venv)
 #   --no-venv           Install into the current Python (system/user), no venv
 #   --uv                Use uv instead of pip (auto-detected if available)
+#   --mcp               Set up VS Code MCP integration automatically (no prompt)
+#   --no-mcp            Skip VS Code MCP integration (no prompt)
 #   --container         Pull and run the container image instead of a Python install
 #   --port PORT         Container host port (default: 8787, only with --container)
 #   --help              Show this help
 #
-# After install, the `mnemos` CLI is available. For MCP integration run:
-#   curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash
+# The installer drops a `mnemos` launcher into ~/.local/bin so the CLI works in
+# any shell — no venv activation needed. If MCP is enabled it can wire VS Code
+# for you (interactively, or via --mcp / --no-mcp).
 set -euo pipefail
 
 VERSION=""
@@ -27,6 +30,8 @@ NO_VENV=false
 USE_UV=false
 CONTAINER=false
 CONTAINER_PORT=8787
+MCP_SETUP="ask"          # ask | yes | no
+LOCAL_BIN="${HOME}/.local/bin"
 
 # ── Colour helpers ────────────────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -47,9 +52,11 @@ while [[ $# -gt 0 ]]; do
     --venv)     VENV_PATH="$2"; NO_VENV=false; shift 2 ;;
     --no-venv)  NO_VENV=true; shift ;;
     --uv)       USE_UV=true; shift ;;
+    --mcp)      MCP_SETUP="yes"; shift ;;
+    --no-mcp)   MCP_SETUP="no"; shift ;;
     --container) CONTAINER=true; shift ;;
     --port)      CONTAINER_PORT="$2"; shift 2 ;;
-    --help|-h)  sed -n '2,18p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    --help|-h)  sed -n '2,28p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *)          die "Unknown flag: $1 (use --help)" ;;
   esac
 done
@@ -119,9 +126,9 @@ if [[ "$CONTAINER" == true ]]; then
 
   ok "Mnemos container started on port ${CONTAINER_PORT}."
   echo ""
-  printf "${GREEN}✓${NC}  Done. Next steps:\n"
-  printf "    curl -s http://localhost:${CONTAINER_PORT}/health | jq\n"
-  printf "    # Swagger UI: http://localhost:${CONTAINER_PORT}/docs\n"
+  ok "Done. Next steps:"
+  printf "    curl -s http://localhost:%s/health | jq\n" "$CONTAINER_PORT"
+  printf "    # Swagger UI: http://localhost:%s/docs\n" "$CONTAINER_PORT"
   printf "    # Logs: %s logs -f mnemos\n" "$RUNTIME"
   printf "    # Stop: %s stop mnemos\n" "$RUNTIME"
   printf "    Docs: docs/en/admin/runbooks/container-deployment.md\n"
@@ -155,29 +162,79 @@ else
   pip install "${WHEEL_URL}${EXTRA_BRACKET}"
 fi
 
-# ── Verify ────────────────────────────────────────────────────────
-if command -v mnemos &>/dev/null; then
-  INSTALLED_VER="$(mnemos --version 2>/dev/null || echo 'unknown')"
-  ok "Mnemos ${INSTALLED_VER} installed successfully!"
+# ── Resolve the mnemos binary ─────────────────────────────────────
+if [[ "$NO_VENV" == false ]]; then
+  MNEMOS_BIN="${VENV_PATH}/bin/mnemos"
 else
-  if [[ -x "${VENV_PATH}/bin/mnemos" ]]; then
-    INSTALLED_VER="$("${VENV_PATH}/bin/mnemos" --version 2>/dev/null || echo 'unknown')"
-    ok "Mnemos ${INSTALLED_VER} installed at ${VENV_PATH}/bin/mnemos"
-  else
-    warn "mnemos CLI not found on PATH. Check your venv activation."
-  fi
+  MNEMOS_BIN="$(command -v mnemos 2>/dev/null || true)"
 fi
 
-echo ""
-printf "${GREEN}✓${NC}  Done. Next steps:\n"
-printf "    mnemos add --content 'Hello' --tags project:test agent:setup gcw:learning\n"
-printf "    mnemos search 'Hello'\n"
+# ── Drop a launcher into ~/.local/bin (no venv activation needed) ──
+LINKED=false
+if [[ "$NO_VENV" == false && -x "$MNEMOS_BIN" ]]; then
+  mkdir -p "$LOCAL_BIN"
+  ln -sf "$MNEMOS_BIN" "${LOCAL_BIN}/mnemos"
+  LINKED=true
+  MNEMOS_BIN="${LOCAL_BIN}/mnemos"
+fi
+
+# ── Verify ────────────────────────────────────────────────────────
+if [[ -x "$MNEMOS_BIN" ]] || command -v mnemos &>/dev/null; then
+  ok "Mnemos v${VERSION} installed successfully!"
+else
+  warn "mnemos CLI not found — check the install output above."
+fi
+
+# ── Optional: VS Code MCP integration ─────────────────────────────
+setup_mcp() {
+  info "Setting up VS Code MCP integration…"
+  if curl -fsSL "https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh" \
+       | bash -s -- --command "$MNEMOS_BIN"; then
+    ok "VS Code MCP integration ready — reload your VS Code window."
+  else
+    warn "MCP setup didn't complete. Run it later:"
+    printf "    curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash\n"
+  fi
+}
+
+MCP_DONE=false
 if [[ "${EXTRAS}" == *mcp* ]]; then
-  printf "    # Register MCP server in VS Code:\n"
+  case "$MCP_SETUP" in
+    yes) echo ""; setup_mcp; MCP_DONE=true ;;
+    no)  : ;;
+    ask)
+      if [[ -r /dev/tty ]]; then
+        echo ""
+        printf "?  Set up VS Code MCP integration now? [Y/n] "
+        read -r reply < /dev/tty || reply=""
+        case "$reply" in
+          [Nn]*) info "Skipped MCP setup. You can run it anytime later." ;;
+          *)     setup_mcp; MCP_DONE=true ;;
+        esac
+      fi
+      ;;
+  esac
+fi
+
+# ── Done ──────────────────────────────────────────────────────────
+echo ""
+ok "Done. Try it:"
+printf "    mnemos add 'Hello' --tags project:test,agent:setup,gcw:learning\n"
+printf "    mnemos search 'Hello'\n"
+if [[ "${EXTRAS}" == *mcp* && "$MCP_DONE" == false ]]; then
+  echo ""
+  info "Enable VS Code MCP integration later:"
   printf "    curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash\n"
 fi
-if [[ "$NO_VENV" == false ]]; then
-  echo ""
-  printf "${YELLOW}⚠${NC}  Activate the venv in new shells:\n"
-  printf "    source ${VENV_PATH}/bin/activate\n"
+
+# ── PATH hint (only if ~/.local/bin isn't already on PATH) ─────────
+if [[ "$LINKED" == true ]]; then
+  case ":${PATH}:" in
+    *":${LOCAL_BIN}:"*) : ;;  # already reachable — nothing to do
+    *)
+      echo ""
+      warn "Add ~/.local/bin to your PATH so 'mnemos' works in every shell:"
+      printf "    echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc\n"
+      ;;
+  esac
 fi
