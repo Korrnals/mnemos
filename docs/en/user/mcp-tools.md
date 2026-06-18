@@ -1,0 +1,679 @@
+# MCP Tools Reference
+
+**🌐 Language / Язык:** English · [Русский](../../ru/user/mcp-tools.md)
+
+> Complete reference for the `mnemos_*` tools exposed by the Mnemos MCP server (`mnemos mcp-server`).
+
+Mnemos speaks the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) over **stdio JSON-RPC 2.0**. VS Code Copilot and any MCP-aware client can call the tools listed here.
+
+The server is defined in `src/mnemos/mcp_server.py`. Every tool below is registered with the `@server.list_tools()` decorator and dispatched by `call_tool()`.
+
+For a quick start on wiring it into VS Code, see [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server). For programmatic access, the same capabilities are also available over HTTP — see [http-api.md](http-api.md). For the tag schema enforced by most tools, see [tag-contract.md](tag-contract.md).
+
+---
+
+## Transport
+
+| Property | Value |
+|----------|-------|
+| Protocol | MCP (JSON-RPC 2.0 over stdio) |
+| Server name | `mnemos` |
+| Default transport | stdio (no TCP) |
+| Tool prefix | `mnemos_` |
+| Encoding | UTF-8, JSON |
+
+The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on stdin.
+
+---
+
+## Tool catalogue (summary)
+
+| Tool | Purpose | Tags required |
+|------|---------|---------------|
+| [`mnemos_add`](#mnemos_add) | Create a new memory entry | yes |
+| [`mnemos_search`](#mnemos_search) | Hybrid FTS + vector search | no |
+| [`mnemos_agent_recall`](#mnemos_agent_recall) | Per-agent recall (M3) | no |
+| [`mnemos_recall_context`](#mnemos_recall_context) | Restore session context for a project | no |
+| [`mnemos_save_context`](#mnemos_save_context) | Persist a session checkpoint | no (auto) |
+| [`mnemos_list_recent`](#mnemos_list_recent) | List recent entries | no |
+| [`mnemos_list_tags`](#mnemos_list_tags) | List all tags with counts | no |
+| [`mnemos_ingest_url`](#mnemos_ingest_url) | Fetch and save a web page | yes |
+| [`mnemos_watch_start`](#mnemos_watch_start) | Start a background file watcher | no |
+| [`mnemos_watch_stop`](#mnemos_watch_stop) | Stop the file watcher | no |
+| [`mnemos_watch_status`](#mnemos_watch_status) | Report watcher status | no |
+| [`mnemos_auto_collect_status`](#mnemos_auto_collect_status) | Compaction signal vector (M7) | no |
+| [`mnemos_stats`](#mnemos_stats) | Health counters and key paths | no |
+
+---
+
+## `mnemos_add`
+
+Create a new memory entry. The MCP layer enforces the GCW tag contract ([M2](tag-contract.md)) before writing.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `content` | string | **yes** | — | Text to remember. |
+| `title` | string | no | auto | Short title. |
+| `tags` | string[] | **yes** | — | Must include `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>`. |
+| `memory_type` | string | no | `note` | One of `note`, `fact`, `snippet`, `bookmark`, `conversation`. |
+| `filter_profile` | string | no | auto | One of `log`, `terminal`, `code`, `docs`, `web`, `default`. Drives M10 context filter. |
+
+### Output
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "Use uv, not pip",
+  "status": "raw"
+}
+```
+
+### Example call (JSON-RPC)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_add",
+    "arguments": {
+      "content": "Use uv, not pip",
+      "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"]
+    }
+  }
+}
+```
+
+### Errors
+
+| Error | Cause |
+|-------|-------|
+| `❌ Tag contract violation: ...` | Missing `project:`, `agent:`, or `gcw:` tag. |
+| `❌ Error: ...` | SQLite write failure, vault write failure, or embed failure (the latter is non-fatal — see [architecture overview](../architecture/overview.md#vector-store)). |
+
+### Related
+
+- Tag schema: [tag-contract.md](tag-contract.md)
+- HTTP equivalent: [`POST /memories`](http-api.md#create-memory)
+- CLI equivalent: [`mnemos add`](cli-reference.md#add)
+
+---
+
+## `mnemos_search`
+
+Hybrid search: FTS5 (full-text) + vector + Reciprocal Rank Fusion. Only `published` memories are searched by default.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `query` | string | **yes** | — | Natural language search string. |
+| `tags` | string[] | no | — | Filter: all of these tags must be present. |
+| `project` | string | no | — | Restrict to a project slug. |
+| `limit` | integer | no | `10` | Max results. |
+| `include_raw` | boolean | no | `false` | If true, returns `raw_content` instead of cleaned `content`. |
+
+### Output
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "title": "Use uv, not pip",
+    "content": "Use uv, not pip — it's faster and resolves transitive CVE closure correctly.",
+    "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"],
+    "score": 0.812,
+    "search_type": "hybrid",
+    "status": "published"
+  }
+]
+```
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_search",
+    "arguments": {
+      "query": "how to manage Python dependencies",
+      "limit": 5,
+      "project": "mnemos"
+    }
+  }
+}
+```
+
+### Errors
+
+- `❌ Error: ...` — query parsing failure (rare; usually succeeds with an empty result).
+
+### Related
+
+- HTTP equivalent: [`POST /search`](http-api.md#search)
+- CLI equivalent: [`mnemos search`](cli-reference.md#search)
+
+---
+
+## `mnemos_agent_recall`
+
+Per-agent recall (M3). Returns the most recent entries for a single agent, optionally filtered by project and / or sub-query.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `agent` | string | **yes** | — | Agent slug, e.g. `cr-security-reviewer`. |
+| `project` | string | no | — | Restrict to a project slug. |
+| `query` | string | no | — | Optional FTS / vector query within the agent scope. |
+| `limit` | integer | no | `20` | Max entries to return. |
+
+When `query` is omitted, the tool returns recent entries (recency-ordered). When `query` is present, it runs a hybrid search scoped to the agent's tags.
+
+### Output
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "title": "Bandit B608 hardcoded SQL — flag for triage",
+    "content": "Found hardcoded SQL in src/legacy/loader.py:42 ...",
+    "tags": ["project:mnemos", "agent:cr-security-reviewer", "gcw:bug-pattern"],
+    "created_at": "2026-06-15T10:42:00+00:00",
+    "status": "published"
+  }
+]
+```
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_agent_recall",
+    "arguments": {
+      "agent": "cr-security-reviewer",
+      "project": "mnemos",
+      "query": "bandit SQL injection",
+      "limit": 10
+    }
+  }
+}
+```
+
+### Errors
+
+- None typical. Returns an empty array if no matches.
+
+### Related
+
+- HTTP equivalent: [`GET /recall/agent/{name}`](http-api.md#agent-recall)
+- CLI equivalent: [`mnemos recall --agent <slug>`](cli-reference.md#recall)
+
+---
+
+## `mnemos_recall_context`
+
+Restore the latest session checkpoint for a project. The **first** thing an agent should call at the start of a session, especially after context compaction.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `project` | string | no | auto (cwd) | Project name. Auto-detected from the current working directory if omitted. |
+| `query` | string | no | — | Optional focus aspect. |
+
+### Output
+
+A plain-text block formatted as Markdown:
+
+```text
+# Context for project 'mnemos'
+
+---
+# Session checkpoint — 2026-06-15T10:42:00+00:00
+
+## Goals
+Ship M15 production hardening.
+## Completed
+bandit clean, mypy --strict green
+## In Progress
+pip-audit CVE-2026-45829 ignore
+## Decisions
+Pin chromadb 1.5.9 with audit
+## Context
+Active files: src/mnemos/manager.py, src/mnemos/api/main.py
+```
+
+If no checkpoint is found:
+
+```text
+No context found for project 'mnemos'. Start by saving context with mnemos_save_context.
+```
+
+In **auto-collect mode** (`MNEMOS_AUTO_COLLECT=1`), a `## 🔄 Auto-Collect Mode Active` block is appended with mandatory session rules.
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_recall_context",
+    "arguments": { "project": "mnemos" }
+  }
+}
+```
+
+### Related
+
+- `mnemos_save_context` — the matching writer
+- [architecture.md#session-context](../architecture/overview.md#session-context)
+
+---
+
+## `mnemos_save_context`
+
+Persist a session checkpoint. Agents should call this **proactively**: after meaningful work, before switching tasks, or when context is large.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `project` | string | no | auto (cwd) | Project name. |
+| `goals` | string | no | — | Current session goals. |
+| `completed` | string | no | — | What has been completed. |
+| `in_progress` | string | no | — | What is in progress. |
+| `decisions` | string | no | — | Key technical decisions + rationale. |
+| `context` | string | no | — | Other context (file paths, architecture, gotchas). |
+
+Mnemos synthesises the parts into a single Markdown memory tagged with `project:<slug>`, `agent:user`, and `gcw:checkpoint`.
+
+### Output
+
+```text
+✅ Context saved (id=550e8400-...).
+```
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_save_context",
+    "arguments": {
+      "project": "mnemos",
+      "goals": "Finish M15.1 mypy --strict",
+      "completed": "Added None checks in 12 functions",
+      "in_progress": "tests/test_api.py:241 type narrowing",
+      "decisions": "Use cast() sparingly, prefer TypeGuard"
+    }
+  }
+}
+```
+
+### Related
+
+- `mnemos_recall_context` — the matching reader
+- Auto-collect mode: [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server)
+
+---
+
+## `mnemos_list_recent`
+
+List the most recent memory entries, oldest-last.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `limit` | integer | no | `10` | Max entries. |
+| `tags` | string[] | no | — | Filter: any of these tags must be present. |
+| `project` | string | no | — | Restrict to a project slug. |
+
+### Output
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "title": "Use uv, not pip",
+    "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"],
+    "status": "raw",
+    "created_at": "2026-06-15T10:42:00+00:00"
+  }
+]
+```
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_list_recent",
+    "arguments": { "limit": 20, "project": "mnemos" }
+  }
+}
+```
+
+---
+
+## `mnemos_list_tags`
+
+List every tag in the memory with its occurrence count.
+
+### Input
+
+None.
+
+### Output
+
+```json
+{
+  "project:mnemos": 142,
+  "agent:tech-writer": 23,
+  "agent:sre": 41,
+  "gcw:learning": 67,
+  "gcw:bug-pattern": 12,
+  "gcw:decision": 8,
+  "gcw:checkpoint": 14
+}
+```
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "tools/call",
+  "params": { "name": "mnemos_list_tags", "arguments": {} }
+}
+```
+
+---
+
+## `mnemos_ingest_url`
+
+Fetch a web page, extract its main content (via `trafilatura`), and save it as a memory.
+
+### Input
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | **yes** | HTTP / HTTPS URL to fetch. |
+| `tags` | string[] | **yes** | Same M2 contract as `mnemos_add`. |
+
+> **SSRF guard.** The MCP layer strips `user:password@` from the URL authority before fetching (defence in depth alongside the in-process guard). Do not bypass this by building the URL from a string.
+
+### Output
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "How to manage Python dependencies",
+  "url": "https://example.com/article"
+}
+```
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_ingest_url",
+    "arguments": {
+      "url": "https://example.com/article",
+      "tags": ["project:research", "agent:user", "gcw:learning"]
+    }
+  }
+}
+```
+
+### Errors
+
+| Error | Cause |
+|-------|-------|
+| `❌ Error: ...` | Network failure, blocked URL (SSRF guard), or `trafilatura` extraction failure. |
+
+### Related
+
+- CLI equivalent: [`mnemos add --url <URL>`](cli-reference.md#add)
+- HTTP equivalent: [`POST /memories` with manual content](http-api.md#create-memory)
+- Security: [security.md](../admin/security.md#ssrf-guard)
+
+---
+
+## `mnemos_watch_start`
+
+Start a background file watcher. New and modified files under the watched paths are auto-indexed into Mnemos.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `paths` | string[] | no | `[cwd]` | Directories to watch. |
+| `scan` | boolean | no | `true` | Run an initial scan to catch up on existing files. |
+| `include_rules` | boolean | no | `false` | Also watch `.github/instructions/*.instructions.md` (M8 path-scoped rules). |
+
+### Output
+
+```text
+✅ Watcher started on ['/home/you/project']
+# or, with include_rules:
+✅ Watcher started on ['/home/you/project'] (including .instructions.md rules)
+```
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_watch_start",
+    "arguments": {
+      "paths": ["/home/you/mnemos", "/home/you/notes"],
+      "include_rules": true
+    }
+  }
+}
+```
+
+### Notes
+
+- File size cap is `watcher.max_file_size_kb` (default 512 KB) — files larger than this are skipped.
+- Default ignored dirs: `.git`, `node_modules`, `__pycache__`, `.venv`, `dist`, `build`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`.
+- Default watched extensions: `.md`, `.py`, `.js`, `.ts`, `.yaml`, `.yml`, `.toml`, `.json`, `.txt`, `.rst`, `.sh`, `.css`, `.html`, `.sql`.
+
+---
+
+## `mnemos_watch_stop`
+
+Stop the background file watcher.
+
+### Input
+
+None.
+
+### Output
+
+```text
+✅ Watcher stopped.
+```
+
+---
+
+## `mnemos_watch_status`
+
+Report the current state of the background watcher.
+
+### Input
+
+None.
+
+### Output
+
+```json
+{
+  "running": true,
+  "paths": ["/home/you/mnemos"],
+  "files_queued": 3,
+  "files_indexed": 142,
+  "include_rules": false
+}
+```
+
+---
+
+## `mnemos_auto_collect_status`
+
+Return the current compaction-detection signal vector (M7). The agent reads this to decide whether to call `mnemos_save_context` proactively.
+
+### Input
+
+None.
+
+### Output
+
+```json
+{
+  "auto_collect_enabled": false,
+  "signals": {
+    "call_counter": {
+      "calls_since_save": 7,
+      "threshold": 12,
+      "triggered": false
+    },
+    "elapsed_secs": {
+      "value": 312,
+      "threshold": 900,
+      "triggered": false
+    },
+    "context_size_heuristic": {
+      "value": null,
+      "note": "populated by client (M7)"
+    },
+    "summary_marker_detected": {
+      "value": null,
+      "note": "populated by client (M7)"
+    },
+    "reference_drop_heuristic": {
+      "value": null,
+      "note": "populated by client (M7)"
+    }
+  },
+  "recommendation": "ok",
+  "next_reminder_in_calls": 5
+}
+```
+
+The `recommendation` field is one of:
+
+| Value | Meaning |
+|-------|---------|
+| `ok` | No checkpoint needed yet. |
+| `save_checkpoint` | Save now — you are at or past a threshold. |
+
+### Auto-collect mode
+
+Set `MNEMOS_AUTO_COLLECT=1` in the server's environment. The reminder thresholds tighten:
+
+| Setting | Normal | Auto-collect |
+|---------|--------|--------------|
+| Calls since save | 12 | 6 |
+| Elapsed seconds | 900 (15 min) | 480 (8 min) |
+
+Tool descriptions also change (with `🔄 [AUTO-COLLECT] MANDATORY:` prefixes) so agents take the hints more seriously. **Recommended for production agents**, not for one-off scripts.
+
+---
+
+## `mnemos_stats`
+
+Return Mnemos health counters.
+
+### Input
+
+None.
+
+### Output
+
+Same shape as the CLI `mnemos stats` command — see [cli-reference.md#stats](cli-reference.md#stats).
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "data_dir": "/home/you/.mnemos",
+  "vault_path": "/home/you/mnemos-vault",
+  "total": 142,
+  "by_status": {"raw": 5, "processing": 0, "processed": 12, "published": 120, "archived": 5},
+  "vectors": 120
+}
+```
+
+---
+
+## Checkpoint reminder (auto-injected)
+
+Every non-save tool call returns its normal payload **plus** an optional reminder string when one of the auto-collect thresholds is hit:
+
+```text
+... normal result ...
+
+⚠️ [mnemos] 12 tool calls since last checkpoint (970s ago). Consider calling mnemos_save_context to preserve your current progress.
+```
+
+This is informational; nothing in Mnemos blocks the call. Disable by setting `MNEMOS_AUTO_COLLECT=0` (the default).
+
+---
+
+## Tag contract reminder
+
+The `mnemos_add` and `mnemos_ingest_url` tools reject calls that violate the M2 contract. The three required tag families are:
+
+| Tag | Format | Cardinality | Purpose |
+|-----|--------|-------------|---------|
+| `project:<slug>` | `[a-z0-9][a-z0-9\-_]{0,63}` | exactly 1 | Binds to a codebase / initiative |
+| `agent:<slug>` | `[a-z0-9][a-z0-9\-_]{0,63}` | exactly 1 | Authoring agent |
+| `gcw:<subtype>` | `[a-z][a-z0-9\-]*` | at least 1 | Cognitive category |
+
+Valid `gcw:` subtypes: `session`, `bug-pattern`, `learning`, `decision`, `rule`, `open-question`, `checkpoint`, `legacy`.
+
+Full reference: [tag-contract.md](tag-contract.md).
+
+---
+
+## See also
+
+- [getting-started.md](getting-started.md) — wiring `mcp.json` and the first call
+- [http-api.md](http-api.md) — the same capabilities over HTTP
+- [cli-reference.md](cli-reference.md) — the same capabilities over the CLI
+- [tag-contract.md](tag-contract.md) — M2 schema enforced by `mnemos_add`
+- [security.md](../admin/security.md) — SSRF guard, secrets hygiene
+- [architecture overview](../architecture/overview.md#mcp-server) — server lifecycle
+
+---
+
+_Last updated: 2026-06-16_

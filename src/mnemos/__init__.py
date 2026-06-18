@@ -3,5 +3,5 @@
 Fork of ai-brain, productionised for the GCW (GitHub Copilot Workflow) agent family.
 """
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 __all__ = ["__version__"]
