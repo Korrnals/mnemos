@@ -116,21 +116,26 @@
     <circle cx="1060" cy="256" r="3.6"/>
   </g>
 
+  <!-- ── Brand block: wordmark + etymology (centered under the wordmark) ── -->
   <!-- Wordmark -->
-  <text x="120" y="208" class="word" font-size="150"
+  <text x="462" y="172" text-anchor="middle" class="word" font-size="148"
         letter-spacing="8" fill="url(#gold)">MNEMOS</text>
 
-  <!-- Etymology line: Greek original in parentheses, italic, small, with em-dash gloss -->
-  <text x="128" y="244" class="sub" font-size="22"
-        letter-spacing="1.5" fill="#eef1f8" fill-opacity="0.78">
-    <tspan font-style="italic">(</tspan><tspan>μνημοσύνη</tspan><tspan font-style="italic"> — memory, remembrance)</tspan>
+  <!-- Etymology, centered under the wordmark — Greek original in gold, gloss muted -->
+  <text x="462" y="208" text-anchor="middle" class="sub" font-size="19"
+        letter-spacing="1" fill="#cfd6ea" fill-opacity="0.82">
+    <tspan font-style="italic">(</tspan><tspan font-style="normal" letter-spacing="2.5" fill="#e7c87a">μνημοσύνη</tspan><tspan font-style="italic"> — memory, remembrance)</tspan>
   </text>
 
-  <!-- Tagline -->
-  <text x="128" y="272" class="sub" font-size="28"
-        letter-spacing="2" fill="#d8b96a" fill-opacity="0.85">memory for machines</text>
+  <!-- ── Thin classical divider with a lozenge, separating brand from tagline ── -->
+  <line x1="296" y1="230" x2="430" y2="230" stroke="url(#gold)" stroke-width="1" stroke-opacity="0.45"/>
+  <path d="M462 224 l7 6 -7 6 -7 -6 z" fill="#d8b96a" fill-opacity="0.7"/>
+  <line x1="494" y1="230" x2="628" y2="230" stroke="url(#gold)" stroke-width="1" stroke-opacity="0.45"/>
 
-  <!-- Function kicker -->
-  <text x="128" y="300" class="kick" font-size="16.5"
-        letter-spacing="5" fill="#9aa6cf">MEMORY &amp; KNOWLEDGE SERVER  ·  CLI · HTTP · MCP</text>
+  <!-- ── Tagline + function kicker ── -->
+  <text x="462" y="264" text-anchor="middle" class="sub" font-size="27"
+        letter-spacing="2" fill="#d8b96a" fill-opacity="0.9">· memory for machines ·</text>
+
+  <text x="462" y="290" text-anchor="middle" class="kick" font-size="14.5"
+        letter-spacing="4.5" fill="#9aa6cf">MEMORY &amp; KNOWLEDGE SERVER · CLI · HTTP · MCP</text>
 </svg>
