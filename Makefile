@@ -1,4 +1,4 @@
-.PHONY: help install bootstrap check-venv test lint format typecheck security coverage clean verify security-reminder update-chromadb update-deps build-dist build-image push-image
+.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify security-reminder update-chromadb update-deps build-dist build-image push-image
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
@@ -10,6 +10,7 @@ help:
 	@echo "  make install    - Install with dev dependencies"
 	@echo "  make test       - Run pytest suite"
 	@echo "  make lint       - Run ruff linter"
+	@echo "  make lint-shell - Run shellcheck on shell scripts"
 	@echo "  make format     - Run ruff formatter"
 	@echo "  make typecheck  - Run mypy"
 	@echo "  make security   - Run bandit + pip-audit"
@@ -31,6 +32,9 @@ test:
 
 lint:
 	ruff check src/ tests/
+
+lint-shell:  ## Run shellcheck on all shell scripts
+	shellcheck scripts/*.sh
 
 format:
 	ruff format src/ tests/
@@ -57,7 +61,7 @@ update-deps:
 coverage:
 	pytest --cov=src/mnemos --cov-report=term-missing --cov-fail-under=80 tests/ -q
 
-verify: lint test security security-reminder
+verify: lint lint-shell test security security-reminder
 	@echo "✅ All verification checks passed"
 
 bootstrap:

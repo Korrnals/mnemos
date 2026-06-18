@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **`make lint-shell` target** (`Makefile`) — runs `shellcheck scripts/*.sh`
+  and is included in the `verify` gate alongside `lint`, so shell scripts are
+  now covered by the same local + CI quality bar as Python code.
+- **Git-workflow notes runbook** (`docs/{ru,en}/admin/runbooks/git-workflow-notes.md`)
+  — documents the expected `git branch -d` warning after a squash-merge and
+  why `-d` is safe despite the warning.
+
+### Fixed
+
+- **Shellcheck findings in `scripts/mcp-setup.sh`** — resolved SC2015
+  (`A && B || C` replaced with `if/else`) and SC2059 (variables removed from
+  `printf` format strings via `%s` args). No suppressions added.
 
 ## [1.2.0] — 2026-06-18
 
