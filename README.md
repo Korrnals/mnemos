@@ -3,11 +3,15 @@
   <img src="docs/assets/mnemos-banner.svg" alt="Mnemos — memory &amp; knowledge server for AI agents" width="100%">
 </p>
 
+<p align="center">
+  <strong>🇬🇧 English</strong> · <a href="README.ru.md">🇷🇺 Русский</a>
+</p>
+
 # Mnemos
 
 > **A memory &amp; knowledge server for AI agents** — named after the Titaness, built for the GCW agent family.
 
-[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.2-blueviolet)](CHANGELOG.md)
+[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.3-blueviolet)](CHANGELOG.md)
 
 ```text
     ╔══════════════════════════════════════════════════════════════╗
@@ -103,7 +107,24 @@ mnemos search "uv vs pip" --limit 5
 That's the whole loop: install, write, find. For a step-by-step first run including the MCP and HTTP servers, see [docs/en/user/getting-started.md](docs/en/user/getting-started.md).
 
 > **Install options.** The repo install above is the fastest for development.
-> Mnemos 1.1.2 is also available as a [released wheel](https://github.com/Korrnals/mnemos/releases/download/v1.1.2/mnemos-1.1.2-py3-none-any.whl) (`pip install <url>`) and as a [container image](https://ghcr.io/korrnals/mnemos) (`ghcr.io/korrnals/mnemos:1.1.2`) — see [docs/en/admin/runbooks/container-deployment.md](docs/en/admin/runbooks/container-deployment.md).
+> Mnemos 1.1.3 is also available as a [released wheel](https://github.com/Korrnals/mnemos/releases/download/v1.1.3/mnemos-1.1.3-py3-none-any.whl) (`pip install <url>`) and as a [container image](https://ghcr.io/korrnals/mnemos) (`ghcr.io/korrnals/mnemos:1.1.3`) — see [docs/en/admin/runbooks/container-deployment.md](docs/en/admin/runbooks/container-deployment.md).
+
+### One-liner install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
+```
+
+Creates a venv at `~/.mnemos-venv`, installs the latest wheel with `[mcp]` extra, and verifies the `mnemos` CLI. Options: `--version 1.1.3`, `--extra mcp,ollama`, `--venv ~/custom`, `--no-venv`.
+
+**Container one-liner:**
+
+```bash
+export MNEMOS_API__TOTP_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash -s -- --container
+```
+
+Pulls `ghcr.io/korrnals/mnemos:latest`, creates volumes, and starts the container on port 8787. See [container-deployment.md](docs/en/admin/runbooks/container-deployment.md) for full details.
 
 ## Three surfaces, one core
 
@@ -143,14 +164,13 @@ Mnemos is the standalone backing store for the **GCW (GitHub Copilot Workflow)**
 ## Source, upstream, license
 
 - **Source**: this repository, [github.com/Korrnals/mnemos](https://github.com/Korrnals/mnemos).
-- **Upstream**: forked from `ai-brain` on 2026-05-15 with full git history preserved (see [ADR 0001](docs/project/adr/0001-fork-from-ai-brain.md)).
-- **License**: MIT (inherited from ai-brain; see [pyproject.toml](pyproject.toml)).
+- **License**: MIT (see [pyproject.toml](pyproject.toml)).
 
 ## Contributing
 
-PRs welcome. Read [PLAN.md](PLAN.md) for the current roadmap, browse the open tasks in [tasks/](tasks/), and follow the conventions in the [docs/](docs/) set. Run `make verify` before opening a PR.
+PRs welcome. Read [PLAN.md](PLAN.md) for the current roadmap and follow the conventions in the [docs/](docs/) set. Run `make verify` before opening a PR.
 
-The Git workflow for this repo (branching model, Conventional Commits, PR rules, merge strategy) is documented in [`.github/instructions/git-workflow-mnemos.instructions.md`](.github/instructions/git-workflow-mnemos.instructions.md). The short version: `feat/*` → `dev-<stage>` → `release/X.Y.Z` → `main`; `main` accepts only `release/*` and `hotfix/*` PRs.
+The Git workflow for this repo: `feat/*` → `dev-<stage>` → `release/X.Y.Z` → `main`; `main` accepts only `release/*` and `hotfix/*` PRs. Conventional Commits required.
 
 ---
 

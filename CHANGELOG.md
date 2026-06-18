@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-06-18
+
+### Added
+
+- **One-liner install script** (`scripts/install.sh`) — `curl | bash` installer
+  that detects Python ≥3.11, creates a venv, installs the latest wheel from
+  GitHub Releases, and verifies the CLI. Supports `--container` flag for
+  pulling and running the ghcr.io image in one command.
+- **One-liner MCP setup** (`scripts/mcp-setup.sh`) — detects the `mnemos`
+  executable, finds VS Code `mcp.json` (User or Workspace scope), and
+  registers the `mnemos` MCP server entry via safe JSON merge.
+- **Russian README** (`README.ru.md`) — full bilingual README with language
+  switcher at the top of both `README.md` and `README.ru.md`.
+- **Container one-liner** — `--container` flag in `install.sh` pulls
+  `ghcr.io/korrnals/mnemos:VERSION`, creates volumes, and starts the container.
+
+### Fixed
+
+- **Banner SVG** — GitHub strips `<style>` tags from inline SVGs, causing
+  font-family classes to be lost. All font attributes are now inlined
+  directly on each `<text>` element.
+- **`config.example.yaml`** — removed stale `telegram:` block (not part of
+  the schema) and fixed `brain watch` → `mnemos watch` comment.
+- **`config.container.yaml`** — removed `telegram:` block.
+- **Broken README links** — removed dead `tasks/` link and
+  `.github/instructions/git-workflow-mnemos.instructions.md` link.
+
+### Changed
+
+- **Purged `ai-brain` references** from all user-facing docs (README,
+  security, index, getting-started, migrate runbook, milestones, ci-cd
+  runbook). Only remaining mention is in ADR-0001 as a brief heritage note.
+- **Bilingual README sync** — both READMEs now have identical structure:
+  lore, mermaid diagram, quick start, one-liner install, container one-liner,
+  three surfaces, documentation table, GCW relationship, contributing.
+
 ## [1.1.2] — 2026-06-18
 
 ### Documentation
