@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CLI `--version` / `-V` flag** (`src/mnemos/cli/main.py`) — eager callback
+  prints `mnemos <version>` and exits 0, so `mnemos --version` works on every
+  subcommand without interfering with command parsing.
+- **Zero-friction installer UX** (`scripts/install.sh`) — drops a `mnemos`
+  launcher symlink into `~/.local/bin` (no manual venv activation needed),
+  adds an interactive VS Code MCP setup prompt over `/dev/tty` plus
+  non-interactive `--mcp` / `--no-mcp` flags for CI, prints the resolved
+  version in the success message instead of "unknown", and fixes the
+  `mnemos add` example to use positional content + comma-separated tags.
+
+### Changed
+
+- **README rework (EN + RU)** — professional layout with centered banner,
+  badges, and navigation; emoji-sectioned thematic blocks (Quick start,
+  What it is, Architecture, Surfaces, Lore, Docs, GCW, License, Contributing);
+  the 3-step Quick Start now includes the MCP registration step; two
+  `<details>` collapsibles cover alternative install methods. EN and RU are
+  mirror-synchronized.
+
 ## [1.1.3] — 2026-06-18
 
 ### Added
