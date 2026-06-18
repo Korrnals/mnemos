@@ -118,6 +118,28 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 ```
 
 Скачивает `ghcr.io/korrnals/mnemos:latest`, создаёт тома и запускает контейнер на порту 8787. Подробности — [container-deployment.md](docs/ru/admin/runbooks/container-deployment.md).
+
+### Контейнер (готовый образ из GHCR)
+
+Образ публикуется в `ghcr.io/korrnals/mnemos` при каждом release-теге. Скачайте и запустите напрямую:
+
+```bash
+# Сгенерируйте TOTP-ключ (обязательно — контейнер слушает 0.0.0.0)
+export MNEMOS_API__TOTP_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+
+# Скачайте и запустите
+podman run -d --name mnemos \
+  -p 8787:8787 \
+  -v mnemos-data:/data \
+  -v mnemos-vault:/vault \
+  -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
+  ghcr.io/korrnals/mnemos:1.1.3
+
+# Проверка
+curl -s http://localhost:8787/health | jq
+```
+
+Теги: `ghcr.io/korrnals/mnemos:1.1.3` (фиксированная версия), `ghcr.io/korrnals/mnemos:latest` (rolling). Работает и с `docker` — замените `podman` на `docker`. Полное руководство — [container-deployment.md](docs/ru/admin/runbooks/container-deployment.md).
 ## Три поверхности, одно ядро
 
 Одно и то же MemoryManager управляет всеми тремя интерфейсами — выберите подходящий.
