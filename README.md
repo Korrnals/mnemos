@@ -7,7 +7,7 @@
 
 > **A memory &amp; knowledge server for AI agents** — named after the Titaness, built for the GCW agent family.
 
-[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.1-blueviolet)](CHANGELOG.md)
+[![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.2-blueviolet)](CHANGELOG.md)
 
 ```text
     ╔══════════════════════════════════════════════════════════════╗
@@ -103,7 +103,7 @@ mnemos search "uv vs pip" --limit 5
 That's the whole loop: install, write, find. For a step-by-step first run including the MCP and HTTP servers, see [docs/en/user/getting-started.md](docs/en/user/getting-started.md).
 
 > **Install options.** The repo install above is the fastest for development.
-> Mnemos 1.1.1 is also available as a [released wheel](https://github.com/Korrnals/mnemos/releases/download/v1.1.1/mnemos-1.1.1-py3-none-any.whl) (`pip install <url>`) and as a [container image](https://ghcr.io/korrnals/mnemos) (`ghcr.io/korrnals/mnemos:1.1.1`) — see [docs/en/admin/runbooks/container-deployment.md](docs/en/admin/runbooks/container-deployment.md).
+> Mnemos 1.1.2 is also available as a [released wheel](https://github.com/Korrnals/mnemos/releases/download/v1.1.2/mnemos-1.1.2-py3-none-any.whl) (`pip install <url>`) and as a [container image](https://ghcr.io/korrnals/mnemos) (`ghcr.io/korrnals/mnemos:1.1.2`) — see [docs/en/admin/runbooks/container-deployment.md](docs/en/admin/runbooks/container-deployment.md).
 
 ## Three surfaces, one core
 
