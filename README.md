@@ -13,13 +13,6 @@
 
 [![CI](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/Korrnals/mnemos/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab)](pyproject.toml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](pyproject.toml) [![Version](https://img.shields.io/badge/version-1.1.3-blueviolet)](CHANGELOG.md)
 
-```text
-    ╔══════════════════════════════════════════════════════════════╗
-    ║   M N E M O S   —   μνημοσύνη  ·  memory for machines         ║
-    ║   a Titaness's gift to the agents who would inherit her     ║
-    ╚══════════════════════════════════════════════════════════════╝
-```
-
 ---
 
 ## The lore
