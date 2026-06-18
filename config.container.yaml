@@ -42,13 +42,5 @@ api:
     - Authorization
     - Content-Type
 
-telegram:
-  # Reserved for a future native Telegram-bot ingest surface (not currently wired
-  # in the code — see src/mnemos/config.py). Harmless: pydantic ignores unknown
-  # keys. To store Telegram dialogue today, route it through an MCP-aware agent
-  # (mnemos_add / mnemos_save_context) or POST /memories from an external bot.
-  bot_token: ""
-  allowed_users: []
-
 mcp:
   transport: stdio

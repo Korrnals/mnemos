@@ -40,18 +40,15 @@ api:
     - Authorization
     - Content-Type
 
-telegram:
-  bot_token: ""
-  allowed_users: []
-
 mcp:
   transport: stdio
 
 watcher:
-  # Directories to auto-index (used by `brain watch` when no args given)
-  paths:
-    # - ~/Projects
-    # - ~/LABs
+  # Directories to auto-index (used by `mnemos watch` when no args given)
+  paths: []
+  # paths:
+  #   - ~/Projects
+  #   - ~/LABs
   ignore_dirs:
     - .git
     - node_modules
