@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [1.2.0] — 2026-06-18
+
 ### Added
 
 - **CLI `--version` / `-V` flag** (`src/mnemos/cli/main.py`) — eager callback
@@ -27,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the 3-step Quick Start now includes the MCP registration step; two
   `<details>` collapsibles cover alternative install methods. EN and RU are
   mirror-synchronized.
+- **Version bump 1.1.3 → 1.2.0** — `pyproject.toml`, `src/mnemos/__init__.py`,
+  README/README.ru version badges and pinned container tag
+  (`ghcr.io/korrnals/mnemos:1.2.0`), `scripts/install.sh` usage example.
 
 ## [1.1.3] — 2026-06-18
 
