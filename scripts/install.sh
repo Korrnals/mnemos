@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
-#   curl -fsSL .../install.sh | bash -s -- --version 1.1.3 --extra mcp
+#   curl -fsSL .../install.sh | bash -s -- --version 1.2.0 --extra mcp
 #   curl -fsSL .../install.sh | bash -s -- --venv ~/.mnemos-venv --extra mcp,ollama
 #
 # Flags:
