@@ -1,4 +1,7 @@
-.PHONY: help install bootstrap check-venv test lint format typecheck security coverage clean verify security-reminder update-chromadb update-deps
+.PHONY: help install bootstrap check-venv test lint format typecheck security coverage clean verify security-reminder update-chromadb update-deps build-dist build-image push-image
+
+# Read version from pyproject.toml — keeps local build targets in sync with the package version.
+VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
 
 help:
 	@echo "Mnemos development commands"
@@ -16,6 +19,9 @@ help:
 	@echo "  make coverage   - Run pytest with coverage"
 	@echo "  make verify     - Run all checks (lint + typecheck + security + test)"
 	@echo "  make clean      - Remove build artifacts"
+	@echo "  make build-dist - Build wheel + sdist into dist/ (requires: pip install build)"
+	@echo "  make build-image - Build container image locally with podman"
+	@echo "  make push-image - Tag and push local image to ghcr.io/korrnals/mnemos (requires: podman login ghcr.io)"
 
 install:
 	uv pip install -e ".[dev]"
@@ -74,3 +80,20 @@ clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache dist/ *.egg-info
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
+
+# --- Distribution & container -----------------------------------------------
+
+build-dist:
+	# Requires: pip install build  (not in dev extras).
+	python -m build
+
+build-image:
+	podman build -t localhost/mnemos:$(VERSION) -t localhost/mnemos:latest -f Containerfile .
+
+push-image:
+	# Run `make build-image` first to ensure the local image exists.
+	# Requires: podman login ghcr.io  (credentials are NOT embedded here).
+	podman tag localhost/mnemos:$(VERSION) ghcr.io/korrnals/mnemos:$(VERSION)
+	podman tag localhost/mnemos:latest ghcr.io/korrnals/mnemos:latest
+	podman push ghcr.io/korrnals/mnemos:$(VERSION)
+	podman push ghcr.io/korrnals/mnemos:latest

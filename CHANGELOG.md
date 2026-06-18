@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-06-18
+
+### Documentation
+
+- **Docs reorganized into audience-based tree** — `docs/` split into
+  `en/` and `ru/` language axes, each with `user/`, `admin/`, and
+  `architecture/` tiers. Added EN hub with MCP guide, fixed cross-links.
+- **Russian mirror** — full RU translation of user/admin/architecture
+  tiers, parity with EN structure.
+- **Lore SVG banner** — `docs/assets/mnemos-banner.svg` added to README
+  and docs landing. Classical Greek-key meander, fluted-column hint,
+  9-node constellation (Muses + memory graph), gold/marble on midnight.
+  Typography refined: centered brand block, gilded Greek source word
+  (μνημοσύνη), classical lozenge divider.
+- **Container deployment runbook** — new
+  `docs/{en,ru}/admin/runbooks/container-deployment.md` covering
+  build/push-ghcr/compose/single/kube/quadlet/config/health.
+- **Install docs clarified** — added Install options table (editable /
+  wheel / container), aligned MCP snippet to VS Code `"servers"` config,
+  added Container subsection.
+
+### Added
+
+- **Release CI (`.github/workflows/release.yml`)** — tag-only (`v*.*.*`)
+  workflow with two parallel jobs: `build-dist` (sanity-gate tag==pyproject
+  version, `python -m build`, attach wheel+sdist to GitHub Release) and
+  `build-push-image` (buildah bud → push to `ghcr.io/korrnals/mnemos:VERSION`
+  + `:latest`). No external secrets required.
+- **Makefile dist/image targets** — `build-dist`, `build-image`,
+  `push-image` targets with `VERSION` auto-detection from `pyproject.toml`.
+
+### Changed
+
+- **Version bump 1.1.1 → 1.1.2** — `pyproject.toml`, `src/mnemos/__init__.py`,
+  README version badge and wheel/container references updated.
+
 ## [1.1.1] — 2026-06-17
 
 ### Fixed
