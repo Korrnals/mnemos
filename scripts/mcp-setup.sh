@@ -132,23 +132,25 @@ with open('$MCP_FILE', 'w') as f:
     fi
   else
     warn "python3 not found — using sed fallback (less safe for complex JSON)."
-    [[ "$DRY_RUN" == true ]] && info "[dry-run] Would insert mnemos entry." || {
+    if [[ "$DRY_RUN" == true ]]; then
+      info "[dry-run] Would insert mnemos entry."
+    else
       sed -i.bak "/\"servers\"[[:space:]]*:[[:space:]]*{/a\\
     \"mnemos\": { \"type\": \"stdio\", \"command\": \"${MNEMOS_CMD}\", \"args\": [\"mcp-server\"], \"env\": { \"MNEMOS_DATA_DIR\": \"${DATA_DIR}\", \"MNEMOS_VAULT__VAULT_PATH\": \"${VAULT_PATH}\" } },
 " "$MCP_FILE"
       ok "Inserted 'mnemos' into ${MCP_FILE} (backup: ${MCP_FILE}.bak)"
-    }
+    fi
   fi
 fi
 
 echo ""
-printf "${GREEN}✓${NC}  MCP server registered.\n"
+printf '%s✓%s  MCP server registered.\n' "$GREEN" "$NC"
 printf "    Command:  %s mcp-server\n" "$MNEMOS_CMD"
 printf "    Data dir: %s\n" "$DATA_DIR"
 printf "    Vault:    %s\n" "$VAULT_PATH"
 [[ "$AUTO_COLLECT" == true ]] && printf "    Auto-collect: enabled\n"
 echo ""
-printf "${CYAN}Next steps:${NC}\n"
-printf "  1. Reload VS Code window (Ctrl+Shift+P → 'Reload Window')\n"
-printf "  2. Open Copilot Chat — mnemos_* tools should appear in the tools picker\n"
-printf "  3. Test: ask Copilot to 'use mnemos_add to save a memory'\n"
+printf '%sNext steps:%s\n' "$CYAN" "$NC"
+printf '  1. Reload VS Code window (Ctrl+Shift+P → '"'"'Reload Window'"'"')\n'
+printf '  2. Open Copilot Chat — mnemos_* tools should appear in the tools picker\n'
+printf '  3. Test: ask Copilot to '"'"'use mnemos_add to save a memory'"'"'\n'
