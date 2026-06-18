@@ -31,6 +31,30 @@ console = Console()
 _manager: MemoryManager | None = None
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        from mnemos import __version__
+
+        console.print(f"mnemos {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            help="Show the Mnemos version and exit.",
+            callback=_version_callback,
+            is_eager=True,
+        ),
+    ] = False,
+) -> None:
+    """Mnemos — standalone memory & knowledge server for GCW agents."""
+
+
 def get_manager(config: str | None = None) -> MemoryManager:
     global _manager
     if _manager is None:
