@@ -57,7 +57,7 @@ integrations/
 ### Одна команда (все цели)
 
 ```bash
-mnemos util-setup
+mnemos integration setup
 ```
 
 Развёртывает инструкции, скиллы и промпт-режим на цель по умолчанию
@@ -67,12 +67,12 @@ mnemos util-setup
 ### По цели
 
 ```bash
-mnemos util-setup --target vscode-copilot   # по умолчанию
-mnemos util-setup --target claude-code       # Claude Code
-mnemos util-setup --target cursor            # Cursor
+mnemos integration setup --target vscode-copilot   # по умолчанию
+mnemos integration setup --target claude-code       # Claude Code
+mnemos integration setup --target cursor            # Cursor
 ```
 
-Полный список целей — `mnemos util-setup --help`. Цели определены в
+Полный список целей — `mnemos integration setup --help`. Цели определены в
 `integrations/targets.yaml` (управляется Stream A).
 
 ### Куда что развёртывается
@@ -90,7 +90,7 @@ mnemos util-setup --target cursor            # Cursor
 После развёртывания проверьте, что все файлы на месте:
 
 ```bash
-mnemos util-verify
+mnemos integration verify
 ```
 
 Проверяет:
@@ -111,12 +111,12 @@ mnemos util-verify
 Когда новая версия Mnemos поставляет обновлённый контент интеграции:
 
 ```bash
-mnemos util-update
+mnemos integration update
 ```
 
 Обновляет только изменённые файлы. Сохраняет локальные настройки (файлы, не
 управляемые Mnemos, не трогаются). После обновления запустите
-`mnemos util-verify`.
+`mnemos integration verify`.
 
 ---
 
@@ -125,10 +125,10 @@ mnemos util-update
 Чтобы удалить все файлы интеграции Mnemos:
 
 ```bash
-mnemos util-uninstall
+mnemos integration uninstall
 ```
 
-Удаляет только файлы, развёрнутые `mnemos util-setup`. Локальные настройки
+Удаляет только файлы, развёрнутые `mnemos integration setup`. Локальные настройки
 сохраняются. **Это деструктивная операция** — она удаляет файлы. Подтвердите
 при запросе.
 
@@ -168,6 +168,6 @@ MCP-сервера в конфигурации клиента.
 <!-- mnemos-integration: v1.2.0 -->
 ```
 
-Это позволяет `mnemos util-verify` обнаруживать устаревшие файлы после
+Это позволяет `mnemos integration verify` обнаруживать устаревшие файлы после
 обновления. Если штамп не совпадает с установленной версией Mnemos, файл
 помечается к обновлению.

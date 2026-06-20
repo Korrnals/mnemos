@@ -56,7 +56,7 @@ integrations/
 ### One command (all targets)
 
 ```bash
-mnemos util-setup
+mnemos integration setup
 ```
 
 Deploys instructions, skills, and prompt mode to the default target
@@ -65,12 +65,12 @@ Deploys instructions, skills, and prompt mode to the default target
 ### Per-target
 
 ```bash
-mnemos util-setup --target vscode-copilot   # default
-mnemos util-setup --target claude-code       # Claude Code
-mnemos util-setup --target cursor            # Cursor
+mnemos integration setup --target vscode-copilot   # default
+mnemos integration setup --target claude-code       # Claude Code
+mnemos integration setup --target cursor            # Cursor
 ```
 
-See `mnemos util-setup --help` for the full target list. Targets are defined
+See `mnemos integration setup --help` for the full target list. Targets are defined
 in `integrations/targets.yaml` (managed by Stream A).
 
 ### What gets deployed where
@@ -88,7 +88,7 @@ in `integrations/targets.yaml` (managed by Stream A).
 After deployment, verify that all files landed correctly:
 
 ```bash
-mnemos util-verify
+mnemos integration verify
 ```
 
 Checks:
@@ -108,11 +108,11 @@ Exit code `0` = all checks passed. Non-zero = missing or malformed files.
 When a new version of Mnemos ships updated integration content:
 
 ```bash
-mnemos util-update
+mnemos integration update
 ```
 
 Updates only files that changed. Preserves any local customizations (files
-not managed by Mnemos are left alone). After update, run `mnemos util-verify`.
+not managed by Mnemos are left alone). After update, run `mnemos integration verify`.
 
 ---
 
@@ -121,10 +121,10 @@ not managed by Mnemos are left alone). After update, run `mnemos util-verify`.
 To remove all Mnemos integration files:
 
 ```bash
-mnemos util-uninstall
+mnemos integration uninstall
 ```
 
-Removes only files deployed by `mnemos util-setup`. Local customizations are
+Removes only files deployed by `mnemos integration setup`. Local customizations are
 preserved. **This is a destructive action** — it deletes files. Confirm when
 prompted.
 
@@ -164,6 +164,6 @@ Every file in the integration layer carries a version stamp:
 <!-- mnemos-integration: v1.2.0 -->
 ```
 
-This allows `mnemos util-verify` to detect stale files after an update. If
+This allows `mnemos integration verify` to detect stale files after an update. If
 the stamp does not match the installed Mnemos version, the file is flagged
 for update.

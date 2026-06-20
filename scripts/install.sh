@@ -224,11 +224,11 @@ fi
 # ── Optional: agent integration pack (instructions + skills + prompts) ──
 setup_instructions() {
   info "Deploying agent integration pack (instructions, skills, prompts)…"
-  if "$MNEMOS_BIN" util-setup --target all --no-mcp; then
+  if "$MNEMOS_BIN" integration setup --target all --no-mcp; then
     ok "Agent integration pack deployed — reload your VS Code window."
   else
     warn "Integration pack deployment didn't complete. Run it later:"
-    printf "    mnemos util-setup --target all\n"
+    printf "    mnemos integration setup --target all\n"
   fi
 }
 
@@ -242,7 +242,7 @@ case "$INSTRUCTIONS_SETUP" in
       printf "?  Deploy agent integration pack (instructions+skills+prompts)? [Y/n] "
       read -r reply < /dev/tty || reply=""
       case "$reply" in
-        [Nn]*) info "Skipped integration pack. You can deploy it anytime: mnemos util-setup" ;;
+        [Nn]*) info "Skipped integration pack. You can deploy it anytime: mnemos integration setup" ;;
         *)     setup_instructions; INSTRUCTIONS_DONE=true ;;
       esac
     fi
@@ -263,7 +263,7 @@ fi
 if [[ "$INSTRUCTIONS_DONE" == false ]]; then
   echo ""
   info "Deploy the agent integration pack later:"
-  printf "    mnemos util-setup --target all\n"
+  printf "    mnemos integration setup --target all\n"
 fi
 
 # ── PATH hint (only if ~/.local/bin isn't already on PATH) ─────────

@@ -9,19 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mnemos completion` command** (`src/mnemos/cli/completion.py`) —
+  auto-detects the current shell from `$SHELL`, generates the completion
+  script, and auto-installs it into the right rc file (`~/.bashrc`,
+  `~/.zshrc`, `~/.config/fish/completions/mnemos.fish`). Idempotent —
+  re-running does not duplicate the source line. Supports
+  `mnemos completion bash|zsh|fish` for explicit shell selection and
+  `mnemos completion --show-instructions` to print manual steps without
+  modifying files. No `--install` flag — auto-install is the default.
+- **`mnemos doctor` command** (`src/mnemos/cli/doctor.py`) — health check
+  that runs 8 checks (config, data dir, vault, SQLite DB, vector store,
+  MCP server registration, integration layer, tag contract) and reports
+  status with a rich table. Exit codes: 0 = all pass, 1 = one or more
+  failed, 2 = warnings only. Supports `--json` for CI/scripting.
+
+### Changed
+
+- **CLI restructure — professional command grouping**:
+  - `mnemos util-*` → `mnemos integration *` (detect/setup/update/verify/uninstall)
+    — the flat `util-*` namespace is replaced by a real `integration` group.
+  - `mnemos tags-validate` → `mnemos tags validate` — nested under a `tags` group.
+  - `mnemos migrate-from-ai-brain` → `mnemos migrate from-ai-brain` — nested
+    under a `migrate` group.
+  - Core commands (`add`, `search`, `recall`, `stats`, `serve`, `mcp-server`)
+    stay flat — daily-use commands, like `git add`/`git commit`.
+  - `auth token/totp` unchanged.
+  - Clean break — no deprecation aliases (owner-confirmed).
 - **Integration layer** (`integrations/`, `src/mnemos/cli/integration.py`,
   `src/mnemos/cli/util.py`) — versioned pack of instructions + skills +
   prompts that ships inside the package and deploys into detected agent
   harnesses (GCW `~/.copilot/`, generic Copilot `~/.config/Code/User/prompts/`,
-  Cursor `~/.cursor/rules/`). New `mnemos util-*` CLI subcommands:
-  - `mnemos util-detect` — print detected harnesses + deploy paths
-  - `mnemos util-setup` — deploy files + register MCP (unified entry point)
-  - `mnemos util-update` — bring stale files to current version
-  - `mnemos util-verify` — compare deployed files against shipped pack
-  - `mnemos util-uninstall` — remove only stamped files, preserve user files
+  Cursor `~/.cursor/rules/`). New `mnemos integration *` CLI subcommands:
+  - `mnemos integration detect` — print detected harnesses + deploy paths
+  - `mnemos integration setup` — deploy files + register MCP (unified entry point)
+  - `mnemos integration update` — bring stale files to current version
+  - `mnemos integration verify` — compare deployed files against shipped pack
+  - `mnemos integration uninstall` — remove only stamped files, preserve user files
   - All commands support `--dry-run` and `--target` (default: all detected)
   - Version stamp `<!-- mnemos-integration: v1.2.0 -->` on every deployed file
-  - Idempotent: re-running `util-setup` updates stale files without duplicating
+  - Idempotent: re-running `integration setup` updates stale files without duplicating
 - **`integrations/targets.yaml`** — harness detection rules + deploy maps
   with `~` expansion. A target is detected if ANY of its detect paths exist.
 - **`install.sh --instructions` / `--no-instructions`** flag — deploys the
