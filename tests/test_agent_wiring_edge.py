@@ -40,6 +40,7 @@ from mnemos.cli.agent_wiring import (
     verify_agents,
     wire_agent,
 )
+from mnemos.cli.integration import Target, TargetsConfig
 from mnemos.cli.main import app
 
 runner = CliRunner()
@@ -49,6 +50,36 @@ def _tools_from_post(post: frontmatter.Post) -> list[str]:
     """Extract tools list from a frontmatter Post, narrowing the object type."""
     tools = post.metadata.get("tools")
     return list(tools) if isinstance(tools, list) else []
+
+
+@pytest.fixture
+def _isolate_gcw_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Monkeypatch load_targets so the gcw target is detected under tmp_path.
+
+    Without this, ``_resolve_targets("gcw")`` checks the real
+    ``~/.copilot/instructions`` and ``~/.copilot/skills`` paths, which do
+    not exist on CI runners — causing the CLI to exit early before reaching
+    agent wiring. This fixture creates the detect/deploy dirs under
+    ``tmp_path`` and patches ``load_targets`` in both ``mnemos.cli.util``
+    and ``mnemos.cli.integration`` so the gcw target is always "detected".
+    """
+    instructions_dir = tmp_path / "copilot" / "instructions"
+    skills_dir = tmp_path / "copilot" / "skills"
+    instructions_dir.mkdir(parents=True)
+    skills_dir.mkdir(parents=True)
+
+    gcw_target = Target(
+        name="gcw",
+        detect_paths=(instructions_dir, skills_dir),
+        deploy_map={"instructions": instructions_dir, "skills": skills_dir},
+        format="copy",
+    )
+    config = TargetsConfig(targets=(gcw_target,))
+    monkeypatch.setattr("mnemos.cli.util.load_targets", lambda: config)
+    monkeypatch.setattr("mnemos.cli.integration.load_targets", lambda config_path=None: config)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -596,6 +627,7 @@ class TestVerifyOutputFormat:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        _isolate_gcw_target: None,
     ) -> None:
         """Verify output includes wired/total counts."""
         directory = tmp_path / "agents"

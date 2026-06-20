@@ -134,7 +134,13 @@ def fake_pack(tmp_path: Path) -> Path:
 
 
 def _patch_integration(monkeypatch: pytest.MonkeyPatch, fake_pack: Path) -> None:
-    """Patch the CLI util module to use the fake pack."""
+    """Patch the CLI util and integration modules to use the fake pack.
+
+    Patches ``load_targets`` in BOTH ``mnemos.cli.util`` and
+    ``mnemos.cli.integration`` because ``_fix_integration_stale`` in
+    ``doctor.py`` imports ``load_targets`` directly from
+    ``mnemos.cli.integration`` at call time (not via the util module).
+    """
     cfg = load_targets(fake_pack / "targets.yaml")
     mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
 
@@ -142,6 +148,8 @@ def _patch_integration(monkeypatch: pytest.MonkeyPatch, fake_pack: Path) -> None
 
     monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
     monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+    # doctor._fix_integration_stale imports load_targets from integration module.
+    monkeypatch.setattr("mnemos.cli.integration.load_targets", lambda config_path=None: cfg)
 
 
 # ── Task 1: integration setup default-flow wiring prompt ─────────────────────
