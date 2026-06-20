@@ -37,9 +37,7 @@ def import_cmd(
         bool,
         typer.Option("--confirm", help="Confirm destructive restore (required for restore mode)"),
     ] = False,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Validate without writing")
-    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate without writing")] = False,
     passphrase_file: Annotated[
         Path | None,
         typer.Option("--passphrase-file", help="Read decryption passphrase from this file"),

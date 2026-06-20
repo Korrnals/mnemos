@@ -93,9 +93,7 @@ class TestLogsCommand:
         assert "synthesize" not in result.output
 
     def test_logs_filter_by_project(self, isolated_config, traces_db):
-        result = runner.invoke(
-            app, ["logs", "--project", "other-project", "--limit", "10"]
-        )
+        result = runner.invoke(app, ["logs", "--project", "other-project", "--limit", "10"])
         assert result.exit_code == 0, result.output
         assert "other-project" in result.output
         assert "mnemos" not in result.output or "other-project" in result.output

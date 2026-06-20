@@ -351,9 +351,7 @@ class TestDoctorCommand:
         assert result.exit_code in (0, 1, 2), result.output
         assert "Traceback" not in result.output
 
-    def test_doctor_json_output(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_doctor_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """`mnemos doctor --json` emits valid JSON with a checks array."""
         cfg = tmp_path / "mnemos.yaml"
         cfg.write_text(

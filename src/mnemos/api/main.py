@@ -694,9 +694,7 @@ def _parse_iso(value: str | None) -> datetime | None:
     try:
         return datetime.fromisoformat(value)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid ISO date: {value}"
-        ) from exc
+        raise HTTPException(status_code=400, detail=f"Invalid ISO date: {value}") from exc
 
 
 @app.post("/api/v1/import")

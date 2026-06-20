@@ -94,18 +94,30 @@ class TestDashboardStats:
         assert resp.status_code == 200
         data = resp.json()
         # Top-level sections
-        for section in ("version", "timestamp", "volume", "filter", "pipeline",
-                        "search", "vectors", "sessions"):
+        for section in (
+            "version",
+            "timestamp",
+            "volume",
+            "filter",
+            "pipeline",
+            "search",
+            "vectors",
+            "sessions",
+        ):
             assert section in data, f"missing section: {section}"
         # Volume subsections
         vol = data["volume"]
-        for key in ("memories_total", "by_status", "by_project",
-                    "by_agent", "by_type"):
+        for key in ("memories_total", "by_status", "by_project", "by_agent", "by_type"):
             assert key in vol, f"missing volume key: {key}"
         # Filter subsections
         filt = data["filter"]
-        for key in ("auto_filter", "filtered_total", "unfiltered_total",
-                    "avg_reduction_pct", "by_profile"):
+        for key in (
+            "auto_filter",
+            "filtered_total",
+            "unfiltered_total",
+            "avg_reduction_pct",
+            "by_profile",
+        ):
             assert key in filt, f"missing filter key: {key}"
         # Pipeline subsections
         pipe = data["pipeline"]
@@ -122,11 +134,13 @@ class TestDashboardStats:
 
     def test_stats_reflects_data(self, client):
         _add_memory(
-            client, "alpha",
+            client,
+            "alpha",
             ["project:mnemos", "agent:tech-lead", "gcw:learning"],
         )
         _add_memory(
-            client, "beta",
+            client,
+            "beta",
             ["project:gcw", "agent:code-reviewer", "gcw:decision"],
         )
         resp = client.get("/api/v1/stats")
@@ -153,7 +167,8 @@ class TestDashboardStats:
 class TestTimeseries:
     def test_timeseries_default(self, client):
         _add_memory(
-            client, "today",
+            client,
+            "today",
             ["project:mnemos", "agent:test", "gcw:learning"],
         )
         resp = client.get("/api/v1/stats/timeseries")
@@ -193,7 +208,8 @@ class TestTimeseries:
 class TestPrometheusMetrics:
     def test_metrics_text_format(self, client):
         _add_memory(
-            client, "prom test",
+            client,
+            "prom test",
             ["project:mnemos", "agent:test", "gcw:learning"],
         )
         resp = client.get("/api/v1/metrics")
@@ -213,7 +229,8 @@ class TestPrometheusMetrics:
 
     def test_metrics_has_labels(self, client):
         _add_memory(
-            client, "labeled",
+            client,
+            "labeled",
             ["project:mnemos", "agent:tech-lead", "gcw:learning"],
         )
         text = client.get("/api/v1/metrics").text
@@ -244,12 +261,14 @@ class TestMetricsBackwardCompat:
 class TestMemoryFilters:
     def test_filter_by_status(self, client):
         _add_memory(
-            client, "raw one",
+            client,
+            "raw one",
             ["project:test", "agent:test", "gcw:learning"],
             status="raw",
         )
         _add_memory(
-            client, "published one",
+            client,
+            "published one",
             ["project:test", "agent:test", "gcw:learning"],
             status="published",
         )
@@ -261,11 +280,13 @@ class TestMemoryFilters:
 
     def test_filter_by_project(self, client):
         _add_memory(
-            client, "mnemos mem",
+            client,
+            "mnemos mem",
             ["project:mnemos", "agent:test", "gcw:learning"],
         )
         _add_memory(
-            client, "gcw mem",
+            client,
+            "gcw mem",
             ["project:gcw", "agent:test", "gcw:learning"],
         )
         resp = client.get("/memories?project=mnemos")
@@ -276,11 +297,13 @@ class TestMemoryFilters:
 
     def test_filter_by_agent(self, client):
         _add_memory(
-            client, "agent a",
+            client,
+            "agent a",
             ["project:test", "agent:alpha", "gcw:learning"],
         )
         _add_memory(
-            client, "agent b",
+            client,
+            "agent b",
             ["project:test", "agent:beta", "gcw:learning"],
         )
         resp = client.get("/memories?agent=alpha")
@@ -291,11 +314,13 @@ class TestMemoryFilters:
 
     def test_filter_by_tags_and(self, client):
         _add_memory(
-            client, "both tags",
+            client,
+            "both tags",
             ["project:mnemos", "agent:test", "gcw:learning"],
         )
         _add_memory(
-            client, "one tag only",
+            client,
+            "one tag only",
             ["project:mnemos", "agent:test", "gcw:decision"],
         )
         resp = client.get("/memories?tags=gcw:learning,project:mnemos")
@@ -306,7 +331,8 @@ class TestMemoryFilters:
 
     def test_filter_by_date_range(self, client):
         _add_memory(
-            client, "recent",
+            client,
+            "recent",
             ["project:test", "agent:test", "gcw:learning"],
         )
         resp = client.get("/memories?since=2026-01-01&until=2026-06-01")
@@ -316,7 +342,8 @@ class TestMemoryFilters:
 
     def test_filter_since_includes_recent(self, client):
         _add_memory(
-            client, "recent",
+            client,
+            "recent",
             ["project:test", "agent:test", "gcw:learning"],
         )
         resp = client.get("/memories?since=2026-06-19")
@@ -326,7 +353,8 @@ class TestMemoryFilters:
     def test_pagination_offset(self, client):
         for i in range(5):
             _add_memory(
-                client, f"item {i}",
+                client,
+                f"item {i}",
                 ["project:test", "agent:test", "gcw:learning"],
             )
         resp = client.get("/memories?limit=2&offset=0")
@@ -346,17 +374,20 @@ class TestMemoryFilters:
 
     def test_combined_filters(self, client):
         _add_memory(
-            client, "match",
+            client,
+            "match",
             ["project:mnemos", "agent:tech-lead", "gcw:learning"],
             status="raw",
         )
         _add_memory(
-            client, "no match project",
+            client,
+            "no match project",
             ["project:gcw", "agent:tech-lead", "gcw:learning"],
             status="raw",
         )
         _add_memory(
-            client, "no match status",
+            client,
+            "no match status",
             ["project:mnemos", "agent:tech-lead", "gcw:learning"],
             status="published",
         )
@@ -375,7 +406,8 @@ class TestMemoryFilters:
 class TestSearchInstrumentation:
     def test_search_increments_requests_total(self, client):
         _add_memory(
-            client, "kubernetes deploy",
+            client,
+            "kubernetes deploy",
             ["project:test", "agent:test", "gcw:learning"],
         )
         # Perform 3 searches
@@ -389,7 +421,8 @@ class TestSearchInstrumentation:
 
     def test_prometheus_shows_search_count(self, client):
         _add_memory(
-            client, "prom search",
+            client,
+            "prom search",
             ["project:test", "agent:test", "gcw:learning"],
         )
         client.post("/search", json={"query": "prom", "limit": 5})

@@ -432,9 +432,7 @@ class TestDocsEndpointAuth:
             tmp_settings.api.totp_enabled = True
             tmp_settings.api.behind_tls_proxy = True
             # TOTP master key is required when TOTP is enabled.
-            tmp_settings.api.totp_master_key = SecretStr(
-                "test-master-key-must-be-32bytes-or-more"
-            )
+            tmp_settings.api.totp_master_key = SecretStr("test-master-key-must-be-32bytes-or-more")
 
         mgr = MemoryManager(tmp_settings)
         mock_embedder = MagicMock()

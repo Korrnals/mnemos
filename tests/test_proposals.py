@@ -157,12 +157,8 @@ class TestSetupDefaultWiringPrompt:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Non-interactive terminal (no TTY) → skip wiring, don't modify agents."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         original = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
@@ -174,9 +170,7 @@ class TestSetupDefaultWiringPrompt:
 
         assert result.exit_code == 0, result.output
         # Agent file NOT modified (non-interactive → skip).
-        assert (agents_dir / "agent-architect.agent.md").read_text(
-            encoding="utf-8"
-        ) == original
+        assert (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8") == original
         assert "skipping agent wiring" in result.output.lower()
 
     def test_interactive_yes_wires_all(
@@ -193,13 +187,10 @@ class TestSetupDefaultWiringPrompt:
         """
         import frontmatter
 
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
+
         # Simulate 'Y' answer: prompt returns all unwired agents.
         def _yes_prompt(agents):
             return [a for a in agents if not a.has_mnemos and not a.uses_tool_profile]
@@ -222,12 +213,8 @@ class TestSetupDefaultWiringPrompt:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Interactive terminal + 'n' answer → skip wiring."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
         # Simulate 'n' answer: prompt returns empty list.
         monkeypatch.setattr("mnemos.cli.util._prompt_wire_agents_default", lambda agents: [])
@@ -240,9 +227,7 @@ class TestSetupDefaultWiringPrompt:
         )
 
         assert result.exit_code == 0, result.output
-        assert (agents_dir / "agent-architect.agent.md").read_text(
-            encoding="utf-8"
-        ) == original
+        assert (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8") == original
 
     def test_wire_agents_flag_still_works(
         self,
@@ -253,21 +238,20 @@ class TestSetupDefaultWiringPrompt:
         """``--wire-agents --all`` still wires without prompting."""
         import frontmatter
 
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "test-harness",
+                "integration",
+                "setup",
+                "--target",
+                "test-harness",
                 "--no-mcp",
-                "--wire-agents", "--all",
+                "--wire-agents",
+                "--all",
             ],
         )
 
@@ -282,12 +266,8 @@ class TestSetupDefaultWiringPrompt:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--no-wire-agents`` still skips without prompting."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         original = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
@@ -295,17 +275,17 @@ class TestSetupDefaultWiringPrompt:
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "test-harness",
+                "integration",
+                "setup",
+                "--target",
+                "test-harness",
                 "--no-mcp",
                 "--no-wire-agents",
             ],
         )
 
         assert result.exit_code == 0, result.output
-        assert (agents_dir / "agent-architect.agent.md").read_text(
-            encoding="utf-8"
-        ) == original
+        assert (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8") == original
 
 
 # ── Task 2: mnemos add --dry-run ──────────────────────────────────────────────
@@ -387,8 +367,10 @@ class TestAddDryRun:
             app,
             [
                 "add",
-                "--file", str(content_file),
-                "--tags", "project:dry,agent:test,gcw:learning",
+                "--file",
+                str(content_file),
+                "--tags",
+                "project:dry,agent:test,gcw:learning",
                 "--dry-run",
             ],
         )
@@ -405,8 +387,10 @@ class TestAddDryRun:
             app,
             [
                 "add",
-                "--url", "https://example.com",
-                "--tags", "project:dry,agent:test,gcw:learning",
+                "--url",
+                "https://example.com",
+                "--tags",
+                "project:dry,agent:test,gcw:learning",
                 "--dry-run",
             ],
         )
@@ -427,9 +411,7 @@ class TestDoctorFix:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--fix --dry-run`` previews fixes without executing."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         result = runner.invoke(app, ["doctor", "--fix", "--dry-run", "--json"])
@@ -464,9 +446,7 @@ class TestDoctorFix:
         """``_fix_agent_wiring`` wires all unwired agents."""
         import frontmatter
 
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
         from mnemos.cli.doctor import _fix_agent_wiring
 
         ok, note = _fix_agent_wiring()
@@ -496,9 +476,7 @@ class TestDoctorFix:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``doctor --fix --json`` includes the ``fixed`` array in output."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         result = runner.invoke(app, ["doctor", "--fix", "--json"])
@@ -535,9 +513,7 @@ class TestDoctorFix:
         After fixing all WARN-level issues, re-running ``doctor --fix``
         should find nothing to fix and exit 0.
         """
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         # First run fixes the warnings.

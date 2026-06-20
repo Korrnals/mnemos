@@ -287,9 +287,7 @@ class TestAutoFilterOnAdd:
         assert memory.filter_profile is not None
         assert memory.filter_stats is not None
 
-    def test_auto_filter_disabled_keeps_clean_content_none(
-        self, mgr: MemoryManager
-    ) -> None:
+    def test_auto_filter_disabled_keeps_clean_content_none(self, mgr: MemoryManager) -> None:
         """auto_filter=False → clean_content stays None."""
         mgr.settings.mnemos.auto_filter = False
         data = MemoryCreate(

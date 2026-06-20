@@ -109,9 +109,7 @@ class TestFts5DesyncRobustness:
         for mem_id in ids:
             hits = mgr.sqlite.fts_search("failure", limit=20)
             found_ids = {h[0].id for h in hits}
-            assert mem_id in found_ids, (
-                f"FTS5 lost memory {mem_id} after filter cycle"
-            )
+            assert mem_id in found_ids, f"FTS5 lost memory {mem_id} after filter cycle"
 
     def test_filter_preserves_fts_rowid(self, mgr: MemoryManager) -> None:
         """After filter, the FTS5 rowid matches the memories table rowid."""
@@ -124,24 +122,18 @@ class TestFts5DesyncRobustness:
 
         # Get the base table rowid before filtering.
         conn = mgr.sqlite._get_conn()  # test-only access
-        before = conn.execute(
-            "SELECT rowid FROM memories WHERE id=?", (memory.id,)
-        ).fetchone()
+        before = conn.execute("SELECT rowid FROM memories WHERE id=?", (memory.id,)).fetchone()
         assert before is not None
         rowid_before = before["rowid"]
 
         mgr.apply_context_filter(memory.id, profile="log")
 
-        after = conn.execute(
-            "SELECT rowid FROM memories WHERE id=?", (memory.id,)
-        ).fetchone()
+        after = conn.execute("SELECT rowid FROM memories WHERE id=?", (memory.id,)).fetchone()
         assert after is not None
         assert after["rowid"] == rowid_before
 
         # FTS5 table should have the same rowid.
-        fts = conn.execute(
-            "SELECT rowid FROM memories_fts WHERE id=?", (memory.id,)
-        ).fetchone()
+        fts = conn.execute("SELECT rowid FROM memories_fts WHERE id=?", (memory.id,)).fetchone()
         assert fts is not None
         assert fts["rowid"] == rowid_before
 
@@ -269,9 +261,7 @@ class TestAutoFilterProfileAutoDetection:
 class TestFilterWithoutRawContent:
     """Memory added before auto_filter existed → filter uses ``content``."""
 
-    def test_filter_uses_content_when_no_raw_content(
-        self, mgr: MemoryManager
-    ) -> None:
+    def test_filter_uses_content_when_no_raw_content(self, mgr: MemoryManager) -> None:
         """When raw_content is NULL, filter falls back to content."""
         data = MemoryCreate(
             content="2024-01-15 [ERROR] legacy memory crash",
@@ -282,9 +272,7 @@ class TestFilterWithoutRawContent:
 
         # Simulate a legacy memory: clear raw_content, keep content.
         conn = mgr.sqlite._get_conn()  # test-only access
-        conn.execute(
-            "UPDATE memories SET raw_content=NULL WHERE id=?", (memory.id,)
-        )
+        conn.execute("UPDATE memories SET raw_content=NULL WHERE id=?", (memory.id,))
         conn.commit()
         mgr.sqlite._invalidate_caches()
 
@@ -318,9 +306,7 @@ class TestFilterAllEmptyDatabase:
 class TestFilterAllMixed:
     """``filter_all`` re-filters ALL memories (not just unfiltered)."""
 
-    def test_filter_all_refilters_already_filtered(
-        self, mgr: MemoryManager
-    ) -> None:
+    def test_filter_all_refilters_already_filtered(self, mgr: MemoryManager) -> None:
         """filter_all re-filters memories that already have clean_content."""
         # Add a memory (auto-filtered on ingest).
         data = MemoryCreate(
@@ -513,9 +499,7 @@ class TestFilterIdempotencyDifferentProfiles:
         memory = mgr.add(data, project="test", agent="filter-test")
         first_clean = memory.clean_content
 
-        result = mgr.apply_context_filter(
-            memory.id, profile=memory.filter_profile
-        )
+        result = mgr.apply_context_filter(memory.id, profile=memory.filter_profile)
         assert result["status"] == "ok"
         assert result["clean_content"] == first_clean
 
@@ -526,9 +510,7 @@ class TestFilterIdempotencyDifferentProfiles:
 class TestCliFilterAllEmpty:
     """``mnemos filter --all`` on empty DB → graceful exit."""
 
-    def test_cli_filter_all_empty_db(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_cli_filter_all_empty_db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = tmp_path / "mnemos.yaml"
         cfg.write_text(
             f"mnemos:\n"
@@ -553,9 +535,7 @@ class TestMcpFilterWithoutRawContent:
     """``mnemos_filter`` MCP tool on a memory with no raw_content."""
 
     @pytest.mark.asyncio
-    async def test_mnemos_filter_uses_content_fallback(
-        self, mgr: MemoryManager
-    ) -> None:
+    async def test_mnemos_filter_uses_content_fallback(self, mgr: MemoryManager) -> None:
         """mnemos_filter works on a memory with raw_content=NULL."""
         from mnemos.mcp_server import _dispatch
 

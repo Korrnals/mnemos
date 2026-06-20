@@ -122,15 +122,11 @@ def add(
         stats = result["stats"]
         tokens_in = len(text) // 4 or 1
         tokens_out = stats["tokens"]["estimated_tokens"]
-        reduction_pct = (
-            round((1 - tokens_out / tokens_in) * 100, 1) if tokens_in else 0.0
-        )
+        reduction_pct = round((1 - tokens_out / tokens_in) * 100, 1) if tokens_in else 0.0
 
         console.print("[cyan][dry-run][/cyan] Filter preview (no memory saved):")
         console.print(f"  Input:     {tokens_in} tokens")
-        console.print(
-            f"  Output:    {tokens_out} tokens ({reduction_pct}% reduction)"
-        )
+        console.print(f"  Output:    {tokens_out} tokens ({reduction_pct}% reduction)")
         console.print(f"  Profile:   {result['profile']} (auto-detected)")
         dedup = stats.get("dedup", {})
         console.print(
@@ -146,12 +142,8 @@ def add(
         )
         console.print(f"  Noise:     {noise_lines} lines cleaned")
         budget = stats["tokens"].get("budget")
-        console.print(
-            f"  Budget:    {budget if budget else 'not set (no truncation)'}"
-        )
-        console.print(
-            "[dim][dry-run] Memory would be saved with these filter stats.[/dim]"
-        )
+        console.print(f"  Budget:    {budget if budget else 'not set (no truncation)'}")
+        console.print("[dim][dry-run] Memory would be saved with these filter stats.[/dim]")
         return
 
     mgr = get_manager(config)
@@ -245,9 +237,7 @@ def recall(
 # Subcommand tree:
 #   mnemos tags validate <vault>   — validate tag contract across a vault
 
-_tags_app = typer.Typer(
-    name="tags", help="Manage and validate memory tags.", no_args_is_help=True
-)
+_tags_app = typer.Typer(name="tags", help="Manage and validate memory tags.", no_args_is_help=True)
 app.add_typer(_tags_app, name="tags")
 
 

@@ -121,9 +121,7 @@ def load_targets(config_path: Path | None = None) -> TargetsConfig:
     """
     if config_path is None:
         config_path = (
-            Path(__file__).resolve().parent.parent.parent.parent
-            / "integrations"
-            / "targets.yaml"
+            Path(__file__).resolve().parent.parent.parent.parent / "integrations" / "targets.yaml"
         )
 
     if not config_path.exists():
@@ -150,18 +148,14 @@ def load_targets(config_path: Path | None = None) -> TargetsConfig:
         if not isinstance(detect_raw, list):
             raise ValueError(f"targets.yaml: target '{name}'.detect must be a list")
         detect_paths = tuple(
-            _expand(d["path"])
-            for d in detect_raw
-            if isinstance(d, dict) and "path" in d
+            _expand(d["path"]) for d in detect_raw if isinstance(d, dict) and "path" in d
         )
 
         deploy_raw = spec.get("deploy", {})
         if not isinstance(deploy_raw, dict):
             raise ValueError(f"targets.yaml: target '{name}'.deploy must be a mapping")
         deploy_map = {
-            kind: _expand(path)
-            for kind, path in deploy_raw.items()
-            if isinstance(path, str)
+            kind: _expand(path) for kind, path in deploy_raw.items() if isinstance(path, str)
         }
 
         fmt = str(spec.get("format", "copy"))
@@ -272,9 +266,7 @@ class DeployResult:
     @property
     def deployed_count(self) -> int:
         return sum(
-            1
-            for f in self.files
-            if f.status in (DeployStatus.DEPLOYED, DeployStatus.UPDATED)
+            1 for f in self.files if f.status in (DeployStatus.DEPLOYED, DeployStatus.UPDATED)
         )
 
     @property
@@ -442,9 +434,7 @@ class IntegrationManager:
                 status=DeployStatus.UPDATED,
                 deployed_version=self.version,
                 note=(
-                    f"updated from v{existing_version}"
-                    if existing_version
-                    else "content refreshed"
+                    f"updated from v{existing_version}" if existing_version else "content refreshed"
                 ),
             )
 

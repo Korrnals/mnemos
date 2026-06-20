@@ -544,9 +544,7 @@ def doctor(
                 fix_skipped.append(r.name)
                 continue
             if dry_run:
-                console.print(
-                    f"  [yellow]⚠[/yellow] {r.name} → would run: {action.description}"
-                )
+                console.print(f"  [yellow]⚠[/yellow] {r.name} → would run: {action.description}")
                 continue
             console.print(f"\n[yellow]⚠[/yellow] {r.name} → fixing...")
             ok, note = action.run()
@@ -567,8 +565,7 @@ def doctor(
         payload: dict[str, Any] = {
             "version": __version__,
             "checks": [
-                {"name": r.name, "status": r.status.value, "detail": r.detail}
-                for r in results
+                {"name": r.name, "status": r.status.value, "detail": r.detail} for r in results
             ],
             "exit_code": exit_code,
         }
@@ -584,16 +581,11 @@ def doctor(
     console.print()
     if fix:
         if dry_run:
-            console.print(
-                f"[cyan][dry-run][/cyan] Would fix "
-                f"{len(_warn_names(results))} issue(s)."
-            )
+            console.print(f"[cyan][dry-run][/cyan] Would fix {len(_warn_names(results))} issue(s).")
         elif fixed:
             console.print(f"[green]Fixed: {len(fixed)} issue(s).[/green]")
         if fix_skipped:
-            console.print(
-                f"[yellow]Could not auto-fix: {', '.join(fix_skipped)}[/yellow]"
-            )
+            console.print(f"[yellow]Could not auto-fix: {', '.join(fix_skipped)}[/yellow]")
     if code == 0:
         console.print("[green]All checks passed. Mnemos is healthy.[/green]")
     elif code == 2:

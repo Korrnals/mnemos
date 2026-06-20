@@ -68,8 +68,7 @@ def _resolve_targets(target: str) -> list[str]:
         if not detected:
             console.print("[yellow]No agent harnesses detected.[/yellow]")
             console.print(
-                "  Looked for: "
-                + ", ".join(str(p) for t in cfg.targets for p in t.detect_paths)
+                "  Looked for: " + ", ".join(str(p) for t in cfg.targets for p in t.detect_paths)
             )
             return []
         return [t.name for t in detected]
@@ -199,11 +198,7 @@ def _resolve_agents_to_wire(
         return selected
 
     if wire_all:
-        return [
-            agent
-            for agent in agents
-            if not agent.has_mnemos and not agent.uses_tool_profile
-        ]
+        return [agent for agent in agents if not agent.has_mnemos and not agent.uses_tool_profile]
 
     # No selection — wire nothing (the caller handles the interactive prompt).
     return []
@@ -216,16 +211,11 @@ def _prompt_wire_agents_default(agents: list[AgentInfo]) -> list[AgentInfo]:
     When non-interactive (CI / pipe): **skips wiring** (safe default —
     don't modify agent files in CI without an explicit ``--wire-agents``).
     """
-    unwired = [
-        agent for agent in agents if not agent.has_mnemos and not agent.uses_tool_profile
-    ]
+    unwired = [agent for agent in agents if not agent.has_mnemos and not agent.uses_tool_profile]
     already = sum(1 for agent in agents if agent.has_mnemos)
     skipped = sum(1 for agent in agents if agent.uses_tool_profile)
 
-    console.print(
-        f"\nFound [bold]{len(agents)}[/bold] agents in "
-        f"[cyan]{DEFAULT_AGENTS_DIR}[/cyan]"
-    )
+    console.print(f"\nFound [bold]{len(agents)}[/bold] agents in [cyan]{DEFAULT_AGENTS_DIR}[/cyan]")
     console.print(
         f"  [green]{already}[/green] already wired, "
         f"[yellow]{len(unwired)}[/yellow] need wiring, "
@@ -257,16 +247,11 @@ def _prompt_wire_agents_interactive(agents: list[AgentInfo]) -> list[AgentInfo]:
     to wiring all unwired agents when stdin is not a TTY (CI / pipe) —
     the user explicitly asked for wiring via ``--wire-agents``.
     """
-    unwired = [
-        agent for agent in agents if not agent.has_mnemos and not agent.uses_tool_profile
-    ]
+    unwired = [agent for agent in agents if not agent.has_mnemos and not agent.uses_tool_profile]
     already = sum(1 for agent in agents if agent.has_mnemos)
     skipped = sum(1 for agent in agents if agent.uses_tool_profile)
 
-    console.print(
-        f"\nFound [bold]{len(agents)}[/bold] agents in "
-        f"[cyan]{DEFAULT_AGENTS_DIR}[/cyan]"
-    )
+    console.print(f"\nFound [bold]{len(agents)}[/bold] agents in [cyan]{DEFAULT_AGENTS_DIR}[/cyan]")
     console.print(
         f"  [green]{already}[/green] already wired, "
         f"[yellow]{len(unwired)}[/yellow] need wiring, "
@@ -279,9 +264,7 @@ def _prompt_wire_agents_interactive(agents: list[AgentInfo]) -> list[AgentInfo]:
 
     # Non-interactive fallback: user passed --wire-agents, so wire all.
     if not sys.stdin.isatty():
-        console.print(
-            "[yellow]⚠ Non-interactive terminal — wiring all unwired agents.[/yellow]"
-        )
+        console.print("[yellow]⚠ Non-interactive terminal — wiring all unwired agents.[/yellow]")
         return unwired
 
     console.print("\n  [bold]Options:[/bold]")
@@ -293,9 +276,7 @@ def _prompt_wire_agents_interactive(agents: list[AgentInfo]) -> list[AgentInfo]:
     if choice == "3":
         return []
     if choice == "2":
-        raw = console.input(
-            "  Enter agent names (comma-separated, e.g. tech-lead,code-reviewer): "
-        )
+        raw = console.input("  Enter agent names (comma-separated, e.g. tech-lead,code-reviewer): ")
         return _resolve_agents_to_wire(agents, select=raw, wire_all=False)
 
     return unwired
@@ -464,9 +445,7 @@ def setup_cmd(
                     f"[yellow]No agents found in {DEFAULT_AGENTS_DIR} — skipping wiring.[/yellow]"
                 )
         elif wire_agents:
-            to_wire = _resolve_agents_to_wire(
-                agents, select=select_agents, wire_all=all_agents
-            )
+            to_wire = _resolve_agents_to_wire(agents, select=select_agents, wire_all=all_agents)
             if not to_wire and not select_agents and not all_agents:
                 to_wire = _prompt_wire_agents_interactive(agents)
             if to_wire:

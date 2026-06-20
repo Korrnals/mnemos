@@ -58,12 +58,8 @@ def export_cmd(
         Path | None,
         typer.Option("--passphrase-file", help="Read passphrase from this file"),
     ] = None,
-    project: Annotated[
-        str | None, typer.Option("--project", help="Filter by project slug")
-    ] = None,
-    agent: Annotated[
-        str | None, typer.Option("--agent", help="Filter by agent slug")
-    ] = None,
+    project: Annotated[str | None, typer.Option("--project", help="Filter by project slug")] = None,
+    agent: Annotated[str | None, typer.Option("--agent", help="Filter by agent slug")] = None,
     status: Annotated[
         MemoryStatus | None, typer.Option("--status", help="Filter by memory status")
     ] = None,

@@ -77,7 +77,8 @@ def logs_cmd(
     task: Annotated[
         str | None,
         typer.Option(
-            "--task", "-t",
+            "--task",
+            "-t",
             help="Filter by task label (cluster|synthesize|publish|recall)",
         ),
     ] = None,

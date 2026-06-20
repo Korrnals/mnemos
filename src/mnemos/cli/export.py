@@ -341,9 +341,7 @@ def run_export(
     elif fmt == ExportFormat.SQLITE:
         # SQLite format is always a full snapshot — filters are ignored.
         if filt.project or filt.agent or filt.status or filt.tags or filt.since or filt.until:
-            warnings.append(
-                "Filters are ignored for sqlite format (full snapshot)."
-            )
+            warnings.append("Filters are ignored for sqlite format (full snapshot).")
         raw = _build_sqlite_snapshot(mgr)
         memory_count = mgr.sqlite.count()
         project_count = len(mgr.sqlite.list_projects())

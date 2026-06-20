@@ -462,8 +462,12 @@ class SQLiteStore:
 
     def _invalidate_caches(self) -> None:
         self._cache.invalidate(
-            "tags", "projects_counts", "agents_counts", "types_counts",
-            "data_health", "stats",
+            "tags",
+            "projects_counts",
+            "agents_counts",
+            "types_counts",
+            "data_health",
+            "stats",
         )
         self._cache.invalidate_prefix("graph_")
         self._cache.invalidate_prefix("agent_")
@@ -618,10 +622,7 @@ class SQLiteStore:
             params.append(agent)
         if tags:
             for tag in tags:
-                q += (
-                    " AND EXISTS (SELECT 1 FROM json_each(tags) "
-                    "WHERE json_each.value = ?)"
-                )
+                q += " AND EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)"
                 params.append(tag)
         if category is not None:
             if category == "__uncategorized":
@@ -699,10 +700,7 @@ class SQLiteStore:
             params.append(status.value)
         if tags:
             for tag in tags:
-                q += (
-                    " AND EXISTS (SELECT 1 FROM json_each(tags) "
-                    "WHERE json_each.value = ?)"
-                )
+                q += " AND EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)"
                 params.append(tag)
         if since:
             q += " AND (created_at >= ? OR updated_at >= ?)"
@@ -885,8 +883,7 @@ class SQLiteStore:
             return cast(dict[str, int], val)
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT COALESCE(memory_type,'note') AS t, COUNT(*) AS c "
-            "FROM memories GROUP BY t"
+            "SELECT COALESCE(memory_type,'note') AS t, COUNT(*) AS c FROM memories GROUP BY t"
         ).fetchall()
         result: dict[str, int] = {str(r[0]): int(r[1]) for r in rows}
         self._cache.set("types_counts", result)
@@ -924,8 +921,7 @@ class SQLiteStore:
         total_row = conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()
         total = int(total_row["c"]) if total_row else 0
         active_row = conn.execute(
-            "SELECT COUNT(*) AS c FROM sessions "
-            "WHERE updated_at > datetime('now', '-1 day')"
+            "SELECT COUNT(*) AS c FROM sessions WHERE updated_at > datetime('now', '-1 day')"
         ).fetchone()
         active = int(active_row["c"]) if active_row else 0
         return {"total": total, "active": active}

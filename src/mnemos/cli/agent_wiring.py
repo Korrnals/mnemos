@@ -222,9 +222,7 @@ def _build_tools_to_add(mode: str) -> list[str]:
         return [MNEMOS_WILDCARD]
     if mode == "precise":
         return list(MNEMOS_TOOLS)
-    raise ValueError(
-        f"Unknown wiring mode: {mode!r} (expected 'wildcard' or 'precise')"
-    )
+    raise ValueError(f"Unknown wiring mode: {mode!r} (expected 'wildcard' or 'precise')")
 
 
 def _filter_missing(tools: list[str], existing: list[str]) -> list[str]:

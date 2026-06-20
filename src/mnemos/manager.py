@@ -306,9 +306,7 @@ class MemoryManager:
         # Record search instrumentation (in-memory, resets on restart).
         latency_ms = (time.monotonic() - _t0) * 1000.0
         with self._search_stats_lock:
-            self._search_stats["requests_total"] = int(
-                self._search_stats["requests_total"]
-            ) + 1
+            self._search_stats["requests_total"] = int(self._search_stats["requests_total"]) + 1
             samples: list[float] = self._search_stats["latency_samples_ms"]
             samples.append(latency_ms)
             # Cap samples to avoid unbounded growth in long-running processes.
@@ -399,9 +397,7 @@ class MemoryManager:
         s_stats = self.search_stats()
         sessions = self.sqlite.count_sessions()
         # Pipeline counts derived from status + DLQ.
-        processed_total = int(by_status.get("processed", 0)) + int(
-            by_status.get("published", 0)
-        )
+        processed_total = int(by_status.get("processed", 0)) + int(by_status.get("published", 0))
         return {
             "version": __version__,
             "timestamp": datetime.now(UTC).isoformat(),
@@ -590,9 +586,7 @@ class MemoryManager:
                     skipped += 1
                     continue
                 try:
-                    result = self.apply_context_filter(
-                        memory.id, profile=profile, budget=budget
-                    )
+                    result = self.apply_context_filter(memory.id, profile=profile, budget=budget)
                     if result.get("status") == "ok":
                         filtered += 1
                     else:
@@ -786,9 +780,7 @@ class MemoryManager:
             content = trafilatura.extract(resp.text) or resp.text[:4000]
         except _SSRFRejectionError as exc:
             # SSRF guard rejected a URL — do NOT store it in memory.
-            raise ValueError(
-                f"URL rejected for security reasons: {exc.original}"
-            ) from exc.original
+            raise ValueError(f"URL rejected for security reasons: {exc.original}") from exc.original
         except Exception as exc:
             logger.warning("URL fetch failed: %s - using placeholder", exc)
             content = f"URL: {url}\n[fetch failed: {exc}]"

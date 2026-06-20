@@ -410,20 +410,19 @@ class TestCliSetupWireAgents:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--wire-agents --all`` wires all unwired agents."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "gcw",
+                "integration",
+                "setup",
+                "--target",
+                "gcw",
                 "--no-mcp",
-                "--wire-agents", "--all",
+                "--wire-agents",
+                "--all",
             ],
         )
 
@@ -447,20 +446,20 @@ class TestCliSetupWireAgents:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--wire-agents --select name`` wires only the specified agent."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "gcw",
+                "integration",
+                "setup",
+                "--target",
+                "gcw",
                 "--no-mcp",
-                "--wire-agents", "--select", "agent-architect",
+                "--wire-agents",
+                "--select",
+                "agent-architect",
             ],
         )
 
@@ -480,22 +479,18 @@ class TestCliSetupWireAgents:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--no-wire-agents`` skips agent wiring entirely."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
-        original_architect = (agents_dir / "agent-architect.agent.md").read_text(
-            encoding="utf-8"
-        )
+        original_architect = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "gcw",
+                "integration",
+                "setup",
+                "--target",
+                "gcw",
                 "--no-mcp",
                 "--no-wire-agents",
             ],
@@ -513,20 +508,20 @@ class TestCliSetupWireAgents:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--wire-agents --all --precise`` uses individual tool names."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "gcw",
+                "integration",
+                "setup",
+                "--target",
+                "gcw",
                 "--no-mcp",
-                "--wire-agents", "--all", "--precise",
+                "--wire-agents",
+                "--all",
+                "--precise",
             ],
         )
 
@@ -545,30 +540,27 @@ class TestCliSetupWireAgents:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--wire-agents --all --dry-run`` does not modify files."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         original = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "gcw",
+                "integration",
+                "setup",
+                "--target",
+                "gcw",
                 "--no-mcp",
-                "--wire-agents", "--all",
+                "--wire-agents",
+                "--all",
                 "--dry-run",
             ],
         )
 
         assert result.exit_code == 0, result.output
-        assert (agents_dir / "agent-architect.agent.md").read_text(
-            encoding="utf-8"
-        ) == original
+        assert (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8") == original
 
     def test_mutually_exclusive_flags(
         self,
@@ -576,20 +568,19 @@ class TestCliSetupWireAgents:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--wire-agents`` and ``--no-wire-agents`` are mutually exclusive."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "gcw",
+                "integration",
+                "setup",
+                "--target",
+                "gcw",
                 "--no-mcp",
-                "--wire-agents", "--no-wire-agents",
+                "--wire-agents",
+                "--no-wire-agents",
             ],
         )
 
@@ -609,12 +600,8 @@ class TestCliVerifyAgentsSection:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``integration verify`` prints an agents wiring summary."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
@@ -632,12 +619,8 @@ class TestCliVerifyAgentsSection:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Unwired agent names appear in the verify output."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
@@ -660,9 +643,7 @@ class TestDoctorAgentWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``doctor`` runs the agent wiring check and reports status."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(app, ["doctor", "--json"])
 
@@ -677,9 +658,7 @@ class TestDoctorAgentWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Doctor reports WARN when agents are unwired."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(app, ["doctor", "--json"])
         # The agent wiring check should mention "unwired".
@@ -691,9 +670,7 @@ class TestDoctorAgentWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Doctor reports WARN (not crash) when no agents directory exists."""
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", tmp_path / "no-agents"
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", tmp_path / "no-agents")
 
         result = runner.invoke(app, ["doctor", "--json"])
         assert "Agent wiring" in result.stdout

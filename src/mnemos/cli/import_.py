@@ -345,9 +345,7 @@ def run_import(
 
     if mode == ImportMode.RESTORE and not dry_run and not confirm:
         result = ImportResult(mode=mode, dry_run=dry_run)
-        result.errors.append(
-            "Restore mode requires --confirm (it wipes all existing data)."
-        )
+        result.errors.append("Restore mode requires --confirm (it wipes all existing data).")
         return result
 
     if not source.exists():
@@ -373,9 +371,7 @@ def run_import(
     # So: detect SQLite on the raw (possibly encrypted) bytes; only fall
     # through to JSON + compression handling if it's not a SQLite snapshot.
     if not encrypted and detect_sqlite_snapshot(raw):
-        return _import_sqlite(
-            mgr, raw, mode=mode, dry_run=dry_run, backup_dir=backup_dir
-        )
+        return _import_sqlite(mgr, raw, mode=mode, dry_run=dry_run, backup_dir=backup_dir)
 
     # ── Detect compression (JSON path) ──────────────────────────────────
     # If the caller did not specify, try to auto-detect by magic bytes.

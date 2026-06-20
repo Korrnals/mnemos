@@ -104,9 +104,7 @@ class TestExportJSON:
         assert len(payload["memories"]) == 3
 
     def test_json_export_includes_projects(self, mgr, tmp_path):
-        mgr.sqlite.save_project(
-            Project(name="mnemos", paths=["/tmp/mnemos"], description="test")
-        )
+        mgr.sqlite.save_project(Project(name="mnemos", paths=["/tmp/mnemos"], description="test"))
         _add_memory(mgr, "x")
         out = tmp_path / "backup.json"
         run_export(mgr, fmt=ExportFormat.JSON, output=out)
@@ -117,9 +115,7 @@ class TestExportJSON:
         """Traces are NEVER included in export (owner decision)."""
         from mnemos.models import Trace
 
-        mgr.sqlite.save_trace(
-            Trace(task_label="cluster", project="mnemos", step="embed")
-        )
+        mgr.sqlite.save_trace(Trace(task_label="cluster", project="mnemos", step="embed"))
         _add_memory(mgr, "x")
         out = tmp_path / "backup.json"
         run_export(mgr, fmt=ExportFormat.JSON, output=out)
@@ -521,9 +517,7 @@ class TestImportDryRun:
         assert result.format_version == "1.0"
 
     def test_dry_run_on_missing_file_reports_error(self, mgr, tmp_path):
-        result = run_import(
-            mgr, tmp_path / "nope.json", mode=ImportMode.MERGE, dry_run=True
-        )
+        result = run_import(mgr, tmp_path / "nope.json", mode=ImportMode.MERGE, dry_run=True)
         assert result.errors
         assert any("not found" in e for e in result.errors)
 

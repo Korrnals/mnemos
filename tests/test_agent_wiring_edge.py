@@ -181,13 +181,7 @@ class TestFrontmatterEdgeCases:
         _write_raw_agent(
             directory,
             "flow-tools.agent.md",
-            (
-                "---\n"
-                "name: 'GCW: Flow Tools'\n"
-                "tools: [read, search, execute]\n"
-                "---\n"
-                "Body.\n"
-            ),
+            ("---\nname: 'GCW: Flow Tools'\ntools: [read, search, execute]\n---\nBody.\n"),
         )
 
         infos = detect_agents(directory)
@@ -206,13 +200,7 @@ class TestFrontmatterEdgeCases:
         _write_raw_agent(
             directory,
             "string-tools.agent.md",
-            (
-                "---\n"
-                "name: 'GCW: String Tools'\n"
-                "tools: read\n"
-                "---\n"
-                "Body.\n"
-            ),
+            ("---\nname: 'GCW: String Tools'\ntools: read\n---\nBody.\n"),
         )
 
         infos = detect_agents(directory)
@@ -288,9 +276,7 @@ class TestConcurrentWiring:
         assert "read" in tools
         assert "search" in tools
 
-    def test_concurrent_double_wire_same_mode_idempotent(
-        self, tmp_path: Path
-    ) -> None:
+    def test_concurrent_double_wire_same_mode_idempotent(self, tmp_path: Path) -> None:
         """Two concurrent wires with the same mode → no duplication."""
         directory = tmp_path / "agents"
         directory.mkdir()
@@ -433,9 +419,7 @@ class TestLargeAgentCount:
 class TestWildcardToPreciseMigration:
     """Agent has ``mnemos/*``, user runs ``--precise``."""
 
-    def test_precise_on_wildcard_adds_tokens_preserves_wildcard(
-        self, tmp_path: Path
-    ) -> None:
+    def test_precise_on_wildcard_adds_tokens_preserves_wildcard(self, tmp_path: Path) -> None:
         """Precise mode on a wildcard-wired agent adds tokens; wildcard stays.
 
         This is the documented behaviour: precise mode adds individual tokens
@@ -504,20 +488,20 @@ class TestCliSelectEdgeCases:
             name="GCW: Real Agent",
             tools=["read"],
         )
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", directory
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", directory
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", directory)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", directory)
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "gcw",
+                "integration",
+                "setup",
+                "--target",
+                "gcw",
                 "--no-mcp",
-                "--wire-agents", "--select", "nonexistent-agent",
+                "--wire-agents",
+                "--select",
+                "nonexistent-agent",
             ],
         )
 
@@ -541,24 +525,22 @@ class TestCliSelectEdgeCases:
             name="GCW: Wired",
             tools=["read", MNEMOS_WILDCARD],
         )
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", directory
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", directory
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", directory)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", directory)
 
-        original_tools = _tools_from_post(
-            frontmatter.load(directory / "wired.agent.md")
-        )
+        original_tools = _tools_from_post(frontmatter.load(directory / "wired.agent.md"))
 
         result = runner.invoke(
             app,
             [
-                "integration", "setup",
-                "--target", "gcw",
+                "integration",
+                "setup",
+                "--target",
+                "gcw",
                 "--no-mcp",
-                "--wire-agents", "--select", "wired",
+                "--wire-agents",
+                "--select",
+                "wired",
             ],
         )
 
@@ -596,9 +578,7 @@ class TestDoctorPassCase:
             name="GCW: Profile",
             tool_profile="worker-readonly",
         )
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", directory
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", directory)
 
         result = runner.invoke(app, ["doctor", "--json"])
         assert "Agent wiring" in result.stdout
@@ -632,12 +612,8 @@ class TestVerifyOutputFormat:
             name="GCW: Unwired",
             tools=["read"],
         )
-        monkeypatch.setattr(
-            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", directory
-        )
-        monkeypatch.setattr(
-            "mnemos.cli.util.DEFAULT_AGENTS_DIR", directory
-        )
+        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", directory)
+        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", directory)
 
         result = runner.invoke(
             app,

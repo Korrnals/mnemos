@@ -149,7 +149,9 @@ class ONNXHubProvider(EmbeddingProvider):
         except Exception as exc:
             logger.warning(
                 "hf_hub_download(%s, %s) failed, falling back to model.onnx: %s",
-                model_id, onnx_file, exc,
+                model_id,
+                onnx_file,
+                exc,
             )
             model_path = hf_hub_download(model_id, "model.onnx", revision=revision)
 

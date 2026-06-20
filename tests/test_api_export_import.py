@@ -89,18 +89,14 @@ class TestApiExport:
             project="other",
             agent="x",
         )
-        resp = client.post(
-            "/api/v1/export", json={"format": "json", "project": "gcw"}
-        )
+        resp = client.post("/api/v1/export", json={"format": "json", "project": "gcw"})
         assert resp.status_code == 200
         payload = json.loads(resp.content)
         assert all(m["project"] == "gcw" for m in payload["memories"])
 
     def test_export_gzip_compression(self, client):
         _add(client, "compress me")
-        resp = client.post(
-            "/api/v1/export", json={"format": "json", "compress": "gzip"}
-        )
+        resp = client.post("/api/v1/export", json={"format": "json", "compress": "gzip"})
         assert resp.status_code == 200
         raw = gzip.decompress(resp.content)
         payload = json.loads(raw)
