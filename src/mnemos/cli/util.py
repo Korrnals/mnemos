@@ -1,12 +1,12 @@
-"""``mnemos util-*`` CLI subcommands — integration layer management.
+"""``mnemos integration *`` CLI subcommands — integration layer management.
 
 Subcommand tree::
 
-    mnemos util-detect      — print detected harnesses + deploy paths
-    mnemos util-setup       — deploy files + register MCP (unified entry point)
-    mnemos util-update      — bring stale files to current version
-    mnemos util-verify      — compare deployed files against shipped pack
-    mnemos util-uninstall   — remove only stamped files
+    mnemos integration detect    — print detected harnesses + deploy paths
+    mnemos integration setup     — deploy files + register MCP (unified entry point)
+    mnemos integration update    — bring stale files to current version
+    mnemos integration verify    — compare deployed files against shipped pack
+    mnemos integration uninstall — remove only stamped files
 
 All commands support ``--dry-run`` and ``--target`` (default: all detected).
 """
@@ -31,8 +31,8 @@ from mnemos.cli.integration import (
 
 console = Console()
 
-util_app = typer.Typer(
-    name="util",
+integration_app = typer.Typer(
+    name="integration",
     help="Manage Mnemos integration layer (instructions, skills, prompts, MCP).",
     no_args_is_help=True,
 )
@@ -136,7 +136,7 @@ def _print_verify_result(result: VerifyResult) -> None:
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 
-@util_app.command(name="detect")
+@integration_app.command(name="detect")
 def detect_cmd() -> None:
     """Print detected agent harnesses and their deploy paths."""
     cfg = load_targets()
@@ -162,12 +162,12 @@ def detect_cmd() -> None:
     console.print(table)
 
     console.print(
-        "\n[dim]Run [bold]mnemos util-setup --target all[/bold] "
+        "\n[dim]Run [bold]mnemos integration setup --target all[/bold] "
         "to deploy the integration pack.[/dim]"
     )
 
 
-@util_app.command(name="setup")
+@integration_app.command(name="setup")
 def setup_cmd(
     target: Annotated[
         str,
@@ -192,7 +192,7 @@ def setup_cmd(
 ) -> None:
     """Deploy instructions + skills + prompts and register MCP (unified setup).
 
-    This is the single entry point: running ``mnemos util-setup`` wires
+    This is the single entry point: running ``mnemos integration setup`` wires
     everything — file deployment and MCP registration — in one pass.
     Idempotent: re-running updates stale files without duplicating.
     """
@@ -227,7 +227,7 @@ def setup_cmd(
     console.print("\n[green]✓[/green] Setup complete.")
 
 
-@util_app.command(name="update")
+@integration_app.command(name="update")
 def update_cmd(
     target: Annotated[
         str,
@@ -256,7 +256,7 @@ def update_cmd(
     console.print("\n[green]✓[/green] Update complete.")
 
 
-@util_app.command(name="verify")
+@integration_app.command(name="verify")
 def verify_cmd(
     target: Annotated[
         str,
@@ -288,14 +288,14 @@ def verify_cmd(
     if has_issues:
         console.print(
             "\n[yellow]⚠ Stale or missing files detected. "
-            "Run [bold]mnemos util-update[/bold] to fix.[/yellow]"
+            "Run [bold]mnemos integration update[/bold] to fix.[/yellow]"
         )
         raise typer.Exit(1)
     else:
         console.print("\n[green]✓[/green] All files current.")
 
 
-@util_app.command(name="uninstall")
+@integration_app.command(name="uninstall")
 def uninstall_cmd(
     target: Annotated[
         str,

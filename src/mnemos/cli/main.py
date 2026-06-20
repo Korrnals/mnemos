@@ -169,10 +169,17 @@ def recall(
         console.print()
 
 
-# ── tags validate (M2) ─────────────────────────────────────────────────────────
+# ── tags (M2) ─────────────────────────────────────────────────────────────────
+# Subcommand tree:
+#   mnemos tags validate <vault>   — validate tag contract across a vault
+
+_tags_app = typer.Typer(
+    name="tags", help="Manage and validate memory tags.", no_args_is_help=True
+)
+app.add_typer(_tags_app, name="tags")
 
 
-@app.command(name="tags-validate")
+@_tags_app.command(name="validate")
 def tags_validate(
     vault: Annotated[Path, typer.Argument(help="Path to Mnemos vault directory")],
     config: str = ConfigOption,
@@ -241,13 +248,20 @@ def mcp_server_cmd(config: str = ConfigOption) -> None:
     asyncio.run(mcp_main())
 
 
-# ── migrate-from-ai-brain (M13) ────────────────────────────────────────────────
+# ── migrate (M13) ──────────────────────────────────────────────────────────────
+# Subcommand tree:
+#   mnemos migrate from-ai-brain   — migrate ai-brain data to Mnemos format
+
+_migrate_app = typer.Typer(
+    name="migrate", help="Migrate data from other memory systems.", no_args_is_help=True
+)
+app.add_typer(_migrate_app, name="migrate")
 
 _DEFAULT_AI_BRAIN_SOURCE = Path("~/.ai-brain").expanduser()
 _DEFAULT_BRAIN_VAULT = Path("~/brain-vault").expanduser()
 
 
-@app.command(name="migrate-from-ai-brain")
+@_migrate_app.command(name="from-ai-brain")
 def migrate(
     source: Annotated[
         Path, typer.Option("--source", help="ai-brain data dir")
@@ -480,14 +494,30 @@ def totp_test(
         raise typer.Exit(1)
 
 
-# ── util (integration layer) ───────────────────────────────────────────────────
+# ── integration (integration layer) ────────────────────────────────────────────
 # Subcommand tree:
-#   mnemos util-detect      — print detected harnesses + deploy paths
-#   mnemos util-setup       — deploy files + register MCP (unified entry point)
-#   mnemos util-update      — bring stale files to current version
-#   mnemos util-verify      — compare deployed files against shipped pack
-#   mnemos util-uninstall   — remove only stamped files
+#   mnemos integration detect    — print detected harnesses + deploy paths
+#   mnemos integration setup     — deploy files + register MCP (unified entry point)
+#   mnemos integration update    — bring stale files to current version
+#   mnemos integration verify    — compare deployed files against shipped pack
+#   mnemos integration uninstall  — remove only stamped files
 
-from mnemos.cli.util import util_app  # noqa: E402
+from mnemos.cli.util import integration_app  # noqa: E402
 
-app.add_typer(util_app, name="util")
+app.add_typer(integration_app, name="integration")
+
+
+# ── completion ─────────────────────────────────────────────────────────────────
+# Auto-detect current shell, generate completion script, auto-install into rc.
+
+from mnemos.cli.completion import completion_app  # noqa: E402
+
+app.add_typer(completion_app, name="completion")
+
+
+# ── doctor ─────────────────────────────────────────────────────────────────────
+# Health-check: config + data dir + vault + SQLite + vectors + MCP + integration + tags.
+
+from mnemos.cli.doctor import doctor_app  # noqa: E402
+
+app.add_typer(doctor_app, name="doctor")
