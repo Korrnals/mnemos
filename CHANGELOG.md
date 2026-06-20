@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dashboard / metrics API** (`src/mnemos/api/main.py`,
+  `src/mnemos/manager.py`, `src/mnemos/storage/sqlite_store.py`) — three
+  new endpoints for the `mnemos-eyes` frontend:
+  - `GET /api/v1/stats` — structured JSON with volume, filter, pipeline,
+    search, vectors, and sessions sections.
+  - `GET /api/v1/stats/timeseries` — daily memory counts for configurable
+    range (`?range=30d&metric=memories_added`).
+  - `GET /api/v1/metrics` — Prometheus text exposition format for
+    Grafana/observability.
+  - `GET /metrics` kept as backward-compatible alias (returns `stats()`
+    JSON).
+- **Extended `GET /memories` filters** — `status`, `project`, `agent`,
+  `tags` (comma-separated, AND logic), `since`, `until` (ISO datetime),
+  `offset` (pagination). Invalid `status` returns 422.
+- **Search instrumentation** (`src/mnemos/manager.py`) — in-memory
+  counter + latency tracker for `MemoryManager.search()`. Exposed via
+  `/api/v1/stats` `search` section and `mnemos_search_requests_total`
+  Prometheus metric. Resets on restart (accepted trade-off for
+  dashboard).
+- **New SQLite aggregate queries** (`src/mnemos/storage/sqlite_store.py`)
+  — `count_by_agent()`, `count_by_type()`, `count_by_date()`,
+  `count_sessions()`.
 - **Agent MCP wiring** (`src/mnemos/cli/agent_wiring.py`,
   `src/mnemos/cli/util.py`) — `mnemos integration setup` now wires
   `mnemos/*` into the `tools:` frontmatter of GCW agent files

@@ -10,10 +10,13 @@ Backed by:
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from mnemos import __version__
 from mnemos.config import Settings
 from mnemos.embeddings import EmbeddingProvider, create_embedding_provider
 from mnemos.models import (
@@ -55,6 +58,14 @@ class MemoryManager:
         self.vectors = VectorStore(settings.mnemos.data_dir)
         self._embedder: EmbeddingProvider | None = None
         self._watcher: Any = None
+        # In-memory search instrumentation (resets on restart).
+        # Accepted trade-off for the dashboard: not persisted, no history.
+        self._search_stats: dict[str, Any] = {
+            "requests_total": 0,
+            "latency_samples_ms": [],
+            "results_counts": [],
+        }
+        self._search_stats_lock = threading.Lock()
 
     @property
     def embedder(self) -> EmbeddingProvider:
@@ -218,6 +229,7 @@ class MemoryManager:
         """
         _ = include_raw  # accepted for contract symmetry; no search-leg effect
         alpha = hybrid_alpha if hybrid_alpha is not None else self.settings.search.hybrid_alpha
+        _t0 = time.monotonic()
 
         # ── FTS leg ────────────────────────────────────────────────────────
         fts_pairs: list[tuple[Memory, float]] = []
@@ -271,6 +283,21 @@ class MemoryManager:
             results.append(SearchResult(memory=matched, score=score, search_type="hybrid"))
             if len(results) >= limit:
                 break
+        # Record search instrumentation (in-memory, resets on restart).
+        latency_ms = (time.monotonic() - _t0) * 1000.0
+        with self._search_stats_lock:
+            self._search_stats["requests_total"] = int(
+                self._search_stats["requests_total"]
+            ) + 1
+            samples: list[float] = self._search_stats["latency_samples_ms"]
+            samples.append(latency_ms)
+            # Cap samples to avoid unbounded growth in long-running processes.
+            if len(samples) > 1000:
+                del samples[: len(samples) - 1000]
+            counts: list[int] = self._search_stats["results_counts"]
+            counts.append(len(results))
+            if len(counts) > 1000:
+                del counts[: len(counts) - 1000]
         return results
 
     def agent_recall(self, query: AgentRecallQuery) -> list[SearchResult]:
@@ -307,26 +334,124 @@ class MemoryManager:
         self,
         *,
         limit: int = 10,
+        offset: int = 0,
         tags: list[str] | None = None,
         project: str | None = None,
         agent: str | None = None,
+        status: MemoryStatus | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> list[Memory]:
         return self.sqlite.list_all(
             limit=limit,
+            offset=offset,
             tags=tags,
             project=project,
             agent=agent,
+            status=status,
+            since=since,
+            until=until,
         )
 
     def list_tags(self) -> dict[str, int]:
         return self.sqlite.get_all_tags()
+
+    def search_stats(self) -> dict[str, Any]:
+        """Return in-memory search instrumentation (resets on restart)."""
+        with self._search_stats_lock:
+            samples: list[float] = list(self._search_stats["latency_samples_ms"])
+            counts: list[int] = list(self._search_stats["results_counts"])
+        avg_latency_ms = round(sum(samples) / len(samples), 2) if samples else 0.0
+        avg_results = round(sum(counts) / len(counts), 2) if counts else 0.0
+        return {
+            "requests_total": int(self._search_stats["requests_total"]),
+            "avg_latency_ms": avg_latency_ms,
+            "avg_results": avg_results,
+        }
+
+    def dashboard_stats(self) -> dict[str, Any]:
+        """Structured JSON for the mnemos-eyes dashboard.
+
+        Aggregates volume, filter, pipeline, search, vectors, sessions.
+        """
+        by_status = self.sqlite.count_by_status()
+        filter_stats = self.sqlite.get_filter_stats()
+        s_stats = self.search_stats()
+        sessions = self.sqlite.count_sessions()
+        # Pipeline counts derived from status + DLQ.
+        processed_total = int(by_status.get("processed", 0)) + int(
+            by_status.get("published", 0)
+        )
+        return {
+            "version": __version__,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "volume": {
+                "memories_total": self.sqlite.count(),
+                "by_status": by_status,
+                "by_project": self.sqlite.get_project_memory_counts(),
+                "by_agent": self.sqlite.count_by_agent(),
+                "by_type": self.sqlite.count_by_type(),
+            },
+            "filter": {
+                "auto_filter": self.settings.mnemos.auto_filter,
+                "filtered_total": filter_stats["filtered"],
+                "unfiltered_total": filter_stats["unfiltered"],
+                "avg_reduction_pct": filter_stats["avg_reduction_pct"],
+                "by_profile": filter_stats["by_profile"],
+            },
+            "pipeline": {
+                "processed_total": processed_total,
+                "failed_total": self.sqlite.dlq_count(),
+                "dlq_depth": self.sqlite.dlq_count(),
+                "last_run": None,
+            },
+            "search": {
+                "requests_total": s_stats["requests_total"],
+                "avg_latency_ms": s_stats["avg_latency_ms"],
+                "avg_results": s_stats["avg_results"],
+            },
+            "vectors": {
+                "indexed_total": self.vectors.count(),
+            },
+            "sessions": {
+                "active": sessions["active"],
+                "total": sessions["total"],
+            },
+        }
+
+    def timeseries(
+        self,
+        *,
+        metric: str = "memories_added",
+        days: int = 30,
+        granularity: str = "day",
+    ) -> dict[str, Any]:
+        """Temporal data for dashboard charts.
+
+        Currently supports ``memories_added`` (daily counts from SQLite).
+        Other metrics return an empty series with a note.
+        """
+        if metric == "memories_added":
+            points = self.sqlite.count_by_date(days=days, granularity=granularity)
+        else:
+            points = []
+        return {
+            "granularity": granularity,
+            "range": f"{days}d",
+            "series": [
+                {
+                    "metric": metric,
+                    "points": points,
+                }
+            ],
+        }
 
     def stats(self) -> dict[str, Any]:
         by_status = self.sqlite.count_by_status()
         filter_stats = self.sqlite.get_filter_stats()
         return {
             "status": "ok",
-            "version": "0.1.0",
+            "version": __version__,
             "data_dir": str(self.settings.mnemos.data_dir),
             "vault_path": str(self.settings.mnemos.vault_path),
             "total": self.sqlite.count(),
