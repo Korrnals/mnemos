@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent MCP wiring** (`src/mnemos/cli/agent_wiring.py`,
+  `src/mnemos/cli/util.py`) — `mnemos integration setup` now wires
+  `mnemos/*` into the `tools:` frontmatter of GCW agent files
+  (`~/.copilot/agents/*.agent.md`). Flags: `--wire-agents` (enable),
+  `--wire-agents --all` (wire all unwired, no prompt), `--wire-agents
+  --select name1,name2` (specific agents), `--no-wire-agents` (skip),
+  `--precise` (individual `mnemos/mnemos_*` tokens instead of wildcard),
+  `--dry-run` (preview). Only `tools:` is touched; agents with
+  `tool_profile:` are skipped (managed by the GCW installer). Idempotent.
+- **Agent wiring in `mnemos integration verify`** — the verify report now
+  includes an agents section showing wired / unwired / skipped counts.
+- **Agent wiring check in `mnemos doctor`** (`src/mnemos/cli/doctor.py`) —
+  9th health check reporting agent wiring status; warns if unwired agents
+  are detected.
+- **Context Filter auto-activation on ingest (M10)**
+  (`src/mnemos/filter/pipeline.py`, `src/mnemos/manager.py`,
+  `src/mnemos/config.py`) — the five-stage filter (dedup, noise, extract,
+  compress, tokens) now auto-runs on every `mnemos_add` when
+  `auto_filter: true` (default for new installs). Stores `raw_content` +
+  `clean_content` + `filter_stats`; filter failures are non-fatal (memory
+  is still saved with raw content). `mnemos_search` /
+  `mnemos_recall_context` return `clean_content` when available.
+- **`mnemos_filter` MCP tool** (`src/mnemos/mcp_server.py`) — explicit
+  re-filter of an existing memory. Parameters: `memory_id` (required),
+  `profile` (optional, auto-detected), `budget` (optional token budget).
+  Returns `clean_content` + per-stage `stats`.
+- **`mnemos filter` CLI command** (`src/mnemos/cli/main.py`) —
+  `mnemos filter <id>` re-filters a single memory; `mnemos filter --all`
+  re-filters every memory (batch, reports aggregate stats). Flags:
+  `--profile`, `--budget`, `--all`.
+- **Filter stats in `mnemos stats`** (`src/mnemos/manager.py`) — the stats
+  output now includes a filter section: `auto_filter` flag,
+  `filtered_count`, `unfiltered_count`, `avg_reduction_pct`, and
+  `by_profile` breakdown.
+- **Context Filter profiles** — `log | terminal | code | docs | web |
+  default`, auto-detected from content heuristics (timestamps, ANSI codes,
+  code keywords, HTML tags, markdown structure).
 - **`make doctor` target** (`Makefile`) — runs `mnemos doctor --json` as a
   health-check gate, wired into `make verify`. Fails the build on actual
   failures (exit 1); allows warnings (exit 2) since CI environments typically
