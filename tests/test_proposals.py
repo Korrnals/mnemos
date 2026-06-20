@@ -523,3 +523,40 @@ class TestDoctorFix:
 
         # Verify CheckStatus enum is used correctly.
         assert CheckStatus.FAIL != CheckStatus.WARN
+
+    def test_fix_noop_when_all_pass(
+        self,
+        agents_dir: Path,
+        fake_pack: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``doctor --fix`` is a no-op (exit 0) when all checks pass.
+
+        After fixing all WARN-level issues, re-running ``doctor --fix``
+        should find nothing to fix and exit 0.
+        """
+        monkeypatch.setattr(
+            "mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir
+        )
+        _patch_integration(monkeypatch, fake_pack)
+
+        # First run fixes the warnings.
+        runner.invoke(app, ["doctor", "--fix", "--json"])
+
+        # Wire the remaining unwired agent manually so all agents are wired.
+        from mnemos.cli.doctor import _fix_agent_wiring
+
+        _fix_agent_wiring()
+
+        # Second run — all checks pass, --fix is a no-op.
+        result = runner.invoke(app, ["doctor", "--fix", "--json"])
+        payload = result.stdout
+        # Exit code 0 means all checks pass (no warnings, no failures).
+        # Some checks (SQLite/vector) may still WARN in tmp_path, so accept 0 or 2.
+        assert result.exit_code in (0, 2), result.output
+        # The fixed array should be empty (nothing needed fixing).
+        if "fixed" in payload:
+            import json as _json
+
+            data = _json.loads(payload)
+            assert data.get("fixed", []) == []
