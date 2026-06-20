@@ -22,6 +22,7 @@ from mnemos.cli.integration import (
     DeployStatus,
     IntegrationManager,
     Target,
+    TargetsConfig,
     load_targets,
     make_stamp,
     read_stamp,
@@ -174,12 +175,8 @@ class TestStamping:
         stamped = stamp_content(content, "1.2.0")
         lines = stamped.splitlines()
         # Stamp should come after the front-matter block.
-        stamp_idx = next(
-            i for i, line in enumerate(lines) if "mnemos-integration" in line
-        )
-        fm_end_idx = next(
-            i for i, line in enumerate(lines) if line.strip() == "---" and i > 0
-        )
+        stamp_idx = next(i for i, line in enumerate(lines) if "mnemos-integration" in line)
+        fm_end_idx = next(i for i, line in enumerate(lines) if line.strip() == "---" and i > 0)
         assert stamp_idx > fm_end_idx
 
     def test_stamp_content_replaces_existing_stamp(self) -> None:
@@ -474,3 +471,1053 @@ class TestCLI:
         # Verify missing after uninstall
         verify2 = manager.verify(detected_target)
         assert verify2.missing_count == 3
+
+
+# ── QA: additional edge-case coverage ─────────────────────────────────────────
+#
+# Added by @GCW: Senior QA Engineer during independent audit of the
+# integration layer. These tests target gaps identified in the audit:
+# idempotency across versions, content drift, partial deploy maps,
+# multi-target, dry-run safety, corrupted config, permission errors,
+# prompt-mode deployment, and CLI paths not covered by the original suite.
+
+
+class TestStampingEdgeCases:
+    """Stamping edge cases not covered by the original TestStamping."""
+
+    def test_stamp_empty_file(self) -> None:
+        """An empty file should still receive a stamp without error."""
+        stamped = stamp_content("", "1.2.0")
+        assert read_stamp(stamped) == "1.2.0"
+
+    def test_stamp_whitespace_only_file(self) -> None:
+        """A file with only whitespace should be stamped cleanly."""
+        stamped = stamp_content("   \n\n", "1.2.0")
+        assert read_stamp(stamped) == "1.2.0"
+
+    def test_stamp_frontmatter_only_file(self) -> None:
+        """A file containing only front-matter (no body) should be stamped."""
+        content = "---\napplyTo: '**'\n---\n"
+        stamped = stamp_content(content, "1.2.0")
+        assert read_stamp(stamped) == "1.2.0"
+
+    def test_stamp_preserves_shebang_and_frontmatter(self) -> None:
+        """A file with both shebang and front-matter stamps after both."""
+        content = "#!/bin/bash\n---\nkey: value\n---\n# body\n"
+        stamped = stamp_content(content, "1.2.0")
+        lines = stamped.splitlines()
+        assert lines[0] == "#!/bin/bash"
+        # Stamp must come after the closing front-matter delimiter.
+        stamp_idx = next(i for i, line in enumerate(lines) if "mnemos-integration" in line)
+        fm_close_idx = max(i for i, line in enumerate(lines) if line.strip() == "---")
+        assert stamp_idx > fm_close_idx
+
+    def test_read_stamp_from_multiline_content(self) -> None:
+        """Stamp can be read from content where it's not on the first line."""
+        content = "#!/bin/bash\n<!-- mnemos-integration: v0.9.0 -->\necho hi\n"
+        assert read_stamp(content) == "0.9.0"
+
+    def test_make_stamp_different_versions(self) -> None:
+        """Stamp reflects the exact version string passed."""
+        assert make_stamp("0.1.0") != make_stamp("1.0.0")
+        assert "v0.1.0" in make_stamp("0.1.0")
+
+
+class TestTargetsConfigEdgeCases:
+    """Edge cases for targets.yaml parsing."""
+
+    def test_load_targets_yaml_syntax_error(self, tmp_path: Path) -> None:
+        """Malformed YAML (syntax error) should raise, not silently parse."""
+        bad = tmp_path / "broken.yaml"
+        bad.write_text("targets: [unclosed", encoding="utf-8")
+        with pytest.raises(yaml.YAMLError):
+            load_targets(bad)
+
+    def test_load_targets_empty_targets_dict(self, tmp_path: Path) -> None:
+        """An empty targets dict should parse to zero targets, not error."""
+        cfg_file = tmp_path / "empty.yaml"
+        cfg_file.write_text("targets: {}\n", encoding="utf-8")
+        cfg = load_targets(cfg_file)
+        assert len(cfg.targets) == 0
+        assert cfg.detected() == ()
+
+    def test_load_targets_target_missing_detect_key(self, tmp_path: Path) -> None:
+        """A target without 'detect' should parse with empty detect_paths."""
+        cfg_file = tmp_path / "no_detect.yaml"
+        cfg_file.write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "bare": {"deploy": {"instructions": str(tmp_path / "out") + "/"}},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(cfg_file)
+        assert len(cfg.targets) == 1
+        assert cfg.targets[0].detect_paths == ()
+
+    def test_load_targets_detect_entry_missing_path_key(self, tmp_path: Path) -> None:
+        """A detect entry without 'path' is silently skipped (not crash)."""
+        cfg_file = tmp_path / "bad_detect.yaml"
+        cfg_file.write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "t": {
+                            "detect": [{"not_path": "x"}],
+                            "deploy": {"instructions": str(tmp_path / "o") + "/"},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(cfg_file)
+        assert cfg.targets[0].detect_paths == ()
+
+    def test_load_targets_deploy_non_string_value(self, tmp_path: Path) -> None:
+        """Non-string deploy values are silently skipped."""
+        cfg_file = tmp_path / "bad_deploy.yaml"
+        cfg_file.write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "t": {
+                            "detect": [{"path": str(tmp_path / "m")}],
+                            "deploy": {"instructions": 12345},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(cfg_file)
+        assert "instructions" not in cfg.targets[0].deploy_map
+
+    def test_load_targets_target_spec_not_dict(self, tmp_path: Path) -> None:
+        """A target spec that is not a mapping should raise ValueError."""
+        cfg_file = tmp_path / "bad_spec.yaml"
+        cfg_file.write_text(
+            yaml.dump({"targets": {"bad": "just-a-string"}}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="must be a mapping"):
+            load_targets(cfg_file)
+
+    def test_load_targets_detect_not_list(self, tmp_path: Path) -> None:
+        """A 'detect' that is not a list should raise ValueError."""
+        cfg_file = tmp_path / "bad_detect_type.yaml"
+        cfg_file.write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "t": {
+                            "detect": "not-a-list",
+                            "deploy": {"instructions": str(tmp_path / "o") + "/"},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="detect must be a list"):
+            load_targets(cfg_file)
+
+    def test_load_targets_deploy_not_mapping(self, tmp_path: Path) -> None:
+        """A 'deploy' that is not a mapping should raise ValueError."""
+        cfg_file = tmp_path / "bad_deploy_type.yaml"
+        cfg_file.write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "t": {
+                            "detect": [{"path": str(tmp_path / "m")}],
+                            "deploy": "not-a-mapping",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="deploy must be a mapping"):
+            load_targets(cfg_file)
+
+    def test_get_returns_none_for_unknown(self, fake_pack: Path) -> None:
+        """TargetsConfig.get returns None for an unknown target name."""
+        cfg = load_targets(fake_pack / "targets.yaml")
+        assert cfg.get("does-not-exist") is None
+
+    def test_detected_returns_only_detected(self, fake_pack: Path) -> None:
+        """detected() filters out targets whose detect paths don't exist."""
+        cfg = load_targets(fake_pack / "targets.yaml")
+        detected = cfg.detected()
+        assert all(t.is_detected() for t in detected)
+
+
+class TestDeployEdgeCases:
+    """Deploy edge cases: content drift, partial maps, multi-target."""
+
+    def test_deploy_content_drift_same_version(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """If the pack content changes but version stays the same, deploy
+        should detect the drift and mark the file as UPDATED, not CURRENT."""
+        manager.deploy(detected_target)
+
+        # Mutate the source pack file (same version, different content).
+        instr_file = manager.pack_root / "instructions" / "mnemos-memory.instructions.md"
+        original = instr_file.read_text(encoding="utf-8")
+        instr_file.write_text(
+            original + "\n# Extra line added after initial deploy\n",
+            encoding="utf-8",
+        )
+
+        result = manager.deploy(detected_target)
+        # The instructions file should be UPDATED (content changed).
+        instr_result = next(f for f in result.files if "mnemos-memory" in f.source.name)
+        assert instr_result.status == DeployStatus.UPDATED
+
+    def test_deploy_partial_deploy_map_skips_unmapped_kinds(self, tmp_path: Path) -> None:
+        """A target that only has 'instructions' in its deploy map should
+        skip skills and prompts with SKIPPED status, not crash."""
+        pack = tmp_path / "integrations"
+        (pack / "instructions").mkdir(parents=True)
+        (pack / "skills").mkdir(parents=True)
+        (pack / "prompts").mkdir(parents=True)
+        (pack / "instructions" / "a.md").write_text("# a\n", encoding="utf-8")
+        (pack / "skills" / "b.md").write_text("# b\n", encoding="utf-8")
+        (pack / "prompts" / "c.md").write_text("# c\n", encoding="utf-8")
+
+        marker = tmp_path / "marker"
+        marker.mkdir()
+        (pack / "targets.yaml").write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "partial": {
+                            "detect": [{"path": str(marker)}],
+                            "deploy": {
+                                "instructions": str(tmp_path / "deploy" / "instr") + "/",
+                            },
+                            "format": "copy",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.0.0", pack_root=pack, targets_config=cfg)
+
+        result = mgr.deploy("partial")
+        statuses = {f.source.name: f.status for f in result.files}
+        # instructions deployed, skills+prompts skipped
+        assert statuses["a.md"] == DeployStatus.DEPLOYED
+        assert statuses["b.md"] == DeployStatus.SKIPPED
+        assert statuses["c.md"] == DeployStatus.SKIPPED
+
+    def test_deploy_multi_target_all_detected(self, tmp_path: Path) -> None:
+        """Deploy to multiple detected targets — all should receive files."""
+        pack = tmp_path / "integrations"
+        (pack / "instructions").mkdir(parents=True)
+        (pack / "instructions" / "shared.md").write_text("# shared\n", encoding="utf-8")
+
+        marker_a = tmp_path / "marker_a"
+        marker_b = tmp_path / "marker_b"
+        marker_a.mkdir()
+        marker_b.mkdir()
+
+        deploy_a = tmp_path / "deploy_a" / "instructions"
+        deploy_b = tmp_path / "deploy_b" / "instructions"
+
+        (pack / "targets.yaml").write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "target-a": {
+                            "detect": [{"path": str(marker_a)}],
+                            "deploy": {"instructions": str(deploy_a) + "/"},
+                            "format": "copy",
+                        },
+                        "target-b": {
+                            "detect": [{"path": str(marker_b)}],
+                            "deploy": {"instructions": str(deploy_b) + "/"},
+                            "format": "copy",
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(pack / "targets.yaml")
+        mgr = IntegrationManager(version="2.0.0", pack_root=pack, targets_config=cfg)
+
+        assert len(cfg.detected()) == 2
+
+        for name in ("target-a", "target-b"):
+            result = mgr.deploy(name)
+            assert result.deployed_count == 1
+
+        assert (deploy_a / "shared.md").exists()
+        assert (deploy_b / "shared.md").exists()
+        assert read_stamp((deploy_a / "shared.md").read_text()) == "2.0.0"
+        assert read_stamp((deploy_b / "shared.md").read_text()) == "2.0.0"
+
+    def test_deploy_preserves_user_file_in_deploy_dir(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """A pre-existing user file in the deploy dir is not overwritten
+        even if it has the same name as a pack file — deploy writes to the
+        correct relative path and leaves unrelated user files alone."""
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        dest_dir = cfg.targets[0].deploy_map["instructions"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        user_file = dest_dir / "my-own-instruction.md"
+        user_file.write_text("# mine, not mnemos\n", encoding="utf-8")
+
+        manager.deploy(detected_target)
+        # User file content unchanged.
+        assert "mine, not mnemos" in user_file.read_text(encoding="utf-8")
+        assert read_stamp(user_file.read_text()) is None
+
+    def test_deploy_unknown_target_raises_value_error(self, manager: IntegrationManager) -> None:
+        """Deploying to an unknown target raises ValueError with the name."""
+        with pytest.raises(ValueError, match="Unknown target"):
+            manager.deploy("totally-fake-target")
+
+    def test_deploy_creates_nested_deploy_dirs(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Deploy creates deeply nested parent directories as needed."""
+        manager.deploy(detected_target)
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        # skills/mnemos-recall/SKILL.md — nested 2 levels under deploy root.
+        nested = cfg.targets[0].deploy_map["skills"] / "mnemos-recall" / "SKILL.md"
+        assert nested.exists()
+
+
+class TestVerifyEdgeCases:
+    """Verify edge cases: stale-removed-from-pack, empty deploy dir."""
+
+    def test_verify_detects_stamped_file_removed_from_pack(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """A stamped file that was deployed but later removed from the pack
+        should be reported as STALE (not SKIPPED), because it carries our
+        stamp and is no longer managed."""
+        manager.deploy(detected_target)
+
+        # Remove a file from the pack.
+        removed = manager.pack_root / "instructions" / "mnemos-memory.instructions.md"
+        removed.unlink()
+
+        result = manager.verify(detected_target)
+        # The deployed copy still exists and is stamped but not in pack.
+        stale_extras = [
+            f
+            for f in result.files
+            if f.status == DeployStatus.STALE and f.source == Path("<not-in-pack>")
+        ]
+        assert len(stale_extras) == 1
+
+    def test_verify_empty_deploy_dir(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Verify on an empty (but existing) deploy dir reports all missing."""
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        for d in cfg.targets[0].deploy_map.values():
+            d.mkdir(parents=True, exist_ok=True)
+
+        result = manager.verify(detected_target)
+        assert result.missing_count == 3
+        assert not result.all_current
+
+    def test_verify_unknown_target_raises(self, manager: IntegrationManager) -> None:
+        with pytest.raises(ValueError, match="Unknown target"):
+            manager.verify("nope")
+
+    def test_verify_all_current_property_false_when_no_files(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """all_current is False when there are zero files (vacuous truth guard)."""
+        # Remove all pack files so _all_pack_files returns empty.
+        import shutil
+
+        for kind in ("instructions", "skills", "prompts"):
+            d = manager.pack_root / kind
+            if d.exists():
+                shutil.rmtree(d)
+
+        result = manager.verify(detected_target)
+        assert len(result.files) == 0
+        assert not result.all_current
+
+
+class TestUpdateEdgeCases:
+    """Update edge cases: missing files deployed, idempotency."""
+
+    def test_update_deploys_missing_files(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Update should deploy files that are missing entirely, not just
+        update stale ones."""
+        result = manager.update(detected_target)
+        assert result.deployed_count == 3
+        verify = manager.verify(detected_target)
+        assert verify.all_current
+
+    def test_update_idempotent_second_run(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Running update twice doesn't change files on the second run."""
+        manager.update(detected_target)
+        result = manager.update(detected_target)
+        assert all(f.status == DeployStatus.CURRENT for f in result.files)
+        assert result.deployed_count == 0
+
+    def test_update_unknown_target_raises(self, manager: IntegrationManager) -> None:
+        with pytest.raises(ValueError, match="Unknown target"):
+            manager.update("ghost")
+
+    def test_update_dry_run_preserves_old_stamp(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Dry-run update leaves the old version stamp intact on disk."""
+        old_mgr = IntegrationManager(
+            version="0.5.0",
+            pack_root=manager.pack_root,
+            targets_config=manager.targets,
+        )
+        old_mgr.deploy(detected_target)
+
+        manager.update(detected_target, dry_run=True)
+        # Files still at old version.
+        verify = manager.verify(detected_target)
+        assert verify.stale_count == 3
+
+
+class TestUninstallEdgeCases:
+    """Uninstall edge cases: unknown target, nested dirs, mixed content."""
+
+    def test_uninstall_unknown_target_raises(self, manager: IntegrationManager) -> None:
+        with pytest.raises(ValueError, match="Unknown target"):
+            manager.uninstall("phantom")
+
+    def test_uninstall_preserves_nested_user_files(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """User files in nested subdirectories are preserved during uninstall."""
+        manager.deploy(detected_target)
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        skills_dir = cfg.targets[0].deploy_map["skills"] / "user-skill"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        user_skill = skills_dir / "SKILL.md"
+        user_skill.write_text("# my custom skill\n", encoding="utf-8")
+
+        manager.uninstall(detected_target)
+        assert user_skill.exists()
+        assert skills_dir.exists()  # not cleaned because user file remains
+
+    def test_uninstall_when_deploy_dir_missing(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Uninstall on a target whose deploy dirs don't exist returns empty."""
+        result = manager.uninstall(detected_target)
+        assert len(result.removed) == 0
+        assert len(result.skipped_user_files) == 0
+
+    def test_uninstall_mixed_stamped_and_user(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Uninstall with a mix of stamped and user files in the same dir."""
+        manager.deploy(detected_target)
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        dest_dir = cfg.targets[0].deploy_map["instructions"]
+        user_a = dest_dir / "user-a.md"
+        user_b = dest_dir / "user-b.md"
+        user_a.write_text("# a\n", encoding="utf-8")
+        user_b.write_text("# b\n", encoding="utf-8")
+
+        result = manager.uninstall(detected_target)
+        assert len(result.removed) == 3  # the 3 pack files
+        assert user_a.exists()
+        assert user_b.exists()
+        assert len(result.skipped_user_files) == 2
+
+    def test_uninstall_dry_run_reports_but_preserves(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Dry-run uninstall reports what would be removed but leaves files."""
+        manager.deploy(detected_target)
+        result = manager.uninstall(detected_target, dry_run=True)
+        assert len(result.removed) == 3
+        for p in result.removed:
+            assert p.exists()
+
+
+class TestSetupMCP:
+    """MCP registration paths in IntegrationManager.setup."""
+
+    def test_setup_skips_mcp_when_disabled(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """setup with register_mcp=False should not attempt MCP registration."""
+        result = manager.setup(detected_target, register_mcp=False)
+        assert result.mcp_registered is False
+        assert result.mcp_note == ""
+        assert result.deployed_count == 3
+
+    def test_setup_dry_run_skips_mcp(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Dry-run setup should not register MCP even if register_mcp=True."""
+        result = manager.setup(detected_target, dry_run=True, register_mcp=True)
+        assert result.mcp_registered is False
+        assert result.deployed_count == 3
+
+    def test_setup_mcp_failure_does_not_block_deploy(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """If MCP registration fails, files are still deployed; the failure
+        is recorded in mcp_note."""
+        result = manager.setup(detected_target, register_mcp=True, mnemos_bin="/nonexistent/mnemos")
+        assert result.deployed_count == 3
+        assert result.mcp_registered is False
+        assert result.mcp_note != ""
+
+    def test_register_mcp_missing_script(self, manager: IntegrationManager) -> None:
+        """register_mcp returns (False, note) when mcp-setup.sh is absent."""
+        ok, note = manager.register_mcp()
+        assert ok is False
+        assert "mcp-setup.sh" in note or "exited" in note or "timed out" in note
+
+
+class TestCLISetupUpdateUninstall:
+    """CLI paths for setup, update, and uninstall not covered by original suite."""
+
+    def test_util_setup_dry_run_via_cli(
+        self,
+        fake_pack: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI `util setup --dry-run` should not write files."""
+        cfg = load_targets(fake_pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
+
+        import mnemos.cli.util as util_mod
+
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+
+        result = runner.invoke(
+            app, ["util", "setup", "--target", "test-harness", "--dry-run", "--no-mcp"]
+        )
+        assert result.exit_code == 0
+        # No files written.
+        for kind in ("instructions", "skills", "prompts"):
+            deploy_dir = cfg.targets[0].deploy_map.get(kind)
+            if deploy_dir:
+                assert not deploy_dir.exists() or not any(deploy_dir.iterdir())
+
+    def test_util_setup_writes_files_via_cli(
+        self,
+        fake_pack: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI `util setup` (non-dry-run) deploys files to disk."""
+        cfg = load_targets(fake_pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
+
+        import mnemos.cli.util as util_mod
+
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+
+        result = runner.invoke(app, ["util", "setup", "--target", "test-harness", "--no-mcp"])
+        assert result.exit_code == 0
+        assert "Setup complete" in result.output
+
+    def test_util_update_via_cli(
+        self,
+        fake_pack: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI `util update` brings stale files to current."""
+        cfg = load_targets(fake_pack / "targets.yaml")
+        old_mgr = IntegrationManager(version="0.1.0", pack_root=fake_pack, targets_config=cfg)
+        old_mgr.deploy("test-harness")
+
+        new_mgr = IntegrationManager(version="9.9.9", pack_root=fake_pack, targets_config=cfg)
+
+        import mnemos.cli.util as util_mod
+
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: new_mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+
+        result = runner.invoke(app, ["util", "update", "--target", "test-harness"])
+        assert result.exit_code == 0
+        assert "Update complete" in result.output
+
+    def test_util_uninstall_via_cli(
+        self,
+        fake_pack: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI `util uninstall` removes stamped files."""
+        cfg = load_targets(fake_pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
+        mgr.deploy("test-harness")
+
+        import mnemos.cli.util as util_mod
+
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+
+        result = runner.invoke(app, ["util", "uninstall", "--target", "test-harness"])
+        assert result.exit_code == 0
+        assert "Uninstall complete" in result.output
+        assert "3 files removed" in result.output
+
+    def test_util_uninstall_dry_run_via_cli(
+        self,
+        fake_pack: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI `util uninstall --dry-run` reports but doesn't delete."""
+        cfg = load_targets(fake_pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
+        mgr.deploy("test-harness")
+
+        import mnemos.cli.util as util_mod
+
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+
+        result = runner.invoke(app, ["util", "uninstall", "--target", "test-harness", "--dry-run"])
+        assert result.exit_code == 0
+        assert "3 files removed" in result.output
+
+    def test_util_setup_all_targets_no_detection(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI `util setup --target all` with no detected harnesses exits 0
+        and prints a 'no harnesses' message."""
+        import mnemos.cli.util as util_mod
+
+        # Empty config with no detected targets.
+        empty_cfg = TargetsConfig(targets=())
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
+
+        result = runner.invoke(app, ["util", "setup", "--target", "all"])
+        assert result.exit_code == 0
+        assert "No agent harnesses detected" in result.output
+
+    def test_util_verify_all_targets_no_detection(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI `util verify --target all` with no detected harnesses exits 0."""
+        import mnemos.cli.util as util_mod
+
+        empty_cfg = TargetsConfig(targets=())
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
+
+        result = runner.invoke(app, ["util", "verify", "--target", "all"])
+        assert result.exit_code == 0
+
+    def test_util_detect_no_harnesses(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """CLI `util detect` with no detected harnesses prints a message."""
+        import mnemos.cli.util as util_mod
+
+        empty_cfg = TargetsConfig(targets=())
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
+
+        result = runner.invoke(app, ["util", "detect"])
+        assert result.exit_code == 0
+        assert "No agent harnesses detected" in result.output
+
+    def test_util_setup_specific_undetected_target(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """CLI `util setup --target X` where X exists in config but is not
+        detected should exit 0 with a 'not detected' warning."""
+        import mnemos.cli.util as util_mod
+
+        cfg = TargetsConfig(
+            targets=(
+                Target(
+                    name="ghost",
+                    detect_paths=(tmp_path / "nonexistent",),
+                    deploy_map={"instructions": tmp_path / "out"},
+                ),
+            )
+        )
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+
+        result = runner.invoke(app, ["util", "setup", "--target", "ghost"])
+        assert result.exit_code == 0
+        assert "not detected" in result.output.lower()
+
+
+class TestFullLifecycleMultiVersion:
+    """Full lifecycle across multiple version transitions."""
+
+    def test_version_progression_deploy_update_verify(self, fake_pack: Path) -> None:
+        """Simulate: deploy v1.0.0 → verify stale at v1.1.0 → update →
+        verify current → deploy v1.2.0 → update → verify current → uninstall."""
+        cfg = load_targets(fake_pack / "targets.yaml")
+
+        v1 = IntegrationManager(version="1.0.0", pack_root=fake_pack, targets_config=cfg)
+        v1.deploy("test-harness")
+
+        v11 = IntegrationManager(version="1.1.0", pack_root=fake_pack, targets_config=cfg)
+        assert v11.verify("test-harness").stale_count == 3
+        v11.update("test-harness")
+        assert v11.verify("test-harness").all_current
+
+        v12 = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
+        v12.update("test-harness")
+        assert v12.verify("test-harness").all_current
+
+        uninstall = v12.uninstall("test-harness")
+        assert len(uninstall.removed) == 3
+        assert v12.verify("test-harness").missing_count == 3
+
+    def test_repeated_deploy_same_version_no_duplicates(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Deploying the same version 5 times should not create duplicate
+        files or change file count."""
+        for _ in range(5):
+            manager.deploy(detected_target)
+
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        instr_dir = cfg.targets[0].deploy_map["instructions"]
+        # Exactly one .md file in instructions (the pack file).
+        md_files = list(instr_dir.rglob("*.md"))
+        assert len(md_files) == 1
+
+    def test_deploy_update_uninstall_preserves_user_files_throughout(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """User files survive a full deploy → update → uninstall cycle."""
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        dest_dir = cfg.targets[0].deploy_map["instructions"]
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        user_file = dest_dir / "persistent-user.md"
+        user_file.write_text("# persistent\n", encoding="utf-8")
+
+        manager.deploy(detected_target)
+        assert user_file.exists()
+
+        old_mgr = IntegrationManager(
+            version="0.1.0",
+            pack_root=manager.pack_root,
+            targets_config=manager.targets,
+        )
+        old_mgr.deploy(detected_target)
+        manager.update(detected_target)
+        assert user_file.exists()
+        assert "persistent" in user_file.read_text()
+
+        manager.uninstall(detected_target)
+        assert user_file.exists()
+        assert "persistent" in user_file.read_text()
+
+
+class TestPermissionErrors:
+    """Graceful handling of permission errors on deploy directories."""
+
+    def test_deploy_permission_error_raises(
+        self,
+        fake_pack: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When the deploy directory is not writable, deploy should raise
+        PermissionError (or OSError), not silently swallow the error."""
+        import os
+
+        cfg = load_targets(fake_pack / "targets.yaml")
+        # Point deploy to a read-only directory.
+        ro_dir = tmp_path / "readonly" / "instructions"
+        ro_dir.mkdir(parents=True)
+        ro_dir.chmod(0o444)
+
+        # Rebuild config with the read-only deploy path.
+        (fake_pack / "targets.yaml").write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "test-harness": {
+                            "detect": [{"path": str(tmp_path / "harness-marker")}],
+                            "deploy": {
+                                "instructions": str(ro_dir) + "/",
+                                "skills": str(tmp_path / "rw" / "skills") + "/",
+                                "prompts": str(tmp_path / "rw" / "prompts") + "/",
+                            },
+                            "format": "copy",
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(fake_pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.0.0", pack_root=fake_pack, targets_config=cfg)
+
+        if os.geteuid() == 0:
+            pytest.skip("running as root — permission test is meaningless")
+        with pytest.raises((PermissionError, OSError)):
+            mgr.deploy("test-harness")
+
+        # Cleanup so tmp_path teardown doesn't fail.
+        ro_dir.chmod(0o755)
+
+
+class TestPromptModeDeployment:
+    """Verify prompt files deploy to the correct directory."""
+
+    def test_prompt_deploys_to_prompts_dir(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Prompt files land in the 'prompts' deploy directory, not instructions."""
+        manager.deploy(detected_target)
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        prompts_dir = cfg.targets[0].deploy_map["prompts"]
+        prompt_file = prompts_dir / "mnemos-session.prompt.md"
+        assert prompt_file.exists()
+        assert read_stamp(prompt_file.read_text()) == "1.2.0"
+
+    def test_prompt_file_not_in_instructions_dir(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Prompt files must NOT appear in the instructions deploy dir."""
+        manager.deploy(detected_target)
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        instr_dir = cfg.targets[0].deploy_map["instructions"]
+        assert not (instr_dir / "mnemos-session.prompt.md").exists()
+
+    def test_prompt_uninstall_removes_only_prompts(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Uninstall removes prompt files from the prompts dir."""
+        manager.deploy(detected_target)
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        prompts_dir = cfg.targets[0].deploy_map["prompts"]
+        prompt_file = prompts_dir / "mnemos-session.prompt.md"
+        assert prompt_file.exists()
+
+        manager.uninstall(detected_target)
+        assert not prompt_file.exists()
+
+
+class TestVersionStampFormat:
+    """Verify the stamp format is consistent and parseable across file types."""
+
+    def test_stamp_format_regex_matches(self) -> None:
+        """The stamp matches the STAMP_PATTERN regex."""
+        from mnemos.cli.integration import STAMP_PATTERN
+
+        stamp = make_stamp("1.2.3")
+        match = STAMP_PATTERN.search(stamp)
+        assert match is not None
+        assert match.group(1) == "1.2.3"
+
+    def test_stamp_applied_to_yaml_like_content(self) -> None:
+        """Stamping works on content that looks like YAML (but is markdown)."""
+        content = "---\nkey: value\n---\n# doc\n"
+        stamped = stamp_content(content, "1.0.0")
+        assert read_stamp(stamped) == "1.0.0"
+
+    def test_stamp_version_with_pre_release_suffix(self) -> None:
+        """Pre-release versions (e.g. 1.0.0-rc1) are handled correctly."""
+        stamped = stamp_content("# title\n", "1.0.0-rc1")
+        assert read_stamp(stamped) == "1.0.0-rc1"
+
+    def test_stamp_version_consistent_across_redeploy(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """The stamp version is identical after multiple deploys."""
+        manager.deploy(detected_target)
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        instr_file = cfg.targets[0].deploy_map["instructions"] / "mnemos-memory.instructions.md"
+        v1 = read_stamp(instr_file.read_text())
+
+        manager.deploy(detected_target)
+        v2 = read_stamp(instr_file.read_text())
+
+        assert v1 == v2 == manager.version
+
+    def test_stamp_not_in_frontmatter_block(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """The stamp must not appear inside the YAML front-matter block."""
+        manager.deploy(detected_target)
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        instr_file = cfg.targets[0].deploy_map["instructions"] / "mnemos-memory.instructions.md"
+        content = instr_file.read_text(encoding="utf-8")
+        lines = content.splitlines()
+
+        # Find front-matter boundaries.
+        fm_lines = [i for i, line in enumerate(lines) if line.strip() == "---"]
+        stamp_line = next((i for i, line in enumerate(lines) if "mnemos-integration" in line), None)
+        assert stamp_line is not None
+        # If there are 2+ '---' lines, stamp must be after the last one.
+        if len(fm_lines) >= 2:
+            assert stamp_line > fm_lines[-1]
+
+
+class TestCorruptedConfig:
+    """Graceful handling of corrupted or malformed targets.yaml."""
+
+    def test_empty_yaml_file(self, tmp_path: Path) -> None:
+        """An empty YAML file (None after parse) should raise ValueError."""
+        cfg_file = tmp_path / "empty.yaml"
+        cfg_file.write_text("", encoding="utf-8")
+        with pytest.raises(ValueError, match="expected top-level 'targets'"):
+            load_targets(cfg_file)
+
+    def test_yaml_null_content(self, tmp_path: Path) -> None:
+        """A YAML file with just 'null' should raise ValueError."""
+        cfg_file = tmp_path / "null.yaml"
+        cfg_file.write_text("null\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="expected top-level 'targets'"):
+            load_targets(cfg_file)
+
+    def test_targets_key_not_a_dict(self, tmp_path: Path) -> None:
+        """When 'targets' is a list instead of a mapping, raise ValueError."""
+        cfg_file = tmp_path / "list.yaml"
+        cfg_file.write_text("targets: [a, b]\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="'targets' must be a mapping"):
+            load_targets(cfg_file)
+
+
+class TestMissingIntegrationsDir:
+    """Graceful handling when integrations/ is empty or missing."""
+
+    def test_pack_root_missing_all_dirs(self, tmp_path: Path) -> None:
+        """When the pack root has no artefact subdirs, deploy produces zero
+        files and verify reports zero missing."""
+        pack = tmp_path / "empty-pack"
+        pack.mkdir()
+        (pack / "targets.yaml").write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "t": {
+                            "detect": [{"path": str(tmp_path / "m")}],
+                            "deploy": {"instructions": str(tmp_path / "o") + "/"},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.0.0", pack_root=pack, targets_config=cfg)
+
+        result = mgr.deploy("t")
+        assert len(result.files) == 0
+        assert result.deployed_count == 0
+
+        verify = mgr.verify("t")
+        assert len(verify.files) == 0
+
+    def test_pack_root_with_empty_subdirs(self, tmp_path: Path) -> None:
+        """When artefact subdirs exist but are empty, deploy produces zero files."""
+        pack = tmp_path / "pack"
+        for kind in ("instructions", "skills", "prompts"):
+            (pack / kind).mkdir(parents=True)
+        (pack / "targets.yaml").write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "t": {
+                            "detect": [{"path": str(tmp_path / "m")}],
+                            "deploy": {
+                                "instructions": str(tmp_path / "o1") + "/",
+                                "skills": str(tmp_path / "o2") + "/",
+                                "prompts": str(tmp_path / "o3") + "/",
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.0.0", pack_root=pack, targets_config=cfg)
+
+        result = mgr.deploy("t")
+        assert result.deployed_count == 0
+
+    def test_pack_files_with_non_deployable_suffix_skipped(self, tmp_path: Path) -> None:
+        """Files with non-deployable suffixes (.gitkeep, .py, etc.) are skipped."""
+        pack = tmp_path / "pack"
+        instr = pack / "instructions"
+        instr.mkdir(parents=True)
+        (instr / "valid.md").write_text("# valid\n", encoding="utf-8")
+        (instr / ".gitkeep").write_text("", encoding="utf-8")
+        (instr / "script.py").write_text("print('hi')\n", encoding="utf-8")
+        (pack / "targets.yaml").write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "t": {
+                            "detect": [{"path": str(tmp_path / "m")}],
+                            "deploy": {"instructions": str(tmp_path / "o") + "/"},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_targets(pack / "targets.yaml")
+        mgr = IntegrationManager(version="1.0.0", pack_root=pack, targets_config=cfg)
+
+        result = mgr.deploy("t")
+        deployed_names = [f.source.name for f in result.files if f.status == DeployStatus.DEPLOYED]
+        assert "valid.md" in deployed_names
+        assert ".gitkeep" not in deployed_names
+        assert "script.py" not in deployed_names
+
+
+class TestDetectAllAndDeployableTargets:
+    """Cover the module-level convenience functions."""
+
+    def test_detect_all_returns_list(self, fake_pack: Path) -> None:
+        from mnemos.cli.integration import detect_all
+
+        cfg = load_targets(fake_pack / "targets.yaml")
+        detected = detect_all(cfg)
+        assert isinstance(detected, list)
+        assert len(detected) == 1
+        assert detected[0].name == "test-harness"
+
+    def test_deployable_targets_returns_all_names(self, fake_pack: Path) -> None:
+        from mnemos.cli.integration import deployable_targets
+
+        cfg = load_targets(fake_pack / "targets.yaml")
+        names = deployable_targets(cfg)
+        assert "test-harness" in names
+
+    def test_detect_all_with_empty_config(self) -> None:
+        from mnemos.cli.integration import detect_all
+
+        empty = TargetsConfig(targets=())
+        assert detect_all(empty) == []
+
+    def test_deployable_targets_empty_config(self) -> None:
+        from mnemos.cli.integration import deployable_targets
+
+        empty = TargetsConfig(targets=())
+        assert deployable_targets(empty) == []
