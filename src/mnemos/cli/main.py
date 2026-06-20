@@ -663,6 +663,8 @@ app.add_typer(doctor_app, name="doctor")
 
 from mnemos.cli.export_cmd import export_app  # noqa: E402
 from mnemos.cli.import_cmd import import_app  # noqa: E402
+from mnemos.cli.logs import logs_app  # noqa: E402
 
 app.add_typer(export_app, name="export")
 app.add_typer(import_app, name="import")
+app.add_typer(logs_app, name="logs")
