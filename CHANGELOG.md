@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.0.2] — 2026-06-21
+
+### Fixed
+
+- **Agent wiring crashes on unquoted `:` in frontmatter** — agent files like
+  `mnemos-curator.agent.md` have `description: (GCW) ... STUB mode: operates on...`
+  where the unquoted `:` confuses the YAML parser (`mapping values are not
+  allowed in this context`). Switched `agent_wiring.py` from `frontmatter.load()`
+  to `frontmatter.loads()` and changed the parse-error status from `ERROR` to
+  `SKIPPED_NO_FRONTMATTER` so the agent is skipped gracefully and the rest of
+  the wiring batch continues. The error is still logged for observability.
+- **Noisy "no deploy map" output for partial targets** — `generic-copilot` only
+  has a `prompts:` deploy map, and `gcw` has no `prompts:` map. The deploy code
+  printed a `SKIPPED` row for every unsupported kind, making the output look
+  broken on every run. Unsupported kinds are now skipped silently with a
+  `debug`-level log — only kinds the target actually supports appear in the
+  result table.
+- **`install.sh` printed "Non-interactive terminal — skipping agent wiring"**
+  even when the user answered "y" — the `setup_instructions()` function called
+  `mnemos integration setup --target all --no-mcp` without `--no-wire-agents`,
+  so the default flow ran the interactive prompt in a non-TTY subshell and
+  printed the skip message. Added `--no-wire-agents` to the instructions step
+  since agent wiring is handled separately by `setup_wire_agents()`.
+
 ## [2.0.1] — 2026-06-21
 
 ### Fixed

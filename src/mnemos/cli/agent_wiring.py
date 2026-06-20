@@ -169,7 +169,7 @@ def _parse_agent(path: Path) -> AgentInfo:
     """
     filename = path.name
     try:
-        post = frontmatter.load(path)
+        post = frontmatter.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         # Malformed frontmatter (YAML parse error, IO error, etc.) — report
         # it, but don't crash detection. python-frontmatter can raise
@@ -258,12 +258,16 @@ def wire_agent(
     to_add = _build_tools_to_add(mode)
 
     try:
-        post = frontmatter.load(agent_path)
+        post = frontmatter.loads(agent_path.read_text(encoding="utf-8"))
     except Exception as exc:
+        # Malformed frontmatter — skip this agent gracefully rather than
+        # failing the whole wiring batch. The error is logged so the user
+        # can fix the agent file, but other agents still wire normally.
+        logger.warning("failed to parse frontmatter in %s: %s", agent_path, exc)
         return WireResult(
             path=agent_path,
             name=agent_path.name,
-            status=WireStatus.ERROR,
+            status=WireStatus.SKIPPED_NO_FRONTMATTER,
             note=f"frontmatter parse failed: {exc}",
         )
 

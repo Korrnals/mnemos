@@ -225,6 +225,42 @@ class TestDetectAgents:
         assert infos[0].name == "broken.agent.md"
         assert infos[0].has_tools is False
 
+    def test_unquoted_colon_in_description_does_not_crash(self, tmp_path: Path) -> None:
+        """Regression: agent files with unquoted ``:`` in description values.
+
+        Real-world agent files like ``mnemos-curator.agent.md`` have:
+            description: (GCW) Curator ... STUB mode: operates on ...
+
+        The ``:`` in "STUB mode:" confuses the YAML parser (it looks like a
+        nested mapping). The frontmatter library raises ScannerError. We
+        must catch this and skip the agent gracefully — not crash the whole
+        wiring batch.
+        """
+        directory = tmp_path / "agents"
+        directory.mkdir()
+        path = directory / "curator.agent.md"
+        # Mimic the real mnemos-curator.agent.md frontmatter structure.
+        path.write_text(
+            "---\n"
+            'name: "GCW: Mnemos Curator"\n'
+            "description: (GCW) Curator commands for memory hygiene — "
+            "curate/rollup/audit. STUB mode: operates on file-based memory.\n"
+            "---\n"
+            "You are a curator.\n",
+            encoding="utf-8",
+        )
+
+        # detect_agents must not crash — returns the agent with safe defaults.
+        infos = detect_agents(directory)
+        assert len(infos) == 1
+        assert infos[0].name == "curator.agent.md"
+        assert infos[0].has_tools is False
+
+        # wire_agent must not crash — returns SKIPPED_NO_FRONTMATTER.
+        result = wire_agent(path, mode="wildcard")
+        assert result.status == WireStatus.SKIPPED_NO_FRONTMATTER
+        assert "frontmatter parse failed" in result.note
+
 
 # ── wire_agent ────────────────────────────────────────────────────────────────
 
@@ -362,12 +398,17 @@ class TestWireAgent:
             wire_agent(path, mode="bogus")  # type: ignore[arg-type]
 
     def test_error_on_unparseable_file(self, tmp_path: Path) -> None:
-        """A file with broken frontmatter returns an ERROR result."""
+        """A file with broken frontmatter is skipped gracefully, not crashed.
+
+        The agent is reported as SKIPPED_NO_FRONTMATTER so the wiring batch
+        continues with other agents. The error is logged for observability.
+        """
         path = tmp_path / "broken.agent.md"
         path.write_text("---\nname: [invalid\n---\nbody\n", encoding="utf-8")
 
         result = wire_agent(path, mode="wildcard")
-        assert result.status == WireStatus.ERROR
+        assert result.status == WireStatus.SKIPPED_NO_FRONTMATTER
+        assert "frontmatter parse failed" in result.note
 
 
 # ── verify_agents ─────────────────────────────────────────────────────────────

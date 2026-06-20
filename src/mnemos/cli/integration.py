@@ -20,6 +20,7 @@ This is invisible in rendered Markdown but trivially greppable.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -30,6 +31,8 @@ import yaml
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ArtefactKind",
@@ -445,16 +448,16 @@ class IntegrationManager:
         for kind, files in self._all_pack_files().items():
             dest_dir = target.deploy_map.get(kind.value)
             if dest_dir is None:
-                # Target doesn't accept this artefact kind — skip.
-                for src in files:
-                    result.files.append(
-                        FileResult(
-                            source=src,
-                            destination=Path("<no-deploy-map>"),
-                            status=DeployStatus.SKIPPED,
-                            note=f"target {target_name!r} has no deploy map for {kind.value}",
-                        )
-                    )
+                # Target doesn't accept this artefact kind — skip silently.
+                # Not every target supports every kind (e.g. generic-copilot
+                # only has prompts, gcw has instructions+skills). Logging a
+                # noisy "no deploy map" row for every unsupported kind makes
+                # the output look like something is broken when it isn't.
+                logger.debug(
+                    "target %r has no deploy map for %s — skipping silently",
+                    target_name,
+                    kind.value,
+                )
                 continue
 
             for src in files:
