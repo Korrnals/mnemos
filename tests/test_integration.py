@@ -1,4 +1,4 @@
-"""Tests for the Mnemos integration layer (``mnemos util-*`` commands).
+"""Tests for the Mnemos integration layer (``mnemos integration *`` commands).
 
 Covers:
 * ``targets.yaml`` parsing and detection logic
@@ -391,24 +391,24 @@ class TestUninstall:
 
 
 class TestCLI:
-    def test_util_help_exits_cleanly(self) -> None:
-        result = runner.invoke(app, ["util", "--help"])
+    def test_integration_help_exits_cleanly(self) -> None:
+        result = runner.invoke(app, ["integration", "--help"])
         assert result.exit_code == 0
         assert "detect" in result.output
         assert "setup" in result.output
         assert "verify" in result.output
         assert "uninstall" in result.output
 
-    def test_util_detect_runs(self) -> None:
-        result = runner.invoke(app, ["util", "detect"])
+    def test_integration_detect_runs(self) -> None:
+        result = runner.invoke(app, ["integration", "detect"])
         assert result.exit_code == 0
 
-    def test_util_setup_unknown_target(self) -> None:
-        result = runner.invoke(app, ["util", "setup", "--target", "nonexistent"])
+    def test_integration_setup_unknown_target(self) -> None:
+        result = runner.invoke(app, ["integration", "setup", "--target", "nonexistent"])
         assert result.exit_code == 1
         assert "Unknown target" in result.output
 
-    def test_util_setup_dry_run_no_files(self, fake_pack: Path, tmp_path: Path) -> None:
+    def test_integration_setup_dry_run_no_files(self, fake_pack: Path, tmp_path: Path) -> None:
         """Dry-run should not create any files."""
         cfg = load_targets(fake_pack / "targets.yaml")
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
@@ -419,7 +419,7 @@ class TestCLI:
             if f.status == DeployStatus.DEPLOYED:
                 assert not f.destination.exists()
 
-    def test_util_verify_exits_nonzero_when_stale(
+    def test_integration_verify_exits_nonzero_when_stale(
         self, manager: IntegrationManager, detected_target: str
     ) -> None:
         # Deploy old version.
@@ -431,10 +431,10 @@ class TestCLI:
         old_mgr.deploy(detected_target)
 
         # Verify via CLI — should exit 1.
-        result = runner.invoke(app, ["util", "verify", "--target", detected_target])
+        result = runner.invoke(app, ["integration", "verify", "--target", detected_target])
         assert result.exit_code == 1
 
-    def test_util_verify_exits_zero_when_current(
+    def test_integration_verify_exits_zero_when_current(
         self, manager: IntegrationManager, detected_target: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """CLI verify exits 0 when all files are current.
@@ -449,7 +449,7 @@ class TestCLI:
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: manager)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: manager.targets)
 
-        result = runner.invoke(app, ["util", "verify", "--target", detected_target])
+        result = runner.invoke(app, ["integration", "verify", "--target", detected_target])
         assert result.exit_code == 0
 
     def test_full_lifecycle_via_manager(
@@ -997,12 +997,12 @@ class TestSetupMCP:
 class TestCLISetupUpdateUninstall:
     """CLI paths for setup, update, and uninstall not covered by original suite."""
 
-    def test_util_setup_dry_run_via_cli(
+    def test_integration_setup_dry_run_via_cli(
         self,
         fake_pack: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CLI `util setup --dry-run` should not write files."""
+        """CLI `integration setup --dry-run` should not write files."""
         cfg = load_targets(fake_pack / "targets.yaml")
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
 
@@ -1012,7 +1012,7 @@ class TestCLISetupUpdateUninstall:
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
 
         result = runner.invoke(
-            app, ["util", "setup", "--target", "test-harness", "--dry-run", "--no-mcp"]
+            app, ["integration", "setup", "--target", "test-harness", "--dry-run", "--no-mcp"]
         )
         assert result.exit_code == 0
         # No files written.
@@ -1021,12 +1021,12 @@ class TestCLISetupUpdateUninstall:
             if deploy_dir:
                 assert not deploy_dir.exists() or not any(deploy_dir.iterdir())
 
-    def test_util_setup_writes_files_via_cli(
+    def test_integration_setup_writes_files_via_cli(
         self,
         fake_pack: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CLI `util setup` (non-dry-run) deploys files to disk."""
+        """CLI `integration setup` (non-dry-run) deploys files to disk."""
         cfg = load_targets(fake_pack / "targets.yaml")
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
 
@@ -1035,16 +1035,18 @@ class TestCLISetupUpdateUninstall:
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
 
-        result = runner.invoke(app, ["util", "setup", "--target", "test-harness", "--no-mcp"])
+        result = runner.invoke(
+            app, ["integration", "setup", "--target", "test-harness", "--no-mcp"]
+        )
         assert result.exit_code == 0
         assert "Setup complete" in result.output
 
-    def test_util_update_via_cli(
+    def test_integration_update_via_cli(
         self,
         fake_pack: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CLI `util update` brings stale files to current."""
+        """CLI `integration update` brings stale files to current."""
         cfg = load_targets(fake_pack / "targets.yaml")
         old_mgr = IntegrationManager(version="0.1.0", pack_root=fake_pack, targets_config=cfg)
         old_mgr.deploy("test-harness")
@@ -1056,16 +1058,16 @@ class TestCLISetupUpdateUninstall:
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: new_mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
 
-        result = runner.invoke(app, ["util", "update", "--target", "test-harness"])
+        result = runner.invoke(app, ["integration", "update", "--target", "test-harness"])
         assert result.exit_code == 0
         assert "Update complete" in result.output
 
-    def test_util_uninstall_via_cli(
+    def test_integration_uninstall_via_cli(
         self,
         fake_pack: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CLI `util uninstall` removes stamped files."""
+        """CLI `integration uninstall` removes stamped files."""
         cfg = load_targets(fake_pack / "targets.yaml")
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
         mgr.deploy("test-harness")
@@ -1075,17 +1077,17 @@ class TestCLISetupUpdateUninstall:
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
 
-        result = runner.invoke(app, ["util", "uninstall", "--target", "test-harness"])
+        result = runner.invoke(app, ["integration", "uninstall", "--target", "test-harness"])
         assert result.exit_code == 0
         assert "Uninstall complete" in result.output
         assert "3 files removed" in result.output
 
-    def test_util_uninstall_dry_run_via_cli(
+    def test_integration_uninstall_dry_run_via_cli(
         self,
         fake_pack: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CLI `util uninstall --dry-run` reports but doesn't delete."""
+        """CLI `integration uninstall --dry-run` reports but doesn't delete."""
         cfg = load_targets(fake_pack / "targets.yaml")
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
         mgr.deploy("test-harness")
@@ -1095,15 +1097,17 @@ class TestCLISetupUpdateUninstall:
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
 
-        result = runner.invoke(app, ["util", "uninstall", "--target", "test-harness", "--dry-run"])
+        result = runner.invoke(
+            app, ["integration", "uninstall", "--target", "test-harness", "--dry-run"]
+        )
         assert result.exit_code == 0
         assert "3 files removed" in result.output
 
-    def test_util_setup_all_targets_no_detection(
+    def test_integration_setup_all_targets_no_detection(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CLI `util setup --target all` with no detected harnesses exits 0
+        """CLI `integration setup --target all` with no detected harnesses exits 0
         and prints a 'no harnesses' message."""
         import mnemos.cli.util as util_mod
 
@@ -1111,43 +1115,43 @@ class TestCLISetupUpdateUninstall:
         empty_cfg = TargetsConfig(targets=())
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
 
-        result = runner.invoke(app, ["util", "setup", "--target", "all"])
+        result = runner.invoke(app, ["integration", "setup", "--target", "all"])
         assert result.exit_code == 0
         assert "No agent harnesses detected" in result.output
 
-    def test_util_verify_all_targets_no_detection(
+    def test_integration_verify_all_targets_no_detection(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CLI `util verify --target all` with no detected harnesses exits 0."""
+        """CLI `integration verify --target all` with no detected harnesses exits 0."""
         import mnemos.cli.util as util_mod
 
         empty_cfg = TargetsConfig(targets=())
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
 
-        result = runner.invoke(app, ["util", "verify", "--target", "all"])
+        result = runner.invoke(app, ["integration", "verify", "--target", "all"])
         assert result.exit_code == 0
 
-    def test_util_detect_no_harnesses(
+    def test_integration_detect_no_harnesses(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """CLI `util detect` with no detected harnesses prints a message."""
+        """CLI `integration detect` with no detected harnesses prints a message."""
         import mnemos.cli.util as util_mod
 
         empty_cfg = TargetsConfig(targets=())
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
 
-        result = runner.invoke(app, ["util", "detect"])
+        result = runner.invoke(app, ["integration", "detect"])
         assert result.exit_code == 0
         assert "No agent harnesses detected" in result.output
 
-    def test_util_setup_specific_undetected_target(
+    def test_integration_setup_specific_undetected_target(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """CLI `util setup --target X` where X exists in config but is not
+        """CLI `integration setup --target X` where X exists in config but is not
         detected should exit 0 with a 'not detected' warning."""
         import mnemos.cli.util as util_mod
 
@@ -1162,7 +1166,7 @@ class TestCLISetupUpdateUninstall:
         )
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
 
-        result = runner.invoke(app, ["util", "setup", "--target", "ghost"])
+        result = runner.invoke(app, ["integration", "setup", "--target", "ghost"])
         assert result.exit_code == 0
         assert "not detected" in result.output.lower()
 
