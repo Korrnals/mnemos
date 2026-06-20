@@ -71,3 +71,37 @@ watcher:
     - .sql
   max_file_size_kb: 512
   auto_scan: true
+
+# ── LLM (synthesis workers + context filter) ────────────────────────────────
+# Used by the M4 synthesis pipeline and the M10 context filter. Provider is
+# selected via `provider`; API keys are env-only (MNEMOS_LLM__OPENAI_API_KEY,
+# MNEMOS_LLM__ANTHROPIC_API_KEY, …) — never commit real keys to this file.
+llm:
+  provider: ollama               # anthropic | openai | azure_openai | ollama | gemini
+  model: qwen2.5:3b
+  ollama_url: http://localhost:11434
+  temperature: 0.3
+  max_tokens: 4096
+
+  # ── RLM (Recursive Language Model) integration ───────────────────────────
+  # Optional, opt-in. When enabled, the synthesis pipeline can decompose a
+  # large prompt into recursive sub-LLM calls inside a sandboxed Python REPL.
+  # See ADR 0008 for the GCW↔RLM pattern mapping. The `rlm_toolkit` package is
+  # an optional dependency; if it is not installed, enabling RLM here is
+  # rejected at runtime in `create_provider()` (not at config load time).
+  rlm:
+    enabled: false               # opt-in only — offline by default
+    use_infiniretri: false       # dynamic mid-generation retrieval — opt-in only
+    threshold_tokens: 10000      # decompose only above this input size
+    sandbox: true                # MUST stay true — False is rejected (host code exec risk)
+    allowed_imports:             # modules the sandboxed REPL may import
+      - re
+      - json
+      - math
+      - datetime
+      - collections
+      - itertools
+    # numpy is intentionally excluded by default; extend this list to add it.
+    max_cost: 0.50               # USD ceiling per synthesis call
+    max_depth: 3                 # max recursive sub-LLM depth
+    max_execution_time: 120      # seconds per synthesis call

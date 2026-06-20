@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -99,6 +99,59 @@ class WatcherConfig(BaseModel):
     auto_translate: bool = False
 
 
+class RLMSettings(BaseModel):
+    """Recursive Language Model (RLM) integration settings.
+
+    RLM is an optional, opt-in capability that lets the synthesis pipeline
+    delegate sub-problems to recursive sub-LLM calls inside a sandboxed
+    Python REPL (see ADR 0008 for the GCW↔RLM pattern mapping). The toolkit
+    (`rlm_toolkit`) is an optional dependency; when absent, `enabled=true`
+    is rejected at runtime in `create_provider()`, not at config load time —
+    pydantic cannot import the toolkit without making it a hard dependency.
+
+    All defaults are offline-safe: `enabled=false`, `use_infiniretri=false`.
+    Operators opt in explicitly via config or `MNEMOS_LLM__RLM__ENABLED=true`.
+    """
+
+    enabled: bool = False
+    # InfiniRetri — dynamic context retrieval mid-generation. Offline by
+    # default (Tech Lead decision #3); operator opt-in only.
+    use_infiniretri: bool = False
+    # Token threshold above which RLM decomposition kicks in. Below this,
+    # the provider falls back to a plain completion call.
+    threshold_tokens: int = Field(default=10_000, ge=1, le=1_000_000)
+    # Sandbox guard — MUST stay true. Disabling the sandbox would let RLM
+    # execute arbitrary code on the host; rejected at validation time.
+    sandbox: bool = True
+    # Whitelist of modules the sandboxed REPL may import. numpy is excluded
+    # by default (Tech Lead decision #5) to keep the attack surface small;
+    # operators can extend via config.
+    allowed_imports: list[str] = Field(
+        default_factory=lambda: [
+            "re",
+            "json",
+            "math",
+            "datetime",
+            "collections",
+            "itertools",
+        ]
+    )
+    # Resource bounds for a single RLM synthesis call.
+    max_cost: float = Field(default=0.50, ge=0.0, le=100.0)
+    max_depth: int = Field(default=3, ge=1, le=10)
+    max_execution_time: int = Field(default=120, ge=1, le=3600)
+
+    @field_validator("sandbox")
+    @classmethod
+    def _sandbox_must_be_enabled(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError(
+                "rlm.sandbox cannot be False — disabling the sandbox would "
+                "allow arbitrary host code execution. Keep sandbox=true."
+            )
+        return v
+
+
 class LLMConfig(BaseModel):
     """Multi-provider LLM configuration (M4 synthesis workers, M10 context filter)."""
 
@@ -119,6 +172,11 @@ class LLMConfig(BaseModel):
     gemini_api_key: str = ""
     temperature: float = 0.3
     max_tokens: int = 4096
+    # RLM (Recursive Language Model) integration — optional, opt-in.
+    # See ADR 0008 for the pattern mapping. The rlm_toolkit import guard is
+    # enforced at runtime in create_provider(), not here, so pydantic does
+    # not need the optional dependency at config load time.
+    rlm: RLMSettings = RLMSettings()
 
 
 class AutomationConfig(BaseModel):

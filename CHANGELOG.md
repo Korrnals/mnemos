@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **RLM config schema** (`src/mnemos/config.py`) — new `RLMSettings` pydantic
+  model wired into `LLMConfig.rlm` for the Recursive Language Model integration
+  (ADR 0008). Offline by default: `enabled=false`, `use_infiniretri=false`.
+  The `sandbox=false` setting is rejected at validation time (host code
+  execution risk); `allowed_imports` defaults to six safe stdlib modules
+  (`re`, `json`, `math`, `datetime`, `collections`, `itertools`) with numpy
+  excluded. Resource bounds: `max_cost`, `max_depth`, `max_execution_time`.
+  Env overrides via `MNEMOS_LLM__RLM__*` (e.g. `MNEMOS_LLM__RLM__ENABLED=true`).
+  The `rlm_toolkit` import guard is enforced at runtime in `create_provider()`,
+  not at config load time, so pydantic does not require the optional dependency.
+- **`LLMResponse.fallback_used`** (`src/mnemos/llm/base.py`) — new bool field
+  (default `False`) marking responses that came from a fallback model/provider
+  rather than the primary, for observability of graceful degradation.
+- **`LLMExecutionError`** (`src/mnemos/llm/base.py`) — typed exception for LLM
+  provider failures after all retries/fallbacks, carrying `provider` and
+  chained `cause` for diagnosis.
+- **`llm.rlm.*` section in `config.example.yaml`** — documented, commented-out
+  RLM settings block matching the schema, with `enabled: false` and
+  `use_infiniretri: false` defaults.
+- **Tests** — `tests/test_llm_config.py` (28 tests: defaults, sandbox=False
+  rejection, bounds, env overrides, YAML round-trip) and
+  `tests/test_llm_provider.py` (18 tests: `fallback_used`, `LLMExecutionError`,
+  `create_provider` stub, `LLMProvider` abstract contract).
+
+### Changed
+
+- **`create_provider()` docstring** (`src/mnemos/llm/base.py`) — updated to
+  reference PR 2 (standard providers: Ollama + OpenAI + Anthropic); the
+  factory still raises `NotImplementedError` in PR 1.
+
 - **`mnemos completion` command** (`src/mnemos/cli/completion.py`) —
   auto-detects the current shell from `$SHELL`, generates the completion
   script, and auto-installs it into the right rc file (`~/.bashrc`,
