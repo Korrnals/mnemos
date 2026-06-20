@@ -167,7 +167,7 @@ def _import_json(
                 from mnemos.models import Project
 
                 proj = Project(
-                    id=p.get("id") or existing.id if existing else p.get("id", ""),
+                    id=p.get("id", ""),
                     name=p["name"],
                     description=p.get("description", ""),
                     paths=p.get("paths", []),
