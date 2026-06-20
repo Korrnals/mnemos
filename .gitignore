@@ -38,6 +38,19 @@ chroma_data/
 # Config with secrets
 config.yaml
 
+# Environment files with secrets
+.env
+.env.*
+.env.local
+
+# Private keys
+*.pem
+*.key
+id_rsa
+id_rsa.*
+*.p12
+*.pfx
+
 # OS
 .DS_Store
 Thumbs.db
