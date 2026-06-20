@@ -282,6 +282,52 @@ def _check_tag_contract(settings: Any) -> CheckResult:
     )
 
 
+def _check_agent_wiring() -> CheckResult:
+    """Check GCW agent MCP wiring status in ``~/.copilot/agents``.
+
+    * PASS — all detected agents have mnemos tools wired (or are skipped
+      via ``tool_profile``).
+    * WARN — some agents are unwired (lists the count).
+    * SKIP — no agents directory found (non-GCW setup).
+    """
+    try:
+        from mnemos.cli.agent_wiring import DEFAULT_AGENTS_DIR, verify_agents
+
+        if not DEFAULT_AGENTS_DIR.is_dir():
+            return CheckResult(
+                "Agent wiring",
+                CheckStatus.WARN,
+                f"no agents directory at {DEFAULT_AGENTS_DIR} (non-GCW setup)",
+            )
+
+        summary = verify_agents()
+    except Exception as exc:  # doctor reports, doesn't crash
+        return CheckResult("Agent wiring", CheckStatus.FAIL, f"check crashed: {exc}")
+
+    if summary.total == 0:
+        return CheckResult(
+            "Agent wiring",
+            CheckStatus.WARN,
+            f"no .agent.md files in {DEFAULT_AGENTS_DIR}",
+        )
+
+    if summary.unwired == 0 and summary.errors == 0:
+        return CheckResult(
+            "Agent wiring",
+            CheckStatus.PASS,
+            f"{summary.wired}/{summary.total} wired, "
+            f"{summary.skipped_tool_profile} skipped (tool_profile)",
+        )
+
+    return CheckResult(
+        "Agent wiring",
+        CheckStatus.WARN,
+        f"{summary.wired}/{summary.total} wired, {summary.unwired} unwired, "
+        f"{summary.skipped_tool_profile} skipped — run "
+        "`mnemos integration setup --wire-agents --all`",
+    )
+
+
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 
@@ -313,7 +359,7 @@ def _run_all_checks() -> list[CheckResult]:
         settings = None
 
     # No-arg checks.
-    for check in (_check_mcp_server, _check_integration):
+    for check in (_check_mcp_server, _check_integration, _check_agent_wiring):
         try:
             results.append(check())
         except Exception as exc:  # doctor must never crash
@@ -374,7 +420,7 @@ def doctor(
     """Run Mnemos health checks and report status.
 
     Checks: config, data dir, vault, SQLite DB, vector store, MCP server,
-    integration layer, tag contract.
+    integration layer, agent wiring, tag contract.
 
     Exit codes: 0 = all pass, 1 = one or more failed, 2 = warnings only.
     """
