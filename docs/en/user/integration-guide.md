@@ -130,11 +130,131 @@ prompted.
 
 ---
 
+## Agent MCP wiring
+
+Deploying instructions and skills tells agents *when* to call memory tools.
+**Agent MCP wiring** goes one step further: it adds `mnemos/*` to the
+`tools:` frontmatter of GCW agent files (`~/.copilot/agents/*.agent.md`) so
+the tools are actually granted to the agent at request time.
+
+Without wiring, an agent may have the behavioural instructions but no
+`mnemos_*` tools in its frontmatter — the harness won't pass them to the
+model. Wiring closes that gap.
+
+### What it does
+
+- Scans `~/.copilot/agents/` for `*.agent.md` files.
+- Parses YAML frontmatter and adds `mnemos/*` (wildcard) or individual
+  `mnemos/mnemos_*` tool references to the `tools:` array.
+- **Only `tools:` is touched** — `model:`, `model_tier:`, `agents:`, and
+  other keys are never modified.
+- Idempotent — re-running does not duplicate `mnemos/*` entries.
+
+### What gets skipped
+
+| Condition | Why |
+|-----------|-----|
+| Agent already has `mnemos/*` or `mnemos/mnemos_*` in `tools:` | Already wired — no change needed. |
+| Agent uses `tool_profile:` instead of `tools:` | Resolved by the GCW installer (`make install-all`); mutating it would be overwritten on the next install. |
+| Agent has no parseable frontmatter | Cannot safely edit — reported as skipped. |
+
+### Usage
+
+`mnemos integration setup` wires agents in the same pass as file deployment
+and MCP registration. The wiring flags control the behaviour:
+
+```bash
+# Wire all unwired agents (no prompt)
+mnemos integration setup --wire-agents --all
+
+# Wire specific agents by name or filename stem
+mnemos integration setup --wire-agents --select tech-lead,code-reviewer
+
+# Skip agent wiring entirely (no prompt)
+mnemos integration setup --no-wire-agents
+
+# Preview what would change without modifying files
+mnemos integration setup --wire-agents --dry-run
+```
+
+If neither `--wire-agents` nor `--no-wire-agents` is passed, the command
+prompts interactively (same pattern as the MCP registration prompt). In a
+non-interactive terminal (CI / pipe), it defaults to wiring all unwired
+agents.
+
+| Flag | Description |
+|------|-------------|
+| `--wire-agents` | Enable agent wiring (interactive prompt by default) |
+| `--wire-agents --all` | Wire all unwired agents without prompting |
+| `--wire-agents --select name1,name2` | Wire only the named agents (matches `name`, filename stem, or filename) |
+| `--no-wire-agents` | Skip agent wiring entirely (explicit opt-out) |
+| `--precise` | Use individual `mnemos/mnemos_*` tool names instead of the `mnemos/*` wildcard |
+| `--dry-run` | Show what would change without modifying files |
+
+### Wildcard vs precise mode
+
+- **Wildcard** (default): adds a single `mnemos/*` entry granting all
+  mnemos tools. Compact frontmatter, grants everything.
+- **Precise** (`--precise`): adds individual `mnemos/mnemos_*` entries
+  (add, search, recall_context, agent_recall, save_context, list_recent,
+  list_tags, ingest_url, stats, auto_collect_status). Explicit grant list —
+  `watch_*` admin tools are intentionally excluded.
+
+Use precise mode when you want fine-grained control over which tools each
+agent gets. Use wildcard mode for convenience when all agents should have
+the full mnemos toolset.
+
+### Verifying wiring
+
+After wiring, verify the state:
+
+```bash
+mnemos integration verify
+```
+
+The agents section of the verify report shows:
+
+- **Wired** — agents with `mnemos/*` or `mnemos/mnemos_*` in `tools:`.
+- **Unwired** — agents without mnemos tools (candidates for wiring).
+- **Skipped** — agents with `tool_profile:` (managed by the GCW installer).
+
+`mnemos doctor` also includes an agent wiring check (9th check) that
+reports the same summary and warns if unwired agents are detected.
+
+---
+
+## Context Filter
+
+The Context Filter is a five-stage pipeline (dedup, noise, extract,
+compress, tokens) that strips noise from raw content before it reaches a
+model. It runs automatically on every `mnemos_add` when `auto_filter: true`
+(the default for new installs).
+
+Key surfaces:
+
+- **Auto-filter on ingest** — `mnemos_add` stores `raw_content` +
+  `clean_content` + `filter_stats`. Search and recall return
+  `clean_content` when available.
+- **`mnemos_filter` MCP tool** — explicit re-filter of an existing memory
+  (override profile, set token budget).
+- **`mnemos filter` CLI** — `mnemos filter <id>` for a single memory,
+  `mnemos filter --all` to backfill unfiltered records.
+- **Filter stats in `mnemos stats`** — filtered/unfiltered counts, average
+  reduction, breakdown by profile.
+- **Profiles** — `log | terminal | code | docs | web | default`,
+  auto-detected from content heuristics.
+
+For the full guide with stage details, profile table, examples, and
+configuration, see [context-filter.md](context-filter.md).
+
+---
+
 ## How agents discover the tools
 
 The integration layer assumes the Mnemos MCP server is already connected.
 The tools (`mnemos_*`) appear in the agent's tool list once the MCP server is
-registered in the client's MCP configuration.
+registered in the client's MCP configuration. Agent MCP wiring (above)
+ensures the `tools:` frontmatter actually grants those tools to each agent.
 
 For VS Code Copilot Chat, see [getting-started.md](getting-started.md#run-the-mcp-server)
 for MCP server setup. Once connected, the instructions and skills in this
