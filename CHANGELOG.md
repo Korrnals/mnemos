@@ -9,18 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`make lint-shell` target** (`Makefile`) — runs `shellcheck scripts/*.sh`
-  and is included in the `verify` gate alongside `lint`, so shell scripts are
-  now covered by the same local + CI quality bar as Python code.
-- **Git-workflow notes runbook** (`docs/{ru,en}/admin/runbooks/git-workflow-notes.md`)
-  — documents the expected `git branch -d` warning after a squash-merge and
-  why `-d` is safe despite the warning.
-
-### Fixed
-
-- **Shellcheck findings in `scripts/mcp-setup.sh`** — resolved SC2015
-  (`A && B || C` replaced with `if/else`) and SC2059 (variables removed from
-  `printf` format strings via `%s` args). No suppressions added.
+- **Integration layer** (`integrations/`, `src/mnemos/cli/integration.py`,
+  `src/mnemos/cli/util.py`) — versioned pack of instructions + skills +
+  prompts that ships inside the package and deploys into detected agent
+  harnesses (GCW `~/.copilot/`, generic Copilot `~/.config/Code/User/prompts/`,
+  Cursor `~/.cursor/rules/`). New `mnemos util-*` CLI subcommands:
+  - `mnemos util-detect` — print detected harnesses + deploy paths
+  - `mnemos util-setup` — deploy files + register MCP (unified entry point)
+  - `mnemos util-update` — bring stale files to current version
+  - `mnemos util-verify` — compare deployed files against shipped pack
+  - `mnemos util-uninstall` — remove only stamped files, preserve user files
+  - All commands support `--dry-run` and `--target` (default: all detected)
+  - Version stamp `<!-- mnemos-integration: v1.2.0 -->` on every deployed file
+  - Idempotent: re-running `util-setup` updates stale files without duplicating
+- **`integrations/targets.yaml`** — harness detection rules + deploy maps
+  with `~` expansion. A target is detected if ANY of its detect paths exist.
+- **`install.sh --instructions` / `--no-instructions`** flag — deploys the
+  agent integration pack after MCP setup (interactive prompt over `/dev/tty`,
+  same pattern as `--mcp` / `--no-mcp`).
 
 ## [1.2.0] — 2026-06-18
 
