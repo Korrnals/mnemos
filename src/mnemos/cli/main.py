@@ -662,5 +662,7 @@ app.add_typer(doctor_app, name="doctor")
 # ── export / import / logs (M17 — backup/restore + trace viewer) ──────────────
 
 from mnemos.cli.export_cmd import export_app  # noqa: E402
+from mnemos.cli.import_cmd import import_app  # noqa: E402
 
 app.add_typer(export_app, name="export")
+app.add_typer(import_app, name="import")
