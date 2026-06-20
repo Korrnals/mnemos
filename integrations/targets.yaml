@@ -1,0 +1,31 @@
+# Mnemos integration targets — harness detection + deploy maps.
+#
+# A target is "detected" if ANY of its detect paths exist (after ~ expansion).
+# The deploy map tells `mnemos util-setup` where to copy each artefact kind.
+#
+# `format: copy` means files are copied verbatim (no templating).
+# Future formats (symlink, template) can be added without breaking the schema.
+
+targets:
+  gcw:
+    detect:
+      - path: "~/.copilot/instructions"
+      - path: "~/.copilot/skills"
+    deploy:
+      instructions: "~/.copilot/instructions/"
+      skills: "~/.copilot/skills/"
+    format: copy
+
+  generic-copilot:
+    detect:
+      - path: "~/.config/Code/User/prompts"
+    deploy:
+      prompts: "~/.config/Code/User/prompts/"
+    format: copy
+
+  cursor:
+    detect:
+      - path: "~/.cursor/rules"
+    deploy:
+      instructions: "~/.cursor/rules/"
+    format: copy

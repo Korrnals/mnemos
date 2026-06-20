@@ -405,15 +405,20 @@ class TestHfHubPinning:
 
         assert captured["revision"] == cfg.hf_revision
 
-    def test_default_config_has_nonempty_hf_revision(self) -> None:
-        """Default EmbeddingConfig must ship with a pinned revision string."""
+    def test_default_config_has_empty_hf_revision(self) -> None:
+        """Default EmbeddingConfig must ship with an empty revision string.
+
+        An empty default forces the ``if not revision: raise`` guard in
+        :class:`ONNXHubProvider` to fire, which in turn forces operators to
+        pin an explicit revision when using the ONNX provider. This is the
+        secure default (CWE-494 mitigation) — a fabricated placeholder SHA
+        would give a false sense of pinning without a verifiable provenance.
+        """
         from mnemos.config import EmbeddingConfig
 
         cfg = EmbeddingConfig()
         assert isinstance(cfg.hf_revision, str)
-        assert len(cfg.hf_revision) > 0
-        # Either looks like a hex SHA (>= 7 chars) or a tag like "vN.N".
-        assert len(cfg.hf_revision) >= 7
+        assert cfg.hf_revision == ""
 
 
 class TestSsrfBlocklist:

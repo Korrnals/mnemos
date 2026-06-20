@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
-#   curl -fsSL .../install.sh | bash -s -- --version 1.2.0 --extra mcp
+#   curl -fsSL .../install.sh | bash -s -- --version 2.0.0 --extra mcp
 #   curl -fsSL .../install.sh | bash -s -- --venv ~/.mnemos-venv --extra mcp,ollama
 #
 # Flags:
@@ -14,6 +14,10 @@
 #   --uv                Use uv instead of pip (auto-detected if available)
 #   --mcp               Set up VS Code MCP integration automatically (no prompt)
 #   --no-mcp            Skip VS Code MCP integration (no prompt)
+#   --instructions      Deploy agent integration pack (instructions+skills+prompts) automatically (no prompt)
+#   --no-instructions   Skip agent integration pack deployment (no prompt)
+#   --wire-agents       Wire mnemos/* into GCW agent tools: frontmatter automatically (no prompt)
+#   --no-wire-agents    Skip GCW agent MCP wiring (no prompt)
 #   --container         Pull and run the container image instead of a Python install
 #   --port PORT         Container host port (default: 8787, only with --container)
 #   --help              Show this help
@@ -31,6 +35,8 @@ USE_UV=false
 CONTAINER=false
 CONTAINER_PORT=8787
 MCP_SETUP="ask"          # ask | yes | no
+INSTRUCTIONS_SETUP="ask"  # ask | yes | no
+WIRE_AGENTS="ask"        # ask | yes | no
 LOCAL_BIN="${HOME}/.local/bin"
 
 # ── Colour helpers ────────────────────────────────────────────────
@@ -52,8 +58,12 @@ while [[ $# -gt 0 ]]; do
     --venv)     VENV_PATH="$2"; NO_VENV=false; shift 2 ;;
     --no-venv)  NO_VENV=true; shift ;;
     --uv)       USE_UV=true; shift ;;
-    --mcp)      MCP_SETUP="yes"; shift ;;
-    --no-mcp)   MCP_SETUP="no"; shift ;;
+    --mcp)             MCP_SETUP="yes"; shift ;;
+    --no-mcp)          MCP_SETUP="no"; shift ;;
+    --instructions)    INSTRUCTIONS_SETUP="yes"; shift ;;
+    --no-instructions) INSTRUCTIONS_SETUP="no"; shift ;;
+    --wire-agents)     WIRE_AGENTS="yes"; shift ;;
+    --no-wire-agents)  WIRE_AGENTS="no"; shift ;;
     --container) CONTAINER=true; shift ;;
     --port)      CONTAINER_PORT="$2"; shift 2 ;;
     --help|-h)  sed -n '2,28p' "$0" | sed 's/^# \?//'; exit 0 ;;
@@ -216,15 +226,81 @@ if [[ "${EXTRAS}" == *mcp* ]]; then
   esac
 fi
 
+# ── Optional: agent integration pack (instructions + skills + prompts) ──
+setup_instructions() {
+  info "Deploying agent integration pack (instructions, skills, prompts)…"
+  if "$MNEMOS_BIN" integration setup --target all --no-mcp; then
+    ok "Agent integration pack deployed — reload your VS Code window."
+  else
+    warn "Integration pack deployment didn't complete. Run it later:"
+    printf "    mnemos integration setup --target all\n"
+  fi
+}
+
+INSTRUCTIONS_DONE=false
+case "$INSTRUCTIONS_SETUP" in
+  yes) echo ""; setup_instructions; INSTRUCTIONS_DONE=true ;;
+  no)  : ;;
+  ask)
+    if [[ -r /dev/tty ]]; then
+      echo ""
+      printf "?  Deploy agent integration pack (instructions+skills+prompts)? [Y/n] "
+      read -r reply < /dev/tty || reply=""
+      case "$reply" in
+        [Nn]*) info "Skipped integration pack. You can deploy it anytime: mnemos integration setup" ;;
+        *)     setup_instructions; INSTRUCTIONS_DONE=true ;;
+      esac
+    fi
+    ;;
+esac
+
+# ── Optional: wire Mnemos MCP into GCW agent tools: frontmatter ────
+setup_wire_agents() {
+  info "Wiring Mnemos MCP into GCW agent tools: frontmatter…"
+  if "$MNEMOS_BIN" integration setup --wire-agents --all --no-mcp; then
+    ok "Agent MCP wiring complete — reload your VS Code window."
+  else
+    warn "Agent wiring didn't complete. Run it later:"
+    printf "    mnemos integration setup --wire-agents --all\n"
+  fi
+}
+
+case "$WIRE_AGENTS" in
+  yes) echo ""; setup_wire_agents ;;
+  no)  : ;;
+  ask)
+    if [[ -r /dev/tty ]]; then
+      echo ""
+      printf "?  Wire Mnemos MCP to all GCW agents? [Y/n] "
+      read -r reply < /dev/tty || reply=""
+      case "$reply" in
+        [Nn]*) info "Skipped agent wiring. Run it anytime: mnemos integration setup --wire-agents --all" ;;
+        *)     setup_wire_agents ;;
+      esac
+    fi
+    ;;
+esac
+
 # ── Done ──────────────────────────────────────────────────────────
 echo ""
-ok "Done. Try it:"
+ok "Mnemos installed. Next steps:"
+echo "  • Run 'mnemos completion' to enable shell autocompletion"
+echo "  • Run 'mnemos integration setup' to deploy behavioral instructions to your agent harness"
+echo "  • Run 'mnemos doctor' to verify your installation"
+echo ""
+ok "Try it:"
 printf "    mnemos add 'Hello' --tags project:test,agent:setup,gcw:learning\n"
 printf "    mnemos search 'Hello'\n"
 if [[ "${EXTRAS}" == *mcp* && "$MCP_DONE" == false ]]; then
   echo ""
   info "Enable VS Code MCP integration later:"
   printf "    curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash\n"
+fi
+
+if [[ "$INSTRUCTIONS_DONE" == false ]]; then
+  echo ""
+  info "Deploy the agent integration pack later:"
+  printf "    mnemos integration setup --target all\n"
 fi
 
 # ── PATH hint (only if ~/.local/bin isn't already on PATH) ─────────

@@ -109,6 +109,7 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 - [HTTP API Reference](user/http-api.md) — every endpoint, request / response shape, error code.
 - [CLI Reference](user/cli-reference.md) — every `mnemos` subcommand with flags, defaults, and examples.
 - [Tag Contract](user/tag-contract.md) — the M2 schema enforced on every memory (`project:`, `agent:`, `gcw:`).
+- [Context Filter](user/context-filter.md) — the five-stage noise stripper (dedup, noise, extract, compress, tokens) with profiles and auto-filter.
 
 ---
 

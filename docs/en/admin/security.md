@@ -296,3 +296,97 @@ from silently opening the API to the network.
   lockout, replay-after-revoke, master-key requirement.
 
 See ADR-0014 for the full threat model.
+
+---
+
+## 10. Stream M — security posture improvements
+
+> **Status**: In progress (2026-06-20). This section documents the
+> posture improvements landing in the Stream M hardening pass. Items
+> marked **planned** are being fixed in parallel with this documentation;
+> items marked **done** are already in the codebase.
+
+### 10.1 LLM API keys — `SecretStr` handling
+
+LLM provider API keys (`openai_api_key`, `anthropic_api_key`,
+`gemini_api_key`, `azure_api_key`) are moving to Pydantic `SecretStr`.
+This prevents accidental leakage through:
+
+- **Logging** — `SecretStr.__repr__` returns `SecretStr('**********')`,
+  not the plaintext.
+- **Serialization** — `model_dump()` returns the secret as
+  `SecretStr('**********')`, not the raw value. Use
+  `model_dump(mode="json", secrets=True)` only when the plaintext is
+  explicitly needed.
+- **Config dumps** — `mnemos doctor` and debug prints no longer expose
+  keys.
+
+**Recommended practice** — pass keys via environment variables, never
+via `config.yaml` in VCS:
+
+```bash
+export MNEMOS_LLM__OPENAI_API_KEY="sk-..."
+export MNEMOS_LLM__ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### 10.2 SSRF — blocked URLs rejected, not stored
+
+When `ingest_url` fetches a URL that fails the SSRF blocklist (§2), the
+URL is **rejected with an error** — it is never stored in memory. This
+prevents a blocked endpoint from persisting as a memory entry that could
+mislead a future recall. The fetch-failed placeholder records the
+rejection reason, not the blocked URL itself.
+
+### 10.3 `.gitignore` — secrets excluded
+
+The `.gitignore` now excludes:
+
+| Pattern | Reason |
+|---------|--------|
+| `config.yaml` | May contain API keys / tokens |
+| `*.env` / `.env` | Environment files with secrets |
+| `*.pem` / `*.key` | Private keys |
+| `*.db` / `*.sqlite` | Local data (not for VCS) |
+| `.history/` | VS Code local history cache |
+
+Operators should keep secrets in environment variables or a secret
+manager — never in committed config files.
+
+### 10.4 Tag filtering — exact match via `json_each`
+
+Tag filtering in `SQLiteStore.list_all` uses `tags LIKE '%"tag"%'` which
+matches on the JSON string. This is an **exact tag match** — the
+`%"tag"%` pattern ensures the tag is matched as a complete JSON string
+element, not as a substring of another tag. For example, filtering by
+`gcw:decision` does not match `gcw:decision-review`.
+
+The `get_all_tags` aggregate uses `json_each(memories.tags)` to iterate
+the JSON array directly — no string matching, no false positives.
+
+### 10.5 Auth, CORS, and session controls (recap)
+
+These controls are documented in §9 and remain in force:
+
+- **Auth** — opaque bearer tokens (`mnk_` prefix), PBKDF2-HMAC-SHA256
+  digests at rest, optional TOTP 2FA with replay prevention.
+- **Session IP pinning** — `api.session_pin_ip=true` binds a session to
+  the IP seen at creation.
+- **CORS** — strict default (disabled). When enabled,
+  `cors_allow_origins` must be an explicit list; combining `["*"]` with
+  `cors_allow_credentials=true` is **rejected at startup**.
+
+### 10.6 Verification
+
+```bash
+# Confirm no API keys in config dumps
+mnemos doctor --json | grep -i api_key   # should show SecretStr('**********')
+
+# Confirm SSRF rejection
+mnemos add --url http://169.254.169.254/  # rejected, not stored
+
+# Confirm .gitignore covers secrets
+git check-ignore -v config.yaml .env     # should list .gitignore:line
+
+# Confirm tag exact match
+mnemos search --tags gcw:decision         # does not match gcw:decision-review
+```

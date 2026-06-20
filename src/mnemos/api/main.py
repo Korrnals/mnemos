@@ -11,9 +11,12 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Header, HTTPException, Query, Response, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -31,6 +34,7 @@ from mnemos.models import (
     FilterRequest,
     Memory,
     MemoryCreate,
+    MemoryStatus,
     RuleIngestRequest,
     RuleRemoveRequest,
     SearchQuery,
@@ -186,10 +190,116 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# ── Dashboard / metrics (mnemos-eyes) ─────────────────────────────────────────
+
+
+@app.get("/api/v1/stats")
+async def dashboard_stats() -> dict[str, Any]:
+    """Structured JSON dashboard data for mnemos-eyes."""
+    return get_manager().dashboard_stats()
+
+
+@app.get("/api/v1/stats/timeseries")
+async def stats_timeseries(
+    metric: str = Query(default="memories_added"),
+    range: str = Query(default="30d"),
+    granularity: str = Query(default="day"),
+) -> dict[str, Any]:
+    """Temporal data for dashboard charts."""
+    mgr = get_manager()
+    # Parse range like "30d", "7d", "90d"
+    days: int | None = None
+    if range.endswith("d"):
+        try:
+            days = int(range[:-1])
+        except ValueError:
+            days = None
+    elif range.endswith("h"):
+        # Hour ranges not yet supported by the daily query; clamp to 1 day.
+        days = 1
+    if days is None or days <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid range '{range}'. Expected format like '30d' (positive integer + 'd').",
+        )
+    return mgr.timeseries(metric=metric, days=days, granularity=granularity)
+
+
+def _prometheus_text(mgr: MemoryManager) -> str:
+    """Render dashboard stats as Prometheus exposition text."""
+    data = mgr.dashboard_stats()
+    vol = data["volume"]
+    filt = data["filter"]
+    pipe = data["pipeline"]
+    search = data["search"]
+    vectors = data["vectors"]
+    sessions = data["sessions"]
+    lines: list[str] = []
+    lines.append("# HELP mnemos_memories_total Total number of memories in storage")
+    lines.append("# TYPE mnemos_memories_total gauge")
+    lines.append(f"mnemos_memories_total {vol['memories_total']}")
+    lines.append("# HELP mnemos_memories_by_status Memories by status")
+    lines.append("# TYPE mnemos_memories_by_status gauge")
+    for s, c in vol["by_status"].items():
+        lines.append(f'mnemos_memories_by_status{{status="{s}"}} {c}')
+    lines.append("# HELP mnemos_memories_by_project Memories by project")
+    lines.append("# TYPE mnemos_memories_by_project gauge")
+    for p, c in vol["by_project"].items():
+        lines.append(f'mnemos_memories_by_project{{project="{p}"}} {c}')
+    lines.append("# HELP mnemos_memories_by_agent Memories by agent")
+    lines.append("# TYPE mnemos_memories_by_agent gauge")
+    for a, c in vol["by_agent"].items():
+        lines.append(f'mnemos_memories_by_agent{{agent="{a}"}} {c}')
+    lines.append("# HELP mnemos_memories_by_type Memories by memory_type")
+    lines.append("# TYPE mnemos_memories_by_type gauge")
+    for t, c in vol["by_type"].items():
+        lines.append(f'mnemos_memories_by_type{{type="{t}"}} {c}')
+    lines.append("# HELP mnemos_filter_avg_reduction_pct Average filter reduction percentage")
+    lines.append("# TYPE mnemos_filter_avg_reduction_pct gauge")
+    lines.append(f"mnemos_filter_avg_reduction_pct {filt['avg_reduction_pct']}")
+    lines.append("# HELP mnemos_filter_filtered_total Memories with clean_content populated")
+    lines.append("# TYPE mnemos_filter_filtered_total gauge")
+    lines.append(f"mnemos_filter_filtered_total {filt['filtered_total']}")
+    lines.append("# HELP mnemos_pipeline_processed_total Total processed memories")
+    lines.append("# TYPE mnemos_pipeline_processed_total counter")
+    lines.append(f"mnemos_pipeline_processed_total {pipe['processed_total']}")
+    lines.append("# HELP mnemos_pipeline_dlq_depth Current DLQ depth")
+    lines.append("# TYPE mnemos_pipeline_dlq_depth gauge")
+    lines.append(f"mnemos_pipeline_dlq_depth {pipe['dlq_depth']}")
+    lines.append("# HELP mnemos_search_requests_total Total search requests since restart")
+    lines.append("# TYPE mnemos_search_requests_total counter")
+    lines.append(f"mnemos_search_requests_total {search['requests_total']}")
+    lines.append("# HELP mnemos_search_avg_latency_ms Average search latency in ms")
+    lines.append("# TYPE mnemos_search_avg_latency_ms gauge")
+    lines.append(f"mnemos_search_avg_latency_ms {search['avg_latency_ms']}")
+    lines.append("# HELP mnemos_vectors_indexed_total Indexed vectors")
+    lines.append("# TYPE mnemos_vectors_indexed_total gauge")
+    lines.append(f"mnemos_vectors_indexed_total {vectors['indexed_total']}")
+    lines.append("# HELP mnemos_sessions_active Active sessions (updated within 24h)")
+    lines.append("# TYPE mnemos_sessions_active gauge")
+    lines.append(f"mnemos_sessions_active {sessions['active']}")
+    lines.append("# HELP mnemos_sessions_total Total sessions")
+    lines.append("# TYPE mnemos_sessions_total gauge")
+    lines.append(f"mnemos_sessions_total {sessions['total']}")
+    return "\n".join(lines) + "\n"
+
+
+@app.get("/api/v1/metrics")
+async def prometheus_metrics() -> Response:
+    """Prometheus text exposition format for Grafana/observability."""
+    text = _prometheus_text(get_manager())
+    return Response(
+        content=text,
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 @app.get("/metrics")
 async def metrics() -> dict[str, Any]:
-    """Prometheus-style metrics endpoint (M5 — observability)."""
-    # TODO (M5): expose mnemos_pipeline_processed_total etc.
+    """Legacy metrics endpoint — returns stats() JSON for backward compat.
+
+    For Prometheus text format, use ``GET /api/v1/metrics``.
+    """
     return get_manager().stats()
 
 
@@ -224,10 +334,36 @@ async def get_memory(memory_id: str, include_raw: bool = False) -> Memory:
 async def list_memories(
     status: str | None = None,
     project: str | None = None,
+    agent: str | None = None,
+    tags: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
     limit: int = Query(default=20, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> list[Memory]:
     mgr = get_manager()
-    return mgr.list_recent(limit=limit, project=project)
+    status_enum: MemoryStatus | None = None
+    if status:
+        try:
+            status_enum = MemoryStatus(status)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid status '{status}'. Valid: {[s.value for s in MemoryStatus]}",
+            ) from exc
+    tag_list: list[str] | None = None
+    if tags:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    return mgr.list_recent(
+        limit=limit,
+        offset=offset,
+        project=project,
+        agent=agent,
+        status=status_enum,
+        tags=tag_list,
+        since=since,
+        until=until,
+    )
 
 
 # ── Search ─────────────────────────────────────────────────────────────────────
@@ -240,6 +376,7 @@ async def search(query: SearchQuery) -> list[dict[str, Any]]:
         query=query.query,
         tags=query.tags,
         project=query.project,
+        status=query.status,
         limit=query.limit,
     )
     out = []
@@ -254,6 +391,7 @@ async def search(query: SearchQuery) -> list[dict[str, Any]]:
                 "title": mem.auto_title(),
                 "content": content,
                 "tags": mem.tags,
+                "status": mem.status.value,
                 "score": r.score,
                 "search_type": r.search_type,
             }
@@ -441,6 +579,164 @@ async def remove_rule(data: RuleRemoveRequest) -> dict[str, Any]:
     if not result["removed"]:
         raise HTTPException(status_code=404, detail=f"Rule for {data.file_path} not found")
     return {"status": "removed", **result}
+
+
+# ── Export / Import (M17 — backup/restore) ────────────────────────────────────
+
+
+class ExportRequest(BaseModel):
+    """Request body for POST /api/v1/export."""
+
+    format: str = "json"  # json | sqlite
+    compress: str = "none"  # none | gzip | zstd
+    encrypt: bool = False
+    project: str | None = None
+    agent: str | None = None
+    status: str | None = None
+    tags: list[str] | None = None
+    since: str | None = None
+    until: str | None = None
+
+
+@app.post("/api/v1/export")
+async def api_export(
+    req: ExportRequest,
+    passphrase: str | None = Header(None, alias="X-Mnemos-Passphrase"),
+) -> StreamingResponse:
+    """Export memories and stream the resulting file as a download.
+
+    Passphrase for encryption is read from the ``X-Mnemos-Passphrase``
+    header (handled below) — kept out of the request body so it is not
+    logged as a request parameter.
+    """
+    import io
+    import json as _json
+
+    from mnemos.cli.export import (
+        CompressMode,
+        ExportFilter,
+        ExportFormat,
+        build_json_payload,
+    )
+    from mnemos.models import MemoryStatus
+
+    mgr = get_manager()
+
+    try:
+        fmt = ExportFormat(req.format)
+        comp = CompressMode(req.compress)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    status_enum: MemoryStatus | None = None
+    if req.status:
+        try:
+            status_enum = MemoryStatus(req.status)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {req.status}") from exc
+
+    since_dt = _parse_iso(req.since)
+    until_dt = _parse_iso(req.until)
+    filt = ExportFilter(
+        project=req.project,
+        agent=req.agent,
+        status=status_enum,
+        tags=req.tags,
+        since=since_dt,
+        until=until_dt,
+    )
+
+    if fmt == ExportFormat.JSON:
+        payload = build_json_payload(mgr, filt)
+        raw = _json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+        media = "application/json"
+        suffix = "json"
+    else:
+        from mnemos.cli.export import _build_sqlite_snapshot
+
+        raw = _build_sqlite_snapshot(mgr)
+        media = "application/gzip"
+        suffix = "tar.gz"
+
+    # Compression
+    from mnemos.cli.export import _compress
+
+    payload_bytes, _warnings = _compress(raw, comp)
+    if comp == CompressMode.GZIP and fmt == ExportFormat.JSON:
+        media = "application/gzip"
+        suffix = "json.gz"
+
+    # Encryption
+    if req.encrypt:
+        if not passphrase:
+            raise HTTPException(
+                status_code=400,
+                detail="Encryption requested but X-Mnemos-Passphrase header is missing.",
+            )
+        from mnemos.cli.export import _encrypt
+
+        payload_bytes = _encrypt(payload_bytes, passphrase)
+        media = "application/octet-stream"
+        suffix = "enc"
+
+    filename = f"mnemos-export.{suffix}"
+    return StreamingResponse(
+        io.BytesIO(payload_bytes),
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    """Parse an ISO-8601 date string, returning None on None/empty."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid ISO date: {value}"
+        ) from exc
+
+
+@app.post("/api/v1/import")
+async def api_import(
+    file: UploadFile = File(...),  # noqa: B008 — FastAPI idiom for multipart upload
+    mode: str = Query(default="merge"),
+    overwrite: bool = Query(default=False),
+    confirm: bool = Query(default=False),
+    dry_run: bool = Query(default=False),
+    passphrase: str | None = Header(None, alias="X-Mnemos-Passphrase"),
+) -> dict[str, Any]:
+    """Import an export file uploaded as multipart form data.
+
+    Returns a summary dict with ``imported``, ``skipped``, ``updated``,
+    ``errors``, and ``warnings``. Encryption passphrase is read from the
+    ``X-Mnemos-Passphrase`` header (kept out of the body / logs).
+    """
+    from mnemos.cli.import_ import run_import
+
+    mgr = get_manager()
+
+    # Stream the upload into a temp file so run_import can read it.
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f"-{file.filename or 'import'}") as tf:
+        tf.write(await file.read())
+        tmp_path = Path(tf.name)
+    try:
+        result = run_import(
+            mgr,
+            tmp_path,
+            mode=mode,
+            overwrite=overwrite,
+            confirm=confirm,
+            dry_run=dry_run,
+            passphrase=passphrase,
+        )
+        return result.summary()
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 # ── A2A Sessions API (M16) ──────────────────────────────────────────────────

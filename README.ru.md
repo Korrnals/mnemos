@@ -14,7 +14,7 @@
   <a href="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml"><img src="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab" alt="Python"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.2.0-blueviolet" alt="Version"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0-blueviolet" alt="Version"></a>
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 
 ## 🚀 Быстрый старт
 
-Три шага до рабочего хранилища памяти, подключённого к VS Code Copilot.
+Четыре шага до рабочего хранилища памяти, подключённого к VS Code Copilot.
 
 ### 1 · Установка
 
@@ -73,6 +73,21 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-se
 
 Затем **перезагрузите окно VS Code** (`Ctrl+Shift+P → Reload Window`). Инструменты `mnemos_*` появятся
 в палитре инструментов Copilot, и агенты смогут вызывать `mnemos_add` / `mnemos_search` напрямую.
+
+### 4 · Установка поведенческих инструкций
+
+```bash
+mnemos integration setup
+```
+
+Развёртывает инструкции использования памяти, скилы и режим промпта в ваш
+агентский харнес (GCW `~/.copilot/`, обычный Copilot, Cursor). Агенты теперь
+*знают когда и как* использовать память Mnemos — а не просто имеют инструменты.
+
+Добавьте `--wire-agents --all`, чтобы в том же проходе выдать инструменты
+`mnemos/*` во фронтматтер GCW-агентов. См. [руководство по интеграции](docs/ru/user/integration-guide.md#подключение-mcp-инструментов-к-агентам)
+по флагам wiring и [руководство по контекстному фильтру](docs/ru/user/context-filter.md)
+— пятиступенчатый очиститель шума, который запускается автоматически при каждом `mnemos_add`.
 
 <details>
 <summary><strong>🛠️ Другие способы установки</strong> — из исходников, готовый wheel или контейнер</summary>
@@ -121,12 +136,12 @@ podman run -d --name mnemos \
   -v mnemos-data:/data \
   -v mnemos-vault:/vault \
   -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
-  ghcr.io/korrnals/mnemos:1.2.0
+  ghcr.io/korrnals/mnemos:2.0.0
 
 curl -s http://localhost:8787/health | jq
 ```
 
-Теги: `:1.2.0` (фиксированная) · `:latest` (rolling). Работает и с `docker` — замените `podman` на `docker`.
+Теги: `:2.0.0` (фиксированная) · `:latest` (rolling). Работает и с `docker` — замените `podman` на `docker`.
 
 </details>
 

@@ -1,11 +1,9 @@
 """SQLite + numpy vector store for semantic search.
 
-Forked from ai-brain's vector_store.py.
 All data stored in WAL-mode SQLite (vectors.db).
 Similarity computed with numpy cosine — fast on CPU, no Rust deps.
-
-For Mnemos: vectors are gated on status=published (MemoryManager ensures this).
-The collection name is "mnemos_memories" to avoid collisions with ai-brain data.
+Vectors are gated on status=published (MemoryManager ensures this).
+The collection name is "mnemos_memories".
 """
 
 from __future__ import annotations
@@ -101,6 +99,16 @@ class VectorStore:
         conn = self._conn()
         conn.execute("DELETE FROM embeddings WHERE id=?", (memory_id,))
         conn.commit()
+
+    def wipe(self) -> int:
+        """Delete every embedding row. Used by ``mnemos import --mode restore``.
+
+        Returns the number of deleted rows. The table schema is preserved.
+        """
+        conn = self._conn()
+        cur = conn.execute("DELETE FROM embeddings")
+        conn.commit()
+        return cur.rowcount
 
     # ── search ────────────────────────────────────────────────────────────
 

@@ -20,6 +20,7 @@ import pyotp  # type: ignore[import-untyped]
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 import mnemos.api.main as api_main
 from mnemos.api.auth import decrypt_totp_secret, encrypt_totp_secret
@@ -404,6 +405,81 @@ class TestAuthEndpoints:
                 "/auth/verify",
                 json={"challenge_id": "chg_nonexistent", "code": "123456"},
             )
+            assert r.status_code == 401
+        mgr.close()
+        api_main._manager = None
+
+
+# ---------------------------------------------------------------------------
+# Docs endpoint auth (finding: /docs bypass on non-loopback binds)
+# ---------------------------------------------------------------------------
+
+
+class TestDocsEndpointAuth:
+    """``/docs``, ``/redoc``, ``/openapi.json`` must require auth on
+    non-loopback binds to avoid leaking API schema to unauthenticated
+    callers. On loopback binds they remain accessible for dev convenience.
+    """
+
+    def _make_client_with_host(self, tmp_settings, host: str) -> tuple[TestClient, MemoryManager]:
+        """Build a TestClient with the API bound to ``host`` and auth enabled."""
+        tmp_settings.api.host = host
+        tmp_settings.api.auth_enabled = True
+        tmp_settings.api.totp_enabled = False
+        tmp_settings.api.behind_tls_proxy = False
+        # Non-loopback binds require TOTP + TLS proxy per the startup guard.
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            tmp_settings.api.totp_enabled = True
+            tmp_settings.api.behind_tls_proxy = True
+            # TOTP master key is required when TOTP is enabled.
+            tmp_settings.api.totp_master_key = SecretStr(
+                "test-master-key-must-be-32bytes-or-more"
+            )
+
+        mgr = MemoryManager(tmp_settings)
+        mock_embedder = MagicMock()
+        mock_embedder.embed.return_value = [0.1] * 384
+        mgr._embedder = mock_embedder
+
+        test_app = FastAPI(title="T", version="0.0.1", lifespan=lifespan)
+        for route in app.routes:
+            test_app.routes.append(route)
+        test_app.add_middleware(AuthMiddleware)
+        api_main._manager = mgr
+        return TestClient(test_app), mgr
+
+    def test_docs_accessible_on_loopback(self, tmp_settings):
+        """On loopback bind with auth enabled, /docs is still bypassed."""
+        tc, mgr = self._make_client_with_host(tmp_settings, "127.0.0.1")
+        with tc:
+            r = tc.get("/docs")
+            assert r.status_code == 200
+        mgr.close()
+        api_main._manager = None
+
+    def test_docs_requires_auth_on_non_loopback(self, tmp_settings):
+        """On non-loopback bind with auth enabled, /docs returns 401."""
+        tc, mgr = self._make_client_with_host(tmp_settings, "0.0.0.0")
+        with tc:
+            r = tc.get("/docs")
+            assert r.status_code == 401
+        mgr.close()
+        api_main._manager = None
+
+    def test_openapi_json_requires_auth_on_non_loopback(self, tmp_settings):
+        """On non-loopback bind with auth enabled, /openapi.json returns 401."""
+        tc, mgr = self._make_client_with_host(tmp_settings, "0.0.0.0")
+        with tc:
+            r = tc.get("/openapi.json")
+            assert r.status_code == 401
+        mgr.close()
+        api_main._manager = None
+
+    def test_redoc_requires_auth_on_non_loopback(self, tmp_settings):
+        """On non-loopback bind with auth enabled, /redoc returns 401."""
+        tc, mgr = self._make_client_with_host(tmp_settings, "0.0.0.0")
+        with tc:
+            r = tc.get("/redoc")
             assert r.status_code == 401
         mgr.close()
         api_main._manager = None

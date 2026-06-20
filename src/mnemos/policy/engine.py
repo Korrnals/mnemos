@@ -65,9 +65,10 @@ def _condition_matches(mem: Memory, cond: PolicyCondition) -> bool:
         return False
     if cond.min_confidence is not None and (mem.confidence or 0.0) < cond.min_confidence:
         return False
-    if cond.min_source_coverage is not None:
-        if (mem.source_coverage or 0) < cond.min_source_coverage:
-            return False
+    if (
+        cond.min_source_coverage is not None
+        and (mem.source_coverage or 0) < cond.min_source_coverage
+    ):
         return False
     if cond.max_age_hours is not None:
         age = datetime.now(UTC) - mem.created_at

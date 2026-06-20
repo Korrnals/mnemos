@@ -1,10 +1,8 @@
 """Data models for the Mnemos memory system.
 
-Key additions over ai-brain:
-  - TagContract: GCW tag validation (M2)
-  - Extended Memory: pipeline fields + Context Filter fields (M4, M10)
-  - Trace: explainability layer (M6)
-  - AgentRecallQuery: per-agent recall (M3)
+Core models: TagContract (GCW tag validation, M2), Memory (pipeline + Context
+Filter fields, M4/M10), Trace (explainability layer, M6), AgentRecallQuery
+(per-agent recall, M3).
 """
 
 from __future__ import annotations
@@ -206,7 +204,7 @@ class TagContract(BaseModel):
 class Memory(BaseModel):
     """Single unified memory entry — status-driven pipeline model.
 
-    Fields are a superset of ai-brain's Memory model, extended with:
+    Field groups:
       - GCW tag contract denormalisations (project, agent)
       - Knowledge pipeline fields (quality_score, confidence, cluster_id, derived_from …)
       - Context Filter fields (raw_content, clean_content, filter_profile …) — M10
@@ -251,7 +249,7 @@ class Memory(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
-    # ── Compat (from ai-brain; retained for migration tooling) ──────────────
+    # ── Compat (retained for migration tooling) ─────────────────────────────
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     # ── Validation control (not stored) ────────────────────────────────────
@@ -395,7 +393,7 @@ class Trace(BaseModel):
         return v[:200]
 
 
-# ── Project model (retained from ai-brain) ─────────────────────────────────────
+# ── Project model ─────────────────────────────────────────────────────────────
 
 
 class Project(BaseModel):

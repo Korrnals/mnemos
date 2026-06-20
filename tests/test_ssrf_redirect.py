@@ -72,7 +72,11 @@ def _mock_resp(status: int, body: str = "", location: str = "") -> MagicMock:
 
 class TestMetadataRedirectBlocked:
     def test_redirect_to_aws_ipv4_metadata_blocked(self, manager: MemoryManager) -> None:
-        """Pivot: public host -> 169.254.169.254 must be caught on the redirect hop."""
+        """Pivot: public host -> 169.254.169.254 must be caught on the redirect hop.
+
+        SSRF rejections are re-raised as ValueError — the blocked URL is NOT
+        stored in memory (T5-SSRF v3 hardening).
+        """
         redir = _mock_resp(302, location="http://169.254.169.254/latest/meta-data/")
         trafilatura_stub = _stub_trafilatura()
         with (
@@ -82,9 +86,8 @@ class TestMetadataRedirectBlocked:
             mock_client = MagicMock()
             mock_client.get.return_value = redir
             mock_cls.return_value.__enter__.return_value = mock_client
-            mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
-        # Guard fires inside the loop -> exception is caught -> placeholder content.
-        assert "[fetch failed:" in mem.content
+            with pytest.raises(ValueError, match="security reasons"):
+                manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
 
     def test_redirect_to_aws_ipv4_metadata_second_hop_blocked(self, manager: MemoryManager) -> None:
         """Second-hop metadata pivot: public -> public -> 169.254.169.254 is caught."""
@@ -98,8 +101,8 @@ class TestMetadataRedirectBlocked:
             mock_client = MagicMock()
             mock_client.get.side_effect = [hop1, hop2]
             mock_cls.return_value.__enter__.return_value = mock_client
-            mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
-        assert "[fetch failed:" in mem.content
+            with pytest.raises(ValueError, match="security reasons"):
+                manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +123,11 @@ class TestMetadataRedirectBlocked:
     ],
 )
 def test_redirect_to_private_range_blocked(manager: MemoryManager, location: str) -> None:
-    """Redirect to any RFC1918/loopback address must be blocked on the hop."""
+    """Redirect to any RFC1918/loopback address must be blocked on the hop.
+
+    SSRF rejections are re-raised as ValueError — the blocked URL is NOT
+    stored in memory (T5-SSRF v3 hardening).
+    """
     redir = _mock_resp(301, location=location)
     trafilatura_stub = _stub_trafilatura()
     with (
@@ -130,8 +137,8 @@ def test_redirect_to_private_range_blocked(manager: MemoryManager, location: str
         mock_client = MagicMock()
         mock_client.get.return_value = redir
         mock_cls.return_value.__enter__.return_value = mock_client
-        mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
-    assert "[fetch failed:" in mem.content
+        with pytest.raises(ValueError, match="security reasons"):
+            manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +155,11 @@ def test_redirect_to_private_range_blocked(manager: MemoryManager, location: str
     ],
 )
 def test_redirect_to_ipv6_blocked(manager: MemoryManager, location: str) -> None:
-    """Redirect to IPv6 loopback / link-local / metadata must be blocked."""
+    """Redirect to IPv6 loopback / link-local / metadata must be blocked.
+
+    SSRF rejections are re-raised as ValueError — the blocked URL is NOT
+    stored in memory (T5-SSRF v3 hardening).
+    """
     redir = _mock_resp(302, location=location)
     trafilatura_stub = _stub_trafilatura()
     with (
@@ -158,8 +169,8 @@ def test_redirect_to_ipv6_blocked(manager: MemoryManager, location: str) -> None
         mock_client = MagicMock()
         mock_client.get.return_value = redir
         mock_cls.return_value.__enter__.return_value = mock_client
-        mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
-    assert "[fetch failed:" in mem.content
+        with pytest.raises(ValueError, match="security reasons"):
+            manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +284,11 @@ def test_too_many_redirects_produces_placeholder(manager: MemoryManager) -> None
     ],
 )
 def test_redirect_to_non_http_scheme_blocked(manager: MemoryManager, location: str) -> None:
-    """A redirect to any scheme other than http/https must be rejected."""
+    """A redirect to any scheme other than http/https must be rejected.
+
+    SSRF rejections are re-raised as ValueError — the blocked URL is NOT
+    stored in memory (T5-SSRF v3 hardening).
+    """
     redir = _mock_resp(302, location=location)
     trafilatura_stub = _stub_trafilatura()
     with (
@@ -283,8 +298,8 @@ def test_redirect_to_non_http_scheme_blocked(manager: MemoryManager, location: s
         mock_client = MagicMock()
         mock_client.get.return_value = redir
         mock_cls.return_value.__enter__.return_value = mock_client
-        mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
-    assert "[fetch failed:" in mem.content
+        with pytest.raises(ValueError, match="security reasons"):
+            manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +333,11 @@ class TestRelativeLocationResolution:
     def test_relative_location_to_private_ip_blocked_after_resolution(
         self, manager: MemoryManager
     ) -> None:
-        """Even when Location is relative, resolved URL pointing to private IP is blocked."""
+        """Even when Location is relative, resolved URL pointing to private IP is blocked.
+
+        SSRF rejections are re-raised as ValueError — the blocked URL is NOT
+        stored in memory (T5-SSRF v3 hardening).
+        """
         # Protocol-relative Location that resolves to a metadata host.
         # urljoin("https://8.8.8.8/", "http://169.254.169.254/") = "http://169.254.169.254/"
         redir = _mock_resp(302, location="http://169.254.169.254/")
@@ -330,8 +349,8 @@ class TestRelativeLocationResolution:
             mock_client = MagicMock()
             mock_client.get.return_value = redir
             mock_cls.return_value.__enter__.return_value = mock_client
-            mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
-        assert "[fetch failed:" in mem.content
+            with pytest.raises(ValueError, match="security reasons"):
+                manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +406,11 @@ def test_obfuscated_ipv4_loopback_blocked(manager: MemoryManager, host: str) -> 
 
 
 def test_redirect_to_decimal_metadata_blocked(manager: MemoryManager) -> None:
-    """A redirect Location using the decimal encoding of a private IP is blocked."""
+    """A redirect Location using the decimal encoding of a private IP is blocked.
+
+    SSRF rejections are re-raised as ValueError — the blocked URL is NOT
+    stored in memory (T5-SSRF v3 hardening).
+    """
     # 2852039166 = 169.254.169.254 (AWS metadata) in decimal notation.
     redir = _mock_resp(302, location="http://2852039166/")
     trafilatura_stub = _stub_trafilatura()
@@ -398,8 +421,8 @@ def test_redirect_to_decimal_metadata_blocked(manager: MemoryManager) -> None:
         mock_client = MagicMock()
         mock_client.get.return_value = redir
         mock_cls.return_value.__enter__.return_value = mock_client
-        mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
-    assert "[fetch failed:" in mem.content
+        with pytest.raises(ValueError, match="security reasons"):
+            manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +441,11 @@ def test_userinfo_does_not_mask_blocked_host(manager: MemoryManager) -> None:
 
 
 def test_redirect_with_userinfo_to_metadata_blocked(manager: MemoryManager) -> None:
-    """A redirect whose Location hides a metadata IP behind userinfo is blocked."""
+    """A redirect whose Location hides a metadata IP behind userinfo is blocked.
+
+    SSRF rejections are re-raised as ValueError — the blocked URL is NOT
+    stored in memory (T5-SSRF v3 hardening).
+    """
     redir = _mock_resp(302, location="http://api.public.test@169.254.169.254/latest/meta-data/")
     trafilatura_stub = _stub_trafilatura()
     with (
@@ -428,5 +455,5 @@ def test_redirect_with_userinfo_to_metadata_blocked(manager: MemoryManager) -> N
         mock_client = MagicMock()
         mock_client.get.return_value = redir
         mock_cls.return_value.__enter__.return_value = mock_client
-        mem = manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")
-    assert "[fetch failed:" in mem.content
+        with pytest.raises(ValueError, match="security reasons"):
+            manager.ingest_url(INITIAL_URL, tags=TAGS, project="test", agent="test")

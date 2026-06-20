@@ -316,6 +316,65 @@ class TestPolicyEngine:
         actions = evaluate_rules(mem, [])
         assert actions == []
 
+    def test_min_source_coverage_passes_when_met(self):
+        """Regression: min_source_coverage must fire when coverage ≥ threshold.
+
+        Before the fix, the condition always returned False (dead code) due to
+        an unconditional ``return False`` after the inner threshold check.
+        """
+        mem = Memory(
+            content="draft",
+            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
+            project="gcw",
+            agent="reviewer",
+            status=MemoryStatus.PROCESSED,
+            source_coverage=5,
+        )
+        rule = PolicyRule(
+            name="min-coverage",
+            conditions=[PolicyCondition(min_source_coverage=3)],
+            actions=[PolicyAction(action="publish")],
+        )
+        actions = evaluate_rules(mem, [rule])
+        assert len(actions) == 1
+        assert actions[0].action == "publish"
+
+    def test_min_source_coverage_fails_when_insufficient(self):
+        """Regression: min_source_coverage must NOT fire when coverage < threshold."""
+        mem = Memory(
+            content="draft",
+            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
+            project="gcw",
+            agent="reviewer",
+            status=MemoryStatus.PROCESSED,
+            source_coverage=1,
+        )
+        rule = PolicyRule(
+            name="min-coverage",
+            conditions=[PolicyCondition(min_source_coverage=3)],
+            actions=[PolicyAction(action="publish")],
+        )
+        actions = evaluate_rules(mem, [rule])
+        assert actions == []
+
+    def test_min_source_coverage_with_none_on_memory(self):
+        """min_source_coverage treats missing source_coverage (None) as 0."""
+        mem = Memory(
+            content="draft",
+            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
+            project="gcw",
+            agent="reviewer",
+            status=MemoryStatus.PROCESSED,
+            source_coverage=None,
+        )
+        rule = PolicyRule(
+            name="min-coverage",
+            conditions=[PolicyCondition(min_source_coverage=1)],
+            actions=[PolicyAction(action="publish")],
+        )
+        actions = evaluate_rules(mem, [rule])
+        assert actions == []
+
 
 # ---------------------------------------------------------------------------
 # Triggers

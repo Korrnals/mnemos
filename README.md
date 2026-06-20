@@ -14,7 +14,7 @@
   <a href="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml"><img src="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab" alt="Python"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.2.0-blueviolet" alt="Version"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0-blueviolet" alt="Version"></a>
 </p>
 
 <p align="center">
@@ -33,7 +33,7 @@
 
 ## 🚀 Quick start
 
-Three steps to a working memory store, wired into VS Code Copilot.
+Four steps to a working memory store, wired into VS Code Copilot.
 
 ### 1 · Install
 
@@ -73,6 +73,22 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-se
 
 Then **reload the VS Code window** (`Ctrl+Shift+P → Reload Window`). The `mnemos_*` tools appear in
 Copilot's tool picker, and your agents can call `mnemos_add` / `mnemos_search` directly.
+
+### 4 · Deploy behavioral instructions
+
+```bash
+mnemos integration setup
+```
+
+This deploys memory-usage instructions, skills, and a prompt mode to your
+agent harness (GCW `~/.copilot/`, generic Copilot, Cursor). Agents will now
+*know when and how* to use Mnemos memory — not just have the tools available.
+
+Add `--wire-agents --all` to also grant `mnemos/*` tools to GCW agent
+frontmatter in the same pass. See the
+[integration guide](docs/en/user/integration-guide.md#agent-mcp-wiring)
+for wiring flags and the [context filter guide](docs/en/user/context-filter.md)
+for the five-stage noise stripper that runs automatically on every `mnemos_add`.
 
 <details>
 <summary><strong>🛠️ Other ways to install</strong> — from source, released wheel, or container one-liner</summary>
@@ -121,12 +137,12 @@ podman run -d --name mnemos \
   -v mnemos-data:/data \
   -v mnemos-vault:/vault \
   -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
-  ghcr.io/korrnals/mnemos:1.2.0
+  ghcr.io/korrnals/mnemos:2.0.0
 
 curl -s http://localhost:8787/health | jq
 ```
 
-Tags: `:1.2.0` (pinned) · `:latest` (rolling). Works with `docker` too — swap `podman` for `docker`.
+Tags: `:2.0.0` (pinned) · `:latest` (rolling). Works with `docker` too — swap `podman` for `docker`.
 
 </details>
 

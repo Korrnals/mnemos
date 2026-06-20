@@ -1,14 +1,12 @@
 """Obsidian-compatible vault integration — read/write markdown with YAML frontmatter.
 
-Forked from ai-brain's vault.py.
-Mnemos additions:
-  - Stores pipeline fields (status, quality_score, cluster_id) in frontmatter
-  - Stores project + agent (GCW tag contract) in frontmatter for searchability
-  - Uses ~/mnemos-vault/ default path
+Stores pipeline fields (status, quality_score, cluster_id) and project + agent
+(GCW tag contract) in frontmatter for searchability. Default path: ~/mnemos-vault/.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -16,6 +14,8 @@ from typing import Any, cast
 import frontmatter
 
 from mnemos.models import Memory, MemorySource, MemoryType
+
+logger = logging.getLogger(__name__)
 
 
 class VaultManager:
@@ -91,7 +91,8 @@ class VaultManager:
         # yaml.parser.ParserError on malformed YAML — these inherit from
         # yaml.YAMLError which is NOT a ValueError, so we catch them
         # explicitly. (M18: regression test for invalid YAML frontmatter.)
-        except Exception:
+        except Exception as exc:
+            logger.warning("failed to parse frontmatter in %s: %s", file_path, exc)
             return None
 
         # `python-frontmatter` exposes `post.metadata` as `Any` (untyped
