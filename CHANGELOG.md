@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`make doctor` target** (`Makefile`) — runs `mnemos doctor --json` as a
+  health-check gate, wired into `make verify`. Fails the build on actual
+  failures (exit 1); allows warnings (exit 2) since CI environments typically
+  lack agent harnesses (integration check warns by design).
+- **`install.sh` post-install suggestions** (`scripts/install.sh`) — the
+  success message now suggests `mnemos completion` (shell autocompletion),
+  `mnemos integration setup` (behavioral instructions), and `mnemos doctor`
+  (installation verification). Suggestions only — nothing is auto-run.
+- **README Quick Start step 4** (`README.md`, `README.ru.md`) — added
+  "Deploy behavioral instructions" / "Установка поведенческих инструкций"
+  section covering `mnemos integration setup`. Updated step count from
+  "Three" to "Four" in both languages.
+
+### Removed
+
+- **ai-brain provenance comments** (`src/mnemos/`) — removed "Forked from
+  ai-brain" / "Key differences from ai-brain" / "Renamed from ai-brain"
+  comment blocks from 10 source files (`__init__.py`, `mcp_server.py`,
+  `storage/{sqlite_store,vector_store,vault,__init__}.py`,
+  `embeddings/__init__.py`, `auto_collect.py`, `models.py`, `cli/main.py`).
+  Module docstrings now describe what each module does, not where it came
+  from. Provenance lives in ADR 0001 and git history. Functional migration
+  code (`cli/migrate.py`, `mnemos migrate from-ai-brain` command) is
+  intentionally preserved.
+- **`.history/` directory** — deleted the VS Code Local History cache
+  (~100+ stale files, gitignored). VS Code recreates files as needed.
+
+### Changed
+
+- **`create_provider()` docstring** (`src/mnemos/llm/base.py`) — updated to
+  reference PR 2 (standard providers: Ollama + OpenAI + Anthropic); the
+  factory still raises `NotImplementedError` in PR 1.
+
 - **`mnemos completion` command** (`src/mnemos/cli/completion.py`) —
   auto-detects the current shell from `$SHELL`, generates the completion
   script, and auto-installs it into the right rc file (`~/.bashrc`,
@@ -22,6 +55,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MCP server registration, integration layer, tag contract) and reports
   status with a rich table. Exit codes: 0 = all pass, 1 = one or more
   failed, 2 = warnings only. Supports `--json` for CI/scripting.
+
+### Removed
+
+- **ai-brain provenance comments** (`src/mnemos/`) — removed "Forked from
+  ai-brain" / "Key differences from ai-brain" / "Renamed from ai-brain"
+  comment blocks from 10 source files (`__init__.py`, `mcp_server.py`,
+  `storage/{sqlite_store,vector_store,vault,__init__}.py`,
+  `embeddings/__init__.py`, `auto_collect.py`, `models.py`, `cli/main.py`).
+  Module docstrings now describe what each module does, not where it came
+  from. Provenance lives in ADR 0001 and git history. Functional migration
+  code (`cli/migrate.py`, `mnemos migrate from-ai-brain` command) is
+  intentionally preserved.
+- **`.history/` directory** — deleted the VS Code Local History cache
+  (~100+ stale files, gitignored). VS Code recreates files as needed.
 
 ### Changed
 

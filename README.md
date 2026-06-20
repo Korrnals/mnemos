@@ -33,7 +33,7 @@
 
 ## 🚀 Quick start
 
-Three steps to a working memory store, wired into VS Code Copilot.
+Four steps to a working memory store, wired into VS Code Copilot.
 
 ### 1 · Install
 
@@ -73,6 +73,16 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-se
 
 Then **reload the VS Code window** (`Ctrl+Shift+P → Reload Window`). The `mnemos_*` tools appear in
 Copilot's tool picker, and your agents can call `mnemos_add` / `mnemos_search` directly.
+
+### 4 · Deploy behavioral instructions
+
+```bash
+mnemos integration setup
+```
+
+This deploys memory-usage instructions, skills, and a prompt mode to your
+agent harness (GCW `~/.copilot/`, generic Copilot, Cursor). Agents will now
+*know when and how* to use Mnemos memory — not just have the tools available.
 
 <details>
 <summary><strong>🛠️ Other ways to install</strong> — from source, released wheel, or container one-liner</summary>
