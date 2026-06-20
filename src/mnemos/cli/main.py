@@ -1,6 +1,5 @@
 """Mnemos CLI — Typer-based command interface.
 
-Renamed from ai-brain's CLI (brain → mnemos).
 Entry point: mnemos (declared in pyproject.toml [project.scripts]).
 """
 

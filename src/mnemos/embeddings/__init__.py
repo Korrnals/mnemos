@@ -1,7 +1,6 @@
 """Embeddings layer for Mnemos.
 
 Uses local ONNX MiniLM-class models by default (privacy + offline).
-Forked from ai-brain's embedding.py.
 
 Providers:
   - ChromaDefaultProvider   — zero-dep ONNX via chromadb (default)

@@ -1,15 +1,11 @@
 """SQLite metadata storage with FTS5 full-text search.
 
-Forked from ai-brain's sqlite_store.py.
-Key additions for Mnemos:
-  - Extended schema: project, agent (denormalised from tags)
-  - Pipeline fields: quality_score, confidence, source_coverage,
-    cluster_id, derived_from, embedding_id
-  - Context Filter fields: raw_content, clean_content, filter_profile,
-    filter_stats, filter_version
-  - Trace table (M6 — explainability)
-  - FTS also indexes project + agent for fast per-agent recall (M3)
-  - Per-agent / per-project query helpers (M3)
+Extended schema: project, agent (denormalised from tags), pipeline fields
+(quality_score, confidence, source_coverage, cluster_id, derived_from,
+embedding_id), Context Filter fields (raw_content, clean_content,
+filter_profile, filter_stats, filter_version), and a trace table (M6 —
+explainability). FTS indexes project + agent for fast per-agent recall (M3).
+Per-agent / per-project query helpers (M3).
 """
 
 from __future__ import annotations

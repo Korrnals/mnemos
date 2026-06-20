@@ -1,7 +1,7 @@
 """Compaction detection signals for Mnemos. (M7)
 
-Extends ai-brain's simple call-counter with additional weighted signals:
-  1. call_counter     — N tool calls since last checkpoint (inherited)
+Weighted signals for auto-checkpoint triggers:
+  1. call_counter     — N tool calls since last checkpoint
   2. context_size     — client-reported token estimate > 80% of model limit
   3. summary_marker   — regex on recent messages for <conversation-summary>/<compacted>
   4. reference_drop   — agent stops citing earlier identifiers in last N calls
@@ -25,7 +25,7 @@ _COMPACTION_MARKERS = re.compile(
 class CompactionSignals:
     """Current state of all compaction-detection signals."""
 
-    # Signal 1: call counter (inherited from ai-brain)
+    # Signal 1: call counter
     calls_since_save: int = 0
     call_threshold: int = 6
 

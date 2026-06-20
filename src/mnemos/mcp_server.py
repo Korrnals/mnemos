@@ -1,12 +1,8 @@
 """MCP server for Mnemos — exposes mnemos_* memory tools to Copilot/LLM agents.
 
-Key differences from ai-brain's mcp_server.py:
-  - Server name: "mnemos" (was "ai-brain")
-  - All tools renamed: brain_* → mnemos_*
-  - New tool: mnemos_agent_recall (M3)
-  - mnemos_add enforces GCW TagContract (M2)
-  - mnemos_auto_collect_status returns per-signal compaction vector (M7)
-  - Env var: MNEMOS_AUTO_COLLECT (was AI_BRAIN_AUTO_COLLECT)
+Tools: mnemos_add (enforces GCW TagContract), mnemos_search, mnemos_recall,
+mnemos_agent_recall (M3), mnemos_auto_collect_status (per-signal compaction
+vector, M7), and others. Auto-collect driven by MNEMOS_AUTO_COLLECT env var.
 """
 
 from __future__ import annotations
