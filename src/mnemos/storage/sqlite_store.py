@@ -618,8 +618,11 @@ class SQLiteStore:
             params.append(agent)
         if tags:
             for tag in tags:
-                q += " AND tags LIKE ?"
-                params.append(f'%"{tag}"%')
+                q += (
+                    " AND EXISTS (SELECT 1 FROM json_each(tags) "
+                    "WHERE json_each.value = ?)"
+                )
+                params.append(tag)
         if category is not None:
             if category == "__uncategorized":
                 q += " AND category IS NULL"
@@ -696,8 +699,11 @@ class SQLiteStore:
             params.append(status.value)
         if tags:
             for tag in tags:
-                q += " AND tags LIKE ?"
-                params.append(f'%"{tag}"%')
+                q += (
+                    " AND EXISTS (SELECT 1 FROM json_each(tags) "
+                    "WHERE json_each.value = ?)"
+                )
+                params.append(tag)
         if since:
             q += " AND (created_at >= ? OR updated_at >= ?)"
             params.extend([since.isoformat(), since.isoformat()])
