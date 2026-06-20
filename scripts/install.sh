@@ -229,7 +229,11 @@ fi
 # ── Optional: agent integration pack (instructions + skills + prompts) ──
 setup_instructions() {
   info "Deploying agent integration pack (instructions, skills, prompts)…"
-  if "$MNEMOS_BIN" integration setup --target all --no-mcp; then
+  # --no-wire-agents: agent wiring is handled separately by setup_wire_agents
+  # below. Without this flag, the default flow prints a noisy "Non-interactive
+  # terminal — skipping agent wiring" message even though wiring is about to
+  # run in its own dedicated step.
+  if "$MNEMOS_BIN" integration setup --target all --no-mcp --no-wire-agents; then
     ok "Agent integration pack deployed — reload your VS Code window."
   else
     warn "Integration pack deployment didn't complete. Run it later:"

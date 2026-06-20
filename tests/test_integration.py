@@ -681,7 +681,13 @@ class TestDeployEdgeCases:
 
     def test_deploy_partial_deploy_map_skips_unmapped_kinds(self, tmp_path: Path) -> None:
         """A target that only has 'instructions' in its deploy map should
-        skip skills and prompts with SKIPPED status, not crash."""
+        silently skip skills and prompts — no noisy SKIPPED rows.
+
+        Not every target supports every artefact kind (e.g. generic-copilot
+        only has prompts, gcw has instructions+skills). Unsupported kinds
+        are skipped silently with a debug log, not reported as SKIPPED in
+        the result (which made users think something was broken).
+        """
         pack = tmp_path / "integrations"
         (pack / "instructions").mkdir(parents=True)
         (pack / "skills").mkdir(parents=True)
@@ -712,11 +718,14 @@ class TestDeployEdgeCases:
         mgr = IntegrationManager(version="1.0.0", pack_root=pack, targets_config=cfg)
 
         result = mgr.deploy("partial")
+        # Only the instructions file is in the result — skills+prompts are
+        # silently skipped (no deploy map for those kinds).
+        assert len(result.files) == 1
         statuses = {f.source.name: f.status for f in result.files}
-        # instructions deployed, skills+prompts skipped
         assert statuses["a.md"] == DeployStatus.DEPLOYED
-        assert statuses["b.md"] == DeployStatus.SKIPPED
-        assert statuses["c.md"] == DeployStatus.SKIPPED
+        # b.md and c.md are NOT in the result at all — silent skip.
+        assert "b.md" not in statuses
+        assert "c.md" not in statuses
 
     def test_deploy_multi_target_all_detected(self, tmp_path: Path) -> None:
         """Deploy to multiple detected targets — all should receive files."""
