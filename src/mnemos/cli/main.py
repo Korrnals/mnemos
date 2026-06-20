@@ -478,3 +478,16 @@ def totp_test(
     else:
         console.print("[red]✗[/red] Code is invalid or expired.")
         raise typer.Exit(1)
+
+
+# ── util (integration layer) ───────────────────────────────────────────────────
+# Subcommand tree:
+#   mnemos util-detect      — print detected harnesses + deploy paths
+#   mnemos util-setup       — deploy files + register MCP (unified entry point)
+#   mnemos util-update      — bring stale files to current version
+#   mnemos util-verify      — compare deployed files against shipped pack
+#   mnemos util-uninstall   — remove only stamped files
+
+from mnemos.cli.util import util_app  # noqa: E402
+
+app.add_typer(util_app, name="util")
