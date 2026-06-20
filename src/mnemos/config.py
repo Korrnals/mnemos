@@ -17,6 +17,10 @@ class MnemosConfig(BaseModel):
     db_name: str = "mnemos.db"
     # M2: tag contract enforcement
     strict_tag_contract: bool = True
+    # M10: auto-run the context filter on ingest (mnemos_add / manager.add).
+    # When True, raw_content is preserved and clean_content is populated;
+    # filter failures are non-fatal (memory is still saved with raw content).
+    auto_filter: bool = True
 
 
 class EmbeddingConfig(BaseModel):

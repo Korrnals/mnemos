@@ -779,6 +779,66 @@ class SQLiteStore:
         self._cache.set("projects_counts", result)
         return result
 
+    def get_filter_stats(self) -> dict[str, Any]:
+        """M10 — aggregate Context Filter coverage statistics.
+
+        Returns:
+            filtered: count of memories with clean_content populated
+            unfiltered: count of memories without clean_content
+            avg_reduction_pct: mean char reduction across filtered memories
+            by_profile: {profile: count} for filtered memories
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT "
+            "COUNT(*) FILTER (WHERE clean_content IS NOT NULL) AS filtered, "
+            "COUNT(*) FILTER (WHERE clean_content IS NULL) AS unfiltered "
+            "FROM memories"
+        ).fetchone()
+        filtered = int(row["filtered"]) if row else 0
+        unfiltered = int(row["unfiltered"]) if row else 0
+
+        # Per-profile counts (filtered memories only)
+        profile_rows = conn.execute(
+            "SELECT COALESCE(filter_profile,'default') AS p, COUNT(*) AS c "
+            "FROM memories WHERE clean_content IS NOT NULL GROUP BY p"
+        ).fetchall()
+        by_profile: dict[str, int] = {str(r["p"]): int(r["c"]) for r in profile_rows}
+
+        # Average char reduction: parse filter_stats JSON for each filtered
+        # memory and compute (1 - final_chars / original_chars) * 100.
+        avg_reduction_pct = 0.0
+        if filtered > 0:
+            stat_rows = conn.execute(
+                "SELECT filter_stats FROM memories "
+                "WHERE clean_content IS NOT NULL AND filter_stats IS NOT NULL"
+            ).fetchall()
+            reductions: list[float] = []
+            for sr in stat_rows:
+                raw_stats = sr["filter_stats"]
+                if not raw_stats:
+                    continue
+                try:
+                    parsed = json.loads(raw_stats)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                reduction = parsed.get("reduction")
+                if not isinstance(reduction, dict):
+                    continue
+                orig = reduction.get("original_chars")
+                final = reduction.get("final_chars")
+                if isinstance(orig, (int, float)) and isinstance(final, (int, float)) and orig > 0:
+                    reductions.append((1.0 - final / orig) * 100.0)
+            if reductions:
+                avg_reduction_pct = sum(reductions) / len(reductions)
+
+        return {
+            "filtered": filtered,
+            "unfiltered": unfiltered,
+            "avg_reduction_pct": round(avg_reduction_pct, 2),
+            "by_profile": by_profile,
+        }
+
     def get_by_file_path(self, file_path: str) -> Memory | None:
         conn = self._get_conn()
         r = conn.execute("SELECT * FROM memories WHERE file_path=?", (file_path,)).fetchone()

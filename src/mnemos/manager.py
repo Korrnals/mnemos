@@ -118,6 +118,17 @@ class MemoryManager:
         # Persist to SQLite
         self.sqlite.save(memory)
 
+        # M10: auto-filter on ingest if enabled. Non-fatal: on failure the
+        # memory is still saved with raw content (clean_content stays None).
+        if self.settings.mnemos.auto_filter and memory.content:
+            try:
+                self.apply_context_filter(memory.id, profile=data.filter_profile)
+                reloaded = self.sqlite.get(memory.id)
+                if reloaded is not None:
+                    memory = reloaded
+            except Exception as exc:
+                logger.warning("Auto-filter failed (non-fatal) for %s: %s", memory.id, exc)
+
         # Only embed + index published memories in the vector store
         if memory.status == MemoryStatus.PUBLISHED:
             try:
@@ -197,8 +208,15 @@ class MemoryManager:
         status: MemoryStatus | None = None,
         limit: int = 20,
         hybrid_alpha: float | None = None,
+        include_raw: bool = False,
     ) -> list[SearchResult]:
-        """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion."""
+        """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion.
+
+        ``include_raw`` is accepted for API/MCP compatibility (the SearchQuery
+        model carries it) but does not change the search leg — the caller
+        inspects ``result.memory.raw_content`` when needed.
+        """
+        _ = include_raw  # accepted for contract symmetry; no search-leg effect
         alpha = hybrid_alpha if hybrid_alpha is not None else self.settings.search.hybrid_alpha
 
         # ── FTS leg ────────────────────────────────────────────────────────
@@ -305,6 +323,7 @@ class MemoryManager:
 
     def stats(self) -> dict[str, Any]:
         by_status = self.sqlite.count_by_status()
+        filter_stats = self.sqlite.get_filter_stats()
         return {
             "status": "ok",
             "version": "0.1.0",
@@ -314,6 +333,13 @@ class MemoryManager:
             "by_status": by_status,
             "vectors": self.vectors.count(),
             "projects": self.sqlite.get_project_memory_counts(),
+            "filter": {
+                "auto_filter": self.settings.mnemos.auto_filter,
+                "filtered_count": filter_stats["filtered"],
+                "unfiltered_count": filter_stats["unfiltered"],
+                "avg_reduction_pct": filter_stats["avg_reduction_pct"],
+                "by_profile": filter_stats["by_profile"],
+            },
         }
 
     # ── Path-scoped rules ingest (M8) ───────────────────────────────────────
@@ -368,7 +394,17 @@ class MemoryManager:
         memory.filter_version = result["version"]
         memory.updated_at = datetime.now(UTC)
 
-        self.sqlite.save(memory)
+        # Use targeted UPDATE (not save()/INSERT OR REPLACE) to avoid
+        # changing the rowid — FTS5 external-content tables lose sync
+        # when INSERT OR REPLACE fires delete+insert triggers.
+        # updated_at is set automatically by update_fields().
+        self.sqlite.update_fields(
+            memory.id,
+            clean_content=memory.clean_content,
+            filter_profile=memory.filter_profile,
+            filter_stats=memory.filter_stats,
+            filter_version=memory.filter_version,
+        )
 
         return {
             "status": "ok",
@@ -376,6 +412,58 @@ class MemoryManager:
             "clean_content": result["clean_content"],
             "filter_profile": result["profile"],
             "stats": result["stats"],
+        }
+
+    def filter_all(
+        self,
+        *,
+        profile: str | None = None,
+        budget: int | None = None,
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        """Re-apply the context filter to all (or a batch of) memories.
+
+        Used by `mnemos filter --all`. Iterates memories in batches via
+        ``sqlite.list_all`` and calls ``apply_context_filter`` on each.
+        Failures on individual memories are non-fatal and counted.
+
+        Returns aggregate stats: total, filtered, failed, skipped.
+        """
+        total = self.sqlite.count()
+        offset = 0
+        filtered = 0
+        failed = 0
+        skipped = 0
+        seen = 0
+        while seen < total:
+            batch = self.sqlite.list_all(limit=limit, offset=offset)
+            if not batch:
+                break
+            for memory in batch:
+                seen += 1
+                if not (memory.raw_content or memory.content):
+                    skipped += 1
+                    continue
+                try:
+                    result = self.apply_context_filter(
+                        memory.id, profile=profile, budget=budget
+                    )
+                    if result.get("status") == "ok":
+                        filtered += 1
+                    else:
+                        failed += 1
+                except Exception as exc:
+                    logger.warning("filter_all: failed %s: %s", memory.id, exc)
+                    failed += 1
+            offset += len(batch)
+            if len(batch) < limit:
+                break
+        return {
+            "status": "ok",
+            "total": total,
+            "filtered": filtered,
+            "failed": failed,
+            "skipped": skipped,
         }
 
     # ── Ingestion ────────────────────────────────────────────────────────────
