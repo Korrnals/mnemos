@@ -1,4 +1,4 @@
-.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify security-reminder update-chromadb update-deps build-dist build-image push-image
+.PHONY: help install bootstrap check-venv test lint format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
@@ -18,7 +18,8 @@ help:
 	@echo "  make update-chromadb - Try upgrading chromadb and re-run audit"
 	@echo "  make update-deps - Upgrade all deps and re-run audit"
 	@echo "  make coverage   - Run pytest with coverage"
-	@echo "  make verify     - Run all checks (lint + typecheck + security + test)"
+	@echo "  make verify     - Run all checks (lint + typecheck + security + test + doctor)"
+	@echo "  make doctor     - Run mnemos doctor health checks (config, storage, MCP, integration)"
 	@echo "  make clean      - Remove build artifacts"
 	@echo "  make build-dist - Build wheel + sdist into dist/ (requires: pip install build)"
 	@echo "  make build-image - Build container image locally with podman"
@@ -61,8 +62,24 @@ update-deps:
 coverage:
 	pytest --cov=src/mnemos --cov-report=term-missing --cov-fail-under=80 tests/ -q
 
-verify: lint lint-shell test security security-reminder
+verify: lint typecheck test security security-reminder doctor
 	@echo "✅ All verification checks passed"
+
+# doctor gate: fail on actual failures (exit 1), allow warnings (exit 2).
+# CI environments typically lack agent harnesses, so the integration check
+# warns — that is expected and must not break the build.
+doctor:
+	@mnemos doctor --json > /dev/null 2>&1; \
+	code=$$?; \
+	if [ $$code -eq 1 ]; then \
+		echo "✗ mnemos doctor: one or more health checks FAILED"; \
+		mnemos doctor; \
+		exit 1; \
+	elif [ $$code -eq 2 ]; then \
+		echo "⚠ mnemos doctor: warnings only (non-blocking)"; \
+	else \
+		echo "✓ mnemos doctor: all checks passed"; \
+	fi
 
 bootstrap:
 	@echo "🔧 Creating .venv and installing mnemos (editable) + dev extras..."

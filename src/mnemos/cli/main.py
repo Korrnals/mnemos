@@ -1,6 +1,5 @@
 """Mnemos CLI — Typer-based command interface.
 
-Renamed from ai-brain's CLI (brain → mnemos).
 Entry point: mnemos (declared in pyproject.toml [project.scripts]).
 """
 
@@ -14,9 +13,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from mnemos.cli._manager import get_manager
 from mnemos.config import load_settings
-from mnemos.manager import MemoryManager
 from mnemos.models import MemoryCreate, MemorySource, MemoryType
+
+# ``get_manager`` lives in the leaf module ``_manager`` so that CLI
+# subcommand modules (export_cmd, import_cmd) can import it without forming
+# a circular import with this module (which imports them to register the
+# Typer sub-apps). Re-exported here for backward compatibility.
 
 if TYPE_CHECKING:
     from mnemos.api.auth_store import AuthStore
@@ -27,8 +31,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
-
-_manager: MemoryManager | None = None
 
 
 def _version_callback(value: bool) -> None:
@@ -55,14 +57,6 @@ def main(
     """Mnemos — standalone memory & knowledge server for GCW agents."""
 
 
-def get_manager(config: str | None = None) -> MemoryManager:
-    global _manager
-    if _manager is None:
-        settings = load_settings(config)
-        _manager = MemoryManager(settings)
-    return _manager
-
-
 ConfigOption = typer.Option(None, "--config", "-c", help="Path to config.yaml")
 
 
@@ -78,11 +72,89 @@ def add(
     url: str = typer.Option(None, "--url", "-u", help="Import from URL"),
     source: Annotated[MemorySource, typer.Option("--source", "-s")] = MemorySource.CLI,
     memory_type: Annotated[MemoryType, typer.Option("--type")] = MemoryType.NOTE,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Show context-filter stats (profile, token reduction, dedup, noise) "
+            "without saving the memory.",
+        ),
+    ] = False,
     config: str = ConfigOption,
 ) -> None:
-    """Add a new memory entry."""
-    mgr = get_manager(config)
+    """Add a new memory entry.
+
+    With ``--dry-run``: validates the tag contract, runs the context filter
+    pipeline on the content, and prints filter stats **without saving**.
+    Useful for previewing how the M10 Context Filter will transform input
+    before committing it to the store.
+    """
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    # ── --dry-run: validate tags + run filter, then exit without saving ──
+    if dry_run:
+        if url:
+            console.print(
+                "[red]--dry-run is not supported with --url (content is fetched at "
+                "ingest time).[/red]"
+            )
+            raise typer.Exit(1)
+        if file:
+            text = Path(file).read_text(encoding="utf-8")
+        elif content:
+            text = content
+        else:
+            stdin_text = sys.stdin.read().strip()
+            if not stdin_text:
+                console.print("[red]No content provided.[/red]")
+                raise typer.Exit(1)
+            text = stdin_text
+
+        # Validate tag contract (raises TagContractError in strict mode).
+        from mnemos.config import load_settings as _load_settings
+        from mnemos.filter.pipeline import apply_filter
+        from mnemos.models import validate_tag_contract
+
+        settings = _load_settings(config)
+        validate_tag_contract(tag_list, strict=settings.mnemos.strict_tag_contract)
+
+        result = apply_filter(text)
+        stats = result["stats"]
+        tokens_in = len(text) // 4 or 1
+        tokens_out = stats["tokens"]["estimated_tokens"]
+        reduction_pct = (
+            round((1 - tokens_out / tokens_in) * 100, 1) if tokens_in else 0.0
+        )
+
+        console.print("[cyan][dry-run][/cyan] Filter preview (no memory saved):")
+        console.print(f"  Input:     {tokens_in} tokens")
+        console.print(
+            f"  Output:    {tokens_out} tokens ({reduction_pct}% reduction)"
+        )
+        console.print(f"  Profile:   {result['profile']} (auto-detected)")
+        dedup = stats.get("dedup", {})
+        console.print(
+            f"  Dedup:     {dedup.get('exact_dups', 0)} exact, "
+            f"{dedup.get('near_dups', 0)} near-duplicates removed"
+        )
+        noise = stats.get("noise", {})
+        noise_lines = (
+            noise.get("removed_ansi", 0)
+            + noise.get("removed_progress", 0)
+            + noise.get("removed_timestamps", 0)
+            + noise.get("removed_separators", 0)
+        )
+        console.print(f"  Noise:     {noise_lines} lines cleaned")
+        budget = stats["tokens"].get("budget")
+        console.print(
+            f"  Budget:    {budget if budget else 'not set (no truncation)'}"
+        )
+        console.print(
+            "[dim][dry-run] Memory would be saved with these filter stats.[/dim]"
+        )
+        return
+
+    mgr = get_manager(config)
 
     if url:
         project = next((t[len("project:") :] for t in tag_list if t.startswith("project:")), "")
@@ -169,10 +241,17 @@ def recall(
         console.print()
 
 
-# ── tags validate (M2) ─────────────────────────────────────────────────────────
+# ── tags (M2) ─────────────────────────────────────────────────────────────────
+# Subcommand tree:
+#   mnemos tags validate <vault>   — validate tag contract across a vault
+
+_tags_app = typer.Typer(
+    name="tags", help="Manage and validate memory tags.", no_args_is_help=True
+)
+app.add_typer(_tags_app, name="tags")
 
 
-@app.command(name="tags-validate")
+@_tags_app.command(name="validate")
 def tags_validate(
     vault: Annotated[Path, typer.Argument(help="Path to Mnemos vault directory")],
     config: str = ConfigOption,
@@ -196,6 +275,70 @@ def stats(config: str = ConfigOption) -> None:
     s = mgr.stats()
     for k, v in s.items():
         console.print(f"  [bold]{k}[/bold]: {v}")
+
+
+# ── filter (M10) ───────────────────────────────────────────────────────────────
+
+
+@app.command(name="filter")
+def filter_cmd(
+    memory_id: str = typer.Argument(
+        None,
+        help=(
+            "Memory ID to filter. Run context filter on a single memory: "
+            "shows clean content + reduction stats. Omit with --all to re-filter every memory."
+        ),
+    ),
+    profile: str = typer.Option(
+        None,
+        "--profile",
+        "-p",
+        help="log|terminal|code|docs|web|default (auto-detected if omitted)",
+    ),
+    budget: int = typer.Option(None, "--budget", "-b", help="Token budget for truncation"),
+    all_memories: bool = typer.Option(
+        False,
+        "--all",
+        help=(
+            "Re-run context filter on ALL memories. Existing clean_content is "
+            "overwritten with fresh filter output. Reports aggregate stats."
+        ),
+    ),
+    config: str = ConfigOption,
+) -> None:
+    """Run the Context Filter on a memory. Shows clean content + reduction stats.
+
+    Note: re-filtering with a different profile produces different clean_content.
+    The filter is idempotent only when the same profile is used.
+    """
+    mgr = get_manager(config)
+
+    if all_memories:
+        with console.status("[bold green]Re-filtering all memories..."):
+            summary = mgr.filter_all(profile=profile, budget=budget)
+        console.print(f"[green]✓[/green] Filtered: {summary['filtered']}")
+        console.print(f"  total:   {summary['total']}")
+        console.print(f"  failed:  {summary['failed']}")
+        console.print(f"  skipped: {summary['skipped']}")
+        return
+
+    if not memory_id:
+        console.print("[red]Provide a memory ID or use --all.[/red]")
+        raise typer.Exit(1)
+
+    result = mgr.apply_context_filter(memory_id, profile=profile, budget=budget)
+    if result.get("status") == "error":
+        console.print(f"[red]✗[/red] {result.get('error', 'unknown error')}")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Filtered: {memory_id}")
+    console.print(f"  profile: {result['filter_profile']}")
+    stats_data = result.get("stats", {})
+    if "dedup" in stats_data:
+        console.print(f"  dedup:   {stats_data['dedup']}")
+    if "tokens" in stats_data:
+        console.print(f"  tokens:  {stats_data['tokens']}")
+    console.print(f"  clean_content:\n{result['clean_content']}")
 
 
 # ── serve ──────────────────────────────────────────────────────────────────────
@@ -241,13 +384,20 @@ def mcp_server_cmd(config: str = ConfigOption) -> None:
     asyncio.run(mcp_main())
 
 
-# ── migrate-from-ai-brain (M13) ────────────────────────────────────────────────
+# ── migrate (M13) ──────────────────────────────────────────────────────────────
+# Subcommand tree:
+#   mnemos migrate from-ai-brain   — migrate ai-brain data to Mnemos format
+
+_migrate_app = typer.Typer(
+    name="migrate", help="Migrate data from other memory systems.", no_args_is_help=True
+)
+app.add_typer(_migrate_app, name="migrate")
 
 _DEFAULT_AI_BRAIN_SOURCE = Path("~/.ai-brain").expanduser()
 _DEFAULT_BRAIN_VAULT = Path("~/brain-vault").expanduser()
 
 
-@app.command(name="migrate-from-ai-brain")
+@_migrate_app.command(name="from-ai-brain")
 def migrate(
     source: Annotated[
         Path, typer.Option("--source", help="ai-brain data dir")
@@ -478,3 +628,43 @@ def totp_test(
     else:
         console.print("[red]✗[/red] Code is invalid or expired.")
         raise typer.Exit(1)
+
+
+# ── integration (integration layer) ────────────────────────────────────────────
+# Subcommand tree:
+#   mnemos integration detect    — print detected harnesses + deploy paths
+#   mnemos integration setup     — deploy files + register MCP (unified entry point)
+#   mnemos integration update    — bring stale files to current version
+#   mnemos integration verify    — compare deployed files against shipped pack
+#   mnemos integration uninstall  — remove only stamped files
+
+from mnemos.cli.util import integration_app  # noqa: E402
+
+app.add_typer(integration_app, name="integration")
+
+
+# ── completion ─────────────────────────────────────────────────────────────────
+# Auto-detect current shell, generate completion script, auto-install into rc.
+
+from mnemos.cli.completion import completion_app  # noqa: E402
+
+app.add_typer(completion_app, name="completion")
+
+
+# ── doctor ─────────────────────────────────────────────────────────────────────
+# Health-check: config + data dir + vault + SQLite + vectors + MCP + integration + tags.
+
+from mnemos.cli.doctor import doctor_app  # noqa: E402
+
+app.add_typer(doctor_app, name="doctor")
+
+
+# ── export / import / logs (M17 — backup/restore + trace viewer) ──────────────
+
+from mnemos.cli.export_cmd import export_app  # noqa: E402
+from mnemos.cli.import_cmd import import_app  # noqa: E402
+from mnemos.cli.logs import logs_app  # noqa: E402
+
+app.add_typer(export_app, name="export")
+app.add_typer(import_app, name="import")
+app.add_typer(logs_app, name="logs")

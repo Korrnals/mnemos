@@ -43,17 +43,35 @@ from mnemos.api.client_ip import resolve_client_ip
 
 logger = logging.getLogger(__name__)
 
-_BYPASS_PATHS = frozenset(
+# Paths that always bypass auth (health + metrics are public by design).
+# Docs endpoints (/docs, /redoc, /openapi.json) are only bypassed on loopback
+# binds — see ``_get_bypass_paths``. On non-loopback binds they require auth
+# to avoid leaking API schema to unauthenticated callers.
+_ALWAYS_BYPASS = frozenset(
     {
         "/health",
         "/auth/login",
         "/auth/verify",
-        "/docs",
-        "/redoc",
-        "/openapi.json",
     }
 )
+_DOCS_BYPASS = frozenset({"/docs", "/redoc", "/openapi.json"})
+_METRICS_BYPASS = frozenset({"/metrics", "/api/v1/metrics"})
 _MUTATION_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+
+
+def _get_bypass_paths(host: str) -> frozenset[str]:
+    """Return the set of paths that bypass auth for the given bind host.
+
+    On loopback binds, docs and metrics endpoints are exposed without auth
+    for dev convenience. On non-loopback binds, docs endpoints require auth
+    (they leak API schema); metrics remain public (they carry no secrets and
+    are typically scraped by a local agent).
+    """
+    paths: set[str] = set(_ALWAYS_BYPASS)
+    paths |= _METRICS_BYPASS
+    if _is_loopback_host(host):
+        paths |= _DOCS_BYPASS
+    return frozenset(paths)
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -82,11 +100,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         path = request.url.path
 
-        # 1. Bypass list
-        if path in _BYPASS_PATHS:
-            return await _call_next(request)
-
-        # 2. Load auth config from app state (set in lifespan)
+        # 1. Load auth config from app state (set in lifespan) — needed for
+        #    both the bypass-path computation (host-dependent) and the
+        #    trust-zone resolution below.
         api_config = getattr(request.app.state, "api_config", None)
         if api_config is None:
             # Fail closed - finding auth-2. Tests that build a bare app
@@ -94,6 +110,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # fine) so the middleware can make a trust-zone decision.
             logger.error("auth: request rejected - app.state.api_config not initialised")
             return _json_response('{"detail":"Auth not initialised"}', 503)
+
+        # 2. Bypass list — docs endpoints are only bypassed on loopback binds.
+        bypass_paths = _get_bypass_paths(api_config.host)
+        if path in bypass_paths:
+            return await _call_next(request)
 
         # 3. Trust-zone resolution
         if not api_config.auth_enabled:
@@ -108,7 +129,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
             return _json_response('{"detail":"Unauthorized"}', 401)
 
-        # 4. Extract session token (Bearer > cookie)
+        # 5. Extract session token (Bearer > cookie)
         auth_header = request.headers.get("Authorization", "")
         bearer: str | None = None
         if auth_header.startswith("Bearer "):
@@ -119,7 +140,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not session_token:
             return _json_response('{"detail":"Authentication required"}', 401)
 
-        # 5. Validate session
+        # 6. Validate session
         session_hash = hashlib.sha256(session_token.encode()).hexdigest()
         auth_store: AuthStore | None = getattr(request.app.state, "auth_store", None)
         if auth_store is None:
@@ -144,14 +165,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         ):
             return _json_response('{"detail":"Invalid or expired session"}', 401)
 
-        # 6. CSRF: mutations require the Authorization: Bearer header
+        # 7. CSRF: mutations require the Authorization: Bearer header
         if request.method in _MUTATION_METHODS and not bearer:
             return _json_response(
                 '{"detail":"CSRF protection: Authorization header required for mutations"}',
                 403,
             )
 
-        # 7. Slide session TTL and expose session to downstream handlers
+        # 8. Slide session TTL and expose session to downstream handlers
         auth_store.touch_session(session_hash, api_config.session_ttl_sec)
         request.state.auth_session = session
         request.state.auth_session_hash = session_hash

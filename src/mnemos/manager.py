@@ -10,10 +10,13 @@ Backed by:
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from mnemos import __version__
 from mnemos.config import Settings
 from mnemos.embeddings import EmbeddingProvider, create_embedding_provider
 from mnemos.models import (
@@ -43,6 +46,20 @@ logger = logging.getLogger(__name__)
 _MAX_REDIRECTS: int = 5
 
 
+class _SSRFRejectionError(Exception):
+    """Internal sentinel wrapping a ``ValueError`` from ``_validate_url``.
+
+    Distinguishes an SSRF guard rejection (must be re-raised, never stored
+    in memory) from operational ``ValueError``s raised inside the fetch
+    loop (too-many-redirects, redirect-loop, missing Location) which are
+    legitimate network errors and degrade to placeholder content.
+    """
+
+    def __init__(self, original: ValueError) -> None:
+        super().__init__(str(original))
+        self.original = original
+
+
 class MemoryManager:
     """Central coordinator for all memory operations."""
 
@@ -55,6 +72,14 @@ class MemoryManager:
         self.vectors = VectorStore(settings.mnemos.data_dir)
         self._embedder: EmbeddingProvider | None = None
         self._watcher: Any = None
+        # In-memory search instrumentation (resets on restart).
+        # Accepted trade-off for the dashboard: not persisted, no history.
+        self._search_stats: dict[str, Any] = {
+            "requests_total": 0,
+            "latency_samples_ms": [],
+            "results_counts": [],
+        }
+        self._search_stats_lock = threading.Lock()
 
     @property
     def embedder(self) -> EmbeddingProvider:
@@ -117,6 +142,17 @@ class MemoryManager:
 
         # Persist to SQLite
         self.sqlite.save(memory)
+
+        # M10: auto-filter on ingest if enabled. Non-fatal: on failure the
+        # memory is still saved with raw content (clean_content stays None).
+        if self.settings.mnemos.auto_filter and memory.content:
+            try:
+                self.apply_context_filter(memory.id, profile=data.filter_profile)
+                reloaded = self.sqlite.get(memory.id)
+                if reloaded is not None:
+                    memory = reloaded
+            except Exception as exc:
+                logger.warning("Auto-filter failed (non-fatal) for %s: %s", memory.id, exc)
 
         # Only embed + index published memories in the vector store
         if memory.status == MemoryStatus.PUBLISHED:
@@ -197,9 +233,17 @@ class MemoryManager:
         status: MemoryStatus | None = None,
         limit: int = 20,
         hybrid_alpha: float | None = None,
+        include_raw: bool = False,
     ) -> list[SearchResult]:
-        """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion."""
+        """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion.
+
+        ``include_raw`` is accepted for API/MCP compatibility (the SearchQuery
+        model carries it) but does not change the search leg — the caller
+        inspects ``result.memory.raw_content`` when needed.
+        """
+        _ = include_raw  # accepted for contract symmetry; no search-leg effect
         alpha = hybrid_alpha if hybrid_alpha is not None else self.settings.search.hybrid_alpha
+        _t0 = time.monotonic()
 
         # ── FTS leg ────────────────────────────────────────────────────────
         fts_pairs: list[tuple[Memory, float]] = []
@@ -240,6 +284,12 @@ class MemoryManager:
                 # deleted between vector and SQLite indexes.
                 fetched: Memory | None = self.sqlite.get(mid)
                 if fetched is not None:
+                    # Finding: filter vector results by status — the vector
+                    # leg does not apply the status filter at query time, so
+                    # a non-published memory that somehow entered the vector
+                    # store could surface in search results. Filter here.
+                    if status is not None and fetched.status != status:
+                        continue
                     id_to_memory[mid] = fetched
 
         # Apply tag filter post-hoc
@@ -253,6 +303,21 @@ class MemoryManager:
             results.append(SearchResult(memory=matched, score=score, search_type="hybrid"))
             if len(results) >= limit:
                 break
+        # Record search instrumentation (in-memory, resets on restart).
+        latency_ms = (time.monotonic() - _t0) * 1000.0
+        with self._search_stats_lock:
+            self._search_stats["requests_total"] = int(
+                self._search_stats["requests_total"]
+            ) + 1
+            samples: list[float] = self._search_stats["latency_samples_ms"]
+            samples.append(latency_ms)
+            # Cap samples to avoid unbounded growth in long-running processes.
+            if len(samples) > 1000:
+                del samples[: len(samples) - 1000]
+            counts: list[int] = self._search_stats["results_counts"]
+            counts.append(len(results))
+            if len(counts) > 1000:
+                del counts[: len(counts) - 1000]
         return results
 
     def agent_recall(self, query: AgentRecallQuery) -> list[SearchResult]:
@@ -289,31 +354,137 @@ class MemoryManager:
         self,
         *,
         limit: int = 10,
+        offset: int = 0,
         tags: list[str] | None = None,
         project: str | None = None,
         agent: str | None = None,
+        status: MemoryStatus | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> list[Memory]:
         return self.sqlite.list_all(
             limit=limit,
+            offset=offset,
             tags=tags,
             project=project,
             agent=agent,
+            status=status,
+            since=since,
+            until=until,
         )
 
     def list_tags(self) -> dict[str, int]:
         return self.sqlite.get_all_tags()
 
+    def search_stats(self) -> dict[str, Any]:
+        """Return in-memory search instrumentation (resets on restart)."""
+        with self._search_stats_lock:
+            samples: list[float] = list(self._search_stats["latency_samples_ms"])
+            counts: list[int] = list(self._search_stats["results_counts"])
+        avg_latency_ms = round(sum(samples) / len(samples), 2) if samples else 0.0
+        avg_results = round(sum(counts) / len(counts), 2) if counts else 0.0
+        return {
+            "requests_total": int(self._search_stats["requests_total"]),
+            "avg_latency_ms": avg_latency_ms,
+            "avg_results": avg_results,
+        }
+
+    def dashboard_stats(self) -> dict[str, Any]:
+        """Structured JSON for the mnemos-eyes dashboard.
+
+        Aggregates volume, filter, pipeline, search, vectors, sessions.
+        """
+        by_status = self.sqlite.count_by_status()
+        filter_stats = self.sqlite.get_filter_stats()
+        s_stats = self.search_stats()
+        sessions = self.sqlite.count_sessions()
+        # Pipeline counts derived from status + DLQ.
+        processed_total = int(by_status.get("processed", 0)) + int(
+            by_status.get("published", 0)
+        )
+        return {
+            "version": __version__,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "volume": {
+                "memories_total": self.sqlite.count(),
+                "by_status": by_status,
+                "by_project": self.sqlite.get_project_memory_counts(),
+                "by_agent": self.sqlite.count_by_agent(),
+                "by_type": self.sqlite.count_by_type(),
+            },
+            "filter": {
+                "auto_filter": self.settings.mnemos.auto_filter,
+                "filtered_total": filter_stats["filtered"],
+                "unfiltered_total": filter_stats["unfiltered"],
+                "avg_reduction_pct": filter_stats["avg_reduction_pct"],
+                "by_profile": filter_stats["by_profile"],
+            },
+            "pipeline": {
+                "processed_total": processed_total,
+                "failed_total": self.sqlite.dlq_count(),
+                "dlq_depth": self.sqlite.dlq_count(),
+                "last_run": None,
+            },
+            "search": {
+                "requests_total": s_stats["requests_total"],
+                "avg_latency_ms": s_stats["avg_latency_ms"],
+                "avg_results": s_stats["avg_results"],
+            },
+            "vectors": {
+                "indexed_total": self.vectors.count(),
+            },
+            "sessions": {
+                "active": sessions["active"],
+                "total": sessions["total"],
+            },
+        }
+
+    def timeseries(
+        self,
+        *,
+        metric: str = "memories_added",
+        days: int = 30,
+        granularity: str = "day",
+    ) -> dict[str, Any]:
+        """Temporal data for dashboard charts.
+
+        Currently supports ``memories_added`` (daily counts from SQLite).
+        Other metrics return an empty series with a note.
+        """
+        if metric == "memories_added":
+            points = self.sqlite.count_by_date(days=days, granularity=granularity)
+        else:
+            points = []
+        return {
+            "granularity": granularity,
+            "range": f"{days}d",
+            "series": [
+                {
+                    "metric": metric,
+                    "points": points,
+                }
+            ],
+        }
+
     def stats(self) -> dict[str, Any]:
         by_status = self.sqlite.count_by_status()
+        filter_stats = self.sqlite.get_filter_stats()
         return {
             "status": "ok",
-            "version": "0.1.0",
+            "version": __version__,
             "data_dir": str(self.settings.mnemos.data_dir),
             "vault_path": str(self.settings.mnemos.vault_path),
             "total": self.sqlite.count(),
             "by_status": by_status,
             "vectors": self.vectors.count(),
             "projects": self.sqlite.get_project_memory_counts(),
+            "filter": {
+                "auto_filter": self.settings.mnemos.auto_filter,
+                "filtered_count": filter_stats["filtered"],
+                "unfiltered_count": filter_stats["unfiltered"],
+                "avg_reduction_pct": filter_stats["avg_reduction_pct"],
+                "by_profile": filter_stats["by_profile"],
+            },
         }
 
     # ── Path-scoped rules ingest (M8) ───────────────────────────────────────
@@ -368,7 +539,17 @@ class MemoryManager:
         memory.filter_version = result["version"]
         memory.updated_at = datetime.now(UTC)
 
-        self.sqlite.save(memory)
+        # Use targeted UPDATE (not save()/INSERT OR REPLACE) to avoid
+        # changing the rowid — FTS5 external-content tables lose sync
+        # when INSERT OR REPLACE fires delete+insert triggers.
+        # updated_at is set automatically by update_fields().
+        self.sqlite.update_fields(
+            memory.id,
+            clean_content=memory.clean_content,
+            filter_profile=memory.filter_profile,
+            filter_stats=memory.filter_stats,
+            filter_version=memory.filter_version,
+        )
 
         return {
             "status": "ok",
@@ -376,6 +557,58 @@ class MemoryManager:
             "clean_content": result["clean_content"],
             "filter_profile": result["profile"],
             "stats": result["stats"],
+        }
+
+    def filter_all(
+        self,
+        *,
+        profile: str | None = None,
+        budget: int | None = None,
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        """Re-apply the context filter to all (or a batch of) memories.
+
+        Used by `mnemos filter --all`. Iterates memories in batches via
+        ``sqlite.list_all`` and calls ``apply_context_filter`` on each.
+        Failures on individual memories are non-fatal and counted.
+
+        Returns aggregate stats: total, filtered, failed, skipped.
+        """
+        total = self.sqlite.count()
+        offset = 0
+        filtered = 0
+        failed = 0
+        skipped = 0
+        seen = 0
+        while seen < total:
+            batch = self.sqlite.list_all(limit=limit, offset=offset)
+            if not batch:
+                break
+            for memory in batch:
+                seen += 1
+                if not (memory.raw_content or memory.content):
+                    skipped += 1
+                    continue
+                try:
+                    result = self.apply_context_filter(
+                        memory.id, profile=profile, budget=budget
+                    )
+                    if result.get("status") == "ok":
+                        filtered += 1
+                    else:
+                        failed += 1
+                except Exception as exc:
+                    logger.warning("filter_all: failed %s: %s", memory.id, exc)
+                    failed += 1
+            offset += len(batch)
+            if len(batch) < limit:
+                break
+        return {
+            "status": "ok",
+            "total": total,
+            "filtered": filtered,
+            "failed": failed,
+            "skipped": skipped,
         }
 
     # ── Ingestion ────────────────────────────────────────────────────────────
@@ -496,14 +729,21 @@ class MemoryManager:
 
         ``httpx.Client(follow_redirects=False)`` is retained so the library
         never follows a redirect without our guard running first.
+
+        SSRF rejections (``ValueError`` from ``_validate_url``) are re-raised
+        as hard errors — the blocked URL is NOT stored in memory. Only
+        network/operational errors (connection, timeout, HTTP error status,
+        too-many-redirects, redirect-loop) degrade to a placeholder.
         """
+        # Initial SSRF validation — reject before any fetch attempt.
+        # A ValueError here must NOT be swallowed into placeholder content.
+        self._validate_url(url)
+
         try:
             from urllib.parse import urljoin
 
             import httpx
             import trafilatura
-
-            self._validate_url(url)
 
             # Per-hop SSRF re-validation (v2): follow redirects manually so
             # every Location target is checked by _validate_url before the
@@ -529,8 +769,13 @@ class MemoryManager:
                     next_url = urljoin(current_url, location)
                     # Core per-hop guard: validate the redirect target BEFORE
                     # following. Catches the pivot: public host -> 169.254.x
-                    # or any private/loopback/metadata endpoint.
-                    self._validate_url(next_url)
+                    # or any private/loopback/metadata endpoint. A ValueError
+                    # here is an SSRF rejection — wrap it so the outer
+                    # ``except Exception`` does not swallow it into a placeholder.
+                    try:
+                        self._validate_url(next_url)
+                    except ValueError as exc:
+                        raise _SSRFRejectionError(exc) from exc
                     if next_url in visited:
                         raise ValueError(f"Redirect loop detected at {next_url}")
                     visited.add(next_url)
@@ -539,6 +784,11 @@ class MemoryManager:
 
             resp.raise_for_status()
             content = trafilatura.extract(resp.text) or resp.text[:4000]
+        except _SSRFRejectionError as exc:
+            # SSRF guard rejected a URL — do NOT store it in memory.
+            raise ValueError(
+                f"URL rejected for security reasons: {exc.original}"
+            ) from exc.original
         except Exception as exc:
             logger.warning("URL fetch failed: %s - using placeholder", exc)
             content = f"URL: {url}\n[fetch failed: {exc}]"

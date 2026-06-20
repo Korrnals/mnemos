@@ -1,7 +1,6 @@
 """Embeddings layer for Mnemos.
 
 Uses local ONNX MiniLM-class models by default (privacy + offline).
-Forked from ai-brain's embedding.py.
 
 Providers:
   - ChromaDefaultProvider   — zero-dep ONNX via chromadb (default)
@@ -147,7 +146,11 @@ class ONNXHubProvider(EmbeddingProvider):
 
         try:
             model_path = hf_hub_download(model_id, onnx_file, revision=revision)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "hf_hub_download(%s, %s) failed, falling back to model.onnx: %s",
+                model_id, onnx_file, exc,
+            )
             model_path = hf_hub_download(model_id, "model.onnx", revision=revision)
 
         tokenizer_path = hf_hub_download(model_id, "tokenizer.json", revision=revision)

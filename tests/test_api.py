@@ -193,6 +193,122 @@ class TestSearch:
 
 
 # ---------------------------------------------------------------------------
+# Tag filter exact matching (finding: LIKE → json_each)
+# ---------------------------------------------------------------------------
+
+
+class TestTagFilterExactMatch:
+    """Tag filtering must match exact tag values, not substrings.
+
+    Regression for the ``LIKE '%"tag"%'`` → ``json_each()`` fix: searching
+    for ``project:mnemos`` must NOT match ``project:mnemos-eyes``.
+    """
+
+    def test_tag_filter_excludes_substring_match(self, client):
+        """``project:mnemos`` filter does not match ``project:mnemos-eyes``."""
+        client.post(
+            "/memories",
+            json={
+                "content": "mnemos backend memory",
+                "tags": ["project:mnemos", "agent:backend", "gcw:learning"],
+            },
+        )
+        client.post(
+            "/memories",
+            json={
+                "content": "mnemos eyes frontend memory",
+                "tags": ["project:mnemos-eyes", "agent:frontend", "gcw:learning"],
+            },
+        )
+
+        # Filter by project:mnemos — must return only the exact match.
+        resp = client.get("/memories?tags=project:mnemos")
+        assert resp.status_code == 200
+        results = resp.json()
+        assert len(results) == 1
+        assert "project:mnemos" in results[0]["tags"]
+        assert "project:mnemos-eyes" not in results[0]["tags"]
+
+    def test_tag_filter_exact_multiple_tags(self, client):
+        """Multiple tag filters use AND logic with exact matching."""
+        client.post(
+            "/memories",
+            json={
+                "content": "memory with both tags",
+                "tags": ["project:mnemos", "agent:backend", "gcw:learning"],
+            },
+        )
+        client.post(
+            "/memories",
+            json={
+                "content": "memory with only one tag",
+                "tags": ["project:mnemos", "agent:frontend", "gcw:learning"],
+            },
+        )
+
+        # Filter by project:mnemos AND agent:backend — only the first matches.
+        resp = client.get("/memories?tags=project:mnemos,agent:backend")
+        assert resp.status_code == 200
+        results = resp.json()
+        assert len(results) == 1
+        assert "agent:backend" in results[0]["tags"]
+
+
+# ---------------------------------------------------------------------------
+# Vector search status filter (finding: vector leg skips status filter)
+# ---------------------------------------------------------------------------
+
+
+class TestVectorSearchStatusFilter:
+    """Vector search results must be filtered by the requested status.
+
+    Regression for the vector-leg status filter fix: a non-published
+    memory that somehow enters the vector store must not appear in
+    search results when ``status=published`` is requested.
+    """
+
+    def test_search_status_excludes_non_published(self, client):
+        """Search with status=published excludes raw memories."""
+        # Published memory — enters the vector store on save.
+        client.post(
+            "/memories",
+            json={
+                "content": "published kubernetes note",
+                "tags": ["project:mnemos", "agent:backend", "gcw:learning"],
+                "status": "published",
+            },
+        )
+        # Raw memory — should NOT be in the vector store, but if it is,
+        # the status filter must still exclude it from results.
+        client.post(
+            "/memories",
+            json={
+                "content": "raw kubernetes note",
+                "tags": ["project:mnemos", "agent:backend", "gcw:learning"],
+                "status": "raw",
+            },
+        )
+
+        # Search with status=published — must return only the published memory.
+        resp = client.post(
+            "/search",
+            json={
+                "query": "kubernetes",
+                "status": "published",
+                "limit": 10,
+            },
+        )
+        assert resp.status_code == 200
+        results = resp.json()
+        # All results must be published.
+        assert all(r["status"] == "published" for r in results)
+        # The published memory must be present.
+        assert any("published" in r["content"] for r in results)
+        # The raw memory must NOT be present.
+        assert all("raw" not in r["content"] for r in results)
+
+
+# ---------------------------------------------------------------------------
 # Per-agent recall
 # ---------------------------------------------------------------------------
 

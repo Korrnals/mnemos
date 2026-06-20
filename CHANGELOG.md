@@ -15,6 +15,156 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Git-workflow notes runbook** (`docs/{ru,en}/admin/runbooks/git-workflow-notes.md`)
   — documents the expected `git branch -d` warning after a squash-merge and
   why `-d` is safe despite the warning.
+- **Dashboard / metrics API** (`src/mnemos/api/main.py`,
+  `src/mnemos/manager.py`, `src/mnemos/storage/sqlite_store.py`) — three
+  new endpoints for the `mnemos-eyes` frontend:
+  - `GET /api/v1/stats` — structured JSON with volume, filter, pipeline,
+    search, vectors, and sessions sections.
+  - `GET /api/v1/stats/timeseries` — daily memory counts for configurable
+    range (`?range=30d&metric=memories_added`).
+  - `GET /api/v1/metrics` — Prometheus text exposition format for
+    Grafana/observability.
+  - `GET /metrics` kept as backward-compatible alias (returns `stats()`
+    JSON).
+- **Extended `GET /memories` filters** — `status`, `project`, `agent`,
+  `tags` (comma-separated, AND logic), `since`, `until` (ISO datetime),
+  `offset` (pagination). Invalid `status` returns 422.
+- **Search instrumentation** (`src/mnemos/manager.py`) — in-memory
+  counter + latency tracker for `MemoryManager.search()`. Exposed via
+  `/api/v1/stats` `search` section and `mnemos_search_requests_total`
+  Prometheus metric. Resets on restart (accepted trade-off for
+  dashboard).
+- **New SQLite aggregate queries** (`src/mnemos/storage/sqlite_store.py`)
+  — `count_by_agent()`, `count_by_type()`, `count_by_date()`,
+  `count_sessions()`.
+- **Agent MCP wiring** (`src/mnemos/cli/agent_wiring.py`,
+  `src/mnemos/cli/util.py`) — `mnemos integration setup` now wires
+  `mnemos/*` into the `tools:` frontmatter of GCW agent files
+  (`~/.copilot/agents/*.agent.md`). Flags: `--wire-agents` (enable),
+  `--wire-agents --all` (wire all unwired, no prompt), `--wire-agents
+  --select name1,name2` (specific agents), `--no-wire-agents` (skip),
+  `--precise` (individual `mnemos/mnemos_*` tokens instead of wildcard),
+  `--dry-run` (preview). Only `tools:` is touched; agents with
+  `tool_profile:` are skipped (managed by the GCW installer). Idempotent.
+- **Agent wiring in `mnemos integration verify`** — the verify report now
+  includes an agents section showing wired / unwired / skipped counts.
+- **Agent wiring check in `mnemos doctor`** (`src/mnemos/cli/doctor.py`) —
+  9th health check reporting agent wiring status; warns if unwired agents
+  are detected.
+- **Context Filter auto-activation on ingest (M10)**
+  (`src/mnemos/filter/pipeline.py`, `src/mnemos/manager.py`,
+  `src/mnemos/config.py`) — the five-stage filter (dedup, noise, extract,
+  compress, tokens) now auto-runs on every `mnemos_add` when
+  `auto_filter: true` (default for new installs). Stores `raw_content` +
+  `clean_content` + `filter_stats`; filter failures are non-fatal (memory
+  is still saved with raw content). `mnemos_search` /
+  `mnemos_recall_context` return `clean_content` when available.
+- **`mnemos_filter` MCP tool** (`src/mnemos/mcp_server.py`) — explicit
+  re-filter of an existing memory. Parameters: `memory_id` (required),
+  `profile` (optional, auto-detected), `budget` (optional token budget).
+  Returns `clean_content` + per-stage `stats`.
+- **`mnemos filter` CLI command** (`src/mnemos/cli/main.py`) —
+  `mnemos filter <id>` re-filters a single memory; `mnemos filter --all`
+  re-filters every memory (batch, reports aggregate stats). Flags:
+  `--profile`, `--budget`, `--all`.
+- **Filter stats in `mnemos stats`** (`src/mnemos/manager.py`) — the stats
+  output now includes a filter section: `auto_filter` flag,
+  `filtered_count`, `unfiltered_count`, `avg_reduction_pct`, and
+  `by_profile` breakdown.
+- **Context Filter profiles** — `log | terminal | code | docs | web |
+  default`, auto-detected from content heuristics (timestamps, ANSI codes,
+  code keywords, HTML tags, markdown structure).
+- **`make doctor` target** (`Makefile`) — runs `mnemos doctor --json` as a
+  health-check gate, wired into `make verify`. Fails the build on actual
+  failures (exit 1); allows warnings (exit 2) since CI environments typically
+  lack agent harnesses (integration check warns by design).
+- **`install.sh` post-install suggestions** (`scripts/install.sh`) — the
+  success message now suggests `mnemos completion` (shell autocompletion),
+  `mnemos integration setup` (behavioral instructions), and `mnemos doctor`
+  (installation verification). Suggestions only — nothing is auto-run.
+- **README Quick Start step 4** (`README.md`, `README.ru.md`) — added
+  "Deploy behavioral instructions" / "Установка поведенческих инструкций"
+  section covering `mnemos integration setup`. Updated step count from
+  "Three" to "Four" in both languages.
+
+### Removed
+
+- **ai-brain provenance comments** (`src/mnemos/`) — removed "Forked from
+  ai-brain" / "Key differences from ai-brain" / "Renamed from ai-brain"
+  comment blocks from 10 source files (`__init__.py`, `mcp_server.py`,
+  `storage/{sqlite_store,vector_store,vault,__init__}.py`,
+  `embeddings/__init__.py`, `auto_collect.py`, `models.py`, `cli/main.py`).
+  Module docstrings now describe what each module does, not where it came
+  from. Provenance lives in ADR 0001 and git history. Functional migration
+  code (`cli/migrate.py`, `mnemos migrate from-ai-brain` command) is
+  intentionally preserved.
+- **`.history/` directory** — deleted the VS Code Local History cache
+  (~100+ stale files, gitignored). VS Code recreates files as needed.
+
+### Changed
+
+- **`create_provider()` docstring** (`src/mnemos/llm/base.py`) — updated to
+  reference PR 2 (standard providers: Ollama + OpenAI + Anthropic); the
+  factory still raises `NotImplementedError` in PR 1.
+
+- **`mnemos completion` command** (`src/mnemos/cli/completion.py`) —
+  auto-detects the current shell from `$SHELL`, generates the completion
+  script, and auto-installs it into the right rc file (`~/.bashrc`,
+  `~/.zshrc`, `~/.config/fish/completions/mnemos.fish`). Idempotent —
+  re-running does not duplicate the source line. Supports
+  `mnemos completion bash|zsh|fish` for explicit shell selection and
+  `mnemos completion --show-instructions` to print manual steps without
+  modifying files. No `--install` flag — auto-install is the default.
+- **`mnemos doctor` command** (`src/mnemos/cli/doctor.py`) — health check
+  that runs 8 checks (config, data dir, vault, SQLite DB, vector store,
+  MCP server registration, integration layer, tag contract) and reports
+  status with a rich table. Exit codes: 0 = all pass, 1 = one or more
+  failed, 2 = warnings only. Supports `--json` for CI/scripting.
+
+### Removed
+
+- **ai-brain provenance comments** (`src/mnemos/`) — removed "Forked from
+  ai-brain" / "Key differences from ai-brain" / "Renamed from ai-brain"
+  comment blocks from 10 source files (`__init__.py`, `mcp_server.py`,
+  `storage/{sqlite_store,vector_store,vault,__init__}.py`,
+  `embeddings/__init__.py`, `auto_collect.py`, `models.py`, `cli/main.py`).
+  Module docstrings now describe what each module does, not where it came
+  from. Provenance lives in ADR 0001 and git history. Functional migration
+  code (`cli/migrate.py`, `mnemos migrate from-ai-brain` command) is
+  intentionally preserved.
+- **`.history/` directory** — deleted the VS Code Local History cache
+  (~100+ stale files, gitignored). VS Code recreates files as needed.
+
+### Changed
+
+- **CLI restructure — professional command grouping**:
+  - `mnemos util-*` → `mnemos integration *` (detect/setup/update/verify/uninstall)
+    — the flat `util-*` namespace is replaced by a real `integration` group.
+  - `mnemos tags-validate` → `mnemos tags validate` — nested under a `tags` group.
+  - `mnemos migrate-from-ai-brain` → `mnemos migrate from-ai-brain` — nested
+    under a `migrate` group.
+  - Core commands (`add`, `search`, `recall`, `stats`, `serve`, `mcp-server`)
+    stay flat — daily-use commands, like `git add`/`git commit`.
+  - `auth token/totp` unchanged.
+  - Clean break — no deprecation aliases (owner-confirmed).
+- **Integration layer** (`integrations/`, `src/mnemos/cli/integration.py`,
+  `src/mnemos/cli/util.py`) — versioned pack of instructions + skills +
+  prompts that ships inside the package and deploys into detected agent
+  harnesses (GCW `~/.copilot/`, generic Copilot `~/.config/Code/User/prompts/`,
+  Cursor `~/.cursor/rules/`). New `mnemos integration *` CLI subcommands:
+  - `mnemos integration detect` — print detected harnesses + deploy paths
+  - `mnemos integration setup` — deploy files + register MCP (unified entry point)
+  - `mnemos integration update` — bring stale files to current version
+  - `mnemos integration verify` — compare deployed files against shipped pack
+  - `mnemos integration uninstall` — remove only stamped files, preserve user files
+  - All commands support `--dry-run` and `--target` (default: all detected)
+  - Version stamp `<!-- mnemos-integration: v1.2.0 -->` on every deployed file
+  - Idempotent: re-running `integration setup` updates stale files without duplicating
+- **`integrations/targets.yaml`** — harness detection rules + deploy maps
+  with `~` expansion. A target is detected if ANY of its detect paths exist.
+- **`install.sh --instructions` / `--no-instructions`** flag — deploys the
+  agent integration pack after MCP setup (interactive prompt over `/dev/tty`,
+  same pattern as `--mcp` / `--no-mcp`).
 
 ### Fixed
 

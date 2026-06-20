@@ -111,6 +111,7 @@ mnemos mcp-server
 - [Справочник HTTP API](user/http-api.md) — все эндпоинты, тела запросов и ответов *(Wave 2)*
 - [Справочник CLI](user/cli-reference.md) — все подкоманды `mnemos` *(Wave 2)*
 - [Контракт тегов](user/tag-contract.md) — схема M2: `project:`, `agent:`, `gcw:` *(Wave 2)*
+- [Контекстный фильтр](user/context-filter.md) — пятиступенчатый очиститель шума (dedup, noise, extract, compress, tokens) с профилями и автофильтром.
 
 ---
 

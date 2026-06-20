@@ -1,15 +1,11 @@
 """SQLite metadata storage with FTS5 full-text search.
 
-Forked from ai-brain's sqlite_store.py.
-Key additions for Mnemos:
-  - Extended schema: project, agent (denormalised from tags)
-  - Pipeline fields: quality_score, confidence, source_coverage,
-    cluster_id, derived_from, embedding_id
-  - Context Filter fields: raw_content, clean_content, filter_profile,
-    filter_stats, filter_version
-  - Trace table (M6 — explainability)
-  - FTS also indexes project + agent for fast per-agent recall (M3)
-  - Per-agent / per-project query helpers (M3)
+Extended schema: project, agent (denormalised from tags), pipeline fields
+(quality_score, confidence, source_coverage, cluster_id, derived_from,
+embedding_id), Context Filter fields (raw_content, clean_content,
+filter_profile, filter_stats, filter_version), and a trace table (M6 —
+explainability). FTS indexes project + agent for fast per-agent recall (M3).
+Per-agent / per-project query helpers (M3).
 """
 
 from __future__ import annotations
@@ -465,7 +461,10 @@ class SQLiteStore:
         )
 
     def _invalidate_caches(self) -> None:
-        self._cache.invalidate("tags", "projects_counts", "data_health", "stats")
+        self._cache.invalidate(
+            "tags", "projects_counts", "agents_counts", "types_counts",
+            "data_health", "stats",
+        )
         self._cache.invalidate_prefix("graph_")
         self._cache.invalidate_prefix("agent_")
         self._cache.invalidate_prefix("project_")
@@ -596,6 +595,8 @@ class SQLiteStore:
         project: str | None = None,
         agent: str | None = None,
         category: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> list[Memory]:
         conn = self._get_conn()
         q = "SELECT * FROM memories WHERE 1=1"
@@ -617,14 +618,23 @@ class SQLiteStore:
             params.append(agent)
         if tags:
             for tag in tags:
-                q += " AND tags LIKE ?"
-                params.append(f'%"{tag}"%')
+                q += (
+                    " AND EXISTS (SELECT 1 FROM json_each(tags) "
+                    "WHERE json_each.value = ?)"
+                )
+                params.append(tag)
         if category is not None:
             if category == "__uncategorized":
                 q += " AND category IS NULL"
             else:
                 q += " AND (category=? OR category LIKE ?)"
                 params.extend([category, f"{category}/%"])
+        if since:
+            q += " AND created_at >= ?"
+            params.append(since)
+        if until:
+            q += " AND created_at <= ?"
+            params.append(until)
         q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         return [self._row_to_memory(r) for r in conn.execute(q, params).fetchall()]
@@ -654,6 +664,78 @@ class SQLiteStore:
             (cluster_id,),
         ).fetchall()
         return [self._row_to_memory(r) for r in rows]
+
+    # ── Export / import query (M17) ───────────────────────────────────────
+
+    def list_for_export(
+        self,
+        *,
+        project: str | None = None,
+        agent: str | None = None,
+        status: MemoryStatus | None = None,
+        tags: list[str] | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[Memory]:
+        """Return memories matching export filters, ordered oldest-first.
+
+        ``since`` / ``until`` apply to both ``created_at`` and ``updated_at``
+        (a memory is included if either timestamp falls within the window).
+        When ``since`` is set, this implements incremental export: only
+        memories created or updated after the boundary are returned.
+        """
+        conn = self._get_conn()
+        q = "SELECT * FROM memories WHERE 1=1"
+        params: list[Any] = []
+        if project:
+            q += " AND project=?"
+            params.append(project)
+        if agent:
+            q += " AND agent=?"
+            params.append(agent)
+        if status:
+            q += " AND status=?"
+            params.append(status.value)
+        if tags:
+            for tag in tags:
+                q += (
+                    " AND EXISTS (SELECT 1 FROM json_each(tags) "
+                    "WHERE json_each.value = ?)"
+                )
+                params.append(tag)
+        if since:
+            q += " AND (created_at >= ? OR updated_at >= ?)"
+            params.extend([since.isoformat(), since.isoformat()])
+        if until:
+            q += " AND (created_at <= ? OR updated_at <= ?)"
+            params.extend([until.isoformat(), until.isoformat()])
+        q += " ORDER BY created_at ASC"
+        if limit is not None:
+            q += " LIMIT ?"
+            params.append(limit)
+        return [self._row_to_memory(r) for r in conn.execute(q, params).fetchall()]
+
+    def wipe_all(self) -> int:
+        """Delete every memory row (and FTS shadow rows via triggers).
+
+        Used by ``mnemos import --mode restore``. Returns the number of
+        deleted memory rows. Schema, indexes, projects, traces, and DLQ
+        are preserved — only the ``memories`` table is cleared.
+        """
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM memories")
+        conn.commit()
+        self._invalidate_caches()
+        return cur.rowcount
+
+    def wipe_projects(self) -> int:
+        """Delete every project row. Used by restore mode before re-import."""
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM projects")
+        conn.commit()
+        self._invalidate_caches()
+        return cur.rowcount
 
     # ── FTS search ────────────────────────────────────────────────────────
 
@@ -782,6 +864,131 @@ class SQLiteStore:
         result: dict[str, int] = {str(r[0]): int(r[1]) for r in rows}
         self._cache.set("projects_counts", result)
         return result
+
+    def count_by_agent(self) -> dict[str, int]:
+        """Count memories grouped by agent (non-empty only)."""
+        hit, val = self._cache.get("agents_counts", 60)
+        if hit:
+            return cast(dict[str, int], val)
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT agent, COUNT(*) AS cnt FROM memories WHERE agent != '' GROUP BY agent"
+        ).fetchall()
+        result: dict[str, int] = {str(r[0]): int(r[1]) for r in rows}
+        self._cache.set("agents_counts", result)
+        return result
+
+    def count_by_type(self) -> dict[str, int]:
+        """Count memories grouped by memory_type."""
+        hit, val = self._cache.get("types_counts", 60)
+        if hit:
+            return cast(dict[str, int], val)
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT COALESCE(memory_type,'note') AS t, COUNT(*) AS c "
+            "FROM memories GROUP BY t"
+        ).fetchall()
+        result: dict[str, int] = {str(r[0]): int(r[1]) for r in rows}
+        self._cache.set("types_counts", result)
+        return result
+
+    def count_by_date(
+        self,
+        *,
+        days: int = 30,
+        granularity: str = "day",
+    ) -> list[dict[str, Any]]:
+        """Return daily memory counts for the last ``days`` days.
+
+        granularity is accepted for forward-compat (only "day" supported now).
+        Returns a list of ``{"timestamp": "YYYY-MM-DD", "value": N}`` dicts
+        ordered by timestamp ascending.
+        """
+        _ = granularity  # only "day" supported; accepted for API symmetry
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DATE(created_at) AS d, COUNT(*) AS c "
+            "FROM memories "
+            "WHERE created_at > datetime('now', ?) "
+            "GROUP BY d ORDER BY d ASC",
+            (f"-{int(days)} days",),
+        ).fetchall()
+        return [{"timestamp": str(r["d"]), "value": int(r["c"])} for r in rows]
+
+    def count_sessions(self) -> dict[str, int]:
+        """Return total and active session counts.
+
+        "active" = sessions updated within the last 24h (heuristic).
+        """
+        conn = self._get_conn()
+        total_row = conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()
+        total = int(total_row["c"]) if total_row else 0
+        active_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM sessions "
+            "WHERE updated_at > datetime('now', '-1 day')"
+        ).fetchone()
+        active = int(active_row["c"]) if active_row else 0
+        return {"total": total, "active": active}
+
+    def get_filter_stats(self) -> dict[str, Any]:
+        """M10 — aggregate Context Filter coverage statistics.
+
+        Returns:
+            filtered: count of memories with clean_content populated
+            unfiltered: count of memories without clean_content
+            avg_reduction_pct: mean char reduction across filtered memories
+            by_profile: {profile: count} for filtered memories
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT "
+            "COUNT(*) FILTER (WHERE clean_content IS NOT NULL) AS filtered, "
+            "COUNT(*) FILTER (WHERE clean_content IS NULL) AS unfiltered "
+            "FROM memories"
+        ).fetchone()
+        filtered = int(row["filtered"]) if row else 0
+        unfiltered = int(row["unfiltered"]) if row else 0
+
+        # Per-profile counts (filtered memories only)
+        profile_rows = conn.execute(
+            "SELECT COALESCE(filter_profile,'default') AS p, COUNT(*) AS c "
+            "FROM memories WHERE clean_content IS NOT NULL GROUP BY p"
+        ).fetchall()
+        by_profile: dict[str, int] = {str(r["p"]): int(r["c"]) for r in profile_rows}
+
+        # Average char reduction: parse filter_stats JSON for each filtered
+        # memory and compute (1 - final_chars / original_chars) * 100.
+        avg_reduction_pct = 0.0
+        if filtered > 0:
+            stat_rows = conn.execute(
+                "SELECT filter_stats FROM memories "
+                "WHERE clean_content IS NOT NULL AND filter_stats IS NOT NULL"
+            ).fetchall()
+            reductions: list[float] = []
+            for sr in stat_rows:
+                raw_stats = sr["filter_stats"]
+                if not raw_stats:
+                    continue
+                try:
+                    parsed = json.loads(raw_stats)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                reduction = parsed.get("reduction")
+                if not isinstance(reduction, dict):
+                    continue
+                orig = reduction.get("original_chars")
+                final = reduction.get("final_chars")
+                if isinstance(orig, (int, float)) and isinstance(final, (int, float)) and orig > 0:
+                    reductions.append((1.0 - final / orig) * 100.0)
+            if reductions:
+                avg_reduction_pct = sum(reductions) / len(reductions)
+
+        return {
+            "filtered": filtered,
+            "unfiltered": unfiltered,
+            "avg_reduction_pct": round(avg_reduction_pct, 2),
+            "by_profile": by_profile,
+        }
 
     def get_by_file_path(self, file_path: str) -> Memory | None:
         conn = self._get_conn()

@@ -17,6 +17,10 @@ class MnemosConfig(BaseModel):
     db_name: str = "mnemos.db"
     # M2: tag contract enforcement
     strict_tag_contract: bool = True
+    # M10: auto-run the context filter on ingest (mnemos_add / manager.add).
+    # When True, raw_content is preserved and clean_content is populated;
+    # filter failures are non-fatal (memory is still saved with raw content).
+    auto_filter: bool = True
 
 
 class EmbeddingConfig(BaseModel):
@@ -26,10 +30,12 @@ class EmbeddingConfig(BaseModel):
     ollama_url: str = "http://localhost:11434"
     # M15.2: pin HF Hub downloads to a specific revision to mitigate supply-chain
     # risk (CWE-494 — download of code without integrity check). Override via
-    # MNEMOS_EMBEDDING__HF_REVISION env var or config.yaml. The default below
-    # pins the recommended revision for the default ONNX model; when changing
-    # the `model` field, also update `hf_revision` to a matching pinned SHA/tag.
-    hf_revision: str = "c9745ed1d7e3b0194c2e1c2b5d7e3e0b3c1c1c1c"  # all-MiniLM-L6-v2 ONNX
+    # MNEMOS_EMBEDDING__HF_REVISION env var or config.yaml. The default is
+    # empty so the ``if not revision: raise`` guard in ONNXHubProvider fires
+    # and forces operators to pin an explicit revision when using the ONNX
+    # provider. When changing the ``model`` field, set ``hf_revision`` to a
+    # matching pinned SHA/tag.
+    hf_revision: str = ""
 
 
 class SearchConfig(BaseModel):
@@ -107,16 +113,16 @@ class LLMConfig(BaseModel):
     # Ollama
     ollama_url: str = "http://localhost:11434"
     # OpenAI
-    openai_api_key: str = ""
+    openai_api_key: SecretStr = SecretStr("")
     openai_base_url: str = ""
     # Azure OpenAI
     azure_endpoint: str = ""
     azure_api_version: str = "2024-02-01"
     azure_deployment: str = ""
     # Anthropic
-    anthropic_api_key: str = ""
+    anthropic_api_key: SecretStr = SecretStr("")
     # Google Gemini
-    gemini_api_key: str = ""
+    gemini_api_key: SecretStr = SecretStr("")
     temperature: float = 0.3
     max_tokens: int = 4096
 
