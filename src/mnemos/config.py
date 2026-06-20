@@ -30,10 +30,12 @@ class EmbeddingConfig(BaseModel):
     ollama_url: str = "http://localhost:11434"
     # M15.2: pin HF Hub downloads to a specific revision to mitigate supply-chain
     # risk (CWE-494 — download of code without integrity check). Override via
-    # MNEMOS_EMBEDDING__HF_REVISION env var or config.yaml. The default below
-    # pins the recommended revision for the default ONNX model; when changing
-    # the `model` field, also update `hf_revision` to a matching pinned SHA/tag.
-    hf_revision: str = "c9745ed1d7e3b0194c2e1c2b5d7e3e0b3c1c1c1c"  # all-MiniLM-L6-v2 ONNX
+    # MNEMOS_EMBEDDING__HF_REVISION env var or config.yaml. The default is
+    # empty so the ``if not revision: raise`` guard in ONNXHubProvider fires
+    # and forces operators to pin an explicit revision when using the ONNX
+    # provider. When changing the ``model`` field, set ``hf_revision`` to a
+    # matching pinned SHA/tag.
+    hf_revision: str = ""
 
 
 class SearchConfig(BaseModel):
