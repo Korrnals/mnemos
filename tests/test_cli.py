@@ -66,11 +66,9 @@ def test_all_expected_commands_are_registered() -> None:
         "add",
         "search",
         "recall",
-        "tags-validate",
         "stats",
         "serve",
         "mcp-server",
-        "migrate-from-ai-brain",
     }
 
     # Typer: when a command has no explicit `name=...`, the registered
@@ -84,6 +82,15 @@ def test_all_expected_commands_are_registered() -> None:
 
     registered = {_cmd_name(c) for c in app.registered_commands}
     assert expected <= registered, f"missing commands: {expected - registered}"
+
+
+def test_all_expected_groups_are_registered() -> None:
+    """Every public subcommand group must be registered on the Typer app."""
+    expected_groups = {"tags", "migrate", "auth", "integration", "completion", "doctor"}
+    registered_groups = {getattr(g, "name", None) for g in app.registered_groups}
+    assert expected_groups <= registered_groups, (
+        f"missing groups: {expected_groups - registered_groups}"
+    )
 
 
 # ── mnemos add ───────────────────────────────────────────────────────────────
@@ -125,15 +132,15 @@ def test_recall_with_empty_vault(isolated_config: Path) -> None:
     assert result.exit_code == 0, result.output
 
 
-# ── mnemos tags-validate ──────────────────────────────────────────────────────
+# ── mnemos tags validate ──────────────────────────────────────────────────────
 
 
 def test_tags_validate_rejects_missing_required(
     isolated_config: Path,
 ) -> None:
-    """`mnemos tags-validate` with no vault → graceful exit (any code is OK)."""
+    """`mnemos tags validate` with no vault → graceful exit (any code is OK)."""
     vault = isolated_config.parent / "vault"
-    result = runner.invoke(app, ["tags-validate", "--vault", str(vault)])
+    result = runner.invoke(app, ["tags", "validate", str(vault)])
     # Typer's argparse may exit 2 on missing-arg / usage error — we
     # only assert the CLI does not raise a Python traceback.
     assert "Traceback" not in result.output
@@ -154,11 +161,11 @@ def test_stats_runs(isolated_config: Path) -> None:
     assert any(k in result.output.lower() for k in ("total", "status", "version", "data_dir"))
 
 
-# ── mnemos migrate-from-ai-brain ────────────────────────────────────────────
+# ── mnemos migrate from-ai-brain ──────────────────────────────────────────────
 
 
 def test_migrate_dry_run_exits_cleanly(isolated_config: Path) -> None:
-    """`mnemos migrate-from-ai-brain --dry-run` with no source → graceful exit.
+    """`mnemos migrate from-ai-brain --dry-run` with no source → graceful exit.
 
     On an empty / missing source directory, the migrate command should
     exit cleanly (0) — either printing 'no memories to migrate' or
@@ -168,7 +175,8 @@ def test_migrate_dry_run_exits_cleanly(isolated_config: Path) -> None:
     result = runner.invoke(
         app,
         [
-            "migrate-from-ai-brain",
+            "migrate",
+            "from-ai-brain",
             "--source",
             str(fake_source),
             "--dry-run",
@@ -233,3 +241,156 @@ def test_add_with_invalid_tags_does_not_crash(
         ],
     )
     assert "Traceback" not in result.output
+
+
+# ── mnemos completion ─────────────────────────────────────────────────────────
+
+
+class TestCompletionCommand:
+    """Tests for `mnemos completion` — auto-detect + auto-install."""
+
+    def test_completion_show_instructions_does_not_modify_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--show-instructions` prints manual steps and exits 0 without touching rc files."""
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        result = runner.invoke(app, ["completion", "--show-instructions"])
+        assert result.exit_code == 0
+        assert "bash" in result.output
+        assert "zsh" in result.output
+        assert "fish" in result.output
+        # No rc files should have been created.
+        assert not (fake_home / ".bashrc").exists()
+
+    def test_completion_explicit_shell_installs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`mnemos completion bash` installs the source line into ~/.bashrc."""
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        result = runner.invoke(app, ["completion", "bash"])
+        assert result.exit_code == 0
+        rc = fake_home / ".bashrc"
+        assert rc.exists()
+        content = rc.read_text(encoding="utf-8")
+        assert "mnemos --show-completion bash" in content
+
+    def test_completion_is_idempotent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Running `mnemos completion bash` twice does not duplicate the source line."""
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        runner.invoke(app, ["completion", "bash"])
+        runner.invoke(app, ["completion", "bash"])
+        rc = fake_home / ".bashrc"
+        content = rc.read_text(encoding="utf-8")
+        # The source line marker should appear exactly once.
+        assert content.count("mnemos --show-completion bash") == 1
+
+    def test_completion_auto_detect_from_shell_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`mnemos completion` (no args) auto-detects from $SHELL."""
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("SHELL", "/usr/bin/zsh")
+        result = runner.invoke(app, ["completion"])
+        assert result.exit_code == 0
+        rc = fake_home / ".zshrc"
+        assert rc.exists()
+        assert "mnemos --show-completion zsh" in rc.read_text(encoding="utf-8")
+
+    def test_completion_unknown_shell_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`mnemos completion unsupported` exits 1 with a clear message."""
+        result = runner.invoke(app, ["completion", "tcsh"])
+        assert result.exit_code == 1
+        assert "Unsupported shell" in result.output
+
+    def test_completion_no_shell_no_env_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`mnemos completion` with no $SHELL and no arg exits 1 with guidance."""
+        monkeypatch.delenv("SHELL", raising=False)
+        result = runner.invoke(app, ["completion"])
+        assert result.exit_code == 1
+        assert "auto-detect" in result.output.lower() or "show-instructions" in result.output
+
+
+# ── mnemos doctor ────────────────────────────────────────────────────────────
+
+
+class TestDoctorCommand:
+    """Tests for `mnemos doctor` — health check."""
+
+    def test_doctor_runs_with_isolated_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`mnemos doctor` runs all checks and exits 0/1/2 (not a traceback)."""
+        cfg = tmp_path / "mnemos.yaml"
+        cfg.write_text(
+            f"mnemos:\n"
+            f"  vault_path: {tmp_path / 'vault'}\n"
+            f"  data_dir: {tmp_path / 'data'}\n"
+            f"  db_name: doctor-smoke.db\n"
+            f"embedding:\n"
+            f"  provider: chromadb\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
+        result = runner.invoke(app, ["doctor"])
+        # Exit code is 0 (all pass), 1 (fail), or 2 (warn) — all acceptable
+        # for a smoke test as long as there's no traceback.
+        assert result.exit_code in (0, 1, 2), result.output
+        assert "Traceback" not in result.output
+
+    def test_doctor_json_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`mnemos doctor --json` emits valid JSON with a checks array."""
+        cfg = tmp_path / "mnemos.yaml"
+        cfg.write_text(
+            f"mnemos:\n"
+            f"  vault_path: {tmp_path / 'vault'}\n"
+            f"  data_dir: {tmp_path / 'data'}\n"
+            f"  db_name: doctor-json.db\n"
+            f"embedding:\n"
+            f"  provider: chromadb\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
+        result = runner.invoke(app, ["doctor", "--json"])
+        assert result.exit_code in (0, 1, 2), result.output
+        import json
+
+        payload = json.loads(result.output)
+        assert "checks" in payload
+        assert "exit_code" in payload
+        assert isinstance(payload["checks"], list)
+        assert len(payload["checks"]) >= 8
+
+    def test_doctor_reports_missing_vault_as_warn_or_fail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A config pointing at an unwritable vault path surfaces a non-pass check."""
+        cfg = tmp_path / "mnemos.yaml"
+        cfg.write_text(
+            f"mnemos:\n"
+            f"  vault_path: /nonexistent-root-cant-create/vault\n"
+            f"  data_dir: {tmp_path / 'data'}\n"
+            f"  db_name: doctor-fail.db\n"
+            f"embedding:\n"
+            f"  provider: chromadb\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
+        result = runner.invoke(app, ["doctor"])
+        # Unwritable vault → at least one FAIL → exit 1.
+        assert result.exit_code == 1, result.output
