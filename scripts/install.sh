@@ -16,6 +16,8 @@
 #   --no-mcp            Skip VS Code MCP integration (no prompt)
 #   --instructions      Deploy agent integration pack (instructions+skills+prompts) automatically (no prompt)
 #   --no-instructions   Skip agent integration pack deployment (no prompt)
+#   --wire-agents       Wire mnemos/* into GCW agent tools: frontmatter automatically (no prompt)
+#   --no-wire-agents    Skip GCW agent MCP wiring (no prompt)
 #   --container         Pull and run the container image instead of a Python install
 #   --port PORT         Container host port (default: 8787, only with --container)
 #   --help              Show this help
@@ -34,6 +36,7 @@ CONTAINER=false
 CONTAINER_PORT=8787
 MCP_SETUP="ask"          # ask | yes | no
 INSTRUCTIONS_SETUP="ask"  # ask | yes | no
+WIRE_AGENTS="ask"        # ask | yes | no
 LOCAL_BIN="${HOME}/.local/bin"
 
 # ── Colour helpers ────────────────────────────────────────────────
@@ -59,6 +62,8 @@ while [[ $# -gt 0 ]]; do
     --no-mcp)          MCP_SETUP="no"; shift ;;
     --instructions)    INSTRUCTIONS_SETUP="yes"; shift ;;
     --no-instructions) INSTRUCTIONS_SETUP="no"; shift ;;
+    --wire-agents)     WIRE_AGENTS="yes"; shift ;;
+    --no-wire-agents)  WIRE_AGENTS="no"; shift ;;
     --container) CONTAINER=true; shift ;;
     --port)      CONTAINER_PORT="$2"; shift 2 ;;
     --help|-h)  sed -n '2,28p' "$0" | sed 's/^# \?//'; exit 0 ;;
@@ -244,6 +249,33 @@ case "$INSTRUCTIONS_SETUP" in
       case "$reply" in
         [Nn]*) info "Skipped integration pack. You can deploy it anytime: mnemos integration setup" ;;
         *)     setup_instructions; INSTRUCTIONS_DONE=true ;;
+      esac
+    fi
+    ;;
+esac
+
+# ── Optional: wire Mnemos MCP into GCW agent tools: frontmatter ────
+setup_wire_agents() {
+  info "Wiring Mnemos MCP into GCW agent tools: frontmatter…"
+  if "$MNEMOS_BIN" integration setup --wire-agents --all --no-mcp; then
+    ok "Agent MCP wiring complete — reload your VS Code window."
+  else
+    warn "Agent wiring didn't complete. Run it later:"
+    printf "    mnemos integration setup --wire-agents --all\n"
+  fi
+}
+
+case "$WIRE_AGENTS" in
+  yes) echo ""; setup_wire_agents ;;
+  no)  : ;;
+  ask)
+    if [[ -r /dev/tty ]]; then
+      echo ""
+      printf "?  Wire Mnemos MCP to all GCW agents? [Y/n] "
+      read -r reply < /dev/tty || reply=""
+      case "$reply" in
+        [Nn]*) info "Skipped agent wiring. Run it anytime: mnemos integration setup --wire-agents --all" ;;
+        *)     setup_wire_agents ;;
       esac
     fi
     ;;
