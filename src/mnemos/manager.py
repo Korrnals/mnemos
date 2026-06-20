@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mnemos.config import Settings
 from mnemos.embeddings import EmbeddingProvider, create_embedding_provider
@@ -36,6 +36,9 @@ from mnemos.storage.sqlite_store import SQLiteStore
 from mnemos.storage.vault import VaultManager
 from mnemos.storage.vector_store import VectorStore
 
+if TYPE_CHECKING:
+    from mnemos.llm.router import LLMRouter
+
 logger = logging.getLogger(__name__)
 
 # Hard cap on redirect hops for per-hop SSRF re-validation (v2 posture).
@@ -54,6 +57,7 @@ class MemoryManager:
         self.vault = VaultManager(settings.mnemos.vault_path)
         self.vectors = VectorStore(settings.mnemos.data_dir)
         self._embedder: EmbeddingProvider | None = None
+        self._llm: LLMRouter | None = None
         self._watcher: Any = None
 
     @property
@@ -61,6 +65,28 @@ class MemoryManager:
         if self._embedder is None:
             self._embedder = create_embedding_provider(self.settings.embedding)
         return self._embedder
+
+    @property
+    def llm(self) -> LLMRouter:
+        """Lazy-construct the LLM router on first use.
+
+        Mirrors the ``embedder`` property: the router (and its standard
+        provider) is only instantiated when a completion is actually
+        needed, so importing ``MemoryManager`` never pays the LLM SDK
+        cost. RLM settings are passed only when ``rlm.enabled`` is true;
+        otherwise ``None`` is passed and the router always uses the
+        standard provider.
+        """
+        if self._llm is None:
+            from mnemos.llm.router import LLMRouter as _LLMRouter
+
+            rlm_settings = (
+                self.settings.llm.rlm
+                if self.settings.llm.rlm.enabled
+                else None
+            )
+            self._llm = _LLMRouter(self.settings.llm, rlm_settings)
+        return self._llm
 
     def close(self) -> None:
         self.sqlite.close()

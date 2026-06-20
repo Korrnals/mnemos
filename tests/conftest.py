@@ -21,9 +21,13 @@ test's quota (all TestClient requests share ``host="testclient"``).
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from mnemos.llm.base import LLMResponse
 
 # ---------------------------------------------------------------------------
 # Minimal MCP stubs - only installed when mcp is not already present
@@ -112,3 +116,74 @@ def reset_rate_limiter() -> None:
 
     limiter._storage.reset()
     yield
+
+
+# ---------------------------------------------------------------------------
+# LLM router fixtures — deterministic, no network
+# ---------------------------------------------------------------------------
+
+
+class MockLLMProvider:
+    """Deterministic in-memory LLM provider for tests — no network, no SDK.
+
+    Implements the ``LLMProvider`` contract (``complete`` + ``provider_name``)
+    so it can be injected into ``LLMRouter`` via ``_provider``. Returns a
+    canned ``LLMResponse`` for every call; records call args for assertions.
+    """
+
+    def __init__(self, *, text: str = "mock-llm-response") -> None:
+        self._text = text
+        self.calls: list[dict] = []
+
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> LLMResponse:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system": system,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+        )
+        from mnemos.llm.base import LLMResponse as _LLMResponse
+
+        return _LLMResponse(
+            text=self._text,
+            model="mock-model",
+            tokens_in=len(prompt) // 4,
+            tokens_out=len(self._text) // 4,
+            cached=False,
+            fallback_used=False,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return "mock"
+
+
+@pytest.fixture
+def mock_standard_provider() -> MockLLMProvider:
+    """A deterministic, no-network LLM provider for router/manager tests."""
+    return MockLLMProvider()
+
+
+@pytest.fixture
+def mock_llm_router(mock_standard_provider: MockLLMProvider):
+    """A LLMRouter with a mocked standard provider — no network calls.
+
+    The router is configured with RLM disabled (``rlm_settings=None``) so
+    it always routes to the mock standard provider. Tests that need RLM
+    routing behaviour should construct their own router.
+    """
+    from mnemos.config import LLMConfig
+    from mnemos.llm.router import LLMRouter
+
+    router = LLMRouter(LLMConfig(provider="ollama", model="qwen2.5:3b"))
+    router._provider = mock_standard_provider
+    return router
