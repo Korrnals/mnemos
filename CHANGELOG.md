@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Integration layer** (`integrations/`, `src/mnemos/cli/integration.py`,
+  `src/mnemos/cli/util.py`) — versioned pack of instructions + skills +
+  prompts that ships inside the package and deploys into detected agent
+  harnesses (GCW `~/.copilot/`, generic Copilot `~/.config/Code/User/prompts/`,
+  Cursor `~/.cursor/rules/`). New `mnemos util-*` CLI subcommands:
+  - `mnemos util-detect` — print detected harnesses + deploy paths
+  - `mnemos util-setup` — deploy files + register MCP (unified entry point)
+  - `mnemos util-update` — bring stale files to current version
+  - `mnemos util-verify` — compare deployed files against shipped pack
+  - `mnemos util-uninstall` — remove only stamped files, preserve user files
+  - All commands support `--dry-run` and `--target` (default: all detected)
+  - Version stamp `<!-- mnemos-integration: v1.2.0 -->` on every deployed file
+  - Idempotent: re-running `util-setup` updates stale files without duplicating
+- **`integrations/targets.yaml`** — harness detection rules + deploy maps
+  with `~` expansion. A target is detected if ANY of its detect paths exist.
+- **`install.sh --instructions` / `--no-instructions`** flag — deploys the
+  agent integration pack after MCP setup (interactive prompt over `/dev/tty`,
+  same pattern as `--mcp` / `--no-mcp`).
 
 ## [1.2.0] — 2026-06-18
 
