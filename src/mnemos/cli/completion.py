@@ -19,7 +19,9 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
-from typer.completion import get_completion_script
+from typer.completion import (  # type: ignore[attr-defined]  # typer stubs don't export this, but it exists at runtime
+    get_completion_script,
+)
 
 console = Console()
 
@@ -197,8 +199,7 @@ def completion(
 
     if target not in _SUPPORTED_SHELLS:
         console.print(
-            f"[red]Unsupported shell: {target!r}.[/red]\n"
-            f"Supported: {', '.join(_SUPPORTED_SHELLS)}"
+            f"[red]Unsupported shell: {target!r}.[/red]\nSupported: {', '.join(_SUPPORTED_SHELLS)}"
         )
         raise typer.Exit(1)
 

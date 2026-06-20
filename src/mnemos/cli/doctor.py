@@ -61,9 +61,7 @@ def _check_config() -> CheckResult:
         settings.resolve_paths()
     except Exception as exc:  # doctor must report, not crash
         return CheckResult("Config", CheckStatus.FAIL, f"load failed: {exc}")
-    cfg_path = os.environ.get("MNEMOS_CONFIG") or str(
-        Path.home() / ".mnemos" / "config.yaml"
-    )
+    cfg_path = os.environ.get("MNEMOS_CONFIG") or str(Path.home() / ".mnemos" / "config.yaml")
     return CheckResult(
         "Config",
         CheckStatus.PASS,
@@ -127,9 +125,7 @@ def _check_sqlite(settings: Any) -> CheckResult:
             conn.close()
     except sqlite3.Error as exc:
         return CheckResult("SQLite DB", CheckStatus.FAIL, f"{db_path} (error: {exc})")
-    return CheckResult(
-        "SQLite DB", CheckStatus.PASS, f"{db_path} (healthy, {count:,} entries)"
-    )
+    return CheckResult("SQLite DB", CheckStatus.PASS, f"{db_path} (healthy, {count:,} entries)")
 
 
 def _check_vector_store(settings: Any) -> CheckResult:
@@ -195,9 +191,7 @@ def _check_integration() -> CheckResult:
         cfg = load_targets()
         detected = cfg.detected()
     except Exception as exc:  # doctor reports, doesn't crash
-        return CheckResult(
-            "Integration", CheckStatus.FAIL, f"init failed: {exc}"
-        )
+        return CheckResult("Integration", CheckStatus.FAIL, f"init failed: {exc}")
 
     if not detected:
         return CheckResult(
@@ -263,9 +257,7 @@ def _check_tag_contract(settings: Any) -> CheckResult:
         finally:
             conn.close()
     except sqlite3.Error as exc:
-        return CheckResult(
-            "Tag contract", CheckStatus.FAIL, f"{mode} mode, scan error: {exc}"
-        )
+        return CheckResult("Tag contract", CheckStatus.FAIL, f"{mode} mode, scan error: {exc}")
 
     for (raw_tags,) in rows:
         try:
@@ -293,35 +285,48 @@ def _check_tag_contract(settings: Any) -> CheckResult:
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 
-_CHECKS = (
-    _check_config,
+# Settings-dependent checks (take the resolved settings object).
+_SETTINGS_CHECKS = (
     _check_data_dir,
     _check_vault,
     _check_sqlite,
     _check_vector_store,
-    _check_mcp_server,
-    _check_integration,
     _check_tag_contract,
 )
 
 
 def _run_all_checks() -> list[CheckResult]:
-    """Run every check in order, threading the settings object through."""
-    results: list[CheckResult] = []
-    settings: Any = None
+    """Run every check in order, threading the settings object through.
 
-    for check in _CHECKS:
+    The doctor must never crash the CLI: each check is wrapped so an
+    unexpected exception becomes a FAIL result with the exception message.
+    """
+    results: list[CheckResult] = []
+
+    # Config first — other checks depend on its resolved settings.
+    try:
+        result = _check_config()
+        settings: Any = result.extra.get("settings")
+        results.append(result)
+    except Exception as exc:  # doctor must never crash
+        results.append(CheckResult("_check_config", CheckStatus.FAIL, f"check crashed: {exc}"))
+        settings = None
+
+    # No-arg checks.
+    for check in (_check_mcp_server, _check_integration):
         try:
-            if check is _check_config:
-                result = check()
-                settings = result.extra.get("settings")
-                results.append(result)
-            elif check is _check_mcp_server or check is _check_integration:
-                results.append(check())
-            else:
-                results.append(check(settings))
+            results.append(check())
         except Exception as exc:  # doctor must never crash
             results.append(CheckResult(check.__name__, CheckStatus.FAIL, f"check crashed: {exc}"))
+
+    # Settings-dependent checks.
+    for settings_check in _SETTINGS_CHECKS:
+        try:
+            results.append(settings_check(settings))
+        except Exception as exc:  # doctor must never crash
+            name = settings_check.__name__
+            results.append(CheckResult(name, CheckStatus.FAIL, f"check crashed: {exc}"))
+
     return results
 
 
@@ -376,16 +381,16 @@ def doctor(
     results = _run_all_checks()
 
     if json_output:
+        exit_code = _exit_code(results)
         payload = {
             "version": __version__,
             "checks": [
-                {"name": r.name, "status": r.status.value, "detail": r.detail}
-                for r in results
+                {"name": r.name, "status": r.status.value, "detail": r.detail} for r in results
             ],
-            "exit_code": _exit_code(results),
+            "exit_code": exit_code,
         }
         console.print_json(json.dumps(payload))
-        raise typer.Exit(payload["exit_code"])
+        raise typer.Exit(exit_code)
 
     _render(results)
     code = _exit_code(results)
@@ -400,4 +405,4 @@ def doctor(
 
 
 if __name__ == "__main__":  # pragma: no cover — manual invocation
-    doctor()  # type: ignore[call-arg]
+    doctor()
