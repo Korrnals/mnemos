@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+from typer.testing import CliRunner
+
+from mnemos.cli.main import app as cli_app
+from mnemos.config import Settings
 from mnemos.filter.pipeline import (
     _stage_compress,
     _stage_dedup,
@@ -11,6 +20,8 @@ from mnemos.filter.pipeline import (
     apply_filter,
     detect_profile,
 )
+from mnemos.manager import MemoryManager
+from mnemos.models import MemoryCreate, MemorySource
 
 
 class TestStageDedup:
@@ -224,3 +235,387 @@ class TestApplyFilter:
         result = apply_filter("")
         assert result["clean_content"] == ""
         assert result["profile"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# Auto-filter on ingest, MCP tool, CLI command, stats (M10 activation)
+# ---------------------------------------------------------------------------
+
+
+def _make_settings(tmpdir: str) -> Settings:
+    tmp = Path(tmpdir)
+    settings = Settings(
+        mnemos={
+            "vault_path": str(tmp / "vault"),
+            "data_dir": str(tmp / "data"),
+            "db_name": "test.db",
+            "auto_filter": True,
+        },
+        embedding={"provider": "chromadb"},
+    )
+    settings.resolve_paths()
+    return settings
+
+
+@pytest.fixture
+def mgr():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        settings = _make_settings(tmpdir)
+        m = MemoryManager(settings)
+        mock_embedder = MagicMock()
+        mock_embedder.embed.return_value = [0.1] * 384
+        m._embedder = mock_embedder
+        yield m
+        m.close()
+
+
+_VALID_TAGS = ["project:test", "agent:filter-test", "gcw:learning"]
+
+
+class TestAutoFilterOnAdd:
+    """Auto-filter activation via MemoryManager.add()."""
+
+    def test_auto_filter_populates_clean_content(self, mgr: MemoryManager) -> None:
+        """auto_filter=True → add() populates clean_content."""
+        data = MemoryCreate(
+            content="2024-01-15T10:30:00Z [INFO] start\n[INFO] start\nError: boom",
+            tags=_VALID_TAGS,
+            source=MemorySource.CLI,
+        )
+        memory = mgr.add(data, project="test", agent="filter-test")
+        assert memory.clean_content is not None
+        assert memory.filter_profile is not None
+        assert memory.filter_stats is not None
+
+    def test_auto_filter_disabled_keeps_clean_content_none(
+        self, mgr: MemoryManager
+    ) -> None:
+        """auto_filter=False → clean_content stays None."""
+        mgr.settings.mnemos.auto_filter = False
+        data = MemoryCreate(
+            content="some plain content",
+            tags=_VALID_TAGS,
+            source=MemorySource.CLI,
+        )
+        memory = mgr.add(data, project="test", agent="filter-test")
+        assert memory.clean_content is None
+
+    def test_auto_filter_non_fatal_on_crash(self, mgr: MemoryManager) -> None:
+        """If the filter crashes, the memory is still saved with raw content."""
+        from unittest.mock import patch
+
+        data = MemoryCreate(
+            content="content that will trigger a filter crash",
+            tags=_VALID_TAGS,
+            source=MemorySource.CLI,
+        )
+        # apply_filter is imported lazily inside apply_context_filter;
+        # patch it at its source module.
+        with patch(
+            "mnemos.filter.pipeline.apply_filter",
+            side_effect=RuntimeError("simulated filter crash"),
+        ):
+            # Should not raise — auto-filter is non-fatal
+            memory = mgr.add(data, project="test", agent="filter-test")
+
+        assert memory.id is not None
+        # Memory is saved; clean_content may be None because filter failed
+        reloaded = mgr.get(memory.id)
+        assert reloaded is not None
+        assert reloaded.content == "content that will trigger a filter crash"
+
+    def test_auto_filter_preserves_raw_content(self, mgr: MemoryManager) -> None:
+        """raw_content invariant: never mutated after first write."""
+        raw_text = "\x1b[31mError: boom\x1b[0m\n2024-01-15 [INFO] start"
+        data = MemoryCreate(
+            content=raw_text,
+            tags=_VALID_TAGS,
+            source=MemorySource.CLI,
+        )
+        memory = mgr.add(data, project="test", agent="filter-test")
+        # content (the original) is preserved
+        assert memory.content == raw_text
+        # clean_content is the filtered projection
+        assert memory.clean_content is not None
+        assert "\x1b[" not in (memory.clean_content or "")
+
+
+class TestMcpFilterTool:
+    """mnemos_filter MCP tool — explicit filter/refresh."""
+
+    @pytest.mark.asyncio
+    async def test_mnemos_filter_tool_registered(self) -> None:
+        from mnemos.mcp_server import list_tools
+
+        tools = await list_tools()
+        names = [t.name for t in tools]
+        assert "mnemos_filter" in names
+
+    @pytest.mark.asyncio
+    async def test_mnemos_filter_dispatch(self, mgr: MemoryManager) -> None:
+        from unittest.mock import patch
+
+        from mnemos.mcp_server import _dispatch
+
+        data = MemoryCreate(
+            content="line 1\nline 1\nline 2",
+            tags=_VALID_TAGS,
+            source=MemorySource.MCP,
+        )
+        memory = mgr.add(data, project="test", agent="filter-test")
+        # Reset clean_content to simulate unfiltered memory
+        mgr.sqlite.update_fields(memory.id, clean_content=None)
+        memory = mgr.get(memory.id)
+        assert memory is not None and memory.clean_content is None
+
+        with patch("mnemos.mcp_server.get_manager", return_value=mgr):
+            result = await _dispatch(
+                "mnemos_filter",
+                {"memory_id": memory.id, "profile": "default"},
+            )
+
+        assert result["memory_id"] == memory.id
+        assert result["profile"] == "default"
+        assert "clean_content" in result
+        assert "stats" in result
+
+    @pytest.mark.asyncio
+    async def test_mnemos_filter_with_budget(self, mgr: MemoryManager) -> None:
+        from unittest.mock import patch
+
+        from mnemos.mcp_server import _dispatch
+
+        data = MemoryCreate(
+            content="word " * 500,
+            tags=_VALID_TAGS,
+            source=MemorySource.MCP,
+        )
+        memory = mgr.add(data, project="test", agent="filter-test")
+
+        with patch("mnemos.mcp_server.get_manager", return_value=mgr):
+            result = await _dispatch(
+                "mnemos_filter",
+                {"memory_id": memory.id, "budget": 50},
+            )
+
+        assert result["stats"]["tokens"]["truncated"] is True
+
+    @pytest.mark.asyncio
+    async def test_mnemos_filter_missing_memory(self, mgr: MemoryManager) -> None:
+        from unittest.mock import patch
+
+        from mnemos.mcp_server import _dispatch
+
+        with patch("mnemos.mcp_server.get_manager", return_value=mgr):
+            result = await _dispatch(
+                "mnemos_filter",
+                {"memory_id": "nonexistent-id"},
+            )
+
+        assert result["status"] == "error"
+
+
+class TestMcpAddAutoFilter:
+    """mnemos_add auto-filters and returns filter metadata."""
+
+    @pytest.mark.asyncio
+    async def test_mnemos_add_returns_filtered_flag(self, mgr: MemoryManager) -> None:
+        from unittest.mock import patch
+
+        from mnemos.mcp_server import _dispatch
+
+        with (
+            patch("mnemos.mcp_server.get_manager", return_value=mgr),
+            patch(
+                "mnemos.mcp_server.validate_tag_contract",
+                side_effect=lambda tags, **_kw: tags,
+            ),
+        ):
+            result = await _dispatch(
+                "mnemos_add",
+                {
+                    "content": "2024-01-15 [INFO] start\n[INFO] start\nError: boom",
+                    "tags": _VALID_TAGS,
+                },
+            )
+
+        assert result["filtered"] is True
+        assert result["filter_profile"] is not None
+
+
+class TestSearchReturnsCleanContent:
+    """mnemos_search / mnemos_recall_context return clean_content after auto-filter."""
+
+    @pytest.mark.asyncio
+    async def test_search_returns_clean_content(self, mgr: MemoryManager) -> None:
+        from unittest.mock import patch
+
+        from mnemos.mcp_server import _dispatch
+
+        # Add a memory with ANSI codes — auto-filter strips them
+        raw = "\x1b[31mError: kubernetes boom\x1b[0m"
+        data = MemoryCreate(
+            content=raw,
+            tags=_VALID_TAGS,
+            source=MemorySource.MCP,
+        )
+        memory = mgr.add(data, project="test", agent="filter-test")
+        assert memory.clean_content is not None
+        assert "\x1b[" not in memory.clean_content
+
+        with patch("mnemos.mcp_server.get_manager", return_value=mgr):
+            results = await _dispatch(
+                "mnemos_search",
+                {"query": "kubernetes", "limit": 10},
+            )
+
+        assert len(results) >= 1
+        # The returned content should be the clean version (no ANSI)
+        assert any("\x1b[" not in r["content"] for r in results)
+
+    @pytest.mark.asyncio
+    async def test_recall_returns_clean_content(self, mgr: MemoryManager) -> None:
+        from unittest.mock import patch
+
+        from mnemos.mcp_server import _dispatch
+
+        raw = "\x1b[31mcheckpoint content\x1b[0m"
+        data = MemoryCreate(
+            content=raw,
+            tags=["project:recall-test", "agent:user", "gcw:checkpoint"],
+            source=MemorySource.MCP,
+        )
+        memory = mgr.add(data, project="recall-test", agent="user")
+        assert memory.clean_content is not None
+
+        with patch("mnemos.mcp_server.get_manager", return_value=mgr):
+            result = await _dispatch(
+                "mnemos_recall_context",
+                {"project": "recall-test"},
+            )
+
+        # result is a string; clean content should not contain ANSI
+        assert isinstance(result, str)
+        assert "\x1b[" not in result
+
+
+class TestStatsFilterSection:
+    """mnemos stats includes filter statistics."""
+
+    def test_stats_includes_filter_section(self, mgr: MemoryManager) -> None:
+        data = MemoryCreate(
+            content="2024-01-15 [INFO] start\n[INFO] start\nError: boom",
+            tags=_VALID_TAGS,
+            source=MemorySource.CLI,
+        )
+        mgr.add(data, project="test", agent="filter-test")
+
+        stats = mgr.stats()
+        assert "filter" in stats
+        filter_stats = stats["filter"]
+        assert filter_stats["auto_filter"] is True
+        assert filter_stats["filtered_count"] >= 1
+        assert "unfiltered_count" in filter_stats
+        assert "avg_reduction_pct" in filter_stats
+        assert "by_profile" in filter_stats
+
+
+class TestFilterIdempotent:
+    """Re-filtering the same memory with the same profile yields the same result."""
+
+    def test_filter_idempotent(self, mgr: MemoryManager) -> None:
+        data = MemoryCreate(
+            content="2024-01-15 [INFO] start\n[INFO] start\nError: boom",
+            tags=_VALID_TAGS,
+            source=MemorySource.CLI,
+        )
+        memory = mgr.add(data, project="test", agent="filter-test")
+        first_clean = memory.clean_content
+
+        # Re-filter explicitly
+        result = mgr.apply_context_filter(memory.id, profile=memory.filter_profile)
+        assert result["status"] == "ok"
+        assert result["clean_content"] == first_clean
+
+
+class TestCliFilterCommand:
+    """mnemos filter <id> and mnemos filter --all CLI commands."""
+
+    def test_cli_filter_single(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "mnemos.yaml"
+        cfg.write_text(
+            f"mnemos:\n"
+            f"  vault_path: {tmp_path / 'vault'}\n"
+            f"  data_dir: {tmp_path / 'data'}\n"
+            f"  db_name: cli-filter.db\n"
+            f"embedding:\n"
+            f"  provider: chromadb\n"
+        )
+        monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
+
+        runner = CliRunner()
+        # First add a memory
+        result = runner.invoke(
+            cli_app,
+            ["add", "2024-01-15 [INFO] start", "--tags", ",".join(_VALID_TAGS)],
+        )
+        assert result.exit_code == 0, result.output
+
+        # Extract the memory id from output
+        # Output format: "✓ Saved: ... (uuid)"
+        output = result.output
+        # Find the UUID in parentheses
+        import re
+
+        match = re.search(r"\(([0-9a-f-]{36})\)", output)
+        assert match is not None, f"Could not find memory id in output: {output}"
+        mem_id = match.group(1)
+
+        # Run filter command
+        result = runner.invoke(cli_app, ["filter", mem_id, "--profile", "default"])
+        assert result.exit_code == 0, result.output
+        assert "Filtered" in result.output or "✓" in result.output
+
+    def test_cli_filter_all(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "mnemos.yaml"
+        cfg.write_text(
+            f"mnemos:\n"
+            f"  vault_path: {tmp_path / 'vault'}\n"
+            f"  data_dir: {tmp_path / 'data'}\n"
+            f"  db_name: cli-filter-all.db\n"
+            f"embedding:\n"
+            f"  provider: chromadb\n"
+        )
+        monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
+
+        runner = CliRunner()
+        # Add a couple of memories
+        for i in range(3):
+            result = runner.invoke(
+                cli_app,
+                ["add", f"line {i} content", "--tags", ",".join(_VALID_TAGS)],
+            )
+            assert result.exit_code == 0, result.output
+
+        # Run filter --all
+        result = runner.invoke(cli_app, ["filter", "--all"])
+        assert result.exit_code == 0, result.output
+        assert "Filtered" in result.output or "✓" in result.output
+
+    def test_cli_filter_no_id_no_all_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "mnemos.yaml"
+        cfg.write_text(
+            f"mnemos:\n"
+            f"  vault_path: {tmp_path / 'vault'}\n"
+            f"  data_dir: {tmp_path / 'data'}\n"
+            f"  db_name: cli-filter-err.db\n"
+            f"embedding:\n"
+            f"  provider: chromadb\n"
+        )
+        monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
+
+        runner = CliRunner()
+        result = runner.invoke(cli_app, ["filter"])
+        assert result.exit_code != 0
