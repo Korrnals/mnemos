@@ -249,6 +249,130 @@ configuration, see [context-filter.md](context-filter.md).
 
 ---
 
+## `mnemos integration setup` — default flow
+
+By default, `mnemos integration setup` now **prompts for agent wiring**
+in the same pass as file deployment and MCP registration. This closes the
+gap where instructions were deployed but agents lacked `mnemos/*` in
+their `tools:` frontmatter.
+
+```bash
+mnemos integration setup
+# → Deploys instructions + skills + prompts
+# → Registers the MCP server
+# → Prompts: "Wire mnemos/* into GCW agents? [Y/n]"
+```
+
+| Flag | Behaviour |
+|------|-----------|
+| (none, interactive) | Prompts for agent wiring (default) |
+| `--wire-agents --all` | Wire all unwired agents without prompting |
+| `--wire-agents --select name1,name2` | Wire only the named agents |
+| `--no-wire-agents` | Skip agent wiring entirely |
+| `--precise` | Use individual `mnemos/mnemos_*` tool names instead of the wildcard |
+| `--dry-run` | Preview what would change without modifying files |
+
+In a non-interactive terminal (CI / pipe), the command defaults to
+wiring all unwired agents. See the [Agent MCP wiring](#agent-mcp-wiring)
+section above for the full flag reference.
+
+---
+
+## `mnemos add --dry-run` — filter preview
+
+Preview how the Context Filter will transform content **before saving**.
+Validates the tag contract, runs the five-stage filter pipeline, and
+prints stats — without writing anything to the store.
+
+```bash
+mnemos add "long log output..." --tags "project:mnemos,agent:tech-lead,gcw:trace" --dry-run
+```
+
+Output:
+
+```text
+[dry-run] Filter preview (no memory saved):
+  Input:     320 tokens
+  Output:    180 tokens (43.8% reduction)
+  Profile:   log (auto-detected)
+  Dedup:     2 exact, 0 near-duplicates removed
+  Noise:     14 lines cleaned
+  Budget:    not set (no truncation)
+[dry-run] Memory would be saved with these filter stats.
+```
+
+| Field | Meaning |
+|-------|---------|
+| Input / Output | Estimated token count before and after filtering |
+| Profile | Auto-detected content profile (`log`, `terminal`, `code`, `docs`, `web`, `default`) |
+| Dedup | Exact and near-duplicate lines removed |
+| Noise | ANSI codes, progress bars, timestamps, separators stripped |
+| Budget | Token budget if set (truncation); `not set` means no truncation |
+
+> `--dry-run` is not supported with `--url` (content is fetched at ingest
+> time). Use it with positional content or `--file`.
+
+---
+
+## `mnemos doctor --fix` — auto-fix warnings
+
+`mnemos doctor` runs health checks and reports status. With `--fix`, it
+**auto-fixes WARN-level checks** — no manual intervention needed for the
+common cases.
+
+```bash
+mnemos doctor          # report only
+mnemos doctor --fix    # fix warnings, then re-check
+mnemos doctor --fix --dry-run   # preview what would be fixed
+```
+
+| Warning | Auto-fix action |
+|---------|-----------------|
+| Integration stale | `mnemos integration update` — redeploy stale files to current version |
+| Agent wiring — unwired agents | `mnemos integration setup --wire-agents --all` |
+| MCP server not registered | MCP registration via `mcp-setup.sh` |
+
+**FAIL-level checks are not auto-fixable** — they require manual
+diagnosis (missing config, broken SQLite DB, missing vault). After
+fixes, `doctor` re-runs the affected checks and reports the new status.
+
+Exit codes: `0` = all pass, `1` = one or more failed, `2` = warnings
+only.
+
+---
+
+## `mnemos logs` — pipeline traces
+
+View the pipeline trace log (the `traces` table) directly from the CLI.
+Shows cluster, synthesize, publish, and recall steps with latency, LLM,
+cache, and fallback flags.
+
+```bash
+mnemos logs                       # last 50 traces
+mnemos logs --task cluster        # only cluster traces
+mnemos logs --project mnemos      # filter by project
+mnemos logs --limit 100           # more rows
+mnemos logs --since 2026-06-01    # only traces after this date
+mnemos logs --follow              # poll for new traces (tail -f)
+```
+
+| Flag | Description |
+|------|-------------|
+| `--task`, `-t` | Filter by task label (`cluster`, `synthesize`, `publish`, `recall`) |
+| `--project`, `-p` | Filter by project slug |
+| `--limit`, `-l` | Maximum number of traces (default 50) |
+| `--since` | Only traces after this ISO date |
+| `--follow`, `-f` | Poll for new traces (tail -f style) |
+| `--config`, `-c` | Path to config.yaml |
+
+The table columns: Timestamp, Task, Project, Step, Item, Latency, LLM
+(called?), Cache (hit?), Fallback (used?). Traces are the audit log for
+the knowledge pipeline — see the [Context Filter](context-filter.md) and
+[architecture overview](../architecture/overview.md) for the pipeline
+stages.
+
+---
+
 ## How agents discover the tools
 
 The integration layer assumes the Mnemos MCP server is already connected.
