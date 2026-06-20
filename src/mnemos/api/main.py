@@ -376,6 +376,7 @@ async def search(query: SearchQuery) -> list[dict[str, Any]]:
         query=query.query,
         tags=query.tags,
         project=query.project,
+        status=query.status,
         limit=query.limit,
     )
     out = []
@@ -390,6 +391,7 @@ async def search(query: SearchQuery) -> list[dict[str, Any]]:
                 "title": mem.auto_title(),
                 "content": content,
                 "tags": mem.tags,
+                "status": mem.status.value,
                 "score": r.score,
                 "search_type": r.search_type,
             }

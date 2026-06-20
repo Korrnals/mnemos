@@ -284,6 +284,12 @@ class MemoryManager:
                 # deleted between vector and SQLite indexes.
                 fetched: Memory | None = self.sqlite.get(mid)
                 if fetched is not None:
+                    # Finding: filter vector results by status — the vector
+                    # leg does not apply the status filter at query time, so
+                    # a non-published memory that somehow entered the vector
+                    # store could surface in search results. Filter here.
+                    if status is not None and fetched.status != status:
+                        continue
                     id_to_memory[mid] = fetched
 
         # Apply tag filter post-hoc
