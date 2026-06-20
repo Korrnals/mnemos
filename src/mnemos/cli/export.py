@@ -27,6 +27,7 @@ from __future__ import annotations
 import gzip
 import io
 import json
+import logging
 import os
 import sqlite3
 import tarfile
@@ -41,6 +42,8 @@ from mnemos.models import MemoryStatus
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CompressMode",
@@ -196,10 +199,10 @@ def _build_sqlite_snapshot(mgr: MemoryManager) -> bytes:
         try:
             store_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             store_conn.commit()
-        except Exception:
+        except sqlite3.Error as exc:
             # Non-fatal: the copy will still include whatever is in the
             # main file; the snapshot may miss the last few writes.
-            pass
+            logger.warning("WAL checkpoint failed during snapshot: %s", exc)
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -445,8 +448,8 @@ def restore_sqlite_snapshot(
         try:
             store_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             store_conn.commit()
-        except Exception:
-            pass
+        except sqlite3.Error as exc:
+            logger.warning("WAL checkpoint failed before restore: %s", exc)
     # Flush any open connection so the on-disk file is current.
     mgr.sqlite.close()
     mgr.vectors.close()

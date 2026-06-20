@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import tarfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -37,6 +38,8 @@ from mnemos.models import Memory, MemoryStatus
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ImportMode",
@@ -224,9 +227,9 @@ def _reembed(mgr: MemoryManager, memory: Memory) -> None:
             embedding,
             {"project": memory.project, "agent": memory.agent},
         )
-    except Exception:
+    except Exception as exc:
         # Re-embedding is best-effort; the memory is still persisted.
-        pass
+        logger.warning("re-embedding failed for memory %s: %s", memory.id, exc)
 
 
 # ── SQLite import ─────────────────────────────────────────────────────────────

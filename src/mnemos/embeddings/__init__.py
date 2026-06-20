@@ -146,7 +146,11 @@ class ONNXHubProvider(EmbeddingProvider):
 
         try:
             model_path = hf_hub_download(model_id, onnx_file, revision=revision)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "hf_hub_download(%s, %s) failed, falling back to model.onnx: %s",
+                model_id, onnx_file, exc,
+            )
             model_path = hf_hub_download(model_id, "model.onnx", revision=revision)
 
         tokenizer_path = hf_hub_download(model_id, "tokenizer.json", revision=revision)

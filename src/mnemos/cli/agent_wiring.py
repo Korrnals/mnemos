@@ -30,12 +30,15 @@ Public API:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import frontmatter
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -167,8 +170,13 @@ def _parse_agent(path: Path) -> AgentInfo:
     filename = path.name
     try:
         post = frontmatter.load(path)
-    except Exception:
-        # Malformed frontmatter — report it, but don't crash detection.
+    except Exception as exc:
+        # Malformed frontmatter (YAML parse error, IO error, etc.) — report
+        # it, but don't crash detection. python-frontmatter can raise
+        # yaml.scanner.ScannerError / yaml.parser.ParserError which inherit
+        # from yaml.YAMLError (not ValueError/OSError), so we catch broadly
+        # but log the failure for observability.
+        logger.warning("failed to parse frontmatter in %s: %s", path, exc)
         return AgentInfo(
             path=path,
             name=filename,

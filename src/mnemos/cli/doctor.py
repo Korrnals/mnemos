@@ -11,6 +11,7 @@ status. Exit codes:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from collections.abc import Callable
@@ -26,6 +27,7 @@ from rich.table import Table
 from mnemos import __version__
 from mnemos.config import load_settings
 
+logger = logging.getLogger(__name__)
 console = Console()
 
 doctor_app = typer.Typer(
@@ -211,7 +213,8 @@ def _check_integration() -> CheckResult:
             result = mgr.verify(target.name)
             total_stale += result.stale_count
             total_missing += result.missing_count
-        except Exception:  # one target failing shouldn't abort
+        except Exception as exc:  # one target failing shouldn't abort
+            logger.warning("integration verify failed for target %s: %s", target.name, exc)
             total_missing += 1
 
     if total_missing > 0:
