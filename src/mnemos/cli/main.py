@@ -77,11 +77,89 @@ def add(
     url: str = typer.Option(None, "--url", "-u", help="Import from URL"),
     source: Annotated[MemorySource, typer.Option("--source", "-s")] = MemorySource.CLI,
     memory_type: Annotated[MemoryType, typer.Option("--type")] = MemoryType.NOTE,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Show context-filter stats (profile, token reduction, dedup, noise) "
+            "without saving the memory.",
+        ),
+    ] = False,
     config: str = ConfigOption,
 ) -> None:
-    """Add a new memory entry."""
-    mgr = get_manager(config)
+    """Add a new memory entry.
+
+    With ``--dry-run``: validates the tag contract, runs the context filter
+    pipeline on the content, and prints filter stats **without saving**.
+    Useful for previewing how the M10 Context Filter will transform input
+    before committing it to the store.
+    """
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    # ── --dry-run: validate tags + run filter, then exit without saving ──
+    if dry_run:
+        if url:
+            console.print(
+                "[red]--dry-run is not supported with --url (content is fetched at "
+                "ingest time).[/red]"
+            )
+            raise typer.Exit(1)
+        if file:
+            text = Path(file).read_text(encoding="utf-8")
+        elif content:
+            text = content
+        else:
+            stdin_text = sys.stdin.read().strip()
+            if not stdin_text:
+                console.print("[red]No content provided.[/red]")
+                raise typer.Exit(1)
+            text = stdin_text
+
+        # Validate tag contract (raises TagContractError in strict mode).
+        from mnemos.config import load_settings as _load_settings
+        from mnemos.filter.pipeline import apply_filter
+        from mnemos.models import validate_tag_contract
+
+        settings = _load_settings(config)
+        validate_tag_contract(tag_list, strict=settings.mnemos.strict_tag_contract)
+
+        result = apply_filter(text)
+        stats = result["stats"]
+        tokens_in = len(text) // 4 or 1
+        tokens_out = stats["tokens"]["estimated_tokens"]
+        reduction_pct = (
+            round((1 - tokens_out / tokens_in) * 100, 1) if tokens_in else 0.0
+        )
+
+        console.print("[cyan][dry-run][/cyan] Filter preview (no memory saved):")
+        console.print(f"  Input:     {tokens_in} tokens")
+        console.print(
+            f"  Output:    {tokens_out} tokens ({reduction_pct}% reduction)"
+        )
+        console.print(f"  Profile:   {result['profile']} (auto-detected)")
+        dedup = stats.get("dedup", {})
+        console.print(
+            f"  Dedup:     {dedup.get('exact_dups', 0)} exact, "
+            f"{dedup.get('near_dups', 0)} near-duplicates removed"
+        )
+        noise = stats.get("noise", {})
+        noise_lines = (
+            noise.get("removed_ansi", 0)
+            + noise.get("removed_progress", 0)
+            + noise.get("removed_timestamps", 0)
+            + noise.get("removed_separators", 0)
+        )
+        console.print(f"  Noise:     {noise_lines} lines cleaned")
+        budget = stats["tokens"].get("budget")
+        console.print(
+            f"  Budget:    {budget if budget else 'not set (no truncation)'}"
+        )
+        console.print(
+            "[dim][dry-run] Memory would be saved with these filter stats.[/dim]"
+        )
+        return
+
+    mgr = get_manager(config)
 
     if url:
         project = next((t[len("project:") :] for t in tag_list if t.startswith("project:")), "")

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -385,6 +386,85 @@ def _exit_code(results: list[CheckResult]) -> int:
     return 0
 
 
+def _warn_names(results: list[CheckResult]) -> list[str]:
+    """Names of all WARN-level checks in the results."""
+    return [r.name for r in results if r.status == CheckStatus.WARN]
+
+
+# ── Auto-fix actions (--fix) ──────────────────────────────────────────────────
+
+
+@dataclass
+class _FixAction:
+    """A callable that attempts to fix a WARN-level check."""
+
+    description: str
+    run: Callable[[], tuple[bool, str]]
+
+
+def _fix_integration_stale() -> tuple[bool, str]:
+    """Run ``integration update`` to bring stale files to current version."""
+    from mnemos.cli.integration import IntegrationManager, load_targets
+
+    mgr = IntegrationManager(version=__version__)
+    cfg = load_targets()
+    detected = cfg.detected()
+    if not detected:
+        return False, "no agent harnesses detected"
+    updated = 0
+    for target in detected:
+        mgr.update(target.name)
+        # Verify after update — count targets that are now fully current.
+        verify = mgr.verify(target.name)
+        if verify.stale_count == 0 and verify.missing_count == 0:
+            updated += 1
+    return True, f"updated {updated}/{len(detected)} target(s) to v{__version__}"
+
+
+def _fix_agent_wiring() -> tuple[bool, str]:
+    """Wire mnemos/* into all unwired GCW agents."""
+    from mnemos.cli.agent_wiring import detect_agents, wire_agents
+    from mnemos.cli.util import _resolve_agents_to_wire
+
+    agents = detect_agents()
+    if not agents:
+        return False, "no agents found"
+    to_wire = _resolve_agents_to_wire(agents, select=None, wire_all=True)
+    if not to_wire:
+        return True, "all agents already wired"
+    results = wire_agents(to_wire, mode="wildcard")
+    wired = sum(1 for r in results if r.status.value == "wired")
+    return True, f"wired {wired}/{len(to_wire)} agent(s)"
+
+
+def _fix_mcp_registration() -> tuple[bool, str]:
+    """Register the MCP server via mcp-setup.sh."""
+    from mnemos.cli.integration import IntegrationManager
+
+    mgr = IntegrationManager(version=__version__)
+    ok, note = mgr.register_mcp()
+    return ok, note
+
+
+def _fix_action_for(check_name: str) -> _FixAction | None:
+    """Return the fix action for a WARN-level check, or None if not fixable."""
+    actions: dict[str, _FixAction] = {
+        "Integration": _FixAction(
+            description="mnemos integration update (redeploy stale files)",
+            run=_fix_integration_stale,
+        ),
+        "Agent wiring": _FixAction(
+            description="mnemos integration setup --wire-agents --all",
+            run=_fix_agent_wiring,
+        ),
+        "MCP server": _FixAction(
+            description="MCP server registration (mcp-setup.sh)",
+            run=_fix_mcp_registration,
+        ),
+    }
+    return actions.get(check_name)
+
+
 def _render(results: list[CheckResult]) -> None:
     """Render the results as a rich table."""
     table = Table(title="Mnemos Health Check", show_header=True, header_style="bold")
@@ -416,6 +496,21 @@ def doctor(
             help="Emit results as JSON (for scripting / CI) instead of a table.",
         ),
     ] = False,
+    fix: Annotated[
+        bool,
+        typer.Option(
+            "--fix",
+            help="Auto-fix WARN-level checks (stale integration, unwired agents, "
+            "missing MCP registration). FAIL-level checks are not auto-fixable.",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="With --fix: preview what would be fixed without executing.",
+        ),
+    ] = False,
 ) -> None:
     """Run Mnemos health checks and report status.
 
@@ -423,24 +518,79 @@ def doctor(
     integration layer, agent wiring, tag contract.
 
     Exit codes: 0 = all pass, 1 = one or more failed, 2 = warnings only.
+
+    With ``--fix``: attempts to auto-fix WARN-level checks (stale
+    integration → ``integration update``, unwired agents →
+    ``integration setup --wire-agents --all``, missing MCP → MCP setup).
+    After fixes, re-runs the affected checks and reports the new status.
+    ``--fix --dry-run`` previews what would be fixed without executing.
     """
     results = _run_all_checks()
 
+    fixed: list[str] = []
+    fix_skipped: list[str] = []
+
+    if fix:
+        if dry_run:
+            console.print("\n[cyan][dry-run][/cyan] Preview of auto-fixes:")
+        for r in results:
+            if r.status != CheckStatus.WARN:
+                continue
+            action = _fix_action_for(r.name)
+            if action is None:
+                fix_skipped.append(r.name)
+                continue
+            if dry_run:
+                console.print(
+                    f"  [yellow]⚠[/yellow] {r.name} → would run: {action.description}"
+                )
+                continue
+            console.print(f"\n[yellow]⚠[/yellow] {r.name} → fixing...")
+            ok, note = action.run()
+            if ok:
+                console.print(f"  [green]✓[/green] {r.name}: {note}")
+                fixed.append(r.name)
+            else:
+                console.print(f"  [red]✗[/red] {r.name}: {note}")
+                fix_skipped.append(r.name)
+
+        if not dry_run and fixed:
+            # Re-run the fixed checks to confirm the new status.
+            new_results = _run_all_checks()
+            results = new_results
+
     if json_output:
         exit_code = _exit_code(results)
-        payload = {
+        payload: dict[str, Any] = {
             "version": __version__,
             "checks": [
-                {"name": r.name, "status": r.status.value, "detail": r.detail} for r in results
+                {"name": r.name, "status": r.status.value, "detail": r.detail}
+                for r in results
             ],
             "exit_code": exit_code,
         }
+        if fix:
+            payload["fixed"] = fixed
+            payload["fix_skipped"] = fix_skipped
+            payload["dry_run"] = dry_run
         console.print_json(json.dumps(payload))
         raise typer.Exit(exit_code)
 
     _render(results)
     code = _exit_code(results)
     console.print()
+    if fix:
+        if dry_run:
+            console.print(
+                f"[cyan][dry-run][/cyan] Would fix "
+                f"{len(_warn_names(results))} issue(s)."
+            )
+        elif fixed:
+            console.print(f"[green]Fixed: {len(fixed)} issue(s).[/green]")
+        if fix_skipped:
+            console.print(
+                f"[yellow]Could not auto-fix: {', '.join(fix_skipped)}[/yellow]"
+            )
     if code == 0:
         console.print("[green]All checks passed. Mnemos is healthy.[/green]")
     elif code == 2:

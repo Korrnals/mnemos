@@ -209,10 +209,12 @@ def _resolve_agents_to_wire(
     return []
 
 
-def _prompt_wire_agents_interactive(agents: list[AgentInfo]) -> list[AgentInfo]:
-    """Interactive prompt: ask the user which agents to wire.
+def _prompt_wire_agents_default(agents: list[AgentInfo]) -> list[AgentInfo]:
+    """Interactive Y/n prompt for agent wiring (default flow, no flags).
 
-    Falls back to ``--all`` behaviour when stdin is not a TTY (CI / pipe).
+    When stdin is a TTY: shows a summary and asks ``[Y/n]``.
+    When non-interactive (CI / pipe): **skips wiring** (safe default —
+    don't modify agent files in CI without an explicit ``--wire-agents``).
     """
     unwired = [
         agent for agent in agents if not agent.has_mnemos and not agent.uses_tool_profile
@@ -234,14 +236,54 @@ def _prompt_wire_agents_interactive(agents: list[AgentInfo]) -> list[AgentInfo]:
         console.print("  [dim]Nothing to wire — all agents already have mnemos tools.[/dim]")
         return []
 
-    # Non-interactive fallback: default to wiring all unwired agents.
+    # Non-interactive: safe default is to SKIP (don't modify agent files in CI).
+    if not sys.stdin.isatty():
+        console.print(
+            "[dim]Non-interactive terminal — skipping agent wiring "
+            "(use --wire-agents to force).[/dim]"
+        )
+        return []
+
+    answer = console.input("Wire Mnemos MCP to all GCW agents? [Y/n] ").strip().lower()
+    if answer in ("", "y", "yes"):
+        return unwired
+    return []
+
+
+def _prompt_wire_agents_interactive(agents: list[AgentInfo]) -> list[AgentInfo]:
+    """Interactive numbered prompt for ``--wire-agents`` without ``--all``.
+
+    Offers three choices: wire all, select by name, or skip. Falls back
+    to wiring all unwired agents when stdin is not a TTY (CI / pipe) —
+    the user explicitly asked for wiring via ``--wire-agents``.
+    """
+    unwired = [
+        agent for agent in agents if not agent.has_mnemos and not agent.uses_tool_profile
+    ]
+    already = sum(1 for agent in agents if agent.has_mnemos)
+    skipped = sum(1 for agent in agents if agent.uses_tool_profile)
+
+    console.print(
+        f"\nFound [bold]{len(agents)}[/bold] agents in "
+        f"[cyan]{DEFAULT_AGENTS_DIR}[/cyan]"
+    )
+    console.print(
+        f"  [green]{already}[/green] already wired, "
+        f"[yellow]{len(unwired)}[/yellow] need wiring, "
+        f"[dim]{skipped} skipped (tool_profile)[/dim]"
+    )
+
+    if not unwired:
+        console.print("  [dim]Nothing to wire — all agents already have mnemos tools.[/dim]")
+        return []
+
+    # Non-interactive fallback: user passed --wire-agents, so wire all.
     if not sys.stdin.isatty():
         console.print(
             "[yellow]⚠ Non-interactive terminal — wiring all unwired agents.[/yellow]"
         )
         return unwired
 
-    # Simple numbered prompt — keep it lightweight, no full TUI.
     console.print("\n  [bold]Options:[/bold]")
     console.print("  [1] Wire all unwired agents")
     console.print("  [2] Select specific agents by name")
@@ -380,7 +422,9 @@ def setup_cmd(
     * ``--dry-run`` — show what would change without modifying files.
 
     If neither ``--wire-agents`` nor ``--no-wire-agents`` is passed, the
-    command prompts interactively (same pattern as the MCP prompt).
+    command prompts interactively (``[Y/n]``) when stdin is a TTY. In a
+    non-interactive terminal (CI / pipe), agent wiring is **skipped** as a
+    safe default — use ``--wire-agents`` to force wiring in CI.
     """
     if wire_agents and no_wire_agents:
         console.print("[red]--wire-agents and --no-wire-agents are mutually exclusive.[/red]")
@@ -430,8 +474,9 @@ def setup_cmd(
             else:
                 console.print("[dim]No agents selected for wiring.[/dim]")
         else:
-            # Default: prompt interactively (same pattern as MCP).
-            to_wire = _prompt_wire_agents_interactive(agents)
+            # Default flow (no --wire-agents / --no-wire-agents): prompt
+            # interactively. Non-interactive terminals skip safely.
+            to_wire = _prompt_wire_agents_default(agents)
             if to_wire:
                 _run_agent_wiring(to_wire, mode=mode, dry_run=dry_run)
 
