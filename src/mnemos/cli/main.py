@@ -210,7 +210,11 @@ def stats(config: str = ConfigOption) -> None:
 @app.command(name="filter")
 def filter_cmd(
     memory_id: str = typer.Argument(
-        None, help="Memory ID to filter (omit with --all to re-filter every memory)"
+        None,
+        help=(
+            "Memory ID to filter. Run context filter on a single memory: "
+            "shows clean content + reduction stats. Omit with --all to re-filter every memory."
+        ),
     ),
     profile: str = typer.Option(
         None,
@@ -220,11 +224,20 @@ def filter_cmd(
     ),
     budget: int = typer.Option(None, "--budget", "-b", help="Token budget for truncation"),
     all_memories: bool = typer.Option(
-        False, "--all", help="Re-filter all memories (reports aggregate stats)"
+        False,
+        "--all",
+        help=(
+            "Re-run context filter on ALL memories. Existing clean_content is "
+            "overwritten with fresh filter output. Reports aggregate stats."
+        ),
     ),
     config: str = ConfigOption,
 ) -> None:
-    """Run the Context Filter on a memory. Shows clean content + reduction stats."""
+    """Run the Context Filter on a memory. Shows clean content + reduction stats.
+
+    Note: re-filtering with a different profile produces different clean_content.
+    The filter is idempotent only when the same profile is used.
+    """
     mgr = get_manager(config)
 
     if all_memories:
