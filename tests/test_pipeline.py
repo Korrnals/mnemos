@@ -50,8 +50,14 @@ def tmp_settings():
 
 
 @pytest.fixture
-def tmp_manager(tmp_settings):
-    """Yield a MemoryManager with isolated storage and mocked embedder."""
+def tmp_manager(tmp_settings, mock_llm_router):
+    """Yield a MemoryManager with isolated storage and mocked embedder/LLM.
+
+    The embedder is mocked with a deterministic hash-based vector generator
+    so clustering works without the ONNX model. The LLM router is the
+    shared ``mock_llm_router`` fixture (no network, no SDK) so synthesis
+    tests run deterministically.
+    """
     mgr = MemoryManager(tmp_settings)
     # Mock embedder: deterministic 384-dim embeddings based on content hash
     mock_embedder = MagicMock()
@@ -69,6 +75,8 @@ def tmp_manager(tmp_settings):
 
     mock_embedder.embed.side_effect = _fake_embed
     mgr._embedder = mock_embedder
+    # Inject the mock LLM router so synthesize_cluster never hits the network.
+    mgr._llm = mock_llm_router
     yield mgr
     mgr.close()
 
@@ -233,6 +241,297 @@ class TestSynthesizeWorker:
         synthesize_cluster(mgr, cluster_id)
         traces = mgr.sqlite.list_traces(limit=10)
         assert any(t.task_label == "synthesize" for t in traces)
+
+    def test_synthesize_calls_llm_router(self, tmp_manager):
+        """synthesize_cluster calls mgr.llm.complete() exactly once."""
+        mgr = tmp_manager
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        # The mock_llm_router has a MockLLMProvider injected as _provider.
+        provider = mgr.llm._provider
+        assert provider is not None
+        calls_before = len(provider.calls)
+
+        result = synthesize_cluster(mgr, cluster_id)
+        assert result is not None
+        assert len(provider.calls) == calls_before + 1
+        # The prompt must contain the --- Synthesis --- delimiter.
+        assert "--- Synthesis ---" in provider.calls[-1]["prompt"]
+
+    def test_synthesize_records_trace(self, tmp_manager):
+        """Trace has llm_called=True, tokens_in/out, fallback_used."""
+        mgr = tmp_manager
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        synthesize_cluster(mgr, cluster_id)
+        traces = mgr.sqlite.list_traces(task_label="synthesize", limit=10)
+        llm_traces = [t for t in traces if t.step == "llm_call"]
+        assert len(llm_traces) >= 1
+        t = llm_traces[0]
+        assert t.llm_called is True
+        assert t.llm_done is True
+        assert t.tokens_in > 0
+        assert t.tokens_out > 0
+        assert t.fallback_used is False
+
+    def test_synthesize_rlm_metrics_in_trace(self, tmp_manager):
+        """When RLM is used, trace rationale_summary includes RLM metrics."""
+        from mnemos.config import LLMConfig, RLMSettings
+        from mnemos.llm.base import LLMProvider, LLMResponse
+        from mnemos.llm.router import LLMRouter
+
+        class _RLMWithMetrics(LLMProvider):
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def complete(self, prompt, *, system=None, temperature=0.3, max_tokens=4096):
+                self.calls.append({"prompt": prompt})
+                return LLMResponse(
+                    text="# RLM Synthesis\n\nArticle.",
+                    model="rlm:qwen2.5:3b",
+                    tokens_in=50,
+                    tokens_out=10,
+                    cached=False,
+                    fallback_used=False,
+                )
+
+            @property
+            def provider_name(self) -> str:
+                return "rlm"
+
+            @property
+            def last_iterations(self) -> int:
+                return 3
+
+            @property
+            def last_subcall_count(self) -> int:
+                return 5
+
+            @property
+            def last_total_cost(self) -> float:
+                return 0.0123
+
+            @property
+            def last_trace_id(self) -> str | None:
+                return "rlm-trace-abc"
+
+        rlm_provider = _RLMWithMetrics()
+        rlm_settings = RLMSettings(enabled=True, threshold_tokens=1)
+        router = LLMRouter(LLMConfig(provider="ollama", model="qwen2.5:3b"), rlm_settings)
+        router._rlm_provider = rlm_provider
+        # Also inject a standard provider so fallback path is available.
+        from tests.conftest import MockLLMProvider
+
+        router._provider = MockLLMProvider(text="standard-fallback")
+
+        mgr = tmp_manager
+        mgr._llm = router
+
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        result = synthesize_cluster(mgr, cluster_id, force_rlm=True)
+        assert result is not None
+        assert len(rlm_provider.calls) == 1
+
+        traces = mgr.sqlite.list_traces(task_label="synthesize", limit=10)
+        llm_traces = [t for t in traces if t.step == "llm_call"]
+        assert len(llm_traces) >= 1
+        rationale = llm_traces[0].rationale_summary
+        assert "RLM iters=3" in rationale
+        assert "subcalls=5" in rationale
+        assert "trace=rlm-trace-abc" in rationale
+
+    def test_synthesize_fallback_on_rlm_failure(self, tmp_manager):
+        """RLM fails, fallback to standard, trace fallback_used=True."""
+        from mnemos.config import LLMConfig, RLMSettings
+        from mnemos.llm.base import LLMExecutionError, LLMProvider
+        from mnemos.llm.router import LLMRouter
+        from tests.conftest import MockLLMProvider
+
+        class _FailingRLM(LLMProvider):
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def complete(self, prompt, *, system=None, temperature=0.3, max_tokens=4096):
+                self.calls.append({"prompt": prompt})
+                raise LLMExecutionError("rlm boom", provider="rlm")
+
+            @property
+            def provider_name(self) -> str:
+                return "rlm"
+
+        rlm_provider = _FailingRLM()
+        standard = MockLLMProvider(text="# Fallback Synthesis\n\nArticle.")
+        rlm_settings = RLMSettings(
+            enabled=True, threshold_tokens=1, fallback_on_failure=True
+        )
+        router = LLMRouter(LLMConfig(provider="ollama", model="qwen2.5:3b"), rlm_settings)
+        router._rlm_provider = rlm_provider
+        router._provider = standard
+
+        mgr = tmp_manager
+        mgr._llm = router
+
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        result = synthesize_cluster(mgr, cluster_id, force_rlm=True)
+        assert result is not None
+        assert len(rlm_provider.calls) == 1  # RLM was attempted
+        assert len(standard.calls) == 1  # then fell back
+        assert result.content == "# Fallback Synthesis\n\nArticle."
+
+        traces = mgr.sqlite.list_traces(task_label="synthesize", limit=10)
+        llm_traces = [t for t in traces if t.step == "llm_call"]
+        assert len(llm_traces) >= 1
+        assert llm_traces[0].fallback_used is True
+
+    def test_synthesize_force_rlm(self, tmp_manager):
+        """force_rlm=True → RLM used regardless of prompt size."""
+        from mnemos.config import LLMConfig, RLMSettings
+        from mnemos.llm.base import LLMProvider, LLMResponse
+        from mnemos.llm.router import LLMRouter
+
+        class _RLMStub(LLMProvider):
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def complete(self, prompt, *, system=None, temperature=0.3, max_tokens=4096):
+                self.calls.append({"prompt": prompt})
+                return LLMResponse(
+                    text="# Forced RLM\n\nArticle.",
+                    model="rlm:qwen2.5:3b",
+                    tokens_in=10,
+                    tokens_out=5,
+                    cached=False,
+                    fallback_used=False,
+                )
+
+            @property
+            def provider_name(self) -> str:
+                return "rlm"
+
+        rlm_provider = _RLMStub()
+        rlm_settings = RLMSettings(enabled=True, threshold_tokens=10_000)
+        router = LLMRouter(LLMConfig(provider="ollama", model="qwen2.5:3b"), rlm_settings)
+        router._rlm_provider = rlm_provider
+        from tests.conftest import MockLLMProvider
+
+        router._provider = MockLLMProvider(text="should-not-be-used")
+
+        mgr = tmp_manager
+        mgr._llm = router
+
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        result = synthesize_cluster(mgr, cluster_id, force_rlm=True)
+        assert result is not None
+        assert len(rlm_provider.calls) == 1
+        assert result.model_used == "rlm:qwen2.5:3b"
+
+    def test_synthesize_force_standard(self, tmp_manager):
+        """force_standard=True → standard used regardless of prompt size."""
+        from mnemos.config import LLMConfig, RLMSettings
+        from mnemos.llm.base import LLMProvider, LLMResponse
+        from mnemos.llm.router import LLMRouter
+
+        class _NeverCalledRLM(LLMProvider):
+            def __init__(self) -> None:
+                self.calls = []
+
+            async def complete(self, prompt, *, system=None, temperature=0.3, max_tokens=4096):
+                self.calls.append({"prompt": prompt})
+                return LLMResponse(
+                    text="should-not-be-used",
+                    model="rlm:mock",
+                    tokens_in=0,
+                    tokens_out=0,
+                )
+
+            @property
+            def provider_name(self) -> str:
+                return "rlm"
+
+        rlm_provider = _NeverCalledRLM()
+        # threshold=1 so without force_standard, RLM would be selected.
+        rlm_settings = RLMSettings(enabled=True, threshold_tokens=1)
+        router = LLMRouter(LLMConfig(provider="ollama", model="qwen2.5:3b"), rlm_settings)
+        router._rlm_provider = rlm_provider
+        from tests.conftest import MockLLMProvider
+
+        standard = MockLLMProvider(text="# Forced Standard\n\nArticle.")
+        router._provider = standard
+
+        mgr = tmp_manager
+        mgr._llm = router
+
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        result = synthesize_cluster(mgr, cluster_id, force_standard=True)
+        assert result is not None
+        assert len(rlm_provider.calls) == 0  # RLM NOT called
+        assert len(standard.calls) == 1
+        assert result.content == "# Forced Standard\n\nArticle."
+
+    def test_synthesize_force_both_raises(self, tmp_manager):
+        """force_rlm and force_standard together → ValueError."""
+        mgr = tmp_manager
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            synthesize_cluster(
+                mgr, cluster_id, force_rlm=True, force_standard=True
+            )
+
+    def test_synthesize_async_variant(self, tmp_manager):
+        """synthesize_cluster_async works with await."""
+        import asyncio
+
+        from mnemos.pipeline.synthesize import synthesize_cluster_async
+
+        mgr = tmp_manager
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        result = asyncio.run(synthesize_cluster_async(mgr, cluster_id))
+        assert result is not None
+        draft = mgr.sqlite.get(result.draft_id)
+        assert draft is not None
+        assert draft.status == MemoryStatus.PROCESSED
+
+    def test_synthesize_sync_wrapper(self, tmp_manager):
+        """synthesize_cluster (sync) works via asyncio.run internally."""
+        mgr = tmp_manager
+        m1 = _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        cluster_id = mgr.sqlite.get(m1.id).cluster_id
+
+        result = synthesize_cluster(mgr, cluster_id)
+        assert result is not None
+        assert result.content == "mock-llm-response"
 
 
 # ---------------------------------------------------------------------------

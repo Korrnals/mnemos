@@ -21,7 +21,7 @@ deterministic and testable without any live provider.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mnemos.llm.base import (
     LLMExecutionError,
@@ -112,30 +112,77 @@ class LLMRouter:
         system: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 4096,
+        force_rlm: bool = False,
+        force_standard: bool = False,
     ) -> LLMResponse:
         """Route a completion request to the selected provider.
 
         Routing logic:
-          * ``token_estimate = len(prompt) // 4``
-          * if ``rlm_settings is None`` or ``token_estimate < threshold``:
-            standard provider, ``fallback_used=False``.
-          * if ``token_estimate >= threshold`` and RLM is configured:
-            dispatch to the RLM provider. On ``LLMExecutionError`` with
-            ``fallback_on_failure=True``, fall back to standard with
-            ``fallback_used=True``. With ``fallback_on_failure=False``,
-            the error propagates.
+          * ``force_rlm`` and ``force_standard`` are mutually exclusive;
+            setting both raises ``ValueError``.
+          * ``force_rlm=True`` → always dispatch to RLM (raises
+            ``LLMExecutionError`` if RLM is not configured/installed).
+          * ``force_standard=True`` → always use the standard provider,
+            bypassing the threshold check.
+          * Otherwise ``token_estimate = len(prompt) // 4``:
+            - if ``rlm_settings is None`` or ``token_estimate < threshold``:
+              standard provider, ``fallback_used=False``.
+            - if ``token_estimate >= threshold`` and RLM is configured:
+              dispatch to the RLM provider. On ``LLMExecutionError`` with
+              ``fallback_on_failure=True``, fall back to standard with
+              ``fallback_used=True``. With ``fallback_on_failure=False``,
+              the error propagates.
           * if the standard provider raises, ``LLMExecutionError``
             propagates (the router does not swallow provider errors).
 
         The returned ``LLMResponse`` always carries the routing outcome in
         its ``fallback_used`` flag.
         """
+        if force_rlm and force_standard:
+            raise ValueError(
+                "force_rlm and force_standard are mutually exclusive"
+            )
+
         token_estimate = self._estimate_tokens(prompt)
         threshold = (
             self._rlm_settings.threshold_tokens
             if self._rlm_settings is not None
             else None
         )
+
+        if force_rlm:
+            if self._rlm_settings is None:
+                raise LLMExecutionError(
+                    "force_rlm=True but RLM is not configured (rlm.enabled=False)",
+                    provider="router",
+                )
+            assert threshold is not None
+            return await self._dispatch_rlm(
+                prompt,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                token_estimate=token_estimate,
+                threshold=threshold,
+            )
+
+        if force_standard:
+            selected = "standard"
+            logger.debug(
+                "router: force_standard=True, estimated=%d tokens, "
+                "selected=%s",
+                token_estimate,
+                selected,
+            )
+            self._last_selection = selected
+            resp = await self._call_standard(
+                prompt,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            resp.fallback_used = False
+            return resp
 
         use_rlm = (
             self._rlm_settings is not None
@@ -310,3 +357,32 @@ class LLMRouter:
         if self._last_selection == "rlm":
             return "router:rlm"
         return "router"
+
+    @property
+    def rlm_metrics(self) -> dict[str, Any] | None:
+        """Aggregate RLM metrics from the most recent RLM dispatch.
+
+        Returns a dict with ``iterations``, ``subcall_count``,
+        ``total_cost``, and ``trace_id`` keys when the last call used the
+        RLM provider (including fallback attempts). Returns ``None`` when
+        RLM was not invoked or no RLM provider is instantiated.
+
+        Used by the synthesis pipeline to enrich the trace
+        ``rationale_summary`` without exposing the raw chain-of-thought
+        (security policy).
+        """
+        provider = self._rlm_provider
+        if provider is None:
+            return None
+        # RLMProvider exposes last_* properties; standard providers do not.
+        # Guard with getattr so a non-RLM provider injected into the slot
+        # does not raise AttributeError.
+        iterations = getattr(provider, "last_iterations", None)
+        if iterations is None:
+            return None
+        return {
+            "iterations": iterations,
+            "subcall_count": getattr(provider, "last_subcall_count", 0),
+            "total_cost": getattr(provider, "last_total_cost", 0.0),
+            "trace_id": getattr(provider, "last_trace_id", None),
+        }

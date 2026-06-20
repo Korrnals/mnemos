@@ -297,15 +297,17 @@ async def trigger_process(
 ) -> dict[str, Any]:
     """Trigger end-to-end pipeline: cluster → synthesize → quality_gate → publish."""
     mgr = get_manager()
-    summary = mgr.run_pipeline(project=project, agent=agent, limit=limit)
+    summary = await mgr.run_pipeline_async(project=project, agent=agent, limit=limit)
     return {"status": "ok", **summary}
 
 
 @app.post("/synthesize")
 async def trigger_synthesize(cluster_id: str) -> dict[str, Any]:
     """Trigger LLM synthesis for a cluster."""
+    from mnemos.pipeline.synthesize import synthesize_cluster_async
+
     mgr = get_manager()
-    result = mgr.synthesize(cluster_id)
+    result = await synthesize_cluster_async(mgr, cluster_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found or empty")
     return {

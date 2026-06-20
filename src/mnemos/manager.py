@@ -623,11 +623,20 @@ class MemoryManager:
         *,
         prompt_version: str = "v1",
         force: bool = False,
+        force_rlm: bool = False,
+        force_standard: bool = False,
     ) -> SynthesisResult | None:
         """Run the synthesis worker on a cluster."""
         from mnemos.pipeline.synthesize import synthesize_cluster
 
-        return synthesize_cluster(self, cluster_id, prompt_version=prompt_version, force=force)
+        return synthesize_cluster(
+            self,
+            cluster_id,
+            prompt_version=prompt_version,
+            force=force,
+            force_rlm=force_rlm,
+            force_standard=force_standard,
+        )
 
     def quality_gate(self, memory_id: str) -> QualityResult:
         """Run quality gates on a processed memory."""
@@ -651,7 +660,10 @@ class MemoryManager:
     ) -> dict[str, Any]:
         """End-to-end pipeline: cluster → synthesize → quality_gate → publish.
 
-        Returns a summary dict for observability / CLI output.
+        Sync variant — uses :func:`asyncio.run` internally via
+        ``synthesize_cluster``. Intended for CLI call sites without a
+        running event loop. Use :meth:`run_pipeline_async` from async
+        contexts (API endpoints).
         """
         clusters = self.cluster(project=project, agent=agent, limit=limit, **kwargs)
         synthesized: list[SynthesisResult] = []
@@ -660,6 +672,48 @@ class MemoryManager:
 
         for cr in clusters:
             syn = self.synthesize(cr.cluster_id)
+            if syn is None:
+                continue
+            synthesized.append(syn)
+
+            qg = self.quality_gate(syn.draft_id)
+            if not qg.passed:
+                failed_qg.append(qg)
+                continue
+
+            pub = self.publish(syn.draft_id)
+            published.append(pub)
+
+        return {
+            "clusters": len(clusters),
+            "synthesized": len(synthesized),
+            "published": len(published),
+            "failed_quality_gate": len(failed_qg),
+            "published_ids": [p.memory_id for p in published],
+        }
+
+    async def run_pipeline_async(
+        self,
+        *,
+        project: str | None = None,
+        agent: str | None = None,
+        limit: int = 100,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Async variant of :meth:`run_pipeline` for async contexts.
+
+        Uses ``synthesize_cluster_async`` so it can be awaited from FastAPI
+        endpoints without nesting ``asyncio.run`` inside a running loop.
+        """
+        from mnemos.pipeline.synthesize import synthesize_cluster_async
+
+        clusters = self.cluster(project=project, agent=agent, limit=limit, **kwargs)
+        synthesized: list[SynthesisResult] = []
+        published: list[PublishResult] = []
+        failed_qg: list[QualityResult] = []
+
+        for cr in clusters:
+            syn = await synthesize_cluster_async(self, cr.cluster_id)
             if syn is None:
                 continue
             synthesized.append(syn)
