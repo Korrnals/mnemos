@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 ---
 name: mnemos-recall
 description: Effective memory search — start narrow, broaden if no hits; avoids re-learning what was already learned

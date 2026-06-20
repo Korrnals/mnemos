@@ -13,7 +13,7 @@ This module is the engine behind the `mnemos util-*` CLI subcommands. It:
 
 The version stamp is a Markdown HTML comment on the first non-shebang line::
 
-    <!-- mnemos-integration: v1.2.0 -->
+    <!-- mnemos-integration: v2.0.0 -->
 
 This is invisible in rendered Markdown but trivially greppable.
 """

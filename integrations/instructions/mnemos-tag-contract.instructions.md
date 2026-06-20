@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 ---
 applyTo: '**'
 description: Mnemos tag contract — required tag composition for every mnemos_add call

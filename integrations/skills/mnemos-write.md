@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 ---
 name: mnemos-write
 description: Write a good memory entry — tag contract, content quality, one idea per entry

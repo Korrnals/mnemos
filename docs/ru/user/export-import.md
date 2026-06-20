@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 # Экспорт и импорт
 
 **🌐 Language / Язык:** [English](../../en/user/export-import.md) · Русский
@@ -317,7 +317,7 @@ attachment; filename="mnemos-export.<suffix>"`. Суффикс зависит о
   "errors": [],
   "warnings": [],
   "format_version": "1.0",
-  "mnemos_version": "1.2.0"
+  "mnemos_version": "2.0.0"
 }
 ```
 

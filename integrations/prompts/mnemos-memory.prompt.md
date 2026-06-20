@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 <!-- Adapted from ~/.config/Code/User/prompts/ai-brain-memory.prompt.md (legacy ai-brain prompt). -->
 ---
 description: "Agent with persistent Mnemos memory — auto-recall, auto-checkpoint, full context preservation"

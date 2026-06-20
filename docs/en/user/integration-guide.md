@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 # Integration Guide
 
 **🌐 Language / Язык:** English · [Русский](../../ru/user/integration-guide.md)
@@ -96,7 +96,7 @@ Checks:
 - All instruction files present with valid frontmatter (`applyTo: '**'`).
 - All skill files present with `name:` and `description:`.
 - Prompt mode file present with `mode:` and `tools:`.
-- Version stamp `<!-- mnemos-integration: v1.2.0 -->` in every file.
+- Version stamp `<!-- mnemos-integration: v2.0.0 -->` in every file.
 - No `ai-brain` references (except the "adapted from" comment in the prompt).
 
 Exit code `0` = all checks passed. Non-zero = missing or malformed files.
@@ -405,7 +405,7 @@ the `mnemos-tag-contract` skill, and the `mnemos-memory` prompt mode.
 Every file in the integration layer carries a version stamp:
 
 ```html
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 ```
 
 This allows `mnemos integration verify` to detect stale files after an update. If

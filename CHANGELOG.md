@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [2.0.0] — 2026-06-21
+
 ### Added
 
 - **`make lint-shell` target** (`Makefile`) — runs `shellcheck scripts/*.sh`
@@ -135,18 +139,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`.history/` directory** — deleted the VS Code Local History cache
   (~100+ stale files, gitignored). VS Code recreates files as needed.
 
+### Changed (BREAKING)
+
+- **CLI restructure** — `mnemos util-*` commands renamed to `mnemos integration *`
+  (`util-detect` → `integration detect`, `util-setup` → `integration setup`, etc.).
+  No deprecation aliases — clean break.
+- **`mnemos tags-validate`** → **`mnemos tags validate`** (nested subcommand).
+- **`mnemos migrate-from-ai-brain`** → **`mnemos migrate from-ai-brain`** (nested subcommand).
+- **`auto_filter: true`** is now the default for new installs. Existing records
+  are unaffected (`clean_content` stays `None` until explicitly filtered).
+- **`hf_revision` default** changed from a fabricated SHA to `""` — ONNX
+  provider now requires explicit pinning. Existing configs with a value are
+  unaffected.
+
 ### Changed
 
-- **CLI restructure — professional command grouping**:
-  - `mnemos util-*` → `mnemos integration *` (detect/setup/update/verify/uninstall)
-    — the flat `util-*` namespace is replaced by a real `integration` group.
-  - `mnemos tags-validate` → `mnemos tags validate` — nested under a `tags` group.
-  - `mnemos migrate-from-ai-brain` → `mnemos migrate from-ai-brain` — nested
-    under a `migrate` group.
-  - Core commands (`add`, `search`, `recall`, `stats`, `serve`, `mcp-server`)
-    stay flat — daily-use commands, like `git add`/`git commit`.
-  - `auth token/totp` unchanged.
-  - Clean break — no deprecation aliases (owner-confirmed).
 - **Integration layer** (`integrations/`, `src/mnemos/cli/integration.py`,
   `src/mnemos/cli/util.py`) — versioned pack of instructions + skills +
   prompts that ships inside the package and deploys into detected agent
@@ -158,7 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `mnemos integration verify` — compare deployed files against shipped pack
   - `mnemos integration uninstall` — remove only stamped files, preserve user files
   - All commands support `--dry-run` and `--target` (default: all detected)
-  - Version stamp `<!-- mnemos-integration: v1.2.0 -->` on every deployed file
+  - Version stamp `<!-- mnemos-integration: v2.0.0 -->` on every deployed file
   - Idempotent: re-running `integration setup` updates stale files without duplicating
 - **`integrations/targets.yaml`** — harness detection rules + deploy maps
   with `~` expansion. A target is detected if ANY of its detect paths exist.

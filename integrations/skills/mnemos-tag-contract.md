@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 ---
 name: mnemos-tag-contract
 description: Canonical tag schema for Mnemos memory entries — required composition, whitelisted prefixes, subtypes

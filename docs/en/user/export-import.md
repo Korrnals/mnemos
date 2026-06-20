@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 # Export & Import
 
 **🌐 Language / Язык:** English · [Русский](../../ru/user/export-import.md)
@@ -308,7 +308,7 @@ Upload an export file as multipart form data and import it.
   "errors": [],
   "warnings": [],
   "format_version": "1.0",
-  "mnemos_version": "1.2.0"
+  "mnemos_version": "2.0.0"
 }
 ```
 

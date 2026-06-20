@@ -1,4 +1,4 @@
-<!-- mnemos-integration: v1.2.0 -->
+<!-- mnemos-integration: v2.0.0 -->
 # Руководство по контекстному фильтру
 
 **🌐 Language / Язык:** [English](../../en/user/context-filter.md) · Русский
