@@ -20,6 +20,7 @@ dependencies = [
     "chromadb>=0.5",
     # API
     "fastapi>=0.115",
+    "python-multipart>=0.0.9",  # multipart form data for POST /api/v1/import (UploadFile)
     "uvicorn[standard]>=0.30",
     # Transitive CVE closure (M15.5.1) — pinned directly to force resolver
     # past vulnerable transitive versions still pulled by chromadb/k8s/fastapi.
