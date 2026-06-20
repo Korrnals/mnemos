@@ -100,6 +100,16 @@ class VectorStore:
         conn.execute("DELETE FROM embeddings WHERE id=?", (memory_id,))
         conn.commit()
 
+    def wipe(self) -> int:
+        """Delete every embedding row. Used by ``mnemos import --mode restore``.
+
+        Returns the number of deleted rows. The table schema is preserved.
+        """
+        conn = self._conn()
+        cur = conn.execute("DELETE FROM embeddings")
+        conn.commit()
+        return cur.rowcount
+
     # ── search ────────────────────────────────────────────────────────────
 
     def search(

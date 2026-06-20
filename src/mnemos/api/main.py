@@ -607,6 +607,9 @@ async def api_export(
     header (handled below) — kept out of the request body so it is not
     logged as a request parameter.
     """
+    import io
+    import json as _json
+
     from mnemos.cli.export import (
         CompressMode,
         ExportFilter,
@@ -614,8 +617,6 @@ async def api_export(
         build_json_payload,
     )
     from mnemos.models import MemoryStatus
-    import io
-    import json as _json
 
     mgr = get_manager()
 
@@ -698,7 +699,7 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 @app.post("/api/v1/import")
 async def api_import(
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # noqa: B008 — FastAPI idiom for multipart upload
     mode: str = Query(default="merge"),
     overwrite: bool = Query(default=False),
     confirm: bool = Query(default=False),
@@ -711,7 +712,7 @@ async def api_import(
     ``errors``, and ``warnings``. Encryption passphrase is read from the
     ``X-Mnemos-Passphrase`` header (kept out of the body / logs).
     """
-    from mnemos.cli.import_ import ImportMode, run_import
+    from mnemos.cli.import_ import run_import
 
     mgr = get_manager()
 
