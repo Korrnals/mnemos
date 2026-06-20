@@ -46,6 +46,20 @@ logger = logging.getLogger(__name__)
 _MAX_REDIRECTS: int = 5
 
 
+class _SSRFRejectionError(Exception):
+    """Internal sentinel wrapping a ``ValueError`` from ``_validate_url``.
+
+    Distinguishes an SSRF guard rejection (must be re-raised, never stored
+    in memory) from operational ``ValueError``s raised inside the fetch
+    loop (too-many-redirects, redirect-loop, missing Location) which are
+    legitimate network errors and degrade to placeholder content.
+    """
+
+    def __init__(self, original: ValueError) -> None:
+        super().__init__(str(original))
+        self.original = original
+
+
 class MemoryManager:
     """Central coordinator for all memory operations."""
 
@@ -709,14 +723,21 @@ class MemoryManager:
 
         ``httpx.Client(follow_redirects=False)`` is retained so the library
         never follows a redirect without our guard running first.
+
+        SSRF rejections (``ValueError`` from ``_validate_url``) are re-raised
+        as hard errors — the blocked URL is NOT stored in memory. Only
+        network/operational errors (connection, timeout, HTTP error status,
+        too-many-redirects, redirect-loop) degrade to a placeholder.
         """
+        # Initial SSRF validation — reject before any fetch attempt.
+        # A ValueError here must NOT be swallowed into placeholder content.
+        self._validate_url(url)
+
         try:
             from urllib.parse import urljoin
 
             import httpx
             import trafilatura
-
-            self._validate_url(url)
 
             # Per-hop SSRF re-validation (v2): follow redirects manually so
             # every Location target is checked by _validate_url before the
@@ -742,8 +763,13 @@ class MemoryManager:
                     next_url = urljoin(current_url, location)
                     # Core per-hop guard: validate the redirect target BEFORE
                     # following. Catches the pivot: public host -> 169.254.x
-                    # or any private/loopback/metadata endpoint.
-                    self._validate_url(next_url)
+                    # or any private/loopback/metadata endpoint. A ValueError
+                    # here is an SSRF rejection — wrap it so the outer
+                    # ``except Exception`` does not swallow it into a placeholder.
+                    try:
+                        self._validate_url(next_url)
+                    except ValueError as exc:
+                        raise _SSRFRejectionError(exc) from exc
                     if next_url in visited:
                         raise ValueError(f"Redirect loop detected at {next_url}")
                     visited.add(next_url)
@@ -752,6 +778,11 @@ class MemoryManager:
 
             resp.raise_for_status()
             content = trafilatura.extract(resp.text) or resp.text[:4000]
+        except _SSRFRejectionError as exc:
+            # SSRF guard rejected a URL — do NOT store it in memory.
+            raise ValueError(
+                f"URL rejected for security reasons: {exc.original}"
+            ) from exc.original
         except Exception as exc:
             logger.warning("URL fetch failed: %s - using placeholder", exc)
             content = f"URL: {url}\n[fetch failed: {exc}]"
