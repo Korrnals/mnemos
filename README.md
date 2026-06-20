@@ -84,6 +84,12 @@ This deploys memory-usage instructions, skills, and a prompt mode to your
 agent harness (GCW `~/.copilot/`, generic Copilot, Cursor). Agents will now
 *know when and how* to use Mnemos memory — not just have the tools available.
 
+Add `--wire-agents --all` to also grant `mnemos/*` tools to GCW agent
+frontmatter in the same pass. See the
+[integration guide](docs/en/user/integration-guide.md#agent-mcp-wiring)
+for wiring flags and the [context filter guide](docs/en/user/context-filter.md)
+for the five-stage noise stripper that runs automatically on every `mnemos_add`.
+
 <details>
 <summary><strong>🛠️ Other ways to install</strong> — from source, released wheel, or container one-liner</summary>
 
