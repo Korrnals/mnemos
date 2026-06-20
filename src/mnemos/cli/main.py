@@ -204,6 +204,57 @@ def stats(config: str = ConfigOption) -> None:
         console.print(f"  [bold]{k}[/bold]: {v}")
 
 
+# ── filter (M10) ───────────────────────────────────────────────────────────────
+
+
+@app.command(name="filter")
+def filter_cmd(
+    memory_id: str = typer.Argument(
+        None, help="Memory ID to filter (omit with --all to re-filter every memory)"
+    ),
+    profile: str = typer.Option(
+        None,
+        "--profile",
+        "-p",
+        help="log|terminal|code|docs|web|default (auto-detected if omitted)",
+    ),
+    budget: int = typer.Option(None, "--budget", "-b", help="Token budget for truncation"),
+    all_memories: bool = typer.Option(
+        False, "--all", help="Re-filter all memories (reports aggregate stats)"
+    ),
+    config: str = ConfigOption,
+) -> None:
+    """Run the Context Filter on a memory. Shows clean content + reduction stats."""
+    mgr = get_manager(config)
+
+    if all_memories:
+        with console.status("[bold green]Re-filtering all memories..."):
+            summary = mgr.filter_all(profile=profile, budget=budget)
+        console.print(f"[green]✓[/green] Filtered: {summary['filtered']}")
+        console.print(f"  total:   {summary['total']}")
+        console.print(f"  failed:  {summary['failed']}")
+        console.print(f"  skipped: {summary['skipped']}")
+        return
+
+    if not memory_id:
+        console.print("[red]Provide a memory ID or use --all.[/red]")
+        raise typer.Exit(1)
+
+    result = mgr.apply_context_filter(memory_id, profile=profile, budget=budget)
+    if result.get("status") == "error":
+        console.print(f"[red]✗[/red] {result.get('error', 'unknown error')}")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/green] Filtered: {memory_id}")
+    console.print(f"  profile: {result['filter_profile']}")
+    stats_data = result.get("stats", {})
+    if "dedup" in stats_data:
+        console.print(f"  dedup:   {stats_data['dedup']}")
+    if "tokens" in stats_data:
+        console.print(f"  tokens:  {stats_data['tokens']}")
+    console.print(f"  clean_content:\n{result['clean_content']}")
+
+
 # ── serve ──────────────────────────────────────────────────────────────────────
 
 
