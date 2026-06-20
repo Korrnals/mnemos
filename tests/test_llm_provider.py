@@ -1,14 +1,17 @@
-"""Tests for LLMResponse fields and LLMExecutionError (PR 1).
+"""Tests for LLMResponse fields, LLMExecutionError, and create_provider factory.
 
-Covers the `fallback_used` field added to `LLMResponse` and the new
-`LLMExecutionError` exception type. The `create_provider()` factory is
-still a stub in PR 1 — its NotImplementedError is verified here too.
+PR 1 covered the ``fallback_used`` field and ``LLMExecutionError`` type.
+PR 2 replaces the ``create_provider`` stub with a real factory dispatching
+to ``OllamaProvider`` / ``OpenAIProvider`` / ``AnthropicProvider``; these
+tests verify the dispatch, import-guard behaviour, and error paths without
+making any real network calls.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from mnemos.config import LLMConfig
 from mnemos.llm.base import (
     LLMExecutionError,
     LLMProvider,
@@ -103,19 +106,94 @@ def test_llm_execution_error_catchable_as_exception() -> None:
         raise LLMExecutionError("boom")
 
 
-# ── create_provider stub (PR 1) ──────────────────────────────────────────────
+# ── create_provider factory (PR 2) ───────────────────────────────────────────
 
 
-def test_create_provider_raises_not_implemented() -> None:
-    """PR 1: the factory is still a stub and raises NotImplementedError."""
-    with pytest.raises(NotImplementedError):
-        create_provider(object())
+def test_create_provider_ollama_returns_ollama_provider() -> None:
+    """create_provider('ollama') returns an OllamaProvider instance."""
+    from mnemos.llm.ollama import OllamaProvider
+
+    config = LLMConfig(provider="ollama", model="qwen2.5:3b")
+    provider = create_provider(config)
+    assert isinstance(provider, OllamaProvider)
+    assert provider.provider_name == "ollama"
 
 
-def test_create_provider_error_mentions_pr2() -> None:
-    """The stub message points to PR 2 so callers know it is intentional."""
-    with pytest.raises(NotImplementedError, match="PR 2"):
-        create_provider(object())
+def test_create_provider_openai_returns_openai_provider() -> None:
+    """create_provider('openai') returns an OpenAIProvider instance."""
+    from mnemos.llm.openai import OpenAIProvider
+
+    config = LLMConfig(
+        provider="openai", model="gpt-4o", openai_api_key="sk-test"
+    )
+    provider = create_provider(config)
+    assert isinstance(provider, OpenAIProvider)
+    assert provider.provider_name == "openai"
+
+
+def test_create_provider_anthropic_returns_anthropic_provider() -> None:
+    """create_provider('anthropic') returns an AnthropicProvider instance."""
+    from mnemos.llm.anthropic import AnthropicProvider
+
+    config = LLMConfig(
+        provider="anthropic", model="claude-3-opus", anthropic_api_key="sk-ant-test"
+    )
+    provider = create_provider(config)
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.provider_name == "anthropic"
+
+
+def test_create_provider_rlm_raises_not_implemented() -> None:
+    """create_provider('rlm') raises NotImplementedError pointing to PR 4."""
+    config = LLMConfig(provider="rlm")
+    with pytest.raises(NotImplementedError, match="PR 4"):
+        create_provider(config)
+
+
+def test_create_provider_unknown_raises_value_error() -> None:
+    """An unrecognised provider name raises ValueError."""
+    config = LLMConfig(provider="totally-fake")
+    with pytest.raises(ValueError, match="Unknown LLM provider"):
+        create_provider(config)
+
+
+def test_create_provider_ollama_import_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the ollama SDK is absent, create_provider('ollama') raises ImportError."""
+    from mnemos.llm import ollama as ollama_mod
+
+    monkeypatch.setattr(ollama_mod, "OLLAMA_AVAILABLE", False)
+    config = LLMConfig(provider="ollama")
+    with pytest.raises(ImportError, match="ollama SDK not installed"):
+        create_provider(config)
+
+
+def test_create_provider_openai_import_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the openai SDK is absent, create_provider('openai') raises ImportError."""
+    from mnemos.llm import openai as openai_mod
+
+    monkeypatch.setattr(openai_mod, "OPENAI_AVAILABLE", False)
+    config = LLMConfig(provider="openai", openai_api_key="sk-test")
+    with pytest.raises(ImportError, match="openai SDK not installed"):
+        create_provider(config)
+
+
+def test_create_provider_anthropic_import_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the anthropic SDK is absent, create_provider('anthropic') raises ImportError."""
+    from mnemos.llm import anthropic as anthropic_mod
+
+    monkeypatch.setattr(anthropic_mod, "ANTHROPIC_AVAILABLE", False)
+    config = LLMConfig(provider="anthropic", anthropic_api_key="sk-ant-test")
+    with pytest.raises(ImportError, match="anthropic SDK not installed"):
+        create_provider(config)
+
+
+def test_create_provider_returns_llm_provider_subclass() -> None:
+    """Every factory result is an LLMProvider instance (contract check)."""
+    config = LLMConfig(provider="ollama", model="qwen2.5:3b")
+    provider = create_provider(config)
+    assert isinstance(provider, LLMProvider)
 
 
 # ── LLMProvider abstract contract ────────────────────────────────────────────

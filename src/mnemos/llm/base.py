@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mnemos.config import LLMConfig
 
 
 class LLMExecutionError(Exception):
@@ -66,11 +70,58 @@ class LLMProvider(ABC):
         ...
 
 
-def create_provider(config: object) -> LLMProvider:
+def create_provider(config: LLMConfig) -> LLMProvider:
     """Factory: instantiate the configured LLM provider.
 
-    Implemented in PR 2 (standard providers: Ollama + OpenAI + Anthropic).
-    PR 1 ships only the config schema and the ``LLMResponse``/
-    ``LLMExecutionError`` types, so the factory still raises.
+    Maps ``config.provider`` to a concrete ``LLMProvider`` subclass. SDK
+    imports are lazy (inside this function) so importing ``mnemos.llm``
+    does not pull in every optional provider dependency — only the one
+    actually requested pays the import cost.
+
+    Supported providers:
+      * ``"ollama"``    → :class:`mnemos.llm.ollama.OllamaProvider`
+      * ``"openai"``    → :class:`mnemos.llm.openai.OpenAIProvider`
+      * ``"anthropic"`` → :class:`mnemos.llm.anthropic.AnthropicProvider`
+      * ``"rlm"``       → ``NotImplementedError`` (PR 4)
+
+    Raises:
+        ImportError:  the selected provider's SDK is not installed.
+        ValueError:   ``config.provider`` is not a recognised provider name.
+        NotImplementedError: ``config.provider == "rlm"`` (landed in PR 4).
     """
-    raise NotImplementedError("LLM provider factory not yet implemented (PR 2)")
+    name = config.provider
+
+    if name == "ollama":
+        from mnemos.llm.ollama import OLLAMA_AVAILABLE, OllamaProvider
+
+        if not OLLAMA_AVAILABLE:
+            raise ImportError(
+                "ollama SDK not installed. Run: pip install mnemos[ollama]"
+            )
+        return OllamaProvider(config)
+
+    if name == "openai":
+        from mnemos.llm.openai import OPENAI_AVAILABLE, OpenAIProvider
+
+        if not OPENAI_AVAILABLE:
+            raise ImportError(
+                "openai SDK not installed. Run: pip install mnemos[openai]"
+            )
+        return OpenAIProvider(config)
+
+    if name == "anthropic":
+        from mnemos.llm.anthropic import ANTHROPIC_AVAILABLE, AnthropicProvider
+
+        if not ANTHROPIC_AVAILABLE:
+            raise ImportError(
+                "anthropic SDK not installed. Run: pip install mnemos[anthropic]"
+            )
+        return AnthropicProvider(config)
+
+    if name == "rlm":
+        raise NotImplementedError("RLM provider implemented in PR 4")
+
+    raise ValueError(
+        f"Unknown LLM provider: {name!r}. "
+        "Supported: 'ollama', 'openai', 'anthropic', 'rlm'."
+    )
