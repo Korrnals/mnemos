@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`make lint-shell` target** (`Makefile`) — runs `shellcheck scripts/*.sh`
+  and is included in the `verify` gate alongside `lint`, so shell scripts are
+  now covered by the same local + CI quality bar as Python code.
+- **Git-workflow notes runbook** (`docs/{ru,en}/admin/runbooks/git-workflow-notes.md`)
+  — documents the expected `git branch -d` warning after a squash-merge and
+  why `-d` is safe despite the warning.
 - **Dashboard / metrics API** (`src/mnemos/api/main.py`,
   `src/mnemos/manager.py`, `src/mnemos/storage/sqlite_store.py`) — three
   new endpoints for the `mnemos-eyes` frontend:
@@ -159,6 +165,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`install.sh --instructions` / `--no-instructions`** flag — deploys the
   agent integration pack after MCP setup (interactive prompt over `/dev/tty`,
   same pattern as `--mcp` / `--no-mcp`).
+
+### Fixed
+
+- **Shellcheck findings in `scripts/mcp-setup.sh`** — resolved SC2015
+  (`A && B || C` replaced with `if/else`) and SC2059 (variables removed from
+  `printf` format strings via `%s` args). No suppressions added.
 
 ## [1.2.0] — 2026-06-18
 
