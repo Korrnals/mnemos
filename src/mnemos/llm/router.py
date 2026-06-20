@@ -7,9 +7,9 @@ completions. It owns two concerns:
    whether the prompt is large enough to warrant RLM decomposition.
 2. **Provider selection** — below the threshold (or when RLM is disabled)
    the standard provider (Ollama / OpenAI / Anthropic) is used directly.
-   At or above the threshold, when RLM is enabled, the RLM provider would
-   be used — but the RLM provider is wired in PR 4. Until then the router
-   logs the routing decision and falls back to the standard provider with
+   At or above the threshold, when RLM is enabled, the RLM provider is
+   dispatched. If the RLM call fails and ``fallback_on_failure`` is set,
+   the router falls back to the standard provider with
    ``fallback_used=True`` so callers and observability can distinguish
    graceful degradation from a clean primary hit.
 
@@ -50,13 +50,14 @@ class LLMRouter:
     constructing a router never pays the SDK import cost unless a
     completion is actually requested.
 
+    The RLM provider is created lazily on the first above-threshold call
+    when ``rlm_settings`` is non-``None``. This keeps the
+    ``rlm_toolkit`` import cost off the hot path when RLM is configured
+    but never triggered.
+
     ``rlm_settings`` is ``None`` when RLM is disabled
     (``rlm.enabled=False``) or the ``rlm_toolkit`` is not installed. When
-    ``None`` the router always uses the standard provider. When non-``None``
-    the router consults ``rlm_settings.threshold_tokens`` to decide whether
-    to route to RLM — but the RLM provider itself is wired in PR 4; until
-    then an above-threshold prompt falls back to standard with
-    ``fallback_used=True`` and a debug log.
+    ``None`` the router always uses the standard provider.
     """
 
     def __init__(
@@ -67,6 +68,7 @@ class LLMRouter:
         self._settings = settings
         self._rlm_settings = rlm_settings
         self._provider: LLMProvider | None = None
+        self._rlm_provider: LLMProvider | None = None
         # Last selection: "standard" | "rlm" | "rlm-fallback". Used by the
         # provider_name property for observability. ``None`` until the first
         # complete() call — provider_name returns "router" before that.
@@ -80,6 +82,21 @@ class LLMRouter:
         if self._provider is None:
             self._provider = create_provider(self._settings)
         return self._provider
+
+    def _rlm(self) -> LLMProvider:
+        """Lazily instantiate the RLM provider on first above-threshold use.
+
+        Imports ``RLMProvider`` here so the ``rlm_toolkit`` import cost is
+        only paid when RLM is actually triggered. Raises ``ImportError``
+        if the toolkit is not installed — the caller (complete) wraps that
+        into a fallback when ``fallback_on_failure`` is set.
+        """
+        if self._rlm_provider is None:
+            from mnemos.llm.rlm import RLMProvider
+
+            assert self._rlm_settings is not None
+            self._rlm_provider = RLMProvider(self._settings, self._rlm_settings)
+        return self._rlm_provider
 
     @staticmethod
     def _estimate_tokens(prompt: str) -> int:
@@ -102,10 +119,11 @@ class LLMRouter:
           * ``token_estimate = len(prompt) // 4``
           * if ``rlm_settings is None`` or ``token_estimate < threshold``:
             standard provider, ``fallback_used=False``.
-          * if ``token_estimate >= threshold`` and RLM is configured: the
-            RLM provider would be used, but it is not wired until PR 4 —
-            fall back to standard with ``fallback_used=True`` and a debug
-            log explaining the fallback.
+          * if ``token_estimate >= threshold`` and RLM is configured:
+            dispatch to the RLM provider. On ``LLMExecutionError`` with
+            ``fallback_on_failure=True``, fall back to standard with
+            ``fallback_used=True``. With ``fallback_on_failure=False``,
+            the error propagates.
           * if the standard provider raises, ``LLMExecutionError``
             propagates (the router does not swallow provider errors).
 
@@ -126,26 +144,16 @@ class LLMRouter:
         )
 
         if use_rlm:
-            # PR 4 wires the RLM provider. Until then we fall back to the
-            # standard provider and mark the response as a fallback so
-            # callers/observability can distinguish graceful degradation
-            # from a clean primary hit.
-            logger.debug(
-                "router: RLM routing selected but RLM provider not yet "
-                "implemented, using standard (estimated=%d tokens, "
-                "threshold=%d)",
-                token_estimate,
-                threshold,
-            )
-            self._last_selection = "rlm-fallback"
-            resp = await self._call_standard(
+            assert self._rlm_settings is not None
+            assert threshold is not None
+            return await self._dispatch_rlm(
                 prompt,
                 system=system,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                token_estimate=token_estimate,
+                threshold=threshold,
             )
-            resp.fallback_used = True
-            return resp
 
         # Standard path — below threshold or RLM disabled.
         selected = "standard"
@@ -163,6 +171,95 @@ class LLMRouter:
             max_tokens=max_tokens,
         )
         resp.fallback_used = False
+        return resp
+
+    async def _dispatch_rlm(
+        self,
+        prompt: str,
+        *,
+        system: str | None,
+        temperature: float,
+        max_tokens: int,
+        token_estimate: int,
+        threshold: int,
+    ) -> LLMResponse:
+        """Dispatch to the RLM provider with optional fallback to standard.
+
+        Called only when the prompt is at or above the RLM threshold and
+        ``rlm_settings`` is non-``None``.
+        """
+        assert self._rlm_settings is not None
+        try:
+            rlm_provider = self._rlm()
+        except ImportError as exc:
+            # rlm_toolkit not installed — fall back or propagate.
+            if not self._rlm_settings.fallback_on_failure:
+                raise
+            logger.warning(
+                "router: RLM selected but rlm_toolkit not installed "
+                "(estimated=%d tokens, threshold=%d): %s — falling back "
+                "to standard",
+                token_estimate,
+                threshold,
+                exc,
+            )
+            return await self._fallback_to_standard(
+                prompt,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        try:
+            resp = await rlm_provider.complete(
+                prompt,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            self._last_selection = "rlm"
+            resp.fallback_used = False
+            logger.debug(
+                "router: RLM dispatch succeeded (estimated=%d tokens, "
+                "threshold=%d)",
+                token_estimate,
+                threshold,
+            )
+            return resp
+        except LLMExecutionError as exc:
+            if not self._rlm_settings.fallback_on_failure:
+                raise
+            logger.warning(
+                "router: RLM call failed (estimated=%d tokens, "
+                "threshold=%d): %s — falling back to standard",
+                token_estimate,
+                threshold,
+                exc,
+            )
+            return await self._fallback_to_standard(
+                prompt,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    async def _fallback_to_standard(
+        self,
+        prompt: str,
+        *,
+        system: str | None,
+        temperature: float,
+        max_tokens: int,
+    ) -> LLMResponse:
+        """Fall back to the standard provider, marking fallback_used=True."""
+        self._last_selection = "rlm-fallback"
+        resp = await self._call_standard(
+            prompt,
+            system=system,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        resp.fallback_used = True
         return resp
 
     async def _call_standard(
@@ -199,10 +296,10 @@ class LLMRouter:
         """Provider identifier reflecting the last routing decision.
 
         Returns ``"router:standard"`` after a standard-path call,
-        ``"router:rlm"`` after a real RLM call (PR 4), and
+        ``"router:rlm"`` after a real RLM call, and
         ``"router:rlm-fallback"`` when RLM was selected but fell back to
-        standard because the RLM provider is not yet wired. Before any
-        call has been made returns ``"router"``.
+        standard (RLM failure or toolkit not installed). Before any call
+        has been made returns ``"router"``.
         """
         if self._last_selection is None:
             return "router"

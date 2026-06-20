@@ -114,9 +114,22 @@ class RLMSettings(BaseModel):
     """
 
     enabled: bool = False
+    # RLM backend — which rlm_toolkit factory to use. ``ollama`` is the
+    # offline default; ``openai`` / ``anthropic`` require cloud keys.
+    backend: str = "ollama"
+    # Root model for the RLM engine (per-backend naming: ollama tag, OpenAI
+    # model id, Anthropic model id).
+    model: str = "qwen2.5:3b"
+    # Optional sub-model for recursive sub-LLM calls (cheaper/faster than
+    # the root model). ``None`` lets rlm_toolkit pick its default.
+    sub_model: str | None = None
+    # Resilient mode — rlm_toolkit retries transient failures internally.
+    resilient: bool = True
     # InfiniRetri — dynamic context retrieval mid-generation. Offline by
     # default (Tech Lead decision #3); operator opt-in only.
     use_infiniretri: bool = False
+    # InfiniRetri token threshold — only activates above this context size.
+    infiniretri_threshold: int = Field(default=100_000, ge=1, le=10_000_000)
     # Token threshold above which RLM decomposition kicks in. Below this,
     # the provider falls back to a plain completion call.
     threshold_tokens: int = Field(default=10_000, ge=1, le=1_000_000)
@@ -137,9 +150,17 @@ class RLMSettings(BaseModel):
         ]
     )
     # Resource bounds for a single RLM synthesis call.
+    max_iterations: int = Field(default=50, ge=1, le=1_000)
+    max_subcalls: int = Field(default=100, ge=1, le=10_000)
     max_cost: float = Field(default=0.50, ge=0.0, le=100.0)
     max_depth: int = Field(default=3, ge=1, le=10)
     max_execution_time: int = Field(default=120, ge=1, le=3600)
+    max_memory_mb: int = Field(default=512, ge=16, le=8192)
+    # Truncate sub-LLM outputs to this many chars (prevents context blowup).
+    truncate_output: int = Field(default=10_000, ge=100, le=1_000_000)
+    # When True, an RLM failure falls back to the standard provider with
+    # ``fallback_used=True``. When False, the LLMExecutionError propagates.
+    fallback_on_failure: bool = True
 
     @field_validator("sandbox")
     @classmethod

@@ -143,10 +143,18 @@ def test_create_provider_anthropic_returns_anthropic_provider() -> None:
     assert provider.provider_name == "anthropic"
 
 
-def test_create_provider_rlm_raises_not_implemented() -> None:
-    """create_provider('rlm') raises NotImplementedError pointing to PR 4."""
+def test_create_provider_rlm_import_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When rlm_toolkit is absent, create_provider('rlm') raises ImportError.
+
+    PR 4 replaced the previous NotImplementedError with a real RLMProvider.
+    When the toolkit is not installed, the import guard fires with a
+    helpful install hint.
+    """
+    from mnemos.llm import rlm as rlm_mod
+
+    monkeypatch.setattr(rlm_mod, "RLM_AVAILABLE", False)
     config = LLMConfig(provider="rlm")
-    with pytest.raises(NotImplementedError, match="PR 4"):
+    with pytest.raises(ImportError, match="rlm-toolkit not installed"):
         create_provider(config)
 
 

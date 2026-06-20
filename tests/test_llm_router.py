@@ -1,14 +1,17 @@
 """Tests for LLMRouter — threshold-based routing, mocked providers, no network.
 
-PR 3 wires the router with standard-provider routing only. The RLM provider
-is not yet implemented (PR 4); when RLM is "selected" (prompt at or above
-threshold and ``rlm.enabled=True``) the router falls back to the standard
-provider with ``fallback_used=True`` and a debug log. These tests verify:
+PR 4 wires the RLM provider into the router. When the prompt is at or above
+the threshold and ``rlm.enabled=True``, the router dispatches to a real
+``RLMProvider`` (mocked here). On RLM failure with
+``fallback_on_failure=True``, it falls back to the standard provider with
+``fallback_used=True``. With ``fallback_on_failure=False``, the
+``LLMExecutionError`` propagates. These tests verify:
 
   * small prompts → standard provider, ``fallback_used=False``
   * large prompts with RLM disabled → standard, ``fallback_used=False``
-  * large prompts with RLM enabled but not implemented → standard,
-    ``fallback_used=True``
+  * large prompts with RLM enabled → RLM provider called, ``fallback_used=False``
+  * RLM failure with fallback → standard, ``fallback_used=True``
+  * RLM failure without fallback → ``LLMExecutionError`` propagates
   * standard provider failure → ``LLMExecutionError`` propagates
   * token estimation heuristic (``len(prompt) // 4``)
   * threshold boundary behaviour
@@ -81,16 +84,69 @@ class _MockStandardProvider(LLMProvider):
         return "mock"
 
 
+class _MockRLMProvider(LLMProvider):
+    """Mock RLM provider — records calls, optionally fails."""
+
+    def __init__(
+        self,
+        *,
+        text: str = "rlm-response",
+        fail: bool = False,
+    ) -> None:
+        self._text = text
+        self._fail = fail
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> LLMResponse:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system": system,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+        )
+        if self._fail:
+            raise LLMExecutionError("mock RLM failure", provider="rlm")
+        return LLMResponse(
+            text=self._text,
+            model="rlm:mock",
+            tokens_in=len(prompt) // 4,
+            tokens_out=len(self._text) // 4,
+            cached=False,
+            fallback_used=False,
+        )
+
+    @property
+    def provider_name(self) -> str:
+        return "rlm"
+
+
 def _make_router(
     *,
     provider: _MockStandardProvider,
     rlm_settings: RLMSettings | None = None,
+    rlm_provider: _MockRLMProvider | None = None,
 ) -> LLMRouter:
-    """Build a router whose standard provider is pre-injected (no factory)."""
+    """Build a router whose standard provider is pre-injected (no factory).
+
+    When ``rlm_provider`` is given, it is injected directly so the router
+    does not try to construct a real ``RLMProvider`` (which would need
+    rlm_toolkit).
+    """
     config = LLMConfig(provider="ollama", model="qwen2.5:3b")
     router = LLMRouter(config, rlm_settings)
     # Bypass create_provider — inject the mock directly.
     router._provider = provider
+    if rlm_provider is not None:
+        router._rlm_provider = rlm_provider
     return router
 
 
@@ -140,34 +196,88 @@ async def test_router_large_context_uses_standard_when_rlm_disabled() -> None:
     assert router.provider_name == "router:standard"
 
 
-# ── large context, RLM enabled but not implemented → fallback ───────────────
+# ── large context, RLM enabled → RLM dispatch ───────────────────────────────
 
 
-async def test_router_large_context_fallback_when_rlm_not_implemented(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Prompt >= threshold, rlm.enabled=True, RLM provider not wired (PR 3).
-
-    Router falls back to standard with fallback_used=True and emits a debug
-    log explaining the fallback.
-    """
-    provider = _MockStandardProvider(text="fallback-ok")
+async def test_router_large_context_uses_rlm() -> None:
+    """Prompt >= threshold, RLM enabled → RLM provider called, no fallback."""
+    standard = _MockStandardProvider(text="standard-ok")
+    rlm_provider = _MockRLMProvider(text="rlm-ok")
     rlm = RLMSettings(enabled=True, threshold_tokens=100)
-    router = _make_router(provider=provider, rlm_settings=rlm)
+    router = _make_router(
+        provider=standard,
+        rlm_settings=rlm,
+        rlm_provider=rlm_provider,
+    )
 
     big_prompt = "x" * 800  # 200 tokens, above threshold=100
-    with caplog.at_level(logging.DEBUG, logger="mnemos.llm.router"):
+    resp = await router.complete(big_prompt)
+
+    assert len(rlm_provider.calls) == 1
+    assert rlm_provider.calls[0]["prompt"] == big_prompt
+    assert len(standard.calls) == 0  # standard NOT called
+    assert resp.text == "rlm-ok"
+    assert resp.fallback_used is False
+    assert router.provider_name == "router:rlm"
+
+
+# ── RLM failure with fallback → standard ────────────────────────────────────
+
+
+async def test_router_rlm_failure_falls_back(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """RLM raises LLMExecutionError, fallback_on_failure=True → standard."""
+    standard = _MockStandardProvider(text="fallback-ok")
+    rlm_provider = _MockRLMProvider(fail=True)
+    rlm = RLMSettings(
+        enabled=True,
+        threshold_tokens=100,
+        fallback_on_failure=True,
+    )
+    router = _make_router(
+        provider=standard,
+        rlm_settings=rlm,
+        rlm_provider=rlm_provider,
+    )
+
+    big_prompt = "x" * 800
+    with caplog.at_level(logging.WARNING, logger="mnemos.llm.router"):
         resp = await router.complete(big_prompt)
 
-    assert len(provider.calls) == 1
+    assert len(rlm_provider.calls) == 1  # RLM was attempted
+    assert len(standard.calls) == 1  # then fell back to standard
     assert resp.text == "fallback-ok"
     assert resp.fallback_used is True
     assert router.provider_name == "router:rlm-fallback"
-    # Debug log mentions RLM not implemented
-    assert any(
-        "RLM provider not yet implemented" in rec.message
-        for rec in caplog.records
+    assert any("RLM call failed" in rec.message for rec in caplog.records)
+
+
+# ── RLM failure without fallback → error propagates ─────────────────────────
+
+
+async def test_router_rlm_failure_no_fallback() -> None:
+    """RLM raises, fallback_on_failure=False → LLMExecutionError propagates."""
+    standard = _MockStandardProvider(text="should-not-reach")
+    rlm_provider = _MockRLMProvider(fail=True)
+    rlm = RLMSettings(
+        enabled=True,
+        threshold_tokens=100,
+        fallback_on_failure=False,
     )
+    router = _make_router(
+        provider=standard,
+        rlm_settings=rlm,
+        rlm_provider=rlm_provider,
+    )
+
+    big_prompt = "x" * 800
+    with pytest.raises(LLMExecutionError) as exc_info:
+        await router.complete(big_prompt)
+
+    assert exc_info.value.provider == "rlm"
+    assert "mock RLM failure" in str(exc_info.value)
+    assert len(standard.calls) == 0  # standard NOT called
 
 
 # ── standard failure → LLMExecutionError ─────────────────────────────────────
@@ -189,20 +299,24 @@ async def test_router_standard_failure_raises_llm_execution_error() -> None:
 
 
 async def test_router_threshold_boundary() -> None:
-    """Prompt exactly at threshold → standard (RLM would trigger at >=)."""
-    provider = _MockStandardProvider(text="boundary")
+    """Prompt exactly at threshold → RLM dispatch (>= triggers RLM)."""
+    standard = _MockStandardProvider(text="standard")
+    rlm_provider = _MockRLMProvider(text="rlm")
     rlm = RLMSettings(enabled=True, threshold_tokens=10)
-    router = _make_router(provider=provider, rlm_settings=rlm)
+    router = _make_router(
+        provider=standard,
+        rlm_settings=rlm,
+        rlm_provider=rlm_provider,
+    )
 
     # Exactly at threshold: 40 chars → 10 tokens == threshold.
-    # The router uses >= so this would route to RLM (fallback in PR 3).
     at_threshold = "a" * 40
     resp = await router.complete(at_threshold)
 
-    assert len(provider.calls) == 1
-    # At threshold with RLM enabled → RLM selected → fallback to standard.
-    assert resp.fallback_used is True
-    assert router.provider_name == "router:rlm-fallback"
+    assert len(rlm_provider.calls) == 1
+    assert len(standard.calls) == 0
+    assert resp.fallback_used is False
+    assert router.provider_name == "router:rlm"
 
 
 async def test_router_just_below_threshold_uses_standard() -> None:

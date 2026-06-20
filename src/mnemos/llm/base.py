@@ -82,12 +82,11 @@ def create_provider(config: LLMConfig) -> LLMProvider:
       * ``"ollama"``    → :class:`mnemos.llm.ollama.OllamaProvider`
       * ``"openai"``    → :class:`mnemos.llm.openai.OpenAIProvider`
       * ``"anthropic"`` → :class:`mnemos.llm.anthropic.AnthropicProvider`
-      * ``"rlm"``       → ``NotImplementedError`` (PR 4)
+      * ``"rlm"``       → :class:`mnemos.llm.rlm.RLMProvider`
 
     Raises:
         ImportError:  the selected provider's SDK is not installed.
         ValueError:   ``config.provider`` is not a recognised provider name.
-        NotImplementedError: ``config.provider == "rlm"`` (landed in PR 4).
     """
     name = config.provider
 
@@ -119,7 +118,13 @@ def create_provider(config: LLMConfig) -> LLMProvider:
         return AnthropicProvider(config)
 
     if name == "rlm":
-        raise NotImplementedError("RLM provider implemented in PR 4")
+        from mnemos.llm.rlm import RLM_AVAILABLE, RLMProvider
+
+        if not RLM_AVAILABLE:
+            raise ImportError(
+                "rlm-toolkit not installed. Run: pip install mnemos[rlm]"
+            )
+        return RLMProvider(config, config.rlm)
 
     raise ValueError(
         f"Unknown LLM provider: {name!r}. "

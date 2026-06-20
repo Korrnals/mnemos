@@ -21,14 +21,17 @@ from mnemos.llm.base import (
     create_provider,
 )
 from mnemos.llm.ollama import OllamaProvider
+from mnemos.llm.rlm import RLM_AVAILABLE, RLMProvider
 
 __all__ = [
+    "RLM_AVAILABLE",
     "AnthropicProvider",
     "LLMExecutionError",
     "LLMProvider",
     "LLMResponse",
     "OllamaProvider",
     "OpenAIProvider",
+    "RLMProvider",
     "create_provider",
 ]
 
