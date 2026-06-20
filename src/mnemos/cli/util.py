@@ -13,6 +13,7 @@ All commands support ``--dry-run`` and ``--target`` (default: all detected).
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -21,6 +22,15 @@ from rich.console import Console
 from rich.table import Table
 
 from mnemos import __version__
+from mnemos.cli.agent_wiring import (
+    DEFAULT_AGENTS_DIR,
+    AgentInfo,
+    WireResult,
+    WireStatus,
+    detect_agents,
+    verify_agents,
+    wire_agent,
+)
 from mnemos.cli.integration import (
     DeployResult,
     DeployStatus,
@@ -133,6 +143,134 @@ def _print_verify_result(result: VerifyResult) -> None:
     console.print(table)
 
 
+# ── Agent wiring helpers ──────────────────────────────────────────────────────
+
+
+def _print_agent_wiring_results(results: list[WireResult], *, dry_run: bool) -> None:
+    """Pretty-print a batch of agent wiring results."""
+    prefix = "[dry-run] " if dry_run else ""
+    table = Table(title=f"{prefix}Agent MCP wiring", show_lines=False)
+    table.add_column("Status", style="bold")
+    table.add_column("Agent")
+    table.add_column("Note")
+
+    for r in results:
+        status_style = {
+            WireStatus.WIRED: "green",
+            WireStatus.DRY_RUN: "cyan",
+            WireStatus.ALREADY_WIRED: "dim",
+            WireStatus.SKIPPED_TOOL_PROFILE: "dim",
+            WireStatus.SKIPPED_NO_FRONTMATTER: "dim",
+            WireStatus.ERROR: "red",
+        }.get(r.status, "white")
+        table.add_row(
+            f"[{status_style}]{r.status.value}[/{status_style}]",
+            r.name,
+            r.note,
+        )
+    console.print(table)
+
+
+def _resolve_agents_to_wire(
+    agents: list[AgentInfo],
+    *,
+    select: str | None,
+    wire_all: bool,
+) -> list[AgentInfo]:
+    """Filter the detected agents to the set the user wants to wire.
+
+    Selection logic:
+
+    * ``--all`` → every agent that is not already wired and does not use
+      ``tool_profile``.
+    * ``--select name1,name2`` → agents whose ``name`` or filename stem
+      matches one of the comma-separated selectors. Already-wired and
+      ``tool_profile`` agents are still skipped (with a note) to keep the
+      operation safe and idempotent.
+    """
+    if select:
+        wanted = {s.strip().lower() for s in select.split(",") if s.strip()}
+        selected: list[AgentInfo] = []
+        for agent in agents:
+            stem = agent.path.stem.removesuffix(".agent")
+            keys = {agent.name.lower(), stem.lower(), agent.filename.lower()}
+            if keys & wanted:
+                selected.append(agent)
+        return selected
+
+    if wire_all:
+        return [
+            agent
+            for agent in agents
+            if not agent.has_mnemos and not agent.uses_tool_profile
+        ]
+
+    # No selection — wire nothing (the caller handles the interactive prompt).
+    return []
+
+
+def _prompt_wire_agents_interactive(agents: list[AgentInfo]) -> list[AgentInfo]:
+    """Interactive prompt: ask the user which agents to wire.
+
+    Falls back to ``--all`` behaviour when stdin is not a TTY (CI / pipe).
+    """
+    unwired = [
+        agent for agent in agents if not agent.has_mnemos and not agent.uses_tool_profile
+    ]
+    already = sum(1 for agent in agents if agent.has_mnemos)
+    skipped = sum(1 for agent in agents if agent.uses_tool_profile)
+
+    console.print(
+        f"\nFound [bold]{len(agents)}[/bold] agents in "
+        f"[cyan]{DEFAULT_AGENTS_DIR}[/cyan]"
+    )
+    console.print(
+        f"  [green]{already}[/green] already wired, "
+        f"[yellow]{len(unwired)}[/yellow] need wiring, "
+        f"[dim]{skipped} skipped (tool_profile)[/dim]"
+    )
+
+    if not unwired:
+        console.print("  [dim]Nothing to wire — all agents already have mnemos tools.[/dim]")
+        return []
+
+    # Non-interactive fallback: default to wiring all unwired agents.
+    if not sys.stdin.isatty():
+        console.print(
+            "[yellow]⚠ Non-interactive terminal — wiring all unwired agents.[/yellow]"
+        )
+        return unwired
+
+    # Simple numbered prompt — keep it lightweight, no full TUI.
+    console.print("\n  [bold]Options:[/bold]")
+    console.print("  [1] Wire all unwired agents")
+    console.print("  [2] Select specific agents by name")
+    console.print("  [3] Skip agent wiring")
+    choice = console.input("\n  Choice [1-3] (default 1): ").strip() or "1"
+
+    if choice == "3":
+        return []
+    if choice == "2":
+        raw = console.input(
+            "  Enter agent names (comma-separated, e.g. tech-lead,code-reviewer): "
+        )
+        return _resolve_agents_to_wire(agents, select=raw, wire_all=False)
+
+    return unwired
+
+
+def _run_agent_wiring(
+    agents: list[AgentInfo],
+    *,
+    mode: str,
+    dry_run: bool,
+) -> list[WireResult]:
+    """Wire a list of agents and print the results. Returns the results."""
+    results = [wire_agent(agent.path, mode=mode, dry_run=dry_run) for agent in agents]
+    _print_agent_wiring_results(results, dry_run=dry_run)
+    return results
+
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 
@@ -189,13 +327,65 @@ def setup_cmd(
         str | None,
         typer.Option("--mnemos-bin", help="Path to mnemos executable for MCP registration"),
     ] = None,
+    wire_agents: Annotated[
+        bool,
+        typer.Option(
+            "--wire-agents",
+            help="Wire mnemos/* into GCW agent tools: frontmatter (prompts if interactive).",
+        ),
+    ] = False,
+    no_wire_agents: Annotated[
+        bool,
+        typer.Option(
+            "--no-wire-agents",
+            help="Skip agent MCP wiring (explicit opt-out, no prompt).",
+        ),
+    ] = False,
+    all_agents: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="With --wire-agents: wire all unwired agents (no prompt).",
+        ),
+    ] = False,
+    select_agents: Annotated[
+        str | None,
+        typer.Option(
+            "--select",
+            help="With --wire-agents: comma-separated agent names/stems to wire.",
+        ),
+    ] = None,
+    precise: Annotated[
+        bool,
+        typer.Option(
+            "--precise",
+            help="Use individual mnemos/mnemos_* tool names instead of mnemos/* wildcard.",
+        ),
+    ] = False,
 ) -> None:
-    """Deploy instructions + skills + prompts and register MCP (unified setup).
+    """Deploy instructions + skills + prompts, register MCP, and wire agents.
 
     This is the single entry point: running ``mnemos integration setup`` wires
-    everything — file deployment and MCP registration — in one pass.
-    Idempotent: re-running updates stale files without duplicating.
+    everything — file deployment, MCP registration, and agent MCP wiring — in
+    one pass. Idempotent: re-running updates stale files without duplicating.
+
+    Agent wiring flags:
+
+    * ``--wire-agents`` — enable agent wiring (interactive prompt by default).
+    * ``--wire-agents --all`` — wire all unwired agents without prompting.
+    * ``--wire-agents --select name1,name2`` — wire only specified agents.
+    * ``--no-wire-agents`` — skip agent wiring entirely (no prompt).
+    * ``--precise`` — use individual ``mnemos/mnemos_*`` tokens instead of
+      the ``mnemos/*`` wildcard.
+    * ``--dry-run`` — show what would change without modifying files.
+
+    If neither ``--wire-agents`` nor ``--no-wire-agents`` is passed, the
+    command prompts interactively (same pattern as the MCP prompt).
     """
+    if wire_agents and no_wire_agents:
+        console.print("[red]--wire-agents and --no-wire-agents are mutually exclusive.[/red]")
+        raise typer.Exit(1)
+
     targets = _resolve_targets(target)
     if not targets:
         return
@@ -219,6 +409,31 @@ def setup_cmd(
 
         if result.mcp_note and not result.mcp_registered and not no_mcp and not dry_run:
             any_failed = True
+
+    # ── Agent MCP wiring ────────────────────────────────────────────────────
+    mode = "precise" if precise else "wildcard"
+    if not no_wire_agents:
+        agents = detect_agents()
+        if not agents:
+            if wire_agents:
+                console.print(
+                    f"[yellow]No agents found in {DEFAULT_AGENTS_DIR} — skipping wiring.[/yellow]"
+                )
+        elif wire_agents:
+            to_wire = _resolve_agents_to_wire(
+                agents, select=select_agents, wire_all=all_agents
+            )
+            if not to_wire and not select_agents and not all_agents:
+                to_wire = _prompt_wire_agents_interactive(agents)
+            if to_wire:
+                _run_agent_wiring(to_wire, mode=mode, dry_run=dry_run)
+            else:
+                console.print("[dim]No agents selected for wiring.[/dim]")
+        else:
+            # Default: prompt interactively (same pattern as MCP).
+            to_wire = _prompt_wire_agents_interactive(agents)
+            if to_wire:
+                _run_agent_wiring(to_wire, mode=mode, dry_run=dry_run)
 
     if any_failed:
         console.print("\n[yellow]⚠ Some steps had issues — see above.[/yellow]")
@@ -283,6 +498,33 @@ def verify_cmd(
             has_issues = True
             console.print(
                 f"  [yellow]{result.stale_count} stale, {result.missing_count} missing[/yellow]"
+            )
+
+    # ── Agent wiring section (informational — does not affect exit code) ────
+    # Agent wiring status is reported here for visibility, but it does not
+    # change the verify exit code. The dedicated ``mnemos doctor`` check
+    # governs the wiring health gate. This keeps ``verify`` focused on file
+    # staleness/missing, which is what CI pipelines expect.
+    agent_summary = verify_agents()
+    if agent_summary.total > 0:
+        console.print(
+            f"\nAgents:        [green]{agent_summary.wired}[/green]/"
+            f"{agent_summary.total} wired, "
+            f"[dim]{agent_summary.skipped_tool_profile} skipped (tool_profile)[/dim], "
+            f"[yellow]{agent_summary.unwired} unwired[/yellow], "
+            f"[red]{agent_summary.errors} errors[/red]"
+        )
+        if agent_summary.unwired_names:
+            preview = ", ".join(agent_summary.unwired_names[:10])
+            more = (
+                f" ... and {len(agent_summary.unwired_names) - 10} more"
+                if len(agent_summary.unwired_names) > 10
+                else ""
+            )
+            console.print(f"  Unwired:     {preview}{more}")
+        if agent_summary.unwired > 0:
+            console.print(
+                "  [dim]Run `mnemos integration setup --wire-agents --all` to wire.[/dim]"
             )
 
     if has_issues:
