@@ -400,6 +400,34 @@ async def list_tools() -> list[Tool]:
             description="Get Mnemos health statistics and memory counts.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        Tool(
+            name="mnemos_filter",
+            description=(
+                "Run or refresh the Context Filter (M10) on an existing memory. "
+                "Useful when auto_filter was off at ingest time, when re-filtering "
+                "with a different profile, or when inspecting filter stats "
+                "(token reduction, dedup count)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "memory_id": {
+                        "type": "string",
+                        "description": "ID of the memory to filter",
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["log", "terminal", "code", "docs", "web", "default"],
+                        "description": "Filter profile (auto-detected if omitted)",
+                    },
+                    "budget": {
+                        "type": "integer",
+                        "description": "Optional token budget for truncation",
+                    },
+                },
+                "required": ["memory_id"],
+            },
+        ),
     ]
 
 
@@ -452,7 +480,18 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             filter_profile=args.get("filter_profile"),
         )
         memory = mgr.add(data, project=project, agent=agent)
-        return {"id": memory.id, "title": memory.auto_title(), "status": memory.status}
+        # mgr.add() auto-filters when settings.mnemos.auto_filter is True;
+        # reload so the returned object reflects clean_content if populated.
+        reloaded = mgr.get(memory.id)
+        if reloaded is not None:
+            memory = reloaded
+        return {
+            "id": memory.id,
+            "title": memory.auto_title(),
+            "status": memory.status,
+            "filter_profile": memory.filter_profile,
+            "filtered": memory.clean_content is not None,
+        }
 
     # ── mnemos_search ───────────────────────────────────────────────────────
     if name == "mnemos_search":
@@ -555,6 +594,23 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     # ── mnemos_stats ────────────────────────────────────────────────────────
     if name == "mnemos_stats":
         return mgr.stats()
+
+    # ── mnemos_filter (M10) ─────────────────────────────────────────────────
+    if name == "mnemos_filter":
+        memory_id = args["memory_id"]
+        result = mgr.apply_context_filter(
+            memory_id,
+            profile=args.get("profile"),
+            budget=args.get("budget"),
+        )
+        if result.get("status") == "error":
+            return result
+        return {
+            "memory_id": memory_id,
+            "profile": result["filter_profile"],
+            "clean_content": result["clean_content"],
+            "stats": result["stats"],
+        }
 
     # ── mnemos_ingest_url ───────────────────────────────────────────────────
     if name == "mnemos_ingest_url":
