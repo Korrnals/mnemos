@@ -13,9 +13,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from mnemos.cli._manager import get_manager
 from mnemos.config import load_settings
-from mnemos.manager import MemoryManager
 from mnemos.models import MemoryCreate, MemorySource, MemoryType
+
+# ``get_manager`` lives in the leaf module ``_manager`` so that CLI
+# subcommand modules (export_cmd, import_cmd) can import it without forming
+# a circular import with this module (which imports them to register the
+# Typer sub-apps). Re-exported here for backward compatibility.
 
 if TYPE_CHECKING:
     from mnemos.api.auth_store import AuthStore
@@ -26,8 +31,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
-
-_manager: MemoryManager | None = None
 
 
 def _version_callback(value: bool) -> None:
@@ -52,14 +55,6 @@ def main(
     ] = False,
 ) -> None:
     """Mnemos — standalone memory & knowledge server for GCW agents."""
-
-
-def get_manager(config: str | None = None) -> MemoryManager:
-    global _manager
-    if _manager is None:
-        settings = load_settings(config)
-        _manager = MemoryManager(settings)
-    return _manager
 
 
 ConfigOption = typer.Option(None, "--config", "-c", help="Path to config.yaml")
