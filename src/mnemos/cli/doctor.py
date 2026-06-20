@@ -41,7 +41,7 @@ doctor_app = typer.Typer(
 
 
 class CheckStatus(StrEnum):
-    PASS = "pass"
+    PASS = "pass"  # nosec B105 — status enum value, not a password
     WARN = "warn"
     FAIL = "fail"
 

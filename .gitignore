@@ -63,3 +63,6 @@ bandit-report.json
 
 # VSCode local history extension
 .history/
+
+# Code review reports (local)
+.cr/

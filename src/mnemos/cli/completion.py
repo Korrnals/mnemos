@@ -79,7 +79,7 @@ def _source_line(shell: str) -> str:
     if shell == "fish":
         # fish: the rc file IS the completion script, no source line needed.
         return ""
-    return f'eval "$({_PROG_NAME} --show-completion {shell})"'
+    return f'eval "$({_PROG_NAME} --show-completion {shell})"'  # nosec B604 — shell completion string for rc file, not Python eval()
 
 
 def _completion_script(shell: str) -> str:
@@ -87,7 +87,7 @@ def _completion_script(shell: str) -> str:
     return get_completion_script(
         prog_name=_PROG_NAME,
         complete_var=_COMPLETE_VAR,
-        shell=shell,
+        shell=shell,  # nosec B604 — shell is a completion type string (bash/zsh/fish), not shell=True
     )
 
 

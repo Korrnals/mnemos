@@ -608,7 +608,7 @@ class IntegrationManager:
         lifting lives in the shell script. We call it rather than reimplement
         the JSON merging to avoid drift.
         """
-        import subprocess
+        import subprocess  # nosec B404 — used for trusted local mcp-setup.sh, not untrusted input
 
         script = self.pack_root.parent / "scripts" / "mcp-setup.sh"
         if not script.exists():
@@ -619,7 +619,7 @@ class IntegrationManager:
             cmd += ["--command", mnemos_bin]
 
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # nosec B603 — runs trusted local mcp-setup.sh with list args
                 cmd,
                 check=False,
                 capture_output=True,
