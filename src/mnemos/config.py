@@ -111,16 +111,16 @@ class LLMConfig(BaseModel):
     # Ollama
     ollama_url: str = "http://localhost:11434"
     # OpenAI
-    openai_api_key: str = ""
+    openai_api_key: SecretStr = SecretStr("")
     openai_base_url: str = ""
     # Azure OpenAI
     azure_endpoint: str = ""
     azure_api_version: str = "2024-02-01"
     azure_deployment: str = ""
     # Anthropic
-    anthropic_api_key: str = ""
+    anthropic_api_key: SecretStr = SecretStr("")
     # Google Gemini
-    gemini_api_key: str = ""
+    gemini_api_key: SecretStr = SecretStr("")
     temperature: float = 0.3
     max_tokens: int = 4096
 
