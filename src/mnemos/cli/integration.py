@@ -73,6 +73,44 @@ class DeployStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+# ── Pack-root resolution ─────────────────────────────────────────────────────
+
+
+def _resolve_pack_targets() -> Path:
+    """Find the shipped ``targets.yaml`` across install layouts.
+
+    Tries the source-tree path first (editable installs / repo checkout),
+    then falls back to the installed-package location via
+    ``importlib.resources`` (wheels that ship ``mnemos/integrations/``).
+    """
+    # 1. Source-tree layout: src/mnemos/cli/integration.py → up 4 levels.
+    source_candidate = (
+        Path(__file__).resolve().parent.parent.parent.parent / "integrations" / "targets.yaml"
+    )
+    if source_candidate.is_file():
+        return source_candidate
+
+    # 2. Installed-package layout via importlib.resources.
+    try:
+        from importlib.resources import files
+
+        pack_targets = files("mnemos") / "integrations" / "targets.yaml"
+        if pack_targets.is_file():
+            return Path(str(pack_targets))
+    except (ImportError, ModuleNotFoundError, FileNotFoundError):
+        pass
+
+    # 3. Upward search for an integrations/ sibling of any parent.
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        maybe = parent / "integrations" / "targets.yaml"
+        if maybe.is_file():
+            return maybe
+
+    # 4. Last resort: CWD (used in tests).
+    return Path.cwd() / "integrations" / "targets.yaml"
+
+
 # ── Config model ──────────────────────────────────────────────────────────────
 
 
@@ -112,17 +150,22 @@ def load_targets(config_path: Path | None = None) -> TargetsConfig:
 
     Args:
         config_path: Explicit path to a ``targets.yaml``. When ``None`` the
-            file shipped inside the package tree is used (resolved relative
-            to this module → ``../../integrations/targets.yaml``).
+            file shipped inside the package tree is used. Resolution order:
+
+            1. Source-tree layout (``src/mnemos/.../integrations/targets.yaml``)
+               — works for editable / repo checkouts.
+            2. Installed-package layout via ``importlib.resources`` — works
+               for wheels that ship ``mnemos/integrations/targets.yaml``
+               (added in v2.0.1 via ``[tool.hatch.build.targets.wheel.force-include]``).
+            3. Upward search for an ``integrations/`` sibling of any parent.
+            4. CWD fallback (used in tests).
 
     Raises:
         FileNotFoundError: if the config file does not exist.
         ValueError: if the YAML is structurally invalid.
     """
     if config_path is None:
-        config_path = (
-            Path(__file__).resolve().parent.parent.parent.parent / "integrations" / "targets.yaml"
-        )
+        config_path = _resolve_pack_targets()
 
     if not config_path.exists():
         raise FileNotFoundError(f"targets.yaml not found: {config_path}")
@@ -328,20 +371,34 @@ class IntegrationManager:
         """Resolve the shipped ``integrations/`` directory.
 
         Works both in editable installs (``src/mnemos/...``) and wheel
-        installs where the package lives under ``site-packages``. We walk up
-        from this file to find the nearest ``integrations/`` directory.
+        installs where the package lives under ``site-packages``. Resolution
+        order mirrors :func:`_resolve_pack_targets`:
+
+        1. Source-tree layout (``src/mnemos/.../integrations``).
+        2. Installed-package layout via ``importlib.resources``.
+        3. Upward search for an ``integrations/`` sibling.
+        4. CWD fallback (used in tests).
         """
         here = Path(__file__).resolve()
-        # Editable / repo layout: src/mnemos/cli/integration.py → up 4 levels
+        # 1. Editable / repo layout: src/mnemos/cli/integration.py → up 4 levels
         candidate = here.parent.parent.parent.parent / "integrations"
         if candidate.is_dir():
             return candidate
-        # Fallback: search upward for an integrations/ sibling.
+        # 2. Installed-package layout via importlib.resources.
+        try:
+            from importlib.resources import files
+
+            pack_integrations = files("mnemos") / "integrations"
+            if pack_integrations.is_dir():
+                return Path(str(pack_integrations))
+        except (ImportError, ModuleNotFoundError, FileNotFoundError):
+            pass
+        # 3. Fallback: search upward for an integrations/ sibling.
         for parent in here.parents:
             maybe = parent / "integrations"
             if maybe.is_dir():
                 return maybe
-        # Last resort: assume CWD (used in tests).
+        # 4. Last resort: assume CWD (used in tests).
         return Path.cwd() / "integrations"
 
     # ── Pack discovery ────────────────────────────────────────────────────────

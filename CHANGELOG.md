@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.0.1] — 2026-06-21
+
+### Fixed
+
+- **Integration files missing from wheel** — `integrations/targets.yaml`,
+  `integrations/instructions/*.instructions.md`, `integrations/skills/*.md`,
+  and `integrations/prompts/*.prompt.md` were not included in the v2.0.0
+  wheel because `pyproject.toml` did not declare them as package data.
+  Added `[tool.hatch.build.targets.wheel.force-include]` so the `integrations/`
+  directory ships inside the wheel at `mnemos/integrations/`. Also added an
+  `importlib.resources` fallback in `load_targets()` and
+  `IntegrationManager._default_pack_root()` to find the pack regardless of
+  install method (source tree, wheel, or editable).
+
 ## [2.0.0] — 2026-06-21
 
 ### Added
