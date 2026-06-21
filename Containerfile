@@ -22,6 +22,9 @@ RUN apt-get update -qq && \
 # Install Python deps first (layer caching)
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
+# integrations/ is required at build time — pyproject.toml force-include
+# ships it inside the wheel via [tool.hatch.build.targets.wheel.force-include].
+COPY integrations/ ./integrations/
 RUN pip install --no-cache-dir ".[mcp]"
 
 # Default directories

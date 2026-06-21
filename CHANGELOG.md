@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.0.3] — 2026-06-21
+
+### Fixed
+
+- **Container build failed** — `pip install .[mcp]` inside the container
+  failed with `FileNotFoundError: Forced include not found: /app/integrations`
+  because the `integrations/` directory was not copied to the container
+  before pip install. The `pyproject.toml` `[tool.hatch.build.targets.wheel.force-include]`
+  maps `integrations/` → `mnemos/integrations/` inside the wheel, but hatch
+  resolves the source path relative to the build CWD (`/app`), which had no
+  `integrations/` directory. Added `COPY integrations/ ./integrations/` to
+  `Containerfile` before the `pip install` line. The force-include in
+  `pyproject.toml` is correct for wheel builds and was not changed.
+
 ## [2.0.2] — 2026-06-21
 
 ### Fixed
