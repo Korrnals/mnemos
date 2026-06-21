@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.0.4] — 2026-06-21
+
+### Fixed
+
+- **`install.sh` UX polish** — when MCP is already configured, the
+  installer no longer shows a misleading "Aborting" failure message.
+  It now shows a green "already registered" success and continues.
+- **Prompts are visually distinct** — interactive prompts in
+  `install.sh` are now framed with horizontal rule separators and a
+  `[?]` prefix so they stand out from info messages.
+
 ## [2.0.3] — 2026-06-21
 
 ### Fixed

@@ -50,6 +50,13 @@ ok()    { printf "${GREEN}✓${NC}  %s\n" "$*"; }
 warn()  { printf "${YELLOW}⚠${NC}  %s\n" "$*"; }
 die()   { printf "${RED}✗${NC}  %s\n" "$*" >&2; exit 1; }
 
+# Visual separator for interactive prompts — makes them stand out from info lines.
+SEPARATOR="────────────────────────────────────────────────────────────"
+prompt_ask() {
+  # $1 — the question text (including the [Y/n] suffix)
+  printf "\n%s\n[?] %s\n%s\n" "$SEPARATOR" "$1" "$SEPARATOR"
+}
+
 # ── Parse args ────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -214,8 +221,7 @@ if [[ "${EXTRAS}" == *mcp* ]]; then
     no)  : ;;
     ask)
       if [[ -r /dev/tty ]]; then
-        echo ""
-        printf "?  Set up VS Code MCP integration now? [Y/n] "
+        prompt_ask "Set up VS Code MCP integration now? [Y/n]"
         read -r reply < /dev/tty || reply=""
         case "$reply" in
           [Nn]*) info "Skipped MCP setup. You can run it anytime later." ;;
@@ -247,8 +253,7 @@ case "$INSTRUCTIONS_SETUP" in
   no)  : ;;
   ask)
     if [[ -r /dev/tty ]]; then
-      echo ""
-      printf "?  Deploy agent integration pack (instructions+skills+prompts)? [Y/n] "
+      prompt_ask "Deploy agent integration pack (instructions+skills+prompts)? [Y/n]"
       read -r reply < /dev/tty || reply=""
       case "$reply" in
         [Nn]*) info "Skipped integration pack. You can deploy it anytime: mnemos integration setup" ;;
@@ -274,8 +279,7 @@ case "$WIRE_AGENTS" in
   no)  : ;;
   ask)
     if [[ -r /dev/tty ]]; then
-      echo ""
-      printf "?  Wire Mnemos MCP to all GCW agents? [Y/n] "
+      prompt_ask "Wire Mnemos MCP to all GCW agents? [Y/n]"
       read -r reply < /dev/tty || reply=""
       case "$reply" in
         [Nn]*) info "Skipped agent wiring. Run it anytime: mnemos integration setup --wire-agents --all" ;;
