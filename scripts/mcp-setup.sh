@@ -99,9 +99,9 @@ JSONEOF
 else
   info "mcp.json exists — checking for existing 'mnemos' entry…"
   if grep -q '"mnemos"' "$MCP_FILE" 2>/dev/null; then
-    warn "An entry for 'mnemos' already exists in ${MCP_FILE}."
-    warn "Manual review recommended — the script will not overwrite an existing entry."
-    die "Aborting to avoid clobbering existing config. Use --dry-run to inspect."
+    ok "MCP server 'mnemos' is already registered in ${MCP_FILE} — no changes needed."
+    ok "Skipping MCP setup (already configured). Use --dry-run to inspect if needed."
+    exit 0
   fi
   if command -v python3 &>/dev/null; then
     info "Using Python for safe JSON merge…"
