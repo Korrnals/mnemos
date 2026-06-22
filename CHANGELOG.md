@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.0.6] — 2026-06-22
+
+### Fixed
+
+- **MCP server `__main__` block missing** — `python -m mnemos.mcp_server`
+  imported the module but never called `main()`, so the server didn't
+  start. Added `if __name__ == "__main__"` block with `asyncio.run(main())`.
+- **MCP config pointed to source checkout** — `mcp-setup.sh` generated
+  config with `PYTHONPATH=src` pointing to the source directory. If the
+  source was deleted, MCP broke. Now uses the installed `mnemos mcp-server`
+  binary from `~/.mnemos-venv/bin/mnemos` — no source dependency.
+- **`mcp-setup.sh` couldn't overwrite stale entries** — added `--force`
+  flag to replace an existing `mnemos` entry (e.g. when migrating from
+  a source-checkout config to the installed binary).
+- **mypy `--strict` failures on numpy-typed code** — `vector_store.py`
+  `_pack`/`_unpack` returned `Any` from numpy calls; `embeddings/__init__.py`
+  iterated over chromadb's `Embedding?` TypeVar. Both now use explicit
+  `cast()` to the declared return types.
+- **mypy numpy stub syntax errors (PEP 695)** — added `ignore_errors = true`
+  to the `numpy` / `numpy.*` mypy overrides so the PEP 695 `type` statement
+  in the stubs doesn't break `--strict` on Python 3.12/3.13.
+
 ## [2.0.5] — 2026-06-22
 
 ### Fixed

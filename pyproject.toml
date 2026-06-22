@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mnemos"
-version = "2.0.5"
+version = "2.0.6"
 description = "Standalone memory & knowledge server for GCW agents — forked from ai-brain"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -118,7 +118,11 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.mypy]
-python_version = "3.11"
+# Don't pin python_version — let each CI job (3.11/3.12/3.13) use its
+# runtime Python version. Pinning to 3.11 causes mypy to reject PEP 695
+# `type` statements in numpy stubs installed on 3.12/3.13 (syntax error
+# that follow_imports=skip cannot suppress). The 3.11 CI job still
+# catches 3.12+ features in our own code.
 strict = true
 ignore_missing_imports = true
 warn_return_any = true
@@ -132,6 +136,18 @@ warn_unused_ignores = true
 module = "mnemos.mcp_server"
 disallow_untyped_decorators = false
 disallow_untyped_calls = false
+
+# numpy stubs use PEP 695 `type` statement (Python 3.12+) which mypy
+# doesn't support in all versions. Don't follow into numpy stubs and
+# ignore any errors there — we only type-check our own code.
+[[tool.mypy.overrides]]
+module = "numpy"
+follow_imports = "skip"
+ignore_errors = true
+[[tool.mypy.overrides]]
+module = "numpy.*"
+follow_imports = "skip"
+ignore_errors = true
 
 [tool.bandit]
 exclude_dirs = [".venv", "tests"]
