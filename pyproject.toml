@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mnemos"
-version = "2.0.5"
+version = "2.0.6"
 description = "Standalone memory & knowledge server for GCW agents — forked from ai-brain"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -134,8 +134,12 @@ disallow_untyped_decorators = false
 disallow_untyped_calls = false
 
 # numpy stubs use PEP 695 `type` statement (Python 3.12+) which mypy
-# doesn't support in all versions. Skip following imports into numpy
-# — we only type-check our own code, not third-party library stubs.
+# doesn't support in all versions. Don't follow into numpy stubs and
+# ignore any errors there — we only type-check our own code.
+[[tool.mypy.overrides]]
+module = "numpy"
+follow_imports = "skip"
+ignore_errors = true
 [[tool.mypy.overrides]]
 module = "numpy.*"
 follow_imports = "skip"

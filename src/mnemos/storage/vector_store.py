@@ -53,11 +53,15 @@ class VectorStore:
 
     @staticmethod
     def _pack(embedding: list[float]) -> bytes:
-        return np.asarray(embedding, dtype=np.float32).tobytes()
+        # np.asarray(...).tobytes() is typed as `Any` by the numpy stubs;
+        # cast back to the declared return type so mypy --strict is happy.
+        return cast("bytes", np.asarray(embedding, dtype=np.float32).tobytes())
 
     @staticmethod
     def _unpack(blob: bytes) -> np.ndarray:
-        return np.frombuffer(blob, dtype=np.float32)
+        # np.frombuffer returns `Any` per the stubs; cast to the declared
+        # ndarray return type.
+        return cast("np.ndarray", np.frombuffer(blob, dtype=np.float32))
 
     # ── write ─────────────────────────────────────────────────────────────
 
