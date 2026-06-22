@@ -133,5 +133,12 @@ module = "mnemos.mcp_server"
 disallow_untyped_decorators = false
 disallow_untyped_calls = false
 
+# numpy stubs use PEP 695 `type` statement (Python 3.12+) which mypy
+# doesn't support in all versions. Ignore errors in numpy's own stubs
+# — we only type-check our own code, not third-party libraries.
+[[tool.mypy.overrides]]
+module = "numpy.*"
+ignore_errors = true
+
 [tool.bandit]
 exclude_dirs = [".venv", "tests"]
