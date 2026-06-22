@@ -693,3 +693,9 @@ async def main() -> None:
             write_stream,
             server.create_initialization_options(),
         )
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(main())

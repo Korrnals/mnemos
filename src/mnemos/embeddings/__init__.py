@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -56,14 +56,21 @@ class ChromaDefaultProvider(EmbeddingProvider):
         from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
         logger.info("Using ChromaDB default ONNX embeddings (all-MiniLM-L6-v2)")
-        self._fn = DefaultEmbeddingFunction()
+        # chromadb's `EmbeddingFunction` is a generic Protocol; its stubs
+        # declare the return as `Embedding?` (a TypeVar bound) which mypy
+        # can't prove is iterable. We treat the callable as `Any` and cast
+        # the result to the concrete ndarray shape we know it returns at
+        # runtime.
+        self._fn: Any = DefaultEmbeddingFunction()
         self._dim = 384
 
     def embed(self, text: str) -> list[float]:
-        return [float(x) for x in self._fn([text])[0]]
+        result = cast("list[Any]", self._fn([text])[0])
+        return [float(x) for x in result]
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [[float(x) for x in row] for row in self._fn(texts)]
+        rows = cast("list[list[Any]]", self._fn(texts))
+        return [[float(x) for x in row] for row in rows]
 
     @property
     def dimension(self) -> int:

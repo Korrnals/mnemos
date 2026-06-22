@@ -53,11 +53,17 @@ class VectorStore:
 
     @staticmethod
     def _pack(embedding: list[float]) -> bytes:
-        return np.asarray(embedding, dtype=np.float32).tobytes()
+        # `np.asarray(...).tobytes()` return type varies across numpy
+        # stub versions (Any on 3.11, bytes on 3.12+). Construct the
+        # ndarray explicitly so the type is concrete on all versions.
+        arr: np.ndarray = np.asarray(embedding, dtype=np.float32)
+        return arr.tobytes()
 
     @staticmethod
     def _unpack(blob: bytes) -> np.ndarray:
-        return np.frombuffer(blob, dtype=np.float32)
+        # Same rationale as _pack — explicit annotation avoids Any-return.
+        arr: np.ndarray = np.frombuffer(blob, dtype=np.float32)
+        return arr
 
     # ── write ─────────────────────────────────────────────────────────────
 
@@ -123,7 +129,7 @@ class VectorStore:
         if not rows:
             return []
 
-        q = np.asarray(query_embedding, dtype=np.float32)
+        q: np.ndarray = np.asarray(query_embedding, dtype=np.float32)
         q_norm = np.linalg.norm(q)
         if q_norm == 0:
             return []
