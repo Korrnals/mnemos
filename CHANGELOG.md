@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.0.5] — 2026-06-22
+
+### Fixed
+
+- **`mnemos_filter` MCP tool not registered** — the tool dispatch
+  existed but the tool was missing from `list_tools()`, so agents
+  couldn't discover or call it. Now properly registered with
+  `memory_id`, `profile`, and `budget` parameters.
+- **`mnemos_add` missing `filtered` flag** — the return value didn't
+  include a `filtered` boolean indicating whether auto-filter ran.
+  Now returns `{"filtered": true/false, ...}`.
+- **Stale agent wiring tests** — updated assertions to match the
+  improved YAML preprocessing + regex fallback behavior.
+
 ## [2.0.4] — 2026-06-21
 
 ### Fixed

@@ -3,5 +3,5 @@
 Productionised for the GCW (GitHub Copilot Workflow) agent family.
 """
 
-__version__ = "2.0.4"
+__version__ = "2.0.5"
 __all__ = ["__version__"]

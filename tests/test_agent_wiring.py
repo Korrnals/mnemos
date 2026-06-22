@@ -214,7 +214,13 @@ class TestDetectAgents:
         assert detect_agents(tmp_path / "does-not-exist") == []
 
     def test_malformed_frontmatter_does_not_crash(self, tmp_path: Path) -> None:
-        """A file with broken frontmatter is reported, not crashed on."""
+        """A file with broken frontmatter is reported, not crashed on.
+
+        The YAML preprocessing + regex fallback extract ``name`` even from
+        malformed flow sequences, so the agent is reported with the parsed
+        name (not the filename fallback). The key invariant: no crash, and
+        the agent appears in the report with safe defaults (no tools).
+        """
         directory = tmp_path / "agents"
         directory.mkdir()
         bad = directory / "broken.agent.md"
@@ -222,7 +228,9 @@ class TestDetectAgents:
 
         infos = detect_agents(directory)
         assert len(infos) == 1
-        assert infos[0].name == "broken.agent.md"
+        # Regex fallback extracts the scalar ``name`` value. The important
+        # assertion is that we did not crash and the agent has no tools.
+        assert infos[0].name == "[invalid"
         assert infos[0].has_tools is False
 
     def test_unquoted_colon_in_description_does_not_crash(self, tmp_path: Path) -> None:
@@ -250,16 +258,19 @@ class TestDetectAgents:
             encoding="utf-8",
         )
 
-        # detect_agents must not crash — returns the agent with safe defaults.
+        # detect_agents must not crash. The preprocessing fixes the
+        # unquoted colon, so the parser succeeds and returns the real name.
         infos = detect_agents(directory)
         assert len(infos) == 1
-        assert infos[0].name == "curator.agent.md"
+        assert infos[0].name == "GCW: Mnemos Curator"
         assert infos[0].has_tools is False
 
-        # wire_agent must not crash — returns SKIPPED_NO_FRONTMATTER.
+        # wire_agent must not crash. The frontmatter parses successfully
+        # (preprocessing quotes the description), so wiring proceeds and
+        # adds the mnemos wildcard tool.
         result = wire_agent(path, mode="wildcard")
-        assert result.status == WireStatus.SKIPPED_NO_FRONTMATTER
-        assert "frontmatter parse failed" in result.note
+        assert result.status == WireStatus.WIRED
+        assert result.tools_added == ["mnemos/*"]
 
 
 # ── wire_agent ────────────────────────────────────────────────────────────────
@@ -398,13 +409,19 @@ class TestWireAgent:
             wire_agent(path, mode="bogus")  # type: ignore[arg-type]
 
     def test_error_on_unparseable_file(self, tmp_path: Path) -> None:
-        """A file with broken frontmatter is skipped gracefully, not crashed.
+        """A file with no frontmatter delimiters is skipped gracefully.
 
-        The agent is reported as SKIPPED_NO_FRONTMATTER so the wiring batch
-        continues with other agents. The error is logged for observability.
+        Content without ``---`` delimiters cannot have frontmatter, so both
+        the YAML parser and the regex fallback return an empty dict. The
+        agent is reported as SKIPPED_NO_FRONTMATTER so the wiring batch
+        continues with other agents.
         """
         path = tmp_path / "broken.agent.md"
-        path.write_text("---\nname: [invalid\n---\nbody\n", encoding="utf-8")
+        # No ``---`` frontmatter delimiters at all — truly unparseable.
+        path.write_text(
+            "This file has no frontmatter delimiters.\nJust plain markdown body text.\n",
+            encoding="utf-8",
+        )
 
         result = wire_agent(path, mode="wildcard")
         assert result.status == WireStatus.SKIPPED_NO_FRONTMATTER

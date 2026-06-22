@@ -31,10 +31,11 @@ Public API:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import frontmatter
 
@@ -160,6 +161,167 @@ def detect_agents(agents_dir: Path | None = None) -> list[AgentInfo]:
     return infos
 
 
+def _quote_unquoted_yaml_value(value: str) -> str:
+    """If ``value`` contains a colon and isn't quoted, wrap it in double quotes.
+
+    Real-world agent files have descriptions like::
+
+        description: (GCW) Curator ... STUB mode: operates on file memory.
+
+    The ``:`` in ``STUB mode:`` is parsed by YAML as a nested mapping key,
+    which raises ``mapping values are not allowed in this context``. Quoting
+    the whole scalar resolves the ambiguity.
+
+    Args:
+        value: The raw scalar text after ``key: `` (already stripped of the
+            key and the separating colon).
+
+    Returns:
+        The value, double-quoted (with inner double quotes escaped) if it
+        contained a colon and wasn't already quoted. Otherwise unchanged.
+    """
+    if not value:
+        return value
+    v = value.strip()
+    # Already quoted (single or double) — leave as-is.
+    if v.startswith('"') or v.startswith("'"):
+        return value
+    # No colon → no ambiguity, no need to quote.
+    if ":" not in v:
+        return value
+    # Contains a colon — quote to prevent YAML mapping interpretation.
+    escaped = v.replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+# Matches a top-level frontmatter line: ``key: value`` (no nested indentation).
+_KV_LINE_RE = re.compile(r"^(\s*)([a-zA-Z_][\w-]*)\s*:\s*(.*)$")
+
+
+def _preprocess_yaml(content: str) -> str:
+    """Quote unquoted scalar values containing ``:`` in YAML frontmatter.
+
+    Splits the document on ``---`` delimiters, scans the frontmatter block
+    for ``key: value`` lines where ``value`` contains a colon and isn't
+    already quoted, and wraps those values in double quotes.
+
+    This is a targeted fix for the ``mapping values are not allowed`` error
+    caused by descriptions like ``STUB mode: operates on ...``. It does not
+    attempt to be a general YAML preprocessor — block scalars, flow
+    collections, and multi-line values are left untouched (they don't
+    trigger the error in practice).
+
+    Args:
+        content: The full file text (with ``---`` frontmatter delimiters).
+
+    Returns:
+        The content with ambiguous scalar values quoted. If the document
+        has no frontmatter (fewer than 3 ``---``-split parts), it is
+        returned unchanged.
+    """
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return content
+
+    fm = parts[1]
+    fixed_lines: list[str] = []
+    for line in fm.split("\n"):
+        m = _KV_LINE_RE.match(line)
+        if m:
+            indent, key, value = m.groups()
+            quoted = _quote_unquoted_yaml_value(value)
+            if quoted != value:
+                line = f"{indent}{key}: {quoted}"
+        fixed_lines.append(line)
+
+    fixed_fm = "\n".join(fixed_lines)
+    # Reassemble: leading text + --- + fixed frontmatter + --- + body.
+    body = parts[2] if len(parts) > 2 else ""
+    return f"{parts[0]}---{fixed_fm}---{body}"
+
+
+def _regex_fallback_parse(content: str) -> dict[str, Any]:
+    """Last-resort parser for malformed YAML frontmatter.
+
+    Extracts ``name``, ``description``, ``tools``, ``tool_profile``,
+    ``model``, and ``agents`` using simple regex. Handles inline lists,
+    block lists, and unquoted scalars. This is only invoked when
+    :func:`_preprocess_yaml` + :func:`frontmatter.loads` both fail — a
+    rare edge case for truly broken files.
+
+    Args:
+        content: The full file text (with ``---`` frontmatter delimiters).
+
+    Returns:
+        A dict of parsed fields. Empty dict if no frontmatter is found.
+    """
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    fm = parts[1]
+    result: dict[str, Any] = {}
+
+    # Extract simple scalars: key: value (quoted or unquoted).
+    # Skip lines that look like block-list items (start with ``-``).
+    for m in re.finditer(r"^([a-zA-Z_][\w-]*)\s*:\s*(.+?)\s*$", fm, re.MULTILINE):
+        key, raw = m.groups()
+        v = raw.strip()
+        if v.startswith('"') and v.endswith('"'):
+            v = v[1:-1].replace('\\"', '"')
+        elif v.startswith("'") and v.endswith("'"):
+            v = v[1:-1]
+        # Skip inline-list values — handled separately below.
+        if v.startswith("[") and v.endswith("]"):
+            continue
+        result[key] = v
+
+    # Extract tools: [a, b, c] (inline list).
+    tools_match = re.search(r"^tools\s*:\s*\[([^\]]*)\]", fm, re.MULTILINE)
+    if tools_match:
+        items = [
+            t.strip().strip('"').strip("'") for t in tools_match.group(1).split(",") if t.strip()
+        ]
+        result["tools"] = items
+    elif "tools" not in result:
+        # Extract tools: block list (- a, - b).
+        tools_match = re.search(r"^tools\s*:\s*\n((?:\s*-\s*.+\n?)+)", fm, re.MULTILINE)
+        if tools_match:
+            items = []
+            for line_m in re.finditer(r"^\s*-\s*(.+?)\s*$", tools_match.group(1), re.MULTILINE):
+                items.append(line_m.group(1).strip().strip('"').strip("'"))
+            result["tools"] = items
+
+    return result
+
+
+def _parse_frontmatter(content: str) -> dict[str, Any]:
+    """Parse YAML frontmatter with preprocessing and regex fallback.
+
+    Tries (in order):
+
+    1. :func:`_preprocess_yaml` + :func:`frontmatter.loads` — the normal
+       path, with unquoted-colon values fixed first.
+    2. :func:`_regex_fallback_parse` — a regex-based extractor for truly
+       broken YAML.
+
+    Args:
+        content: The full file text.
+
+    Returns:
+        A metadata dict. Empty dict if both parsers fail.
+    """
+    try:
+        preprocessed = _preprocess_yaml(content)
+        post = frontmatter.loads(preprocessed)
+        return dict(post.metadata)
+    except Exception as exc:
+        logger.warning(
+            "frontmatter.loads failed even after preprocessing: %s; using regex fallback",
+            exc,
+        )
+        return _regex_fallback_parse(content)
+
+
 def _parse_agent(path: Path) -> AgentInfo:
     """Parse a single agent file into :class:`AgentInfo`.
 
@@ -168,15 +330,10 @@ def _parse_agent(path: Path) -> AgentInfo:
     during wiring.
     """
     filename = path.name
-    try:
-        post = frontmatter.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        # Malformed frontmatter (YAML parse error, IO error, etc.) — report
-        # it, but don't crash detection. python-frontmatter can raise
-        # yaml.scanner.ScannerError / yaml.parser.ParserError which inherit
-        # from yaml.YAMLError (not ValueError/OSError), so we catch broadly
-        # but log the failure for observability.
-        logger.warning("failed to parse frontmatter in %s: %s", path, exc)
+    metadata = _parse_frontmatter(path.read_text(encoding="utf-8"))
+
+    if not metadata:
+        # Complete failure — return safe defaults.
         return AgentInfo(
             path=path,
             name=filename,
@@ -187,7 +344,6 @@ def _parse_agent(path: Path) -> AgentInfo:
             has_tools=False,
         )
 
-    metadata = post.metadata
     name = str(metadata.get("name", filename))
     has_tool_profile = "tool_profile" in metadata
     tools = metadata.get("tools")
@@ -257,21 +413,21 @@ def wire_agent(
     """
     to_add = _build_tools_to_add(mode)
 
-    try:
-        post = frontmatter.loads(agent_path.read_text(encoding="utf-8"))
-    except Exception as exc:
+    raw = agent_path.read_text(encoding="utf-8")
+    metadata = _parse_frontmatter(raw)
+
+    if not metadata:
         # Malformed frontmatter — skip this agent gracefully rather than
-        # failing the whole wiring batch. The error is logged so the user
-        # can fix the agent file, but other agents still wire normally.
-        logger.warning("failed to parse frontmatter in %s: %s", agent_path, exc)
+        # failing the whole wiring batch. The error is logged inside
+        # ``_parse_frontmatter`` so the user can fix the agent file, but
+        # other agents still wire normally.
         return WireResult(
             path=agent_path,
             name=agent_path.name,
             status=WireStatus.SKIPPED_NO_FRONTMATTER,
-            note=f"frontmatter parse failed: {exc}",
+            note="frontmatter parse failed (preprocessing + regex fallback exhausted)",
         )
 
-    metadata = post.metadata
     name = str(metadata.get("name", agent_path.name))
 
     # Skip agents that use tool_profile — the installer owns their tools.
@@ -309,9 +465,14 @@ def wire_agent(
             tools_added=missing,
         )
 
-    # Mutate metadata and write back.
+    # Mutate metadata and write back. We re-parse the preprocessed content
+    # (with colons already quoted) so that ``frontmatter.dump`` round-trips
+    # cleanly without re-introducing the original YAML ambiguity.
     metadata["tools"] = new_tools
     try:
+        preprocessed = _preprocess_yaml(raw)
+        post = frontmatter.loads(preprocessed)
+        post.metadata["tools"] = new_tools
         frontmatter.dump(post, agent_path)
     except Exception as exc:
         return WireResult(
