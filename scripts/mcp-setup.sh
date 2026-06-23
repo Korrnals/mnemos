@@ -52,12 +52,10 @@ done
 [[ "$SCOPE" != "user" && "$SCOPE" != "workspace" ]] && die "--scope must be 'user' or 'workspace'"
 
 if [[ -z "$MNEMOS_CMD" ]]; then
-  for candidate in "${HOME}/.mnemos/venv/bin/mnemos" "${HOME}/.venv/bin/mnemos"; do
-    if [[ -x "$candidate" ]]; then
-      MNEMOS_CMD="$candidate"; info "Found mnemos at: ${MNEMOS_CMD}"; break
-    fi
-  done
-  if [[ -z "$MNEMOS_CMD" ]] && command -v mnemos &>/dev/null; then
+  candidate="${HOME}/.mnemos/venv/bin/mnemos"
+  if [[ -x "$candidate" ]]; then
+    MNEMOS_CMD="$candidate"; info "Found mnemos at: ${MNEMOS_CMD}"
+  elif command -v mnemos &>/dev/null; then
     MNEMOS_CMD="$(command -v mnemos)"; info "Found mnemos on PATH: ${MNEMOS_CMD}"
   fi
 fi
