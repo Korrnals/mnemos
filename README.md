@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 
 The installer does everything for you — no Python or venv knowledge required:
 
-- creates an isolated environment at `~/.mnemos-venv`;
+- creates an isolated environment at `~/.mnemos/venv`;
 - drops a `mnemos` launcher into `~/.local/bin`, so the CLI just works in any shell (**no venv activation needed**);
 - offers to wire up VS Code MCP integration right there (or run it later — see step 3).
 

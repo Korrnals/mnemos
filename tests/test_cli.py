@@ -267,16 +267,22 @@ class TestCompletionCommand:
     def test_completion_explicit_shell_installs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """`mnemos completion bash` installs the source line into ~/.bashrc."""
+        """`mnemos completion bash` writes the script file and a source line into ~/.bashrc."""
         fake_home = tmp_path / "fakehome"
         fake_home.mkdir()
         monkeypatch.setenv("HOME", str(fake_home))
         result = runner.invoke(app, ["completion", "bash"])
         assert result.exit_code == 0
+        # Completion script file stored under ~/.mnemos/completion/
+        script_file = fake_home / ".mnemos" / "completion" / "mnemos.bash"
+        assert script_file.exists()
+        assert "_mnemos" in script_file.read_text(encoding="utf-8")
+        # rc file gets an active (uncommented) source line, not eval.
         rc = fake_home / ".bashrc"
         assert rc.exists()
         content = rc.read_text(encoding="utf-8")
-        assert "mnemos --show-completion bash" in content
+        assert "source ~/.mnemos/completion/mnemos.bash" in content
+        assert "eval " not in content
 
     def test_completion_is_idempotent(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -290,7 +296,7 @@ class TestCompletionCommand:
         rc = fake_home / ".bashrc"
         content = rc.read_text(encoding="utf-8")
         # The source line marker should appear exactly once.
-        assert content.count("mnemos --show-completion bash") == 1
+        assert content.count("source ~/.mnemos/completion/mnemos.bash") == 1
 
     def test_completion_auto_detect_from_shell_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -302,9 +308,69 @@ class TestCompletionCommand:
         monkeypatch.setenv("SHELL", "/usr/bin/zsh")
         result = runner.invoke(app, ["completion"])
         assert result.exit_code == 0
+        script_file = fake_home / ".mnemos" / "completion" / "mnemos.zsh"
+        assert script_file.exists()
         rc = fake_home / ".zshrc"
         assert rc.exists()
-        assert "mnemos --show-completion zsh" in rc.read_text(encoding="utf-8")
+        assert "source ~/.mnemos/completion/mnemos.zsh" in rc.read_text(encoding="utf-8")
+
+    def test_completion_is_installed_false_for_commented_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`_is_installed()` returns False when the source line is commented out."""
+        from mnemos.cli.completion import _is_installed
+
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        rc = fake_home / ".bashrc"
+        rc.write_text(
+            "# Added by `mnemos completion` (bash)\n"
+            "#[ -f ~/.mnemos/completion/mnemos.bash ] && source ~/.mnemos/completion/mnemos.bash\n",
+            encoding="utf-8",
+        )
+        assert not _is_installed("bash", rc)
+
+    def test_completion_is_installed_true_for_active_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`_is_installed()` returns True for an active (uncommented) source line."""
+        from mnemos.cli.completion import _is_installed
+
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        rc = fake_home / ".bashrc"
+        rc.write_text(
+            "[ -f ~/.mnemos/completion/mnemos.bash ] && source ~/.mnemos/completion/mnemos.bash\n",
+            encoding="utf-8",
+        )
+        assert _is_installed("bash", rc)
+
+    def test_completion_migrates_old_eval_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Old `eval "$(mnemos --show-completion bash)"` line is removed on install."""
+        fake_home = tmp_path / "fakehome"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+        rc = fake_home / ".bashrc"
+        rc.write_text(
+            "# Added by `mnemos completion` (bash)\n"
+            'eval "$(mnemos --show-completion bash)"\n'
+            "# some user content\n",
+            encoding="utf-8",
+        )
+        result = runner.invoke(app, ["completion", "bash"])
+        assert result.exit_code == 0
+        content = rc.read_text(encoding="utf-8")
+        # Old eval line and its marker comment must be gone.
+        assert "mnemos --show-completion" not in content
+        assert "eval " not in content
+        # New source line must be present.
+        assert "source ~/.mnemos/completion/mnemos.bash" in content
+        # User content preserved.
+        assert "# some user content" in content
 
     def test_completion_unknown_shell_errors(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

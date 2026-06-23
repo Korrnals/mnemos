@@ -1,6 +1,13 @@
 mnemos:
-  vault_path: ~/mnemos-vault
-  data_dir: ~/.mnemos
+  # Consolidated layout (v2.1): everything under ~/.mnemos/
+  #   ~/.mnemos/config.yaml  ← this file
+  #   ~/.mnemos/data/         ← SQLite DBs (mnemos.db, vectors.db)
+  #   ~/.mnemos/vault/        ← markdown vault
+  #   ~/.mnemos/logs/         ← log files
+  #   ~/.mnemos/cache/        ← embedding model cache, temp files
+  # Old paths (~/mnemos-vault, ~/.mnemos as data_dir) are auto-migrated on first run.
+  vault_path: ~/.mnemos/vault
+  data_dir: ~/.mnemos/data
 
 embedding:
   # Default: chromadb — uses built-in ONNX model (all-MiniLM-L6-v2), no torch needed
@@ -71,3 +78,13 @@ watcher:
     - .sql
   max_file_size_kb: 512
   auto_scan: true
+
+# ── Logging (v2.1) ───────────────────────────────────────────────────────────
+# File logging with rotation. Set log_file to empty ("") for stderr-only output.
+logging:
+  level: INFO                    # DEBUG | INFO | WARNING | ERROR
+  log_file: ~/.mnemos/logs/mnemos.log
+  max_file_size_mb: 10           # rotating file handler — max size per file
+  backup_count: 3                # keep N rotated files
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"

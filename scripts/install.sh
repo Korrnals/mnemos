@@ -9,7 +9,7 @@
 # Flags:
 #   --version VERSION   Mnemos version to install (default: latest from GitHub Releases)
 #   --extra EXTRAS      Comma-separated extras: mcp,ollama,openai,anthropic,gemini,dev,all (default: mcp)
-#   --venv PATH         Create a venv at PATH and install there (default: ~/.mnemos-venv)
+#   --venv PATH         Create a venv at PATH and install there (default: ~/.mnemos/venv)
 #   --no-venv           Install into the current Python (system/user), no venv
 #   --uv                Use uv instead of pip (auto-detected if available)
 #   --mcp               Set up VS Code MCP integration automatically (no prompt)
@@ -29,7 +29,7 @@ set -euo pipefail
 
 VERSION=""
 EXTRAS="mcp"
-VENV_PATH="${HOME}/.mnemos-venv"
+VENV_PATH="${HOME}/.mnemos/venv"
 NO_VENV=false
 USE_UV=false
 CONTAINER=false

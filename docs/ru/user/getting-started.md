@@ -113,8 +113,8 @@ mnemos add --content "Hello world" --tags project:test agent:getting-started gcw
 
 Mnemos автоматически:
 
-1. **Записал запись в SQLite** по пути `~/.mnemos/mnemos.db`.
-2. **Отразил её в Obsidian-vault** `~/mnemos-vault/` как markdown-файл с YAML-фронтматером.
+1. **Записал запись в SQLite** по пути `~/.mnemos/data/mnemos.db`.
+2. **Отразил её в Obsidian-vault** `~/.mnemos/vault/` как markdown-файл с YAML-фронтматером.
 3. **Проверил контракт тегов** — `project:test` + `agent:getting-started` + `gcw:learning` — корректная тройка M2. Если пропустить один из тегов, вы получите `❌ Tag contract violation: ...` вместо подтверждения.
 
 Контракт тегов описан в [tag-contract.md](tag-contract.md). Коротко: каждая запись требует **ровно одного** `project:<slug>`, **ровно одного** `agent:<slug>` и **хотя бы одного** `gcw:<subtype>` (например, `gcw:learning`, `gcw:bug-pattern`, `gcw:decision`).
@@ -202,8 +202,8 @@ mnemos mcp-server
       "command": "mnemos",
       "args": ["mcp-server"],
       "env": {
-        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos",
-        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/mnemos-vault"
+        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos/data",
+        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/.mnemos/vault"
       }
     }
   }

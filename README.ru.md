@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 
 Установщик делает всё за вас — знание Python или venv не требуется:
 
-- создаёт изолированное окружение в `~/.mnemos-venv`;
+- создаёт изолированное окружение в `~/.mnemos/venv`;
 - кладёт лаунчер `mnemos` в `~/.local/bin`, чтобы CLI работал в любом шелле (**активировать venv не нужно**);
 - тут же предлагает настроить интеграцию VS Code MCP (или сделайте это позже — см. шаг 3).
 
