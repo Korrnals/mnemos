@@ -8,8 +8,8 @@
 #
 # Flags:
 #   --scope SCOPE       VS Code config scope: user | workspace (default: user)
-#   --data-dir PATH     MNEMOS_DATA_DIR (default: ~/.mnemos)
-#   --vault PATH        MNEMOS_VAULT__VAULT_PATH (default: ~/mnemos-vault)
+#   --data-dir PATH     MNEMOS_DATA_DIR (default: ~/.mnemos/data)
+#   --vault PATH        MNEMOS_VAULT__VAULT_PATH (default: ~/.mnemos/vault)
 #   --command CMD       Command to launch mnemos (default: auto-detect: venv → system → mnemos)
 #   --auto-collect      Set MNEMOS_AUTO_COLLECT=1 (nag agent to save context)
 #   --force             Overwrite an existing 'mnemos' entry even if already present
@@ -18,8 +18,8 @@
 set -euo pipefail
 
 SCOPE="user"
-DATA_DIR="${HOME}/.mnemos"
-VAULT_PATH="${HOME}/mnemos-vault"
+DATA_DIR="${HOME}/.mnemos/data"
+VAULT_PATH="${HOME}/.mnemos/vault"
 MNEMOS_CMD=""
 AUTO_COLLECT=false
 FORCE=false
@@ -52,7 +52,7 @@ done
 [[ "$SCOPE" != "user" && "$SCOPE" != "workspace" ]] && die "--scope must be 'user' or 'workspace'"
 
 if [[ -z "$MNEMOS_CMD" ]]; then
-  for candidate in "${HOME}/.mnemos-venv/bin/mnemos" "${HOME}/.venv/bin/mnemos"; do
+  for candidate in "${HOME}/.mnemos/venv/bin/mnemos" "${HOME}/.venv/bin/mnemos"; do
     if [[ -x "$candidate" ]]; then
       MNEMOS_CMD="$candidate"; info "Found mnemos at: ${MNEMOS_CMD}"; break
     fi

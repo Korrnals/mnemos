@@ -332,6 +332,61 @@ def _check_agent_wiring() -> CheckResult:
     )
 
 
+# ── Paths overview ────────────────────────────────────────────────────────────
+
+
+def _collect_paths(settings: Any) -> dict[str, str]:
+    """Collect all relevant Mnemos paths as display strings.
+
+    Returns a dict with keys: root, config, data_dir, db_path, vault, logs,
+    cache, completion, mcp_config.
+    """
+    home = Path.home()
+    root = home / ".mnemos"
+    mcp_cfg = home / ".config" / "Code" / "User" / "mcp.json"
+
+    # Use ~ abbreviation for display where possible.
+    def _display(p: Path) -> str:
+        s = str(p)
+        home_s = str(home)
+        if s.startswith(home_s):
+            return "~" + s[len(home_s):]
+        return s
+
+    return {
+        "root": _display(root),
+        "config": _display(root / "config.yaml"),
+        "data_dir": _display(settings.mnemos.data_dir),
+        "db_path": _display(settings.db_path),
+        "vault": _display(settings.mnemos.vault_path),
+        "logs": _display(settings.logging.log_file)
+        if settings.logging.log_file
+        else "(stderr only)",
+        "cache": _display(root / "cache"),
+        "completion": _display(root / "completion"),
+        "mcp_config": _display(mcp_cfg),
+    }
+
+
+def _render_paths(paths: dict[str, str]) -> None:
+    """Print the paths table to the console."""
+    console.print()
+    console.print("[bold cyan]── Paths ──────────────────────────────────────[/bold cyan]")
+    labels = [
+        ("Root", "root"),
+        ("Config", "config"),
+        ("Data dir", "data_dir"),
+        ("DB", "db_path"),
+        ("Vault", "vault"),
+        ("Logs", "logs"),
+        ("Cache", "cache"),
+        ("Completion", "completion"),
+        ("MCP config", "mcp_config"),
+    ]
+    for label, key in labels:
+        console.print(f"  {label:<13} {paths.get(key, '?')}")
+
+
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 
@@ -514,6 +569,14 @@ def doctor(
             help="With --fix: preview what would be fixed without executing.",
         ),
     ] = False,
+    paths_only: Annotated[
+        bool,
+        typer.Option(
+            "--paths",
+            help="Show only the paths overview table (skip health checks). "
+            "Useful for quick reference.",
+        ),
+    ] = False,
 ) -> None:
     """Run Mnemos health checks and report status.
 
@@ -527,8 +590,33 @@ def doctor(
     ``integration setup --wire-agents --all``, missing MCP → MCP setup).
     After fixes, re-runs the affected checks and reports the new status.
     ``--fix --dry-run`` previews what would be fixed without executing.
+
+    With ``--paths``: prints only the paths overview table and exits 0.
     """
+    # ── --paths: quick reference, no health checks ──────────────────────
+    if paths_only:
+        try:
+            settings = load_settings()
+            settings.resolve_paths()
+        except Exception as exc:  # doctor must not crash
+            console.print(f"[red]✗[/red] Cannot load settings: {exc}")
+            raise typer.Exit(1) from exc
+        paths = _collect_paths(settings)
+        if json_output:
+            console.print_json(json.dumps({"paths": paths}))
+        else:
+            _render_paths(paths)
+        raise typer.Exit(0)
+
     results = _run_all_checks()
+
+    # Collect paths from the config check's settings (already loaded).
+    settings_obj: Any = None
+    for r in results:
+        if r.name == "Config":
+            settings_obj = r.extra.get("settings")
+            break
+    paths = _collect_paths(settings_obj) if settings_obj else {}
 
     fixed: list[str] = []
     fix_skipped: list[str] = []
@@ -567,6 +655,7 @@ def doctor(
             "checks": [
                 {"name": r.name, "status": r.status.value, "detail": r.detail} for r in results
             ],
+            "paths": paths,
             "exit_code": exit_code,
         }
         if fix:
@@ -577,6 +666,8 @@ def doctor(
         raise typer.Exit(exit_code)
 
     _render(results)
+    if paths:
+        _render_paths(paths)
     code = _exit_code(results)
     console.print()
     if fix:

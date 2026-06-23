@@ -31,8 +31,8 @@ pytest tests/ -q
 
 ```yaml
 mnemos:
-  data_dir: ~/.mnemos
-  vault_path: ~/mnemos-vault
+  data_dir: ~/.mnemos/data
+  vault_path: ~/.mnemos/vault
   strict_tag_contract: true
 embedding:
   provider: chromadb  # или onnx, ollama

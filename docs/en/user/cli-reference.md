@@ -60,8 +60,8 @@ All settings are env-overridable via the `MNEMOS_` prefix. Nested keys use `__` 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `MNEMOS_CONFIG` | — | Path to `config.yaml` |
-| `MNEMOS_DATA_DIR` | `~/.mnemos` | SQLite DB + vector index |
-| `MNEMOS_VAULT__VAULT_PATH` | `~/mnemos-vault` | Obsidian mirror directory |
+| `MNEMOS_DATA_DIR` | `~/.mnemos/data` | SQLite DB + vector index |
+| `MNEMOS_VAULT__VAULT_PATH` | `~/.mnemos/vault` | Obsidian mirror directory |
 | `MNEMOS_STRICT_TAG_CONTRACT` | `true` | Enforce M2 tag schema |
 | `MNEMOS_API__HOST` | `127.0.0.1` | Default for `mnemos serve` |
 | `MNEMOS_API__PORT` | `8787` | Default for `mnemos serve` |
@@ -202,7 +202,7 @@ mnemos tags-validate VAULT_PATH
 ### Example
 
 ```bash
-mnemos tags-validate ~/mnemos-vault
+mnemos tags-validate ~/.mnemos/vault
 ```
 
 ---
@@ -237,8 +237,8 @@ mnemos stats [OPTIONS]
 mnemos stats
 # status: ok
 # version: 0.1.0
-# data_dir: /home/you/.mnemos
-# vault_path: /home/you/mnemos-vault
+# data_dir: /home/you/.mnemos/data
+# vault_path: /home/you/.mnemos/vault
 # total: 142
 # by_status: {'raw': 5, 'processing': 0, 'processed': 12, 'published': 120, 'archived': 5}
 # vectors: 120
@@ -334,7 +334,7 @@ mnemos migrate-from-ai-brain [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--source` | `~/.mnemos` | Mnemos data directory (must contain `mnemos.db`). |
-| `--vault` | `~/mnemos-vault` | Mnemos vault directory (Obsidian mirror). |
+| `--vault` | `~/.mnemos/vault` | Mnemos vault directory (Obsidian mirror). |
 | `--dry-run` | `false` | Show what would be migrated, write nothing. |
 | `--config / -c` | — | Path to `config.yaml`. |
 
