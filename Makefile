@@ -5,8 +5,8 @@ VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
 
 help:
 	@echo "Mnemos development commands"
-	@echo "  make bootstrap  - Create .venv and install project (editable) + dev extras"
-	@echo "  make check-venv - Verify .venv editable install resolves to ./src"
+	@echo "  make bootstrap  - [DEV] Create .venv and install project (editable) + dev extras"
+	@echo "  make check-venv - [DEV] Verify .venv editable install resolves to ./src"
 	@echo "  make install    - Install with dev dependencies"
 	@echo "  make test       - Run pytest suite"
 	@echo "  make lint       - Run ruff linter"
