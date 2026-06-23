@@ -49,9 +49,7 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settin
 # ── Basic configuration ────────────────────────────────────────────────────────
 
 
-def test_setup_logging_sets_root_level(
-    clean_logging: None, isolated_settings: Settings
-) -> None:
+def test_setup_logging_sets_root_level(clean_logging: None, isolated_settings: Settings) -> None:
     """setup_logging() sets the root logger level from config."""
     isolated_settings.logging.level = "WARNING"
     setup_logging(isolated_settings)
@@ -127,9 +125,7 @@ def test_setup_logging_writes_to_file(
     assert "test log message" in log_content
 
 
-def test_setup_logging_rotation_config(
-    clean_logging: None, isolated_settings: Settings
-) -> None:
+def test_setup_logging_rotation_config(clean_logging: None, isolated_settings: Settings) -> None:
     """RotatingFileHandler uses max_file_size_mb and backup_count from config."""
     isolated_settings.logging.max_file_size_mb = 5
     isolated_settings.logging.backup_count = 7
@@ -155,9 +151,7 @@ def test_setup_logging_empty_log_file_no_file_handler(
 # ── Uvicorn integration ───────────────────────────────────────────────────────
 
 
-def test_setup_logging_integrates_uvicorn(
-    clean_logging: None, isolated_settings: Settings
-) -> None:
+def test_setup_logging_integrates_uvicorn(clean_logging: None, isolated_settings: Settings) -> None:
     """Uvicorn loggers are configured to propagate to root."""
     setup_logging(isolated_settings)
     for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
@@ -166,9 +160,7 @@ def test_setup_logging_integrates_uvicorn(
         assert uv_logger.propagate is True
 
 
-def test_setup_logging_verbose_uvicorn(
-    clean_logging: None, isolated_settings: Settings
-) -> None:
+def test_setup_logging_verbose_uvicorn(clean_logging: None, isolated_settings: Settings) -> None:
     """Verbose mode sets uvicorn loggers to DEBUG."""
     setup_logging(isolated_settings, verbose=True)
     uv_logger = logging.getLogger("uvicorn")
@@ -178,9 +170,7 @@ def test_setup_logging_verbose_uvicorn(
 # ── Idempotency ───────────────────────────────────────────────────────────────
 
 
-def test_setup_logging_idempotent(
-    clean_logging: None, isolated_settings: Settings
-) -> None:
+def test_setup_logging_idempotent(clean_logging: None, isolated_settings: Settings) -> None:
     """Calling setup_logging twice doesn't stack handlers."""
     setup_logging(isolated_settings)
     count1 = len(logging.getLogger().handlers)

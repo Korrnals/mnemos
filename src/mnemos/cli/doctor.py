@@ -350,7 +350,7 @@ def _collect_paths(settings: Any) -> dict[str, str]:
         s = str(p)
         home_s = str(home)
         if s.startswith(home_s):
-            return "~" + s[len(home_s):]
+            return "~" + s[len(home_s) :]
         return s
 
     return {

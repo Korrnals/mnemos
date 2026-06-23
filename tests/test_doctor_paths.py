@@ -47,8 +47,15 @@ def test_collect_paths_returns_all_keys(isolated_home: Path) -> None:
     settings.resolve_paths()
     paths = _collect_paths(settings)
     expected_keys = {
-        "root", "config", "data_dir", "db_path", "vault", "logs",
-        "cache", "completion", "mcp_config",
+        "root",
+        "config",
+        "data_dir",
+        "db_path",
+        "vault",
+        "logs",
+        "cache",
+        "completion",
+        "mcp_config",
     }
     assert set(paths.keys()) == expected_keys
 
