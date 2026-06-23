@@ -987,20 +987,134 @@ class TestSetupMCP:
         assert result.deployed_count == 3
 
     def test_setup_mcp_failure_does_not_block_deploy(
-        self, manager: IntegrationManager, detected_target: str
+        self, manager: IntegrationManager, detected_target: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """If MCP registration fails, files are still deployed; the failure
         is recorded in mcp_note."""
+        monkeypatch.setattr(
+            IntegrationManager, "_find_mcp_setup_script", staticmethod(lambda: None)
+        )
         result = manager.setup(detected_target, register_mcp=True, mnemos_bin="/nonexistent/mnemos")
         assert result.deployed_count == 3
         assert result.mcp_registered is False
         assert result.mcp_note != ""
 
-    def test_register_mcp_missing_script(self, manager: IntegrationManager) -> None:
+    def test_register_mcp_missing_script(
+        self, manager: IntegrationManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """register_mcp returns (False, note) when mcp-setup.sh is absent."""
+        monkeypatch.setattr(
+            IntegrationManager, "_find_mcp_setup_script", staticmethod(lambda: None)
+        )
         ok, note = manager.register_mcp()
         assert ok is False
-        assert "mcp-setup.sh" in note or "exited" in note or "timed out" in note
+        assert "mcp-setup.sh" in note
+
+
+class TestFindMcpSetupScript:
+    """_find_mcp_setup_script() 3-tier lookup for mcp-setup.sh."""
+
+    def test_returns_path_in_source_tree(self) -> None:
+        """In the repo source-tree layout, the helper finds scripts/mcp-setup.sh."""
+        script = IntegrationManager._find_mcp_setup_script()
+        # In the test environment (running from source checkout), the script
+        # must be found — either via source-tree layout or upward search.
+        assert script is not None
+        assert script.name == "mcp-setup.sh"
+
+    def test_returned_path_exists_and_is_file(self) -> None:
+        """The path returned by the helper must point to an existing file."""
+        script = IntegrationManager._find_mcp_setup_script()
+        assert script is not None
+        assert script.is_file()
+
+    def test_returns_none_when_no_scripts_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When no scripts/ exists anywhere, the helper returns None.
+
+        We simulate this by placing __file__ in a deep tmp_path with no
+        scripts/ sibling and monkeypatching importlib.resources to miss.
+        """
+        # Build a fake package layout: tmp_path/src/mnemos/cli/integration.py
+        fake_cli = tmp_path / "src" / "mnemos" / "cli"
+        fake_cli.mkdir(parents=True)
+        fake_module = fake_cli / "integration.py"
+        fake_module.write_text("# fake\n")
+
+        # Monkeypatch __file__ inside the integration module so the helper
+        # resolves relative to our fake location.
+        import mnemos.cli.integration as mod
+
+        monkeypatch.setattr(mod, "__file__", str(fake_module))
+
+        # Also neutralise importlib.resources so the wheel-layout branch misses.
+        import importlib.resources as ilr
+
+        class _FakeFiles:
+            def __truediv__(self, other: str) -> _FakeFiles:
+                return self
+
+            def is_file(self) -> bool:
+                return False
+
+            def is_dir(self) -> bool:
+                return False
+
+        monkeypatch.setattr(ilr, "files", lambda _pkg: _FakeFiles())
+
+        script = IntegrationManager._find_mcp_setup_script()
+        assert script is None
+
+    def test_wheel_layout_via_importlib_resources(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The importlib.resources branch finds mcp-setup.sh when present.
+
+        We simulate a wheel install by placing __file__ deep in site-packages
+        (so the source-tree branch misses) and making importlib.resources.files
+        return a path to a fake scripts/mcp-setup.sh.
+        """
+        fake_scripts = tmp_path / "site-packages" / "mnemos" / "scripts"
+        fake_scripts.mkdir(parents=True)
+        fake_script = fake_scripts / "mcp-setup.sh"
+        fake_script.write_text("#!/bin/bash\n# fake mcp-setup\n")
+
+        fake_cli = tmp_path / "site-packages" / "mnemos" / "cli"
+        fake_cli.mkdir(parents=True)
+        fake_module = fake_cli / "integration.py"
+        fake_module.write_text("# fake\n")
+
+        import mnemos.cli.integration as mod
+
+        monkeypatch.setattr(mod, "__file__", str(fake_module))
+
+        import importlib.resources as ilr
+
+        fake_pkg_root = tmp_path / "site-packages" / "mnemos"
+
+        class _FakeTraversable:
+            def __init__(self, path: Path) -> None:
+                self._path = path
+
+            def __truediv__(self, other: str) -> _FakeTraversable:
+                return _FakeTraversable(self._path / other)
+
+            def __str__(self) -> str:
+                return str(self._path)
+
+            def is_file(self) -> bool:
+                return self._path.is_file()
+
+            def is_dir(self) -> bool:
+                return self._path.is_dir()
+
+        monkeypatch.setattr(ilr, "files", lambda _pkg: _FakeTraversable(fake_pkg_root))
+
+        script = IntegrationManager._find_mcp_setup_script()
+        assert script is not None
+        assert script.is_file()
+        assert script.name == "mcp-setup.sh"
 
 
 class TestCLISetupUpdateUninstall:

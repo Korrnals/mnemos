@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **Wheel now includes `scripts/`** — `mcp-setup.sh`, `install.sh`, `deploy.sh`,
+  `setup-distrobox.sh` are packaged via hatchling `force-include` so
+  `mnemos integration setup` works from a pip-installed wheel, not just a source
+  checkout. `register_mcp()` now uses a 3-tier `_find_mcp_setup_script()` helper
+  (source-tree → `importlib.resources` → upward search) to locate the script.
+  Closes #52.
 
 ## [2.1.0] — 2026-06-23
 

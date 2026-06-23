@@ -104,6 +104,11 @@ packages = ["src/mnemos"]
 # "mnemos") / "integrations"`.
 [tool.hatch.build.targets.wheel.force-include]
 "integrations" = "mnemos/integrations"
+# Ship the setup scripts (mcp-setup.sh, install.sh, deploy.sh, setup-distrobox.sh)
+# inside the wheel so `mnemos integration setup` can find mcp-setup.sh from a
+# pip-installed package, not just from a source checkout. Mapped to
+# `mnemos/scripts/` — reachable via `importlib.resources.files("mnemos") / "scripts"`.
+"scripts" = "mnemos/scripts"
 
 [tool.ruff]
 target-version = "py311"
