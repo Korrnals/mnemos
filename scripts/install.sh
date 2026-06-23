@@ -173,10 +173,10 @@ EXTRA_BRACKET="[${EXTRAS}]"
 info "Installing mnemos${EXTRA_BRACKET} from ${WHEEL_URL}…"
 
 if [[ "$USE_UV" == true ]]; then
-  uv pip install "${WHEEL_URL}${EXTRA_BRACKET}"
+  uv pip install --reinstall --no-cache "${WHEEL_URL}${EXTRA_BRACKET}"
 else
   pip install --upgrade pip
-  pip install "${WHEEL_URL}${EXTRA_BRACKET}"
+  pip install --force-reinstall --no-cache-dir "${WHEEL_URL}${EXTRA_BRACKET}"
 fi
 
 # ── Resolve the mnemos binary ─────────────────────────────────────
