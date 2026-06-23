@@ -14,7 +14,7 @@
   <a href="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml"><img src="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab" alt="Python"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.6-blueviolet" alt="Version"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.1.0-blueviolet" alt="Version"></a>
 </p>
 
 <p align="center">
@@ -106,7 +106,7 @@ uv pip install -e ".[dev]"
 **Готовый wheel** (зафиксировать конкретную версию):
 
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v1.1.3/mnemos-1.1.3-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v2.1.0/mnemos-2.1.0-py3-none-any.whl
 ```
 
 **Контейнер одной командой** — скачивает образ, создаёт тома, запускает на порту 8787:
@@ -136,12 +136,12 @@ podman run -d --name mnemos \
   -v mnemos-data:/data \
   -v mnemos-vault:/vault \
   -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
-  ghcr.io/korrnals/mnemos:2.0.3
+  ghcr.io/korrnals/mnemos:2.1.0
 
 curl -s http://localhost:8787/health | jq
 ```
 
-Теги: `:2.0.3` (фиксированная) · `:latest` (rolling). Работает и с `docker` — замените `podman` на `docker`.
+Теги: `:2.1.0` (фиксированная) · `:latest` (rolling). Работает и с `docker` — замените `podman` на `docker`.
 
 </details>
 
@@ -317,5 +317,5 @@ Git-workflow: `feat/*` → `dev-<этап>` → `release/X.Y.Z` → `main`; `mai
 
 <p align="center">
   <sub><strong>Воспроизведите зелёное состояние:</strong> <code>make verify</code> запускает полный
-  quality gate — ruff + mypy --strict + bandit + pip-audit + 209 тестов. Если зелёно — готово к публикации.</sub>
+  quality gate — ruff + mypy --strict + bandit + pip-audit + 802 тестов. Если зелёно — готово к публикации.</sub>
 </p>
