@@ -1,4 +1,4 @@
-.PHONY: help install bootstrap check-venv test lint format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image
+.PHONY: help install bootstrap check-venv test lint format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
@@ -62,7 +62,10 @@ update-deps:
 coverage:
 	pytest --cov=src/mnemos --cov-report=term-missing --cov-fail-under=80 tests/ -q
 
-verify: lint typecheck test security security-reminder doctor
+check-version:
+	@python -c "from mnemos import __version__; from importlib.metadata import version; v = version('mnemos'); assert __version__ == v, f'mismatch: __init__={__version__}, metadata={v}'; print(f'✓ version {v} consistent')"
+
+verify: lint typecheck test security security-reminder doctor check-version
 	@echo "✅ All verification checks passed"
 
 # doctor gate: fail on actual failures (exit 1), allow warnings (exit 2).
