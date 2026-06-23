@@ -370,6 +370,37 @@ If you see `Errors: N`, the `summary.errors` list (printed to stderr at DEBUG le
 
 ---
 
+## `doctor`
+
+Diagnose the Mnemos installation — checks paths, config, database, and vault.
+
+```text
+mnemos doctor [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--paths` | `false` | Print all resolved paths (data dir, vault, logs, cache, completion) and exit. |
+| `--config / -c` | — | Path to `config.yaml`. |
+
+### `doctor --paths`
+
+Shows every path Mnemos uses, resolved from config and environment:
+
+```bash
+mnemos doctor --paths
+# data_dir:      /home/you/.mnemos/data
+# vault_path:    /home/you/.mnemos/vault
+# log_file:      /home/you/.mnemos/logs/mnemos.log
+# cache_dir:     /home/you/.mnemos/cache
+# completion:    /home/you/.mnemos/completion
+# config_file:   /home/you/.mnemos/config.yaml
+```
+
+Use this to verify the consolidated `~/.mnemos/` layout after upgrade or migration.
+
+---
+
 ## Exit codes
 
 | Code | Meaning |

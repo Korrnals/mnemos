@@ -40,7 +40,7 @@ and `mnemos-vault` (Obsidian markdown mirror).
 Build a versioned local image from the source tree:
 
 ```bash
-podman build -t localhost/mnemos:1.1.1 -f Containerfile .
+podman build -t localhost/mnemos:2.1.0 -f Containerfile .
 ```
 
 The `Containerfile` uses `python:3.12-slim` as the base, installs `.[mcp]`, copies
@@ -71,8 +71,8 @@ The deploy helper does the same:
 
 ```bash
 podman login ghcr.io
-podman tag localhost/mnemos:1.1.1 ghcr.io/korrnals/mnemos:1.1.1
-podman push ghcr.io/korrnals/mnemos:1.1.1
+podman tag localhost/mnemos:2.1.0 ghcr.io/korrnals/mnemos:2.1.0
+podman push ghcr.io/korrnals/mnemos:2.1.0
 podman push ghcr.io/korrnals/mnemos:latest
 ```
 
@@ -163,9 +163,9 @@ embedding:
 Pull the released image and start it directly:
 
 ```bash
-podman pull ghcr.io/korrnals/mnemos:1.1.1
+podman pull ghcr.io/korrnals/mnemos:2.1.0
 podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 \
-  --env MNEMOS_API__TOTP_MASTER_KEY=<your-key> ghcr.io/korrnals/mnemos:1.1.1
+  --env MNEMOS_API__TOTP_MASTER_KEY=<your-key> ghcr.io/korrnals/mnemos:2.1.0
 ```
 
 The image includes `config.container.yaml` baked in as `/app/config.yaml` — no separate config

@@ -61,7 +61,7 @@ MNEMOS_LOG_LEVEL=DEBUG mnemos search "test"
 |------------|-------------|------------ |
 | `MNEMOS_CONFIG` | — | Путь к `config.yaml` |
 | `MNEMOS_DATA_DIR` | `~/.mnemos` | БД SQLite + векторный индекс |
-| `MNEMOS_VAULT__VAULT_PATH` | `~/mnemos-vault` | Директория зеркала Obsidian |
+| `MNEMOS_VAULT__VAULT_PATH` | `~/.mnemos/vault` | Директория зеркала Obsidian |
 | `MNEMOS_STRICT_TAG_CONTRACT` | `true` | Соблюдение схемы тегов M2 |
 | `MNEMOS_API__HOST` | `127.0.0.1` | Адрес по умолчанию для `mnemos serve` |
 | `MNEMOS_API__PORT` | `8787` | Порт по умолчанию для `mnemos serve` |
@@ -202,7 +202,7 @@ mnemos tags-validate VAULT_PATH
 ### Пример
 
 ```bash
-mnemos tags-validate ~/mnemos-vault
+mnemos tags-validate ~/.mnemos/vault
 ```
 
 ---
@@ -238,7 +238,7 @@ mnemos stats
 # status: ok
 # version: 0.1.0
 # data_dir: /home/you/.mnemos
-# vault_path: /home/you/mnemos-vault
+# vault_path: /home/you/.mnemos/vault
 # total: 142
 # by_status: {'raw': 5, 'processing': 0, 'processed': 12, 'published': 120, 'archived': 5}
 # vectors: 120
@@ -334,7 +334,7 @@ mnemos migrate-from-ai-brain [OPTIONS]
 | Опция | По умолчанию | Описание |
 |-------|-------------|---------- |
 | `--source` | `~/.mnemos` | Директория данных Mnemos (должна содержать `mnemos.db`). |
-| `--vault` | `~/mnemos-vault` | Директория vault Mnemos (зеркало Obsidian). |
+| `--vault` | `~/.mnemos/vault` | Директория vault Mnemos (зеркало Obsidian). |
 | `--dry-run` | `false` | Показать что будет мигрировано, без записи. |
 | `--config / -c` | — | Путь к `config.yaml`. |
 
@@ -367,6 +367,37 @@ mnemos migrate-from-ai-brain --source /tmp/restore/.ai-brain --vault /tmp/restor
 ```
 
 При наличии `Errors: N` список `summary.errors` (выводится в stderr на уровне DEBUG) укажет, какие строки упали. Как правило, это строки с повреждённой схемой — их можно игнорировать или исправить вручную в SQLite.
+
+---
+
+## `doctor`
+
+Диагностика установки Mnemos — проверяет пути, конфигурацию, базу данных и vault.
+
+```text
+mnemos doctor [OPTIONS]
+```
+
+| Опция | По умолчанию | Описание |
+|-------|-------------|---------- |
+| `--paths` | `false` | Вывести все разрешённые пути (data, vault, logs, cache, completion) и выйти. |
+| `--config / -c` | — | Путь к `config.yaml`. |
+
+### `doctor --paths`
+
+Показывает все пути, которые использует Mnemos, разрешённые из конфига и окружения:
+
+```bash
+mnemos doctor --paths
+# data_dir:      /home/you/.mnemos/data
+# vault_path:    /home/you/.mnemos/vault
+# log_file:      /home/you/.mnemos/logs/mnemos.log
+# cache_dir:     /home/you/.mnemos/cache
+# completion:    /home/you/.mnemos/completion
+# config_file:   /home/you/.mnemos/config.yaml
+```
+
+Используйте для проверки консолидированной структуры `~/.mnemos/` после обновления или миграции.
 
 ---
 

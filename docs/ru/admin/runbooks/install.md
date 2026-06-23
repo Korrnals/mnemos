@@ -69,7 +69,7 @@ mnemos serve  # uvicorn на 127.0.0.1:8787
 
 ```bash
 podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 \
-  --env MNEMOS_API__TOTP_MASTER_KEY=<your-key> ghcr.io/korrnals/mnemos:1.1.1
+  --env MNEMOS_API__TOTP_MASTER_KEY=<your-key> ghcr.io/korrnals/mnemos:2.1.0
 ```
 
 Или через compose из корня репозитория:
