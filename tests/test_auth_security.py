@@ -611,9 +611,10 @@ class TestTotpReplay:
                 # locally (3.14) but fail on CI (3.12).
                 fixed_time = 1_700_000_000.0
                 code = pyotp.TOTP(totp_secret).at(fixed_time)
-                with mock_patch(
-                    "mnemos.api.auth.time.time", return_value=fixed_time
-                ), mock_patch("pyotp.TOTP.verify", return_value=True):
+                with (
+                    mock_patch("mnemos.api.auth.time.time", return_value=fixed_time),
+                    mock_patch("pyotp.TOTP.verify", return_value=True),
+                ):
                     # First verify: succeed
                     r1 = tc.post("/auth/login", json={"token": plaintext})
                     cid1 = r1.json()["challenge_id"]
