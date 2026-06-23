@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.1.0] — 2026-06-23
+
+### Added
+
+- **Consolidated directory layout** — all Mnemos data now lives under a single
+  root `~/.mnemos/` with subdirectories: `data/`, `vault/`, `logs/`, `cache/`,
+  `completion/`. Old scattered paths (`~/.mnemos-venv`, `~/mnemos-vault`) are
+  auto-migrated on first run (idempotent, non-destructive, skips custom paths).
+- **Logging configuration** — new `LoggingConfig` section in `config.yaml` with
+  `level`, `log_file`, `max_file_size_mb`, `backup_count`, `format`,
+  `date_format`. `setup_logging()` configures root logger with console +
+  `RotatingFileHandler` + uvicorn integration. CLI `--verbose/-v` flag for
+  DEBUG, `--log-file` option on `serve`.
+- **`mnemos doctor --paths`** — new flag showing all Mnemos paths in one table
+  (root, config, data_dir, db_path, vault, logs, cache, completion, mcp_config).
+  JSON output includes `"paths"` key.
+- **Shell completion fix** — completion script now stored as a file in
+  `~/.mnemos/completion/mnemos.{shell}` instead of inline `eval` in rc files.
+  `.bashrc`/`.zshrc` gets a single `source` line with `[ -f ... ] && source ...`
+  guard. Old `eval` entries auto-migrated. `_is_installed()` no longer matches
+  commented-out lines.
+
+### Changed
+
+- `MnemosConfig` defaults: `vault_path` → `~/.mnemos/vault`, `data_dir` →
+  `~/.mnemos/data` (was `~/mnemos-vault`, `~/.mnemos`).
+- `scripts/install.sh`: default venv path `~/.mnemos/venv` (was `~/.mnemos-venv`).
+- `scripts/mcp-setup.sh`: updated default paths.
+- `config.example.yaml`: new paths + `logging:` section.
+
+### Fixed
+
+- **Shell completion not working** — the `eval` line in `.bashrc` was
+  commented out (`#eval "$(mnemos --show-completion bash)"`), but
+  `_is_installed()` matched the marker inside the comment, reporting "already
+  installed" without fixing it. Now checks for active (uncommented) `source`
+  lines only.
+
 ## [2.0.6] — 2026-06-22
 
 ### Fixed

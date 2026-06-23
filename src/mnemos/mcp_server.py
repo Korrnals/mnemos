@@ -687,6 +687,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
 
 async def main() -> None:
     """Run the Mnemos MCP server over stdio."""
+    from mnemos.logging_setup import setup_logging
+
+    setup_logging(load_settings())
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

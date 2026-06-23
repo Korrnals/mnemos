@@ -15,6 +15,7 @@ from rich.table import Table
 
 from mnemos.cli._manager import get_manager
 from mnemos.config import load_settings
+from mnemos.logging_setup import setup_logging
 from mnemos.models import MemoryCreate, MemorySource, MemoryType
 
 # ``get_manager`` lives in the leaf module ``_manager`` so that CLI
@@ -31,6 +32,10 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+# Module-level verbose flag — set by the top-level callback via ``--verbose``
+# so that subcommands (serve, mcp-server) can pick it up without re-parsing.
+_verbose: bool = False
 
 
 def _version_callback(value: bool) -> None:
@@ -53,8 +58,18 @@ def main(
             is_eager=True,
         ),
     ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Enable DEBUG logging (overrides config log level).",
+        ),
+    ] = False,
 ) -> None:
     """Mnemos — standalone memory & knowledge server for GCW agents."""
+    global _verbose
+    _verbose = verbose
 
 
 ConfigOption = typer.Option(None, "--config", "-c", help="Path to config.yaml")
@@ -338,6 +353,10 @@ def filter_cmd(
 def serve(
     host: str = typer.Option(None, "--host"),
     port: int = typer.Option(None, "--port"),
+    log_file: Annotated[
+        Path | None,
+        typer.Option("--log-file", help="Override config log file path (enables file logging)."),
+    ] = None,
     config: str = ConfigOption,
 ) -> None:
     """Start the Mnemos HTTP API server."""
@@ -346,6 +365,10 @@ def serve(
     import uvicorn
 
     settings = load_settings(config)
+    if log_file is not None:
+        settings.logging.log_file = log_file
+        settings.resolve_paths()
+    setup_logging(settings, verbose=_verbose)
     h = host or settings.api.host
     p = port or settings.api.port
     # Propagate effective bind to the app process so the startup guard and
@@ -371,6 +394,8 @@ def mcp_server_cmd(config: str = ConfigOption) -> None:
 
     from mnemos.mcp_server import main as mcp_main
 
+    settings = load_settings(config)
+    setup_logging(settings, verbose=_verbose)
     asyncio.run(mcp_main())
 
 
