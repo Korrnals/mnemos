@@ -27,6 +27,10 @@ runner = CliRunner()
 @pytest.fixture
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point MNEMOS_CONFIG at an empty YAML so the CLI uses tmp_path."""
+    # Reset the CLI manager singleton so each test gets a fresh DB.
+    from mnemos.cli._manager import reset_manager
+
+    reset_manager()
     cfg = tmp_path / "mnemos.yaml"
     cfg.write_text(
         f"mnemos:\n"
@@ -37,7 +41,9 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"  provider: chromadb\n"
     )
     monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
-    return cfg
+    yield cfg
+    # Clean up the singleton so it doesn't leak into the next test.
+    reset_manager()
 
 
 # ── App builds ───────────────────────────────────────────────────────────────
@@ -458,3 +464,89 @@ class TestDoctorCommand:
         result = runner.invoke(app, ["doctor"])
         # Unwritable vault → at least one FAIL → exit 1.
         assert result.exit_code == 1, result.output
+
+
+# ── mnemos tags normalize ────────────────────────────────────────────────────
+
+
+class TestTagsNormalize:
+    """`mnemos tags normalize` lowercases mixed-case project/agent slugs."""
+
+    def test_normalize_lowercases_mixed_case_tags(self, isolated_config: Path) -> None:
+        """Memories with project:Foo / agent:Bar get normalized to lowercase."""
+        from mnemos.cli._manager import get_manager
+        from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType
+
+        mgr = get_manager(str(isolated_config))
+        # Bypass validate_tag_contract (which normalizes on ingest) by
+        # saving directly to SQLite with mixed-case tags.
+        for slug_project, slug_agent in [("MyProject", "SeniorAgent"), ("OtherProj", "DBA")]:
+            mem = Memory(
+                content=f"test content for {slug_project}",
+                title="test",
+                tags=[f"project:{slug_project}", f"agent:{slug_agent}", "gcw:test"],
+                source=MemorySource.CLI,
+                memory_type=MemoryType.NOTE,
+                status=MemoryStatus.RAW,
+            )
+            mgr.sqlite.save(mem)
+
+        result = runner.invoke(app, ["tags", "normalize"])
+        assert result.exit_code == 0, result.output
+        assert "Scanned:" in result.output
+        assert "Normalized:" in result.output
+
+        # Verify the DB now has lowercase tags.
+        all_mems = mgr.sqlite.list_all(limit=100)
+        for mem in all_mems:
+            for tag in mem.tags:
+                if tag.startswith("project:") or tag.startswith("agent:"):
+                    # Slug portion must be all lowercase.
+                    slug = tag.split(":", 1)[1]
+                    assert slug == slug.lower(), f"tag {tag} not normalized"
+
+    def test_normalize_dry_run_does_not_write(self, isolated_config: Path) -> None:
+        """--dry-run reports changes but leaves the DB untouched."""
+        from mnemos.cli._manager import get_manager
+        from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType
+
+        mgr = get_manager(str(isolated_config))
+        mem = Memory(
+            content="dry-run test",
+            title="test",
+            tags=["project:MixedCase", "agent:UpperAgent", "gcw:test"],
+            source=MemorySource.CLI,
+            memory_type=MemoryType.NOTE,
+            status=MemoryStatus.RAW,
+        )
+        mgr.sqlite.save(mem)
+
+        result = runner.invoke(app, ["tags", "normalize", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert "dry-run" in result.output.lower()
+        assert "MixedCase" in result.output  # reports the change
+
+        # DB must still have the original mixed-case tag.
+        all_mems = mgr.sqlite.list_all(limit=100)
+        saved = next(m for m in all_mems if "dry-run" in m.content)
+        assert "project:MixedCase" in saved.tags
+
+    def test_normalize_idempotent_on_clean_tags(self, isolated_config: Path) -> None:
+        """Running normalize on already-lowercase tags is a no-op."""
+        from mnemos.cli._manager import get_manager
+        from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType
+
+        mgr = get_manager(str(isolated_config))
+        mem = Memory(
+            content="clean tags",
+            title="test",
+            tags=["project:clean", "agent:bot", "gcw:test"],
+            source=MemorySource.CLI,
+            memory_type=MemoryType.NOTE,
+            status=MemoryStatus.RAW,
+        )
+        mgr.sqlite.save(mem)
+
+        result = runner.invoke(app, ["tags", "normalize"])
+        assert result.exit_code == 0, result.output
+        assert "Normalized: 0" in result.output

@@ -270,6 +270,81 @@ def tags_validate(
     )
 
 
+@_tags_app.command(name="normalize")
+def tags_normalize(
+    config: str = ConfigOption,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview changes without writing to the database."),
+    ] = False,
+) -> None:
+    """Normalize project:/agent: tag case to lowercase across all memories.
+
+    Scans every memory in the SQLite store, lowercases the slug portion of
+    project: and agent: tags (matching the lax-mode logic in
+    validate_tag_contract), and re-saves memories that changed. The FTS
+    trigger fires on UPDATE so search stays consistent.
+    """
+
+    mgr = get_manager(config)
+    # Page through all memories — list_all paginates with limit/offset.
+    page_size = 500
+    offset = 0
+    scanned = 0
+    normalized_count = 0
+    changed_projects: set[str] = set()
+    changed_agents: set[str] = set()
+
+    while True:
+        batch = mgr.sqlite.list_all(limit=page_size, offset=offset)
+        if not batch:
+            break
+        offset += len(batch)
+
+        for mem in batch:
+            scanned += 1
+            new_tags = list(mem.tags)
+            modified = False
+
+            for i, tag in enumerate(new_tags):
+                for prefix in ("project:", "agent:"):
+                    if tag.startswith(prefix):
+                        slug = tag[len(prefix) :]
+                        lower = slug.lower()
+                        if lower != slug:
+                            new_tags[i] = prefix + lower
+                            modified = True
+                            if prefix == "project:":
+                                changed_projects.add(f"{slug} → {lower}")
+                            else:
+                                changed_agents.add(f"{slug} → {lower}")
+
+            if not modified:
+                continue
+
+            normalized_count += 1
+            if dry_run:
+                continue
+
+            # Update tags in-place and re-save. sqlite.save() does an
+            # INSERT OR REPLACE, which fires the FTS UPDATE trigger.
+            mem.tags = new_tags
+            mgr.sqlite.save(mem)
+
+    console.print(f"[bold]Scanned:[/bold] {scanned} memories")
+    console.print(f"[bold]Normalized:[/bold] {normalized_count} memories")
+    if dry_run:
+        console.print("[yellow](dry-run — no changes written)[/yellow]")
+    if changed_projects:
+        console.print("\n[bold]Changed project slugs:[/bold]")
+        for entry in sorted(changed_projects):
+            console.print(f"  {entry}")
+    if changed_agents:
+        console.print("\n[bold]Changed agent slugs:[/bold]")
+        for entry in sorted(changed_agents):
+            console.print(f"  {entry}")
+
+
 # ── stats ──────────────────────────────────────────────────────────────────────
 
 
