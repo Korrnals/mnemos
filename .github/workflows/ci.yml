@@ -30,7 +30,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Full history so `git blame` and coverage tools can attribute lines.
           fetch-depth: 0
@@ -105,7 +105,7 @@ jobs:
     needs: verify
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       # buildah is the official Red Hat rootless build tool — no Docker daemon required,
       # no privileged mode, and works on stock ubuntu-latest runners.
