@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`include_raw` parameter now filters by status** — `manager.search()` was
+  accepting `include_raw` as a no-op. Now: `include_raw=False` (default) filters
+  FTS results to `published` + `processed` only, preserving the "only searches
+  published knowledge by default" contract. `include_raw=True` surfaces
+  `raw`/`processing` entries not yet pipeline-processed. Explicit `status`
+  parameter always takes precedence. The REST `/search` endpoint and
+  `mnemos_agent_recall` query path now pass `include_raw` through correctly.
+- **`mnemos_search` MCP tool gains `status` parameter** — the MCP schema was
+  missing `status` even though `manager.search()` accepted it. Callers can now
+  filter by `raw`/`processing`/`processed`/`published`/`archived` via MCP.
+  `include_raw` description corrected: it controls status filtering, not
+  `raw_content` inclusion.
+- **`mnemos_agent_recall` finds raw entries** — the query path now passes
+  `include_raw=True` so agent recall surfaces recently-added entries regardless
+  of pipeline status. The recency path (no query) already had no status filter.
+- **Project/agent tag case normalized in lax mode** — `project:Project-Umbra`
+  is now normalized to `project:project-umbra` (canonical lowercase) instead of
+  being replaced with `project:unknown`. Prevents duplicate namespaces from
+  mixed-case slugs. Strict mode is unchanged (still rejects uppercase).
+- **`search_type` indicator reflects actual mode** — when the vector leg is
+  empty (embeddings down or no vectors indexed), results now carry
+  `search_type="fts_only"` instead of `"hybrid"`, so callers can detect
+  degraded search mode.
+
+### Added
+
+- **`mnemos_stats` health fields** — `stats()` now returns `embedding_status`
+  (provider, vectors_indexed, degraded flag), `processor` (queue depth,
+  last_processed_at), and `search_health` (fts_available, vector_available,
+  mode). Callers can detect a stuck pipeline or degraded search.
+
 - **Wheel now includes `scripts/`** — `mcp-setup.sh`, `install.sh`, `deploy.sh`,
   `setup-distrobox.sh` are packaged via hatchling `force-include` so
   `mnemos integration setup` works from a pip-installed wheel, not just a source
