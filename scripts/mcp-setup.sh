@@ -8,19 +8,21 @@
 #
 # Flags:
 #   --scope SCOPE       VS Code config scope: user | workspace (default: user)
-#   --data-dir PATH     MNEMOS_DATA_DIR (default: ~/.mnemos)
-#   --vault PATH        MNEMOS_VAULT__VAULT_PATH (default: ~/mnemos-vault)
+#   --data-dir PATH     MNEMOS_DATA_DIR (default: ~/.mnemos/data)
+#   --vault PATH        MNEMOS_VAULT__VAULT_PATH (default: ~/.mnemos/vault)
 #   --command CMD       Command to launch mnemos (default: auto-detect: venv → system → mnemos)
 #   --auto-collect      Set MNEMOS_AUTO_COLLECT=1 (nag agent to save context)
+#   --force             Overwrite an existing 'mnemos' entry even if already present
 #   --dry-run           Show what would be written, don't modify files
 #   --help              Show this help
 set -euo pipefail
 
 SCOPE="user"
-DATA_DIR="${HOME}/.mnemos"
-VAULT_PATH="${HOME}/mnemos-vault"
+DATA_DIR="${HOME}/.mnemos/data"
+VAULT_PATH="${HOME}/.mnemos/vault"
 MNEMOS_CMD=""
 AUTO_COLLECT=false
+FORCE=false
 DRY_RUN=false
 
 if [[ -t 1 ]]; then
@@ -40,6 +42,7 @@ while [[ $# -gt 0 ]]; do
     --vault)        VAULT_PATH="$2"; shift 2 ;;
     --command)      MNEMOS_CMD="$2"; shift 2 ;;
     --auto-collect) AUTO_COLLECT=true; shift ;;
+    --force)        FORCE=true; shift ;;
     --dry-run)      DRY_RUN=true; shift ;;
     --help|-h)      sed -n '2,18p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *)              die "Unknown flag: $1 (use --help)" ;;
@@ -49,12 +52,10 @@ done
 [[ "$SCOPE" != "user" && "$SCOPE" != "workspace" ]] && die "--scope must be 'user' or 'workspace'"
 
 if [[ -z "$MNEMOS_CMD" ]]; then
-  for candidate in "${HOME}/.mnemos-venv/bin/mnemos" "${HOME}/.venv/bin/mnemos"; do
-    if [[ -x "$candidate" ]]; then
-      MNEMOS_CMD="$candidate"; info "Found mnemos at: ${MNEMOS_CMD}"; break
-    fi
-  done
-  if [[ -z "$MNEMOS_CMD" ]] && command -v mnemos &>/dev/null; then
+  candidate="${HOME}/.mnemos/venv/bin/mnemos"
+  if [[ -x "$candidate" ]]; then
+    MNEMOS_CMD="$candidate"; info "Found mnemos at: ${MNEMOS_CMD}"
+  elif command -v mnemos &>/dev/null; then
     MNEMOS_CMD="$(command -v mnemos)"; info "Found mnemos on PATH: ${MNEMOS_CMD}"
   fi
 fi
@@ -99,9 +100,13 @@ JSONEOF
 else
   info "mcp.json exists — checking for existing 'mnemos' entry…"
   if grep -q '"mnemos"' "$MCP_FILE" 2>/dev/null; then
-    ok "MCP server 'mnemos' is already registered in ${MCP_FILE} — no changes needed."
-    ok "Skipping MCP setup (already configured). Use --dry-run to inspect if needed."
-    exit 0
+    if [[ "$FORCE" == true ]]; then
+      warn "Existing 'mnemos' entry found — overwriting (--force)."
+    else
+      ok "MCP server 'mnemos' is already registered in ${MCP_FILE} — no changes needed."
+      ok "Skipping MCP setup (already configured). Use --force to overwrite or --dry-run to inspect."
+      exit 0
+    fi
   fi
   if command -v python3 &>/dev/null; then
     info "Using Python for safe JSON merge…"

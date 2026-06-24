@@ -9,15 +9,15 @@
 ```bash
 # Mnemos data + vault
 tar czf mnemos-backup-$(date +%Y%m%d).tar.gz \
-  ~/.mnemos \
-  ~/mnemos-vault
+  ~/.mnemos/data \
+  ~/.mnemos/vault
 ```
 
 ### Automated (cron)
 
 ```bash
 # Daily backup at 02:00
-0 2 * * * tar czf ~/backups/mnemos-$(date +\%Y\%m\%d).tar.gz ~/.mnemos ~/mnemos-vault
+0 2 * * * tar czf ~/backups/mnemos-$(date +\%Y\%m\%d).tar.gz ~/.mnemos/data ~/.mnemos/vault
 ```
 
 ## Restore
@@ -29,8 +29,8 @@ tar czf mnemos-backup-$(date +%Y%m%d).tar.gz \
 tar xzf mnemos-backup-20260115.tar.gz -C /
 
 # Or selective restore
-cp mnemos-backup-20260115/.mnemos/mnemos.db ~/.mnemos/
-rsync -a mnemos-backup-20260115/mnemos-vault/ ~/mnemos-vault/
+cp mnemos-backup-20260115/.mnemos/mnemos.db ~/.mnemos/data/
+rsync -a mnemos-backup-20260115/.mnemos/vault/ ~/.mnemos/vault/
 ```
 
 ## Point-in-time recovery

@@ -661,6 +661,42 @@ class IntegrationManager:
 
     # ── MCP registration ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _find_mcp_setup_script() -> Path | None:
+        """Find ``mcp-setup.sh`` in source-tree, wheel, or upward search.
+
+        Resolution order:
+
+        1. **Source-tree layout** — ``src/mnemos/cli/`` → up 4 levels →
+           ``scripts/mcp-setup.sh`` (editable / repo installs).
+        2. **Wheel layout** — ``importlib.resources.files("mnemos") /
+           "scripts" / "mcp-setup.sh"`` (pip-installed wheel).
+        3. **Upward search** — walk parents of this file looking for a
+           ``scripts/`` sibling (fallback for unusual layouts).
+
+        Returns the first existing path, or ``None`` if not found anywhere.
+        """
+        here = Path(__file__).resolve()
+        # 1. Source-tree layout: src/mnemos/cli/integration.py → up 4 levels
+        candidate = here.parent.parent.parent.parent / "scripts" / "mcp-setup.sh"
+        if candidate.is_file():
+            return candidate
+        # 2. Wheel layout via importlib.resources.
+        try:
+            from importlib.resources import files
+
+            script = files("mnemos") / "scripts" / "mcp-setup.sh"
+            if script.is_file():
+                return Path(str(script))
+        except (ImportError, ModuleNotFoundError, FileNotFoundError):
+            pass
+        # 3. Upward search for a scripts/ sibling.
+        for parent in here.parents:
+            candidate = parent / "scripts" / "mcp-setup.sh"
+            if candidate.is_file():
+                return candidate
+        return None
+
     def register_mcp(self, mnemos_bin: str | None = None) -> tuple[bool, str]:
         """Invoke ``mcp-setup.sh`` to register the MCP server in VS Code.
 
@@ -670,9 +706,9 @@ class IntegrationManager:
         """
         import subprocess  # nosec B404 — used for trusted local mcp-setup.sh, not untrusted input
 
-        script = self.pack_root.parent / "scripts" / "mcp-setup.sh"
-        if not script.exists():
-            return False, f"mcp-setup.sh not found at {script}"
+        script = self._find_mcp_setup_script()
+        if script is None:
+            return False, "mcp-setup.sh not found (not in wheel, not in source tree)"
 
         cmd: list[str] = ["bash", str(script)]
         if mnemos_bin:

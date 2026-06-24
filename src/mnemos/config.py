@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -10,10 +12,15 @@ import yaml
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings
 
+logger = logging.getLogger(__name__)
+
 
 class MnemosConfig(BaseModel):
-    vault_path: Path = Path("~/mnemos-vault")
-    data_dir: Path = Path("~/.mnemos")
+    # Consolidated layout (v2.1): everything lives under ~/.mnemos/.
+    # Old scattered paths (~/mnemos-vault, ~/.mnemos as data_dir) are
+    # auto-migrated by ``Settings.migrate_layout()`` on first load.
+    vault_path: Path = Path("~/.mnemos/vault")
+    data_dir: Path = Path("~/.mnemos/data")
     db_name: str = "mnemos.db"
     # M2: tag contract enforcement
     strict_tag_contract: bool = True
@@ -21,6 +28,21 @@ class MnemosConfig(BaseModel):
     # When True, raw_content is preserved and clean_content is populated;
     # filter failures are non-fatal (memory is still saved with raw content).
     auto_filter: bool = True
+
+
+class LoggingConfig(BaseModel):
+    """Logging configuration — file + console handlers with rotation.
+
+    Set ``log_file`` to an empty path (``Path("")``) to disable file logging
+    and emit to stderr only.
+    """
+
+    level: str = "INFO"  # DEBUG | INFO | WARNING | ERROR
+    log_file: Path = Path("~/.mnemos/logs/mnemos.log")
+    max_file_size_mb: int = Field(default=10, ge=1, le=1024)
+    backup_count: int = Field(default=3, ge=0, le=100)
+    format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    date_format: str = "%Y-%m-%d %H:%M:%S"
 
 
 class EmbeddingConfig(BaseModel):
@@ -158,6 +180,7 @@ class Settings(BaseSettings):
     llm: LLMConfig = LLMConfig()
     automation: AutomationConfig = AutomationConfig()
     runtime: RuntimeConfig = RuntimeConfig()
+    logging: LoggingConfig = LoggingConfig()
     # M5: declarative policy rules (loaded from YAML or set programmatically)
     policies: dict[str, Any] = Field(default_factory=dict)
 
@@ -171,6 +194,13 @@ class Settings(BaseSettings):
     def resolve_paths(self) -> None:
         self.mnemos.vault_path = self.mnemos.vault_path.expanduser().resolve()
         self.mnemos.data_dir = self.mnemos.data_dir.expanduser().resolve()
+        # Resolve log_file only if non-empty; an empty Path("") becomes "."
+        # which means "stderr only" — leave it as an empty Path().
+        log_str = str(self.logging.log_file).strip()
+        if log_str and log_str != ".":
+            self.logging.log_file = self.logging.log_file.expanduser().resolve()
+        else:
+            self.logging.log_file = Path()
 
     def apply_runtime_env(self) -> None:
         """Apply conservative thread caps unless explicitly overridden by user env."""
@@ -190,6 +220,67 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.mnemos.data_dir / self.mnemos.db_name
+
+    def migrate_layout(self) -> list[str]:
+        """Migrate scattered old paths to the consolidated ``~/.mnemos/`` layout.
+
+        Detection rules (all idempotent — only moves if old exists AND new doesn't):
+
+        * Old data dir ``~/.mnemos`` containing ``mnemos.db`` (and optionally
+          ``vectors.db``) → moved to ``~/.mnemos/data/``.
+        * Old vault ``~/mnemos-vault/`` → moved to ``~/.mnemos/vault/``.
+
+        The config file ``~/.mnemos/config.yaml`` stays in place — it was
+        already at the root. If the old ``~/.mnemos`` dir contained a
+        ``config.yaml``, it is left in place (the new layout keeps config at
+        the root, not under ``data/``).
+
+        Returns a list of human-readable descriptions of what was moved
+        (empty if nothing was migrated).
+        """
+        actions: list[str] = []
+        home = Path.home()
+        new_data = self.mnemos.data_dir
+        new_vault = self.mnemos.vault_path
+
+        # ── Data dir migration ────────────────────────────────────────────
+        # Old layout: ~/.mnemos/mnemos.db (and vectors.db) directly under root.
+        # New layout: ~/.mnemos/data/mnemos.db
+        # Only migrate if the *default* data_dir is in use (i.e. the user
+        # hasn't overridden it to a custom path). If data_dir was overridden
+        # via config/env, we respect that and skip migration.
+        old_data_root = home / ".mnemos"
+        default_new_data = (home / ".mnemos" / "data").resolve()
+        if (
+            new_data == default_new_data
+            and old_data_root.is_dir()
+            and (old_data_root / "mnemos.db").exists()
+            and not (new_data / "mnemos.db").exists()
+        ):
+            new_data.mkdir(parents=True, exist_ok=True)
+            for item in old_data_root.iterdir():
+                # Don't move config.yaml, data/, vault/, logs/, cache/ — those
+                # are either already in the right place or belong at root.
+                if item.name in ("config.yaml", "data", "vault", "logs", "cache"):
+                    continue
+                dest = new_data / item.name
+                if not dest.exists():
+                    shutil.move(str(item), str(dest))
+                    actions.append(f"data: {item.name} → {dest}")
+                    logger.info("migrate_layout: moved %s → %s", item, dest)
+
+        # ── Vault migration ───────────────────────────────────────────────
+        # Old layout: ~/mnemos-vault/
+        # New layout: ~/.mnemos/vault/
+        old_vault = home / "mnemos-vault"
+        default_new_vault = (home / ".mnemos" / "vault").resolve()
+        if new_vault == default_new_vault and old_vault.is_dir() and not new_vault.exists():
+            new_vault.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(old_vault), str(new_vault))
+            actions.append(f"vault: {old_vault} → {new_vault}")
+            logger.info("migrate_layout: moved vault %s → %s", old_vault, new_vault)
+
+        return actions
 
 
 def load_settings(config_path: str | Path | None = None) -> Settings:
@@ -220,5 +311,6 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
 
     settings = Settings(**config_data)
     settings.resolve_paths()
+    settings.migrate_layout()
     settings.apply_runtime_env()
     return settings

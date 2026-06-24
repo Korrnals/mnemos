@@ -464,7 +464,7 @@ class TestSearchReturnsCleanContent:
         with patch("mnemos.mcp_server.get_manager", return_value=mgr):
             results = await _dispatch(
                 "mnemos_search",
-                {"query": "kubernetes", "limit": 10},
+                {"query": "kubernetes", "limit": 10, "include_raw": True},
             )
 
         assert len(results) >= 1

@@ -58,7 +58,7 @@ mnemos search "project:legacy" --limit 50
 
 - [ ] `mnemos stats` показывает ожидаемое количество записей
 - [ ] `mnemos search "hello"` возвращает результаты
-- [ ] Файлы vault видны в `~/mnemos-vault/`
+- [ ] Файлы vault видны в `~/.mnemos/vault/`
 - [ ] MCP-команда `mnemos_recall_context` работает
 
 ## Откат
@@ -67,9 +67,9 @@ mnemos search "project:legacy" --limit 50
 
 ```bash
 # Восстановление из резервной копии Mnemos
-ls ~/.mnemos/*.backup-*
-cp ~/.mnemos/mnemos.db.backup-YYYYMMDD-HHMMSS ~/.mnemos/mnemos.db
+ls ~/.mnemos/data/*.backup-*
+cp ~/.mnemos/data/mnemos.db.backup-YYYYMMDD-HHMMSS ~/.mnemos/data/mnemos.db
 
 # Или начать заново
-rm -rf ~/.mnemos ~/mnemos-vault
+rm -rf ~/.mnemos/data ~/.mnemos/vault
 ```

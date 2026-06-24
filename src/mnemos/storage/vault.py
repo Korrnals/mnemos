@@ -1,7 +1,7 @@
 """Obsidian-compatible vault integration — read/write markdown with YAML frontmatter.
 
 Stores pipeline fields (status, quality_score, cluster_id) and project + agent
-(GCW tag contract) in frontmatter for searchability. Default path: ~/mnemos-vault/.
+(GCW tag contract) in frontmatter for searchability. Default path: ~/.mnemos/vault/.
 """
 
 from __future__ import annotations
