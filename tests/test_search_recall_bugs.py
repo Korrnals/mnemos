@@ -160,9 +160,7 @@ class TestExplicitStatusFilter:
         _add(mgr, "epsilon published", status=MemoryStatus.PUBLISHED)
 
         # status=published + include_raw=True → only published
-        results = mgr.search(
-            "epsilon", status=MemoryStatus.PUBLISHED, include_raw=True
-        )
+        results = mgr.search("epsilon", status=MemoryStatus.PUBLISHED, include_raw=True)
         assert len(results) == 1
         assert results[0].memory.status == MemoryStatus.PUBLISHED
 

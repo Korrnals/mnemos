@@ -313,9 +313,14 @@ class MemoryManager:
                     # somehow entered the store could surface here.
                     if status is not None and fetched.status != status:
                         continue
-                    if status is None and not include_raw and fetched.status not in (
-                        MemoryStatus.PUBLISHED,
-                        MemoryStatus.PROCESSED,
+                    if (
+                        status is None
+                        and not include_raw
+                        and fetched.status
+                        not in (
+                            MemoryStatus.PUBLISHED,
+                            MemoryStatus.PROCESSED,
+                        )
                     ):
                         continue
                     id_to_memory[mid] = fetched
