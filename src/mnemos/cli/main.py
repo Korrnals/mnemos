@@ -314,7 +314,12 @@ def tags_normalize(
                 for prefix in ("project:", "agent:"):
                     if tag.startswith(prefix):
                         slug = tag[len(prefix) :]
-                        lower = slug.lower()
+                        # Match validate_tag_contract lax-mode normalization:
+                        # lowercase AND replace spaces with hyphens. Without
+                        # the space→hyphen step the CLI diverged from the
+                        # contract, leaving `project:My Project` as
+                        # `project:my project` (invalid slug with a space).
+                        lower = slug.lower().replace(" ", "-")
                         if lower != slug:
                             new_tags[i] = prefix + lower
                             modified = True
