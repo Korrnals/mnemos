@@ -47,7 +47,7 @@ dependencies = [
     # Text processing
     "python-frontmatter>=1.1",
     # Utilities
-    "python-dateutil>=2.9",
+    "python-dateutil>=2.9.0.post0",
     # Scheduling (M5 — policy engine / automation)
     "apscheduler>=3.10",
     # T-AUTH (ADR-0014): bearer tokens + TOTP 2FA + rate limiting
