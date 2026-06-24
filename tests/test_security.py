@@ -270,6 +270,11 @@ class TestSqlInjectionSafe:
             "tags",
             "category",
             "file_path",
+            # Denormalised columns derived from tags — whitelisted so
+            # `tags normalize` can update them via update_fields without
+            # falling back to save() (INSERT OR REPLACE, FTS5 desync risk).
+            "project",
+            "agent",
         }
         assert set(sqlite_store._FIELD_UPDATERS) == expected_keys
         # Every value is a static "col=?" fragment.

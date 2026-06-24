@@ -198,13 +198,38 @@ def add(
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search query"),
-    limit: int = typer.Option(10, "--limit", "-l"),
-    project: str = typer.Option(None, "--project", "-p"),
+    limit: int = typer.Option(10, "--limit", "-l", help="Max results"),
+    project: str = typer.Option(None, "--project", "-p", help="Filter by project slug"),
+    tags: str = typer.Option(None, "--tags", "-T", help="Comma-separated tags to filter by"),
+    include_raw: bool = typer.Option(
+        False,
+        "--include-raw",
+        help="Include raw/processing entries (skipped by default).",
+    ),
+    status: str = typer.Option(
+        None,
+        "--status",
+        help=(
+            "Filter by status (raw/processing/processed/published/archived). "
+            "Takes precedence over --include-raw."
+        ),
+    ),
     config: str = ConfigOption,
 ) -> None:
     """Search long-term memory (hybrid FTS + vector)."""
+    from mnemos.models import MemoryStatus
+
     mgr = get_manager(config)
-    results = mgr.search(query=query, project=project, limit=limit)
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    status_enum = MemoryStatus(status) if status else None
+    results = mgr.search(
+        query=query,
+        tags=tag_list,
+        project=project,
+        limit=limit,
+        include_raw=include_raw,
+        status=status_enum,
+    )
     if not results:
         console.print("[yellow]No results found.[/yellow]")
         return
@@ -281,9 +306,13 @@ def tags_normalize(
     """Normalize project:/agent: tag case to lowercase across all memories.
 
     Scans every memory in the SQLite store, lowercases the slug portion of
-    project: and agent: tags (matching the lax-mode logic in
-    validate_tag_contract), and re-saves memories that changed. The FTS
-    trigger fires on UPDATE so search stays consistent.
+    project: and agent: tags and replaces spaces with hyphens (matching the
+    lax-mode normalization in ``validate_tag_contract``), and updates
+    memories that changed via ``update_fields`` (plain UPDATE). The FTS5
+    ``AFTER UPDATE`` trigger fires on UPDATE so the search index stays
+    consistent; using ``save()`` (INSERT OR REPLACE) here would risk
+    desyncing the FTS5 external content table. The denormalised ``project``
+    and ``agent`` columns are updated in the same statement.
     """
 
     mgr = get_manager(config)
@@ -310,7 +339,12 @@ def tags_normalize(
                 for prefix in ("project:", "agent:"):
                     if tag.startswith(prefix):
                         slug = tag[len(prefix) :]
-                        lower = slug.lower()
+                        # Match validate_tag_contract lax-mode normalization:
+                        # lowercase AND replace spaces with hyphens. Without
+                        # the space→hyphen step the CLI diverged from the
+                        # contract, leaving `project:My Project` as
+                        # `project:my project` (invalid slug with a space).
+                        lower = slug.lower().replace(" ", "-")
                         if lower != slug:
                             new_tags[i] = prefix + lower
                             modified = True
@@ -326,10 +360,28 @@ def tags_normalize(
             if dry_run:
                 continue
 
-            # Update tags in-place and re-save. sqlite.save() does an
-            # INSERT OR REPLACE, which fires the FTS UPDATE trigger.
-            mem.tags = new_tags
-            mgr.sqlite.save(mem)
+            # Use update_fields (UPDATE) not save() (INSERT OR REPLACE).
+            # INSERT OR REPLACE can desync the FTS5 external content table
+            # (`content=memories`), causing "missing row from content
+            # table" errors on subsequent searches. A plain UPDATE fires
+            # the `memories_au` AFTER UPDATE trigger which keeps the FTS5
+            # index consistent. Also update the denormalised `project` and
+            # `agent` columns so per-project / per-agent queries stay in
+            # sync with the normalized tags.
+            new_project = next(
+                (t[len("project:") :] for t in new_tags if t.startswith("project:")),
+                mem.project,
+            )
+            new_agent = next(
+                (t[len("agent:") :] for t in new_tags if t.startswith("agent:")),
+                mem.agent,
+            )
+            mgr.sqlite.update_fields(
+                mem.id,
+                tags=new_tags,
+                project=new_project,
+                agent=new_agent,
+            )
 
     console.print(f"[bold]Scanned:[/bold] {scanned} memories")
     console.print(f"[bold]Normalized:[/bold] {normalized_count} memories")

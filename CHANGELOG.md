@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tags normalize` no longer corrupts the FTS5 index** — the CLI command
+  used `sqlite.save()` (INSERT OR REPLACE) to persist normalized tags, which
+  could desync the FTS5 external content table (`content=memories`) and cause
+  "missing row from content table" errors on subsequent searches. It now uses
+  `update_fields()` (plain UPDATE), which fires the `AFTER UPDATE` trigger
+  that keeps the FTS5 index consistent. The denormalised `project` and `agent`
+  columns are updated in the same statement so per-project / per-agent queries
+  stay in sync with the normalized tags.
+- **`tags normalize` replaces spaces with hyphens** — the CLI command
+  previously only lowercased slugs, diverging from `validate_tag_contract`
+  lax-mode normalization. `project:My Project` now becomes `project:my-project`
+  (hyphen), matching the contract.
+- **CLI `search` gains `--include-raw` and `--status` flags** — the MCP tool
+  and Python API already supported `include_raw` and `status` filtering, but
+  the CLI `search` command did not expose them. After the `include_raw`
+  status-filtering fix, default search no longer surfaces raw entries; CLI
+  users can now opt in with `--include-raw` or filter explicitly with
+  `--status raw|processing|processed|published|archived`. A `--tags` filter
+  flag was also added for parity with the API.
+
 - **`include_raw` parameter now filters by status** — `manager.search()` was
   accepting `include_raw` as a no-op. Now: `include_raw=False` (default) filters
   FTS results to `published` + `processed` only, preserving the "only searches

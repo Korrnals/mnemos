@@ -53,6 +53,13 @@ _FIELD_UPDATERS: dict[str, str] = {
     "tags": "tags=?",
     "category": "category=?",
     "file_path": "file_path=?",
+    # Denormalised columns derived from tags (project:/agent: slugs).
+    # Whitelisted so `tags normalize` can update them via `update_fields`
+    # alongside the tags JSON without falling back to `save()` (which
+    # uses INSERT OR REPLACE and can desync the FTS5 external content
+    # table — see fix in cli/main.py `tags normalize`).
+    "project": "project=?",
+    "agent": "agent=?",
 }
 
 # FTS5 query-syntax special chars. Stripping them and wrapping the rest in
