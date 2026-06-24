@@ -239,8 +239,10 @@ class MemoryManager:
 
         Status filtering precedence:
           1. Explicit ``status`` — always wins (caller knows what they want).
-          2. ``include_raw=True`` — no status filter (all statuses returned,
-             including raw/processing entries not yet pipeline-processed).
+          2. ``include_raw=True`` — all statuses EXCEPT ``archived`` are
+             returned. ``archived`` means "intentionally hidden from normal
+             search" and is excluded unless the caller passes
+             ``status=MemoryStatus.ARCHIVED`` explicitly.
           3. Default (``include_raw=False``, no ``status``) — only
              ``published`` and ``processed`` memories surface, preserving the
              documented "Only searches 'published' knowledge units by default"
@@ -270,16 +272,30 @@ class MemoryManager:
         except Exception as exc:
             logger.warning("FTS search failed: %s", exc)
 
-        # Default gating: when no explicit status was requested and the
-        # caller did not opt into raw entries, restrict FTS hits to the
-        # "ready" statuses. This keeps recently-added raw entries out of
-        # normal search unless the caller explicitly asks for them.
+        # Default gating: when no explicit status was requested, restrict
+        # FTS hits to the allowed set. ``include_raw`` widens the set to all
+        # statuses except ``archived`` (archived = intentionally hidden from
+        # normal search). An explicit ``status`` skips this post-hoc filter
+        # entirely — ``fts_search`` already filtered on it.
         if status is None and not include_raw:
-            fts_pairs = [
-                (m, s)
-                for m, s in fts_pairs
-                if m.status in (MemoryStatus.PUBLISHED, MemoryStatus.PROCESSED)
-            ]
+            # Default: only published + processed
+            allowed: set[MemoryStatus] | None = {
+                MemoryStatus.PUBLISHED,
+                MemoryStatus.PROCESSED,
+            }
+        elif status is None and include_raw:
+            # include_raw: all except archived (archived = intentionally hidden)
+            allowed = {
+                MemoryStatus.RAW,
+                MemoryStatus.PROCESSING,
+                MemoryStatus.PROCESSED,
+                MemoryStatus.PUBLISHED,
+            }
+        else:
+            allowed = None  # explicit status, no post-hoc filter
+
+        if allowed is not None:
+            fts_pairs = [(m, s) for m, s in fts_pairs if m.status in allowed]
 
         # ── Vector leg ─────────────────────────────────────────────────────
         vector_pairs: list[tuple[str, float]] = []
@@ -313,22 +329,21 @@ class MemoryManager:
                     # somehow entered the store could surface here.
                     if status is not None and fetched.status != status:
                         continue
-                    if (
-                        status is None
-                        and not include_raw
-                        and fetched.status
-                        not in (
-                            MemoryStatus.PUBLISHED,
-                            MemoryStatus.PROCESSED,
-                        )
-                    ):
+                    if allowed is not None and fetched.status not in allowed:
                         continue
                     id_to_memory[mid] = fetched
 
-        # Search mode: "hybrid" when both legs contributed, else "fts_only".
-        # Vector leg failure (embeddings down) degrades gracefully — RRF
-        # still ranks FTS-only results, but callers can see the mode.
-        search_type = "hybrid" if vector_pairs else "fts_only"
+        # Search mode: "hybrid" when the vector leg actually contributed a
+        # result that survived status filtering and is not already covered by
+        # the FTS leg. Vector leg failure (embeddings down) degrades
+        # gracefully — RRF still ranks FTS-only results, but callers can see
+        # the mode. Tracking contribution (not just raw output) prevents
+        # reporting "hybrid" when all vector pairs were filtered out.
+        fts_ids = {m.id for m, _ in fts_pairs}
+        vector_contributed = any(
+            mid in id_to_memory and mid not in fts_ids for mid, _ in vector_pairs
+        )
+        search_type = "hybrid" if vector_contributed else "fts_only"
 
         # Apply tag filter post-hoc
         results: list[SearchResult] = []
@@ -547,6 +562,10 @@ class MemoryManager:
                 "fts_available": True,  # FTS5 is always available (SQLite built-in)
                 "vector_available": vector_count > 0,
                 "mode": "hybrid" if vector_count > 0 else "fts_only",
+                # Orphaned vectors: embeddings exist but no published memories
+                # — indicates the vector store drifted out of sync with SQLite
+                # (e.g. memories were deleted but vectors were not removed).
+                "orphaned_vectors": vector_count > 0 and published_count == 0,
             },
         }
 

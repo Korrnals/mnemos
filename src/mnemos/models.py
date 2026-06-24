@@ -170,11 +170,12 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
     def _normalize_slug(tag: str, regex: re.Pattern[str], prefix: str) -> str | None:
         """Return a normalized form of ``tag`` if it can be salvaged, else None.
 
-        Lowercases the slug portion and replaces spaces with hyphens. If the
-        normalized form still does not match ``regex``, the tag is not
-        recoverable and the caller falls back to the ``<prefix>unknown`` default.
+        Strips leading/trailing whitespace, lowercases the slug portion, and
+        replaces spaces with hyphens. If the normalized form still does not
+        match ``regex``, the tag is not recoverable and the caller falls back
+        to the ``<prefix>unknown`` default.
         """
-        slug = tag[len(prefix) :]
+        slug = tag[len(prefix) :].strip()
         normalized = prefix + slug.lower().replace(" ", "-")
         return normalized if regex.match(normalized) else None
 

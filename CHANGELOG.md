@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`include_raw=True` no longer surfaces archived entries** —
+  `manager.search()` was returning `archived` memories when
+  `include_raw=True` and no explicit `status` was given. `archived` means
+  "intentionally hidden from normal search"; it is now excluded from
+  `include_raw=True` results. An explicit `status=MemoryStatus.ARCHIVED`
+  still returns archived entries (explicit status always wins). The same
+  status-policy is now applied to the vector leg, not just the FTS leg.
+- **`search_type` reflects actual vector contribution** — the indicator
+  was set to `"hybrid"` whenever the vector leg returned pairs, even if all
+  were filtered out by status or already covered by FTS. It now tracks
+  whether any vector pair survived filtering AND contributed a new id not
+  already found by FTS. A search where the vector leg returned only
+  already-known or filtered-out results reports `"fts_only"`.
+- **`mnemos_search` MCP tool gives a clear error for invalid `status`** —
+  passing `status="invalid"` previously raised a `ValueError` caught by the
+  generic handler, producing `❌ Error: 'invalid' is not a valid
+  MemoryStatus` without listing valid values. The error now lists all
+  valid statuses: `raw, processing, processed, published, archived`.
+- **`stats()` detects orphaned vectors** — `search_health` now includes
+  `orphaned_vectors` (`True` when vectors exist but `published_count == 0`),
+  indicating the vector store drifted out of sync with SQLite (e.g.
+  memories were deleted but vectors were not removed).
+- **Tag normalization strips leading/trailing spaces** —
+  `validate_tag_contract` lax-mode `_normalize_slug` and the CLI
+  `tags normalize` command did not strip the slug before lowercasing and
+  replacing spaces with hyphens. `project: My Project ` produced
+  `project:-my-project-` (leading/trailing hyphens). Both now `.strip()`
+  first, yielding `project:my-project`.
+
 - **`tags normalize` no longer corrupts the FTS5 index** — the CLI command
   used `sqlite.save()` (INSERT OR REPLACE) to persist normalized tags, which
   could desync the FTS5 external content table (`content=memories`) and cause
@@ -58,7 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mnemos_stats` health fields** — `stats()` now returns `embedding_status`
   (provider, vectors_indexed, degraded flag), `processor` (queue depth,
   last_processed_at), and `search_health` (fts_available, vector_available,
-  mode). Callers can detect a stuck pipeline or degraded search.
+  mode, orphaned_vectors). Callers can detect a stuck pipeline, degraded
+  search, or vector/SQLite drift.
 
 - **Wheel now includes `scripts/`** — `mcp-setup.sh`, `install.sh`, `deploy.sh`,
   `setup-distrobox.sh` are packaged via hatchling `force-include` so

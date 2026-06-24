@@ -374,11 +374,40 @@ class TestSearchTypeIndicator:
         assert results[0].search_type == "fts_only"
 
     def test_search_hybrid_when_vectors_present(self, tmp_manager):
-        """When vectors exist, search_type is 'hybrid'."""
+        """When the vector leg contributes a NEW result, search_type is 'hybrid'.
+
+        LOW-1 fix: search_type reflects actual vector contribution, not just
+        whether the vector leg returned pairs. A memory that is in BOTH the
+        FTS and vector legs does not count as vector-contributed (the vector
+        leg added no new id to the result set). To get 'hybrid', the vector
+        leg must return a memory that FTS did NOT find.
+        """
+        mgr = tmp_manager
+        # Memory A — matches FTS query "kappa".
+        _add(mgr, "published kappa content", status=MemoryStatus.PUBLISHED)
+        # Memory B — does NOT match FTS "kappa" but is in the vector store.
+        # The mock embedder returns the same vector for all queries, so
+        # vector search returns B regardless of query text.
+        mem_b = _add(mgr, "published unrelated text", status=MemoryStatus.PUBLISHED)
+        mgr.vectors.upsert(
+            mem_b.id,
+            [0.1] * 384,
+            {"project": "test-project", "agent": "test-agent"},
+        )
+
+        results = mgr.search("kappa", include_raw=True)
+        assert len(results) >= 1
+        # The vector leg contributed mem_b (not in fts_ids) → hybrid.
+        assert results[0].search_type == "hybrid"
+
+    def test_search_fts_only_when_vector_same_as_fts(self, tmp_manager):
+        """Same memory in both legs → fts_only (vector added no new result).
+
+        LOW-1: when the only vector result is also found by FTS, the vector
+        leg did not contribute a new id — search_type is 'fts_only'.
+        """
         mgr = tmp_manager
         mem = _add(mgr, "published kappa content", status=MemoryStatus.PUBLISHED)
-
-        # Manually insert a vector so the vector leg returns something
         mgr.vectors.upsert(
             mem.id,
             [0.1] * 384,
@@ -387,7 +416,7 @@ class TestSearchTypeIndicator:
 
         results = mgr.search("kappa", include_raw=True)
         assert len(results) >= 1
-        assert results[0].search_type == "hybrid"
+        assert results[0].search_type == "fts_only"
 
 
 # ---------------------------------------------------------------------------

@@ -507,7 +507,13 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     # ── mnemos_search ───────────────────────────────────────────────────────
     if name == "mnemos_search":
         status_str = args.get("status")
-        status = MemoryStatus(status_str) if status_str else None
+        status: MemoryStatus | None = None
+        if status_str:
+            try:
+                status = MemoryStatus(status_str)
+            except ValueError:
+                valid = ", ".join(s.value for s in MemoryStatus)
+                return f"❌ Invalid status '{status_str}'. Valid values: {valid}"
         results = mgr.search(
             query=args["query"],
             tags=args.get("tags"),
