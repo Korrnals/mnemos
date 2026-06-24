@@ -184,6 +184,7 @@ class TestSearch:
             json={
                 "query": "kubernetes",
                 "limit": 10,
+                "include_raw": True,
             },
         )
         assert resp.status_code == 200
