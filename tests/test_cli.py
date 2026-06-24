@@ -550,3 +550,165 @@ class TestTagsNormalize:
         result = runner.invoke(app, ["tags", "normalize"])
         assert result.exit_code == 0, result.output
         assert "Normalized: 0" in result.output
+
+    def test_tags_normalize_does_not_corrupt_fts(self, isolated_config: Path) -> None:
+        """Regression for HIGH-1: normalize must not desync the FTS5 index.
+
+        Before the fix, `tags normalize` used `sqlite.save()` (INSERT OR
+        REPLACE) which can desync the FTS5 external content table
+        (`content=memories`), causing "missing row from content table"
+        errors on subsequent searches. With `update_fields` (plain UPDATE)
+        the AFTER UPDATE trigger keeps the FTS5 index consistent, so search
+        still finds the memory after normalization.
+        """
+        from mnemos.cli._manager import get_manager
+        from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType
+
+        mgr = get_manager(str(isolated_config))
+        mem = Memory(
+            content="fts corruption regression unique marker ALPHA",
+            title="regression",
+            tags=["project:MyProject", "agent:SeniorAgent", "gcw:test"],
+            source=MemorySource.CLI,
+            memory_type=MemoryType.NOTE,
+            # PUBLISHED so default search (no include_raw) can find it.
+            status=MemoryStatus.PUBLISHED,
+        )
+        mgr.sqlite.save(mem)
+
+        # Run normalize (not dry-run) — this used to corrupt FTS5.
+        result = runner.invoke(app, ["tags", "normalize"])
+        assert result.exit_code == 0, result.output
+        assert "Normalized:" in result.output
+
+        # Search must still find the memory — no "missing row" error.
+        results = mgr.search("fts corruption regression unique marker ALPHA")
+        assert len(results) >= 1, "FTS search returned nothing after normalize (index corrupted?)"
+        assert results[0].memory.id == mem.id
+
+    def test_tags_normalize_updates_project_agent_columns(self, isolated_config: Path) -> None:
+        """Denormalised project/agent columns are updated, not just tags.
+
+        `update_fields` now writes `project` and `agent` columns alongside
+        the tags JSON, so per-project / per-agent queries stay in sync.
+        """
+        from mnemos.cli._manager import get_manager
+        from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType
+
+        mgr = get_manager(str(isolated_config))
+        mem = Memory(
+            content="denormalised column check",
+            title="test",
+            tags=["project:My-Project", "agent:Senior-Agent", "gcw:test"],
+            source=MemorySource.CLI,
+            memory_type=MemoryType.NOTE,
+            status=MemoryStatus.RAW,
+        )
+        mgr.sqlite.save(mem)
+
+        result = runner.invoke(app, ["tags", "normalize"])
+        assert result.exit_code == 0, result.output
+
+        updated = mgr.sqlite.get(mem.id)
+        assert updated is not None
+        assert updated.project == "my-project", f"project column not updated: {updated.project!r}"
+        assert updated.agent == "senior-agent", f"agent column not updated: {updated.agent!r}"
+        assert "project:my-project" in updated.tags
+        assert "agent:senior-agent" in updated.tags
+
+    def test_tags_normalize_normalizes_spaces(self, isolated_config: Path) -> None:
+        """Spaces in slugs are replaced with hyphens (contract parity).
+
+        The CLI normalize command previously only lowercased, diverging
+        from `validate_tag_contract` which also replaces spaces with
+        hyphens. `project:My Project` must become `project:my-project`.
+        """
+        from mnemos.cli._manager import get_manager
+        from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType
+
+        mgr = get_manager(str(isolated_config))
+        mem = Memory(
+            content="space normalization check",
+            title="test",
+            tags=["project:My Project", "agent:Some Agent", "gcw:test"],
+            source=MemorySource.CLI,
+            memory_type=MemoryType.NOTE,
+            status=MemoryStatus.RAW,
+        )
+        mgr.sqlite.save(mem)
+
+        result = runner.invoke(app, ["tags", "normalize"])
+        assert result.exit_code == 0, result.output
+
+        updated = mgr.sqlite.get(mem.id)
+        assert updated is not None
+        assert "project:my-project" in updated.tags, (
+            f"space not replaced in project tag: {updated.tags!r}"
+        )
+        assert "agent:some-agent" in updated.tags, (
+            f"space not replaced in agent tag: {updated.tags!r}"
+        )
+        assert updated.project == "my-project"
+        assert updated.agent == "some-agent"
+
+
+# ── mnemos search --include-raw / --status ────────────────────────────────────
+
+
+class TestCliSearchFlags:
+    """`mnemos search` exposes --include-raw and --status for parity with the API."""
+
+    def _add_memory(
+        self,
+        mgr: object,
+        content: str,
+        status: str,
+        title: str,
+    ) -> None:
+        """Seed a memory directly into SQLite with a given status + title."""
+        from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType
+
+        mem = Memory(
+            content=content,
+            title=title,
+            tags=["project:search-flags", "agent:test", "gcw:test"],
+            source=MemorySource.CLI,
+            memory_type=MemoryType.NOTE,
+            status=MemoryStatus(status),
+        )
+        mgr.sqlite.save(mem)
+
+    def test_cli_search_include_raw_flag(self, isolated_config: Path) -> None:
+        """`--include-raw` surfaces raw entries; default search hides them."""
+        from mnemos.cli._manager import get_manager
+
+        mgr = get_manager(str(isolated_config))
+        self._add_memory(mgr, "raw entry marker", "raw", "RawTitleZeta")
+        self._add_memory(mgr, "published entry marker", "published", "PubTitleOmega")
+
+        # Default search: raw entries are filtered out — only the published
+        # title appears in the results table.
+        result_default = runner.invoke(app, ["search", "marker"])
+        assert result_default.exit_code == 0, result_default.output
+        assert "PubTitleOmega" in result_default.output
+        assert "RawTitleZeta" not in result_default.output
+
+        # --include-raw: raw entries surface.
+        result_raw = runner.invoke(app, ["search", "marker", "--include-raw"])
+        assert result_raw.exit_code == 0, result_raw.output
+        assert "RawTitleZeta" in result_raw.output
+
+    def test_cli_search_status_flag(self, isolated_config: Path) -> None:
+        """`--status raw` finds only raw entries among mixed statuses."""
+        from mnemos.cli._manager import get_manager
+
+        mgr = get_manager(str(isolated_config))
+        self._add_memory(mgr, "status raw marker", "raw", "RawTitleBeta")
+        self._add_memory(mgr, "status published marker", "published", "PubTitleGamma")
+        self._add_memory(mgr, "status archived marker", "archived", "ArchTitleDelta")
+
+        result = runner.invoke(app, ["search", "status", "--status", "raw"])
+        assert result.exit_code == 0, result.output
+        assert "RawTitleBeta" in result.output
+        assert "PubTitleGamma" not in result.output
+        assert "ArchTitleDelta" not in result.output
