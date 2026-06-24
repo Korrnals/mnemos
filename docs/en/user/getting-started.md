@@ -55,8 +55,8 @@ The `[dev]` extra adds `pytest`, `ruff`, `mypy`, `bandit`, and `pip-audit` so yo
 |--------|---------|
 | Editable dev (recommended for contributors) | `pip install -e ".[dev,mcp]"` |
 | From source, versioned | `pip install ".[mcp]"` |
-| Released wheel | `pip install https://github.com/Korrnals/mnemos/releases/download/v1.1.1/mnemos-1.1.1-py3-none-any.whl` |
-| Container | `podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 --env MNEMOS_API__TOTP_MASTER_KEY=<key> ghcr.io/korrnals/mnemos:1.1.1` — see [container-deployment.md](../admin/runbooks/container-deployment.md) |
+| Released wheel | `pip install https://github.com/Korrnals/mnemos/releases/download/v2.1.0/mnemos-2.1.0-py3-none-any.whl` |
+| Container | `podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 --env MNEMOS_API__TOTP_MASTER_KEY=<key> ghcr.io/korrnals/mnemos:2.1.0` — see [container-deployment.md](../admin/runbooks/container-deployment.md) |
 
 ### Optional LLM provider extras
 
@@ -114,7 +114,7 @@ Expected output:
 Mnemos automatically:
 
 1. **Wrote the entry to SQLite** at `~/.mnemos/mnemos.db`.
-2. **Mirrored it to your Obsidian vault** at `~/mnemos-vault/` as a markdown file with YAML frontmatter.
+2. **Mirrored it to your Obsidian vault** at `~/.mnemos/vault/` as a markdown file with YAML frontmatter.
 3. **Validated the tag contract** — `project:test` + `agent:getting-started` + `gcw:learning` is a valid M2 trio. If you skip one, you get `❌ Tag contract violation: ...` instead.
 
 The tag contract is documented in [tag-contract.md](tag-contract.md). The short version: every memory needs **exactly one** `project:<slug>`, **exactly one** `agent:<slug>`, and **at least one** `gcw:<subtype>` (e.g. `gcw:learning`, `gcw:bug-pattern`, `gcw:decision`).
@@ -203,7 +203,7 @@ Add this to your VS Code `mcp.json` (User or Workspace):
       "args": ["mcp-server"],
       "env": {
         "MNEMOS_DATA_DIR": "/home/youruser/.mnemos",
-        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/mnemos-vault"
+        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/.mnemos/vault"
       }
     }
   }
@@ -279,8 +279,8 @@ Mnemos reads `config.yaml` from the current directory or `~/.mnemos/config.yaml`
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `mnemos.vault_path` | `~/mnemos-vault` | Obsidian mirror |
-| `mnemos.data_dir` | `~/.mnemos` | SQLite + vector index |
+| `mnemos.vault_path` | `~/.mnemos/vault` | Obsidian mirror |
+| `mnemos.data_dir` | `~/.mnemos/data` | SQLite + vector index |
 | `mnemos.strict_tag_contract` | `true` | Enforce M2 contract (set `false` only for legacy imports) |
 | `embedding.provider` | `chromadb` | `chromadb` / `onnx` / `ollama` / `sentence-transformers` |
 | `search.hybrid_alpha` | `0.7` | Weight of vector leg in RRF (0.0 = pure FTS, 1.0 = pure vector) |
@@ -292,6 +292,21 @@ Any of these can be overridden by env vars (`MNEMOS_*`, with `__` for nesting). 
 ```bash
 MNEMOS_SEARCH__HYBRID_ALPHA=0.5 mnemos search "deployment"
 ```
+
+### Logging
+
+Mnemos logs to `~/.mnemos/logs/mnemos.log` by default (rotating, 10 MB × 3 files).
+Configure via `config.yaml`:
+
+```yaml
+logging:
+  level: INFO                    # DEBUG | INFO | WARNING | ERROR
+  log_file: ~/.mnemos/logs/mnemos.log
+  max_file_size_mb: 10
+  backup_count: 3
+```
+
+CLI: `mnemos serve --verbose` for DEBUG level, `mnemos serve --log-file /path/to/log` to override.
 
 ---
 

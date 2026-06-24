@@ -58,7 +58,7 @@ mnemos search "project:legacy" --limit 50
 
 - [ ] `mnemos stats` shows expected memory count
 - [ ] `mnemos search "hello"` returns results
-- [ ] Vault files visible in `~/mnemos-vault/`
+- [ ] Vault files visible in `~/.mnemos/vault/`
 - [ ] MCP server `mnemos_recall_context` works
 
 ## Rollback
@@ -71,5 +71,5 @@ ls ~/.mnemos/*.backup-*
 cp ~/.mnemos/mnemos.db.backup-YYYYMMDD-HHMMSS ~/.mnemos/mnemos.db
 
 # Or start fresh
-rm -rf ~/.mnemos ~/mnemos-vault
+rm -rf ~/.mnemos/data ~/.mnemos/vault
 ```

@@ -237,13 +237,25 @@ class MemoryManager:
     ) -> list[SearchResult]:
         """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion.
 
-        ``include_raw`` is accepted for API/MCP compatibility (the SearchQuery
-        model carries it) but does not change the search leg — the caller
-        inspects ``result.memory.raw_content`` when needed.
+        Status filtering precedence:
+          1. Explicit ``status`` — always wins (caller knows what they want).
+          2. ``include_raw=True`` — no status filter (all statuses returned,
+             including raw/processing entries not yet pipeline-processed).
+          3. Default (``include_raw=False``, no ``status``) — only
+             ``published`` and ``processed`` memories surface, preserving the
+             documented "Only searches 'published' knowledge units by default"
+             contract.
         """
-        _ = include_raw  # accepted for contract symmetry; no search-leg effect
         alpha = hybrid_alpha if hybrid_alpha is not None else self.settings.search.hybrid_alpha
         _t0 = time.monotonic()
+
+        # Resolve the status filter applied to the FTS leg.
+        # fts_search treats status=None as "no filter", so we only pass a
+        # value when an explicit status was given. The include_raw/default
+        # gating is applied post-hoc below (fts_search does not accept a
+        # list of allowed statuses, and widening its signature is out of
+        # scope for this fix).
+        fts_status = status  # explicit status always wins
 
         # ── FTS leg ────────────────────────────────────────────────────────
         fts_pairs: list[tuple[Memory, float]] = []
@@ -253,10 +265,21 @@ class MemoryManager:
                 limit=limit * 2,
                 project=project,
                 agent=agent,
-                status=status,
+                status=fts_status,
             )
         except Exception as exc:
             logger.warning("FTS search failed: %s", exc)
+
+        # Default gating: when no explicit status was requested and the
+        # caller did not opt into raw entries, restrict FTS hits to the
+        # "ready" statuses. This keeps recently-added raw entries out of
+        # normal search unless the caller explicitly asks for them.
+        if status is None and not include_raw:
+            fts_pairs = [
+                (m, s)
+                for m, s in fts_pairs
+                if m.status in (MemoryStatus.PUBLISHED, MemoryStatus.PROCESSED)
+            ]
 
         # ── Vector leg ─────────────────────────────────────────────────────
         vector_pairs: list[tuple[str, float]] = []
@@ -284,13 +307,28 @@ class MemoryManager:
                 # deleted between vector and SQLite indexes.
                 fetched: Memory | None = self.sqlite.get(mid)
                 if fetched is not None:
-                    # Finding: filter vector results by status — the vector
-                    # leg does not apply the status filter at query time, so
-                    # a non-published memory that somehow entered the vector
-                    # store could surface in search results. Filter here.
+                    # Filter vector results by the same status policy as the
+                    # FTS leg. The vector store only holds published memories
+                    # in normal operation, but a non-published memory that
+                    # somehow entered the store could surface here.
                     if status is not None and fetched.status != status:
                         continue
+                    if (
+                        status is None
+                        and not include_raw
+                        and fetched.status
+                        not in (
+                            MemoryStatus.PUBLISHED,
+                            MemoryStatus.PROCESSED,
+                        )
+                    ):
+                        continue
                     id_to_memory[mid] = fetched
+
+        # Search mode: "hybrid" when both legs contributed, else "fts_only".
+        # Vector leg failure (embeddings down) degrades gracefully — RRF
+        # still ranks FTS-only results, but callers can see the mode.
+        search_type = "hybrid" if vector_pairs else "fts_only"
 
         # Apply tag filter post-hoc
         results: list[SearchResult] = []
@@ -300,7 +338,7 @@ class MemoryManager:
                 continue
             if tags and not all(t in matched.tags for t in tags):
                 continue
-            results.append(SearchResult(memory=matched, score=score, search_type="hybrid"))
+            results.append(SearchResult(memory=matched, score=score, search_type=search_type))
             if len(results) >= limit:
                 break
         # Record search instrumentation (in-memory, resets on restart).
@@ -319,13 +357,20 @@ class MemoryManager:
         return results
 
     def agent_recall(self, query: AgentRecallQuery) -> list[SearchResult]:
-        """M3 — per-agent recall: recent entries + optional hybrid search."""
+        """M3 — per-agent recall: recent entries + optional hybrid search.
+
+        Agent recall is about "what has this agent stored", not "what is
+        published knowledge" — so the query path passes ``include_raw=True``
+        to surface recently-added entries regardless of pipeline status.
+        The recency path (no query) already has no status filter.
+        """
         if query.query:
             return self.search(
                 query.query,
                 agent=query.agent,
                 project=query.project,
                 limit=query.limit,
+                include_raw=True,
             )
         # No query → return most recent N for agent
         memories = self.sqlite.list_recent_for_agent(
@@ -465,6 +510,12 @@ class MemoryManager:
     def stats(self) -> dict[str, Any]:
         by_status = self.sqlite.count_by_status()
         filter_stats = self.sqlite.get_filter_stats()
+        vector_count = self.vectors.count()
+        published_count = int(by_status.get("published", 0))
+        # Degraded: published memories exist but none are embedded —
+        # vector search is silently unavailable, search degrades to FTS-only.
+        degraded = vector_count == 0 and published_count > 0
+        queue_depth = int(by_status.get("raw", 0)) + int(by_status.get("processing", 0))
         return {
             "status": "ok",
             "version": __version__,
@@ -472,7 +523,7 @@ class MemoryManager:
             "vault_path": str(self.settings.mnemos.vault_path),
             "total": self.sqlite.count(),
             "by_status": by_status,
-            "vectors": self.vectors.count(),
+            "vectors": vector_count,
             "projects": self.sqlite.get_project_memory_counts(),
             "filter": {
                 "auto_filter": self.settings.mnemos.auto_filter,
@@ -480,6 +531,22 @@ class MemoryManager:
                 "unfiltered_count": filter_stats["unfiltered"],
                 "avg_reduction_pct": filter_stats["avg_reduction_pct"],
                 "by_profile": filter_stats["by_profile"],
+            },
+            "embedding_status": {
+                "provider": self.settings.embedding.provider,
+                "vectors_indexed": vector_count,
+                "degraded": degraded,
+            },
+            "processor": {
+                "queue_depth": queue_depth,
+                # Pipeline runs record their finish time in the meta table;
+                # None means the pipeline has never run yet.
+                "last_processed_at": self.sqlite.get_meta("pipeline_last_run"),
+            },
+            "search_health": {
+                "fts_available": True,  # FTS5 is always available (SQLite built-in)
+                "vector_available": vector_count > 0,
+                "mode": "hybrid" if vector_count > 0 else "fts_only",
             },
         }
 
@@ -887,6 +954,10 @@ class MemoryManager:
 
             pub = self.publish(syn.draft_id)
             published.append(pub)
+
+        # Record when the pipeline last finished so stats() / dashboards can
+        # detect a stuck pipeline (queue growing but last_processed_at stale).
+        self.sqlite.set_meta("pipeline_last_run", datetime.now(UTC).isoformat())
 
         return {
             "clusters": len(clusters),

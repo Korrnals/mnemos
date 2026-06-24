@@ -364,6 +364,15 @@ CREATE TABLE IF NOT EXISTS auth_challenges (
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_sha256      ON auth_tokens(token_sha256);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires   ON auth_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_auth_challenges_expires ON auth_challenges(expires_at);
+
+-- Generic key-value metadata store for cross-run state (e.g. pipeline
+-- last-run timestamp). Uses UPSERT so concurrent writers don't clobber
+-- each other's rows.
+CREATE TABLE IF NOT EXISTS meta (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 _MIGRATIONS: list[tuple[str, str]] = [
@@ -1181,3 +1190,23 @@ class SQLiteStore:
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
+
+    # ── Generic key-value metadata ────────────────────────────────────────
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Upsert a metadata row (e.g. pipeline last-run timestamp)."""
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO meta (key, value, updated_at) VALUES (?,?,?)
+               ON CONFLICT(key) DO UPDATE SET
+                   value=excluded.value,
+                   updated_at=excluded.updated_at""",
+            (key, value, datetime.now(UTC).isoformat()),
+        )
+        conn.commit()
+
+    def get_meta(self, key: str) -> str | None:
+        """Read a metadata row. Returns None if the key does not exist."""
+        conn = self._get_conn()
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None

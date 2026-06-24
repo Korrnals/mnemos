@@ -163,10 +163,41 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
     logger = logging.getLogger(__name__)
     logger.warning("Tag contract violations (lax mode — auto-patching): %s", patchable_errors)
     patched = list(tags)
-    if not project_tags:
+
+    # Normalize case for project/agent tags instead of dropping to "unknown".
+    # This prevents duplicate namespaces (project:Project-Umbra vs
+    # project:project-umbra) when callers pass mixed-case slugs.
+    def _normalize_slug(tag: str, regex: re.Pattern[str], prefix: str) -> str | None:
+        """Return a normalized form of ``tag`` if it can be salvaged, else None.
+
+        Lowercases the slug portion and replaces spaces with hyphens. If the
+        normalized form still does not match ``regex``, the tag is not
+        recoverable and the caller falls back to the ``<prefix>unknown`` default.
+        """
+        slug = tag[len(prefix) :]
+        normalized = prefix + slug.lower().replace(" ", "-")
+        return normalized if regex.match(normalized) else None
+
+    if project_tags and not _PROJECT_RE.match(project_tags[0]):
+        normalized = _normalize_slug(project_tags[0], _PROJECT_RE, "project:")
+        if normalized is not None:
+            patched = [normalized if t == project_tags[0] else t for t in patched]
+            logger.warning("Normalized project tag: %s → %s", project_tags[0], normalized)
+        else:
+            patched = [t for t in patched if t != project_tags[0]] + ["project:unknown"]
+    elif not project_tags:
         patched.append("project:unknown")
-    if not agent_tags:
+
+    if agent_tags and not _AGENT_RE.match(agent_tags[0]):
+        normalized = _normalize_slug(agent_tags[0], _AGENT_RE, "agent:")
+        if normalized is not None:
+            patched = [normalized if t == agent_tags[0] else t for t in patched]
+            logger.warning("Normalized agent tag: %s → %s", agent_tags[0], normalized)
+        else:
+            patched = [t for t in patched if t != agent_tags[0]] + ["agent:unknown"]
+    elif not agent_tags:
         patched.append("agent:unknown")
+
     if not gcw_tags:
         patched.append("gcw:legacy")
     return patched

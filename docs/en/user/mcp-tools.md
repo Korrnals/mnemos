@@ -625,8 +625,8 @@ Same shape as the CLI `mnemos stats` command — see [cli-reference.md#stats](cl
 {
   "status": "ok",
   "version": "0.1.0",
-  "data_dir": "/home/you/.mnemos",
-  "vault_path": "/home/you/mnemos-vault",
+  "data_dir": "/home/you/.mnemos/data",
+  "vault_path": "/home/you/.mnemos/vault",
   "total": 142,
   "by_status": {"raw": 5, "processing": 0, "processed": 12, "published": 120, "archived": 5},
   "vectors": 120

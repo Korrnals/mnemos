@@ -19,6 +19,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
+from unittest.mock import patch as mock_patch
 
 import pyotp  # type: ignore[import-untyped]
 import pytest
@@ -592,20 +593,47 @@ class TestTotpReplay:
 
             auth_mod.load_settings = patch  # type: ignore[assignment]
             try:
-                # First verify: succeed
-                r1 = tc.post("/auth/login", json={"token": plaintext})
-                cid1 = r1.json()["challenge_id"]
-                code = pyotp.TOTP(totp_secret).now()
-                r2 = tc.post("/auth/verify", json={"challenge_id": cid1, "code": code})
-                assert r2.status_code == 200
-                assert store.get_totp_last_step(token_id) is not None
+                # This test verifies the **replay guard** in auth.py, not
+                # pyotp's verification logic.  We mock pyotp.TOTP.verify to
+                # always return True so the test is deterministic regardless
+                # of real wall-clock time or TOTP step boundaries.
+                #
+                # The replay guard in auth.py reads ``time.time()`` to
+                # compute ``current_step = int(time.time()) // 30``.  We pin
+                # ONLY ``mnemos.api.auth.time.time`` to a fixed value so both
+                # verify requests see the same step.  The second request is
+                # then rejected because ``current_step == last_step``.
+                #
+                # We deliberately do NOT mock the global ``time.time`` or
+                # ``datetime.datetime.now``: on Python 3.12, mock.patch does
+                # not reliably propagate to modules that already imported
+                # ``datetime`` (notably pyotp), causing the old test to pass
+                # locally (3.14) but fail on CI (3.12).
+                fixed_time = 1_700_000_000.0
+                code = pyotp.TOTP(totp_secret).at(fixed_time)
+                with (
+                    mock_patch("mnemos.api.auth.time.time", return_value=fixed_time),
+                    mock_patch("pyotp.TOTP.verify", return_value=True),
+                ):
+                    # First verify: succeed
+                    r1 = tc.post("/auth/login", json={"token": plaintext})
+                    cid1 = r1.json()["challenge_id"]
+                    r2 = tc.post(
+                        "/auth/verify",
+                        json={"challenge_id": cid1, "code": code},
+                    )
+                    assert r2.status_code == 200
+                    assert store.get_totp_last_step(token_id) is not None
 
-                # Issue a fresh challenge and replay the SAME code
-                r3 = tc.post("/auth/login", json={"token": plaintext})
-                cid2 = r3.json()["challenge_id"]
-                r4 = tc.post("/auth/verify", json={"challenge_id": cid2, "code": code})
-                assert r4.status_code == 401
-                assert "already used" in r4.json()["detail"].lower()
+                    # Issue a fresh challenge and replay the SAME code
+                    r3 = tc.post("/auth/login", json={"token": plaintext})
+                    cid2 = r3.json()["challenge_id"]
+                    r4 = tc.post(
+                        "/auth/verify",
+                        json={"challenge_id": cid2, "code": code},
+                    )
+                    assert r4.status_code == 401
+                    assert "already used" in r4.json()["detail"].lower()
             finally:
                 auth_mod.load_settings = orig  # type: ignore[assignment]
         _cleanup(mgr)

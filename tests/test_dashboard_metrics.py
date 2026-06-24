@@ -410,9 +410,12 @@ class TestSearchInstrumentation:
             "kubernetes deploy",
             ["project:test", "agent:test", "gcw:learning"],
         )
-        # Perform 3 searches
+        # Perform 3 searches (include_raw: newly added entries are raw)
         for _ in range(3):
-            client.post("/search", json={"query": "kubernetes", "limit": 5})
+            client.post(
+                "/search",
+                json={"query": "kubernetes", "limit": 5, "include_raw": True},
+            )
         resp = client.get("/api/v1/stats")
         data = resp.json()
         assert data["search"]["requests_total"] == 3
