@@ -281,9 +281,13 @@ def tags_normalize(
     """Normalize project:/agent: tag case to lowercase across all memories.
 
     Scans every memory in the SQLite store, lowercases the slug portion of
-    project: and agent: tags (matching the lax-mode logic in
-    validate_tag_contract), and re-saves memories that changed. The FTS
-    trigger fires on UPDATE so search stays consistent.
+    project: and agent: tags and replaces spaces with hyphens (matching the
+    lax-mode normalization in ``validate_tag_contract``), and updates
+    memories that changed via ``update_fields`` (plain UPDATE). The FTS5
+    ``AFTER UPDATE`` trigger fires on UPDATE so the search index stays
+    consistent; using ``save()`` (INSERT OR REPLACE) here would risk
+    desyncing the FTS5 external content table. The denormalised ``project``
+    and ``agent`` columns are updated in the same statement.
     """
 
     mgr = get_manager(config)
@@ -326,10 +330,28 @@ def tags_normalize(
             if dry_run:
                 continue
 
-            # Update tags in-place and re-save. sqlite.save() does an
-            # INSERT OR REPLACE, which fires the FTS UPDATE trigger.
-            mem.tags = new_tags
-            mgr.sqlite.save(mem)
+            # Use update_fields (UPDATE) not save() (INSERT OR REPLACE).
+            # INSERT OR REPLACE can desync the FTS5 external content table
+            # (`content=memories`), causing "missing row from content
+            # table" errors on subsequent searches. A plain UPDATE fires
+            # the `memories_au` AFTER UPDATE trigger which keeps the FTS5
+            # index consistent. Also update the denormalised `project` and
+            # `agent` columns so per-project / per-agent queries stay in
+            # sync with the normalized tags.
+            new_project = next(
+                (t[len("project:") :] for t in new_tags if t.startswith("project:")),
+                mem.project,
+            )
+            new_agent = next(
+                (t[len("agent:") :] for t in new_tags if t.startswith("agent:")),
+                mem.agent,
+            )
+            mgr.sqlite.update_fields(
+                mem.id,
+                tags=new_tags,
+                project=new_project,
+                agent=new_agent,
+            )
 
     console.print(f"[bold]Scanned:[/bold] {scanned} memories")
     console.print(f"[bold]Normalized:[/bold] {normalized_count} memories")
