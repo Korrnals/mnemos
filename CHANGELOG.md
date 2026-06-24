@@ -7,37 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [2.2.0] - 2026-06-24
 
-- **`include_raw=True` no longer surfaces archived entries** —
-  `manager.search()` was returning `archived` memories when
-  `include_raw=True` and no explicit `status` was given. `archived` means
-  "intentionally hidden from normal search"; it is now excluded from
-  `include_raw=True` results. An explicit `status=MemoryStatus.ARCHIVED`
-  still returns archived entries (explicit status always wins). The same
-  status-policy is now applied to the vector leg, not just the FTS leg.
-- **`search_type` reflects actual vector contribution** — the indicator
-  was set to `"hybrid"` whenever the vector leg returned pairs, even if all
-  were filtered out by status or already covered by FTS. It now tracks
-  whether any vector pair survived filtering AND contributed a new id not
-  already found by FTS. A search where the vector leg returned only
-  already-known or filtered-out results reports `"fts_only"`.
-- **`mnemos_search` MCP tool gives a clear error for invalid `status`** —
-  passing `status="invalid"` previously raised a `ValueError` caught by the
-  generic handler, producing `❌ Error: 'invalid' is not a valid
-  MemoryStatus` without listing valid values. The error now lists all
-  valid statuses: `raw, processing, processed, published, archived`.
-- **`stats()` detects orphaned vectors** — `search_health` now includes
+### Added
+
+- **`mnemos_search` MCP tool gains `status` parameter** — the MCP schema was
+  missing `status` even though `manager.search()` accepted it. Callers can now
+  filter by `raw`/`processing`/`processed`/`published`/`archived` via MCP.
+  `include_raw` description corrected: it controls status filtering, not
+  `raw_content` inclusion.
+- **`mnemos_stats` health fields** — `stats()` now returns `embedding_status`
+  (provider, vectors_indexed, degraded flag), `processor` (queue depth,
+  last_processed_at), and `search_health` (fts_available, vector_available,
+  mode, orphaned_vectors). Callers can detect a stuck pipeline, degraded
+  search, or vector/SQLite drift.
+- **`mnemos tags normalize` CLI command** — normalizes existing tags in the
+  SQLite store to canonical lowercase + hyphenated form, matching
+  `validate_tag_contract` lax-mode normalization. Uses `update_fields()` to
+  keep the FTS5 index consistent.
+- **`processor.last_processed_at` tracking** — the background processor now
+  records the timestamp of its last successful processing cycle, surfaced via
+  `stats().processor.last_processed_at` so callers can detect a stuck pipeline.
+- **`search_health.orphaned_vectors`** — `search_health` now includes
   `orphaned_vectors` (`True` when vectors exist but `published_count == 0`),
   indicating the vector store drifted out of sync with SQLite (e.g.
   memories were deleted but vectors were not removed).
-- **Tag normalization strips leading/trailing spaces** —
-  `validate_tag_contract` lax-mode `_normalize_slug` and the CLI
-  `tags normalize` command did not strip the slug before lowercasing and
-  replacing spaces with hyphens. `project: My Project ` produced
-  `project:-my-project-` (leading/trailing hyphens). Both now `.strip()`
-  first, yielding `project:my-project`.
+- **Wheel now includes `scripts/`** — `mcp-setup.sh`, `install.sh`, `deploy.sh`,
+  `setup-distrobox.sh` are packaged via hatchling `force-include` so
+  `mnemos integration setup` works from a pip-installed wheel, not just a source
+  checkout. `register_mcp()` now uses a 3-tier `_find_mcp_setup_script()` helper
+  (source-tree → `importlib.resources` → upward search) to locate the script.
+  Closes #52.
 
+### Changed
+
+- **`ruff format --check` added to `make verify`** — the `format-check` Make
+  target runs `ruff format --check src/ tests/` and is now part of the
+  `verify` gate, ensuring formatting violations fail CI before merge.
+
+### Fixed
+
+- **`include_raw` filter implemented** — `manager.search()` was accepting
+  `include_raw` as a no-op. Now: `include_raw=False` (default) filters FTS
+  results to `published` + `processed` only, preserving the "only searches
+  published knowledge by default" contract. `include_raw=True` surfaces
+  `raw`/`processing` entries not yet pipeline-processed. Explicit `status`
+  parameter always takes precedence. The REST `/search` endpoint and
+  `mnemos_agent_recall` query path now pass `include_raw` through correctly.
+- **`mnemos_agent_recall` finds raw entries** — the query path now passes
+  `include_raw=True` so agent recall surfaces recently-added entries regardless
+  of pipeline status. The recency path (no query) already had no status filter.
+- **Project/agent tag case normalized in lax mode** — `project:Project-Umbra`
+  is now normalized to `project:project-umbra` (canonical lowercase) instead of
+  being replaced with `project:unknown`. Prevents duplicate namespaces from
+  mixed-case slugs. Strict mode is unchanged (still rejects uppercase).
+- **`search_type` indicator reflects actual mode** — when the vector leg is
+  empty (embeddings down or no vectors indexed), results now carry
+  `search_type="fts_only"` instead of `"hybrid"`, so callers can detect
+  degraded search mode.
 - **`tags normalize` no longer corrupts the FTS5 index** — the CLI command
   used `sqlite.save()` (INSERT OR REPLACE) to persist normalized tags, which
   could desync the FTS5 external content table (`content=memories`) and cause
@@ -57,45 +84,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   users can now opt in with `--include-raw` or filter explicitly with
   `--status raw|processing|processed|published|archived`. A `--tags` filter
   flag was also added for parity with the API.
-
-- **`include_raw` parameter now filters by status** — `manager.search()` was
-  accepting `include_raw` as a no-op. Now: `include_raw=False` (default) filters
-  FTS results to `published` + `processed` only, preserving the "only searches
-  published knowledge by default" contract. `include_raw=True` surfaces
-  `raw`/`processing` entries not yet pipeline-processed. Explicit `status`
-  parameter always takes precedence. The REST `/search` endpoint and
-  `mnemos_agent_recall` query path now pass `include_raw` through correctly.
-- **`mnemos_search` MCP tool gains `status` parameter** — the MCP schema was
-  missing `status` even though `manager.search()` accepted it. Callers can now
-  filter by `raw`/`processing`/`processed`/`published`/`archived` via MCP.
-  `include_raw` description corrected: it controls status filtering, not
-  `raw_content` inclusion.
-- **`mnemos_agent_recall` finds raw entries** — the query path now passes
-  `include_raw=True` so agent recall surfaces recently-added entries regardless
-  of pipeline status. The recency path (no query) already had no status filter.
-- **Project/agent tag case normalized in lax mode** — `project:Project-Umbra`
-  is now normalized to `project:project-umbra` (canonical lowercase) instead of
-  being replaced with `project:unknown`. Prevents duplicate namespaces from
-  mixed-case slugs. Strict mode is unchanged (still rejects uppercase).
-- **`search_type` indicator reflects actual mode** — when the vector leg is
-  empty (embeddings down or no vectors indexed), results now carry
-  `search_type="fts_only"` instead of `"hybrid"`, so callers can detect
-  degraded search mode.
-
-### Added
-
-- **`mnemos_stats` health fields** — `stats()` now returns `embedding_status`
-  (provider, vectors_indexed, degraded flag), `processor` (queue depth,
-  last_processed_at), and `search_health` (fts_available, vector_available,
-  mode, orphaned_vectors). Callers can detect a stuck pipeline, degraded
-  search, or vector/SQLite drift.
-
-- **Wheel now includes `scripts/`** — `mcp-setup.sh`, `install.sh`, `deploy.sh`,
-  `setup-distrobox.sh` are packaged via hatchling `force-include` so
-  `mnemos integration setup` works from a pip-installed wheel, not just a source
-  checkout. `register_mcp()` now uses a 3-tier `_find_mcp_setup_script()` helper
-  (source-tree → `importlib.resources` → upward search) to locate the script.
-  Closes #52.
+- **`include_raw=True` excludes archived** — `manager.search()` was returning
+  `archived` memories when `include_raw=True` and no explicit `status` was
+  given. `archived` means "intentionally hidden from normal search"; it is now
+  excluded from `include_raw=True` results. An explicit
+  `status=MemoryStatus.ARCHIVED` still returns archived entries (explicit
+  status always wins). The same status-policy is now applied to the vector
+  leg, not just the FTS leg.
+- **`search_type` reflects actual vector contribution** — the indicator was
+  set to `"hybrid"` whenever the vector leg returned pairs, even if all were
+  filtered out by status or already covered by FTS. It now tracks whether any
+  vector pair survived filtering AND contributed a new id not already found
+  by FTS. A search where the vector leg returned only already-known or
+  filtered-out results reports `"fts_only"`.
+- **`mnemos_search` MCP tool gives a clear error for invalid `status`** —
+  passing `status="invalid"` previously raised a `ValueError` caught by the
+  generic handler, producing `❌ Error: 'invalid' is not a valid
+  MemoryStatus` without listing valid values. The error now lists all valid
+  statuses: `raw, processing, processed, published, archived`.
+- **Tag normalization strips leading/trailing spaces** —
+  `validate_tag_contract` lax-mode `_normalize_slug` and the CLI
+  `tags normalize` command did not strip the slug before lowercasing and
+  replacing spaces with hyphens. `project: My Project ` produced
+  `project:-my-project-` (leading/trailing hyphens). Both now `.strip()`
+  first, yielding `project:my-project`.
+- **Dependency bumps** — `pyyaml>=6.0.3`, `httpx>=0.28.1`, `fastapi>=0.138.0`,
+  `typer>=0.26.7`, `python-dateutil` updated; GitHub Actions
+  `actions/checkout@7`, `actions/upload-artifact@7`,
+  `softprops/action-gh-release@3` bumped via dependabot.
 
 ## [2.1.0] — 2026-06-23
 
