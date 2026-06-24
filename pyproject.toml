@@ -37,7 +37,7 @@ dependencies = [
     "idna>=3.15",              # PYSEC-2026-215 fixed in 3.15
     "pygments>=2.20.0",        # CVE-2026-4539 fixed in 2.20.0
     # CLI
-    "typer>=0.12",
+    "typer>=0.26.7",
     "rich>=13.0",
     # File watching
     "watchdog>=4.0",
