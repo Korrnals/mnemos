@@ -201,8 +201,8 @@ updated: 2026-04-10T12:00:00
 ```yaml
 # config.yaml
 mnemos:
-  vault_path: ~/mnemos-vault         # Obsidian vault
-  data_dir: ~/.mnemos                # ChromaDB + SQLite
+  vault_path: ~/.mnemos/vault          # Obsidian vault
+  data_dir: ~/.mnemos/data             # ChromaDB + SQLite
 
 embedding:
   provider: sentence-transformers    # sentence-transformers | ollama | openai

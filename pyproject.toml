@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mnemos"
-version = "2.0.5"
+version = "2.1.0"
 description = "Standalone memory & knowledge server for GCW agents — forked from ai-brain"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,19 +13,29 @@ license = "MIT"
 dependencies = [
     # Core
     "pydantic>=2.0",
-    "pydantic-settings>=2.0",
+    # CVE-2026-4539 (pygments transitive via rich/pytest) fixed in 2.20.0;
+    # GHSA-4xgf-cpjx-pc3j fixed in 2.14.2.
+    "pydantic-settings>=2.14.2",
     "pyyaml>=6.0",
     "aiosqlite>=0.20",
     # Vector Search (includes onnxruntime for built-in embeddings — no torch needed)
     "chromadb>=0.5",
     # API
     "fastapi>=0.115",
-    "python-multipart>=0.0.9",  # multipart form data for POST /api/v1/import (UploadFile)
+    # CVE-2026-40347/42561/53538/53539/53540 fixed in 0.0.31.
+    "python-multipart>=0.0.31",  # multipart form data for POST /api/v1/import (UploadFile)
     "uvicorn[standard]>=0.30",
     # Transitive CVE closure (M15.5.1) — pinned directly to force resolver
     # past vulnerable transitive versions still pulled by chromadb/k8s/fastapi.
     "aiohttp>=3.14.1,<4.0",    # CVE-2026-34993, 47265, 50269, 54273-54280 fixed in 3.14.x
     "starlette>=1.3.0,<2.0",   # CVE-2026-48817, 48818, 54282, 54283 fixed in 1.3.x
+    # Transitive CVE closure (M15.5.2) — pinned directly to force resolver
+    # past vulnerable transitive versions pulled by mcp/chromadb/httpx.
+    "pyjwt>=2.13.0",           # PYSEC-2026-120/175/176/177/178/179 fixed in 2.13.0
+    "urllib3>=2.7.0",          # PYSEC-2026-141/142 fixed in 2.7.0
+    "python-dotenv>=1.2.2",    # CVE-2026-28684 fixed in 1.2.2
+    "idna>=3.15",              # PYSEC-2026-215 fixed in 3.15
+    "pygments>=2.20.0",        # CVE-2026-4539 fixed in 2.20.0
     # CLI
     "typer>=0.12",
     "rich>=13.0",
@@ -43,7 +53,8 @@ dependencies = [
     # T-AUTH (ADR-0014): bearer tokens + TOTP 2FA + rate limiting
     "pyotp~=2.9",
     "slowapi~=0.1.9",
-    "cryptography>=41.0",  # Fernet for TOTP-secret-at-rest; also transitive via httpx[http2]
+    # CVE-2026-26007, PYSEC-2026-35/36, GHSA-537c-gmf6-5ccf fixed in 48.0.1.
+    "cryptography>=48.0.1",  # Fernet for TOTP-secret-at-rest; also transitive via httpx[http2]
 ]
 
 [project.optional-dependencies]
@@ -79,7 +90,8 @@ docx = [
     "python-docx>=1.1",
 ]
 dev = [
-    "pytest>=8.0",
+    # CVE-2025-71176 fixed in 9.0.3.
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=7.0",
     "ruff>=0.15,<0.16",  # CI pins to 0.15.x to match local format
@@ -104,6 +116,11 @@ packages = ["src/mnemos"]
 # "mnemos") / "integrations"`.
 [tool.hatch.build.targets.wheel.force-include]
 "integrations" = "mnemos/integrations"
+# Ship the setup scripts (mcp-setup.sh, install.sh, deploy.sh, setup-distrobox.sh)
+# inside the wheel so `mnemos integration setup` can find mcp-setup.sh from a
+# pip-installed package, not just from a source checkout. Mapped to
+# `mnemos/scripts/` — reachable via `importlib.resources.files("mnemos") / "scripts"`.
+"scripts" = "mnemos/scripts"
 
 [tool.ruff]
 target-version = "py311"
@@ -118,7 +135,11 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.mypy]
-python_version = "3.11"
+# Don't pin python_version — let each CI job (3.11/3.12/3.13) use its
+# runtime Python version. Pinning to 3.11 causes mypy to reject PEP 695
+# `type` statements in numpy stubs installed on 3.12/3.13 (syntax error
+# that follow_imports=skip cannot suppress). The 3.11 CI job still
+# catches 3.12+ features in our own code.
 strict = true
 ignore_missing_imports = true
 warn_return_any = true
@@ -132,6 +153,18 @@ warn_unused_ignores = true
 module = "mnemos.mcp_server"
 disallow_untyped_decorators = false
 disallow_untyped_calls = false
+
+# numpy stubs use PEP 695 `type` statement (Python 3.12+) which mypy
+# doesn't support in all versions. Don't follow into numpy stubs and
+# ignore any errors there — we only type-check our own code.
+[[tool.mypy.overrides]]
+module = "numpy"
+follow_imports = "skip"
+ignore_errors = true
+[[tool.mypy.overrides]]
+module = "numpy.*"
+follow_imports = "skip"
+ignore_errors = true
 
 [tool.bandit]
 exclude_dirs = [".venv", "tests"]

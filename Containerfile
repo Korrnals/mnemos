@@ -25,6 +25,9 @@ COPY src/ ./src/
 # integrations/ is required at build time — pyproject.toml force-include
 # ships it inside the wheel via [tool.hatch.build.targets.wheel.force-include].
 COPY integrations/ ./integrations/
+# scripts/ is required at build time — force-include ships it inside the wheel
+# as mnemos/scripts/ so `mnemos integration setup` can find mcp-setup.sh.
+COPY scripts/ ./scripts/
 RUN pip install --no-cache-dir ".[mcp]"
 
 # Default directories

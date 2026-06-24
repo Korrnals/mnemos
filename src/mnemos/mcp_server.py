@@ -24,6 +24,7 @@ from mnemos.models import (
     AgentRecallQuery,
     MemoryCreate,
     MemorySource,
+    MemoryStatus,
     MemoryType,
     TagContractError,
     validate_tag_contract,
@@ -205,8 +206,18 @@ async def list_tools() -> list[Tool]:
                     },
                     "include_raw": {
                         "type": "boolean",
-                        "description": "Include raw_content in results (default: false)",
+                        "description": (
+                            "When true, includes raw/processing entries in results "
+                            "(default: false — only published/processed)."
+                        ),
                         "default": False,
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["raw", "processing", "processed", "published", "archived"],
+                        "description": (
+                            "Filter by memory status (optional). Overrides include_raw."
+                        ),
                     },
                 },
                 "required": ["query"],
@@ -495,12 +506,15 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
 
     # ── mnemos_search ───────────────────────────────────────────────────────
     if name == "mnemos_search":
+        status_str = args.get("status")
+        status = MemoryStatus(status_str) if status_str else None
         results = mgr.search(
             query=args["query"],
             tags=args.get("tags"),
             project=args.get("project"),
             limit=args.get("limit", 10),
             include_raw=args.get("include_raw", False),
+            status=status,
         )
         return [
             {
@@ -687,9 +701,18 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
 
 async def main() -> None:
     """Run the Mnemos MCP server over stdio."""
+    from mnemos.logging_setup import setup_logging
+
+    setup_logging(load_settings())
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
             write_stream,
             server.create_initialization_options(),
         )
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(main())

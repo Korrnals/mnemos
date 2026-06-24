@@ -55,8 +55,8 @@ pip install -e ".[dev]"
 |-------|--------|
 | Editable dev (рекомендуется для контрибьюторов) | `pip install -e ".[dev,mcp]"` |
 | Из исходников, версионированный | `pip install ".[mcp]"` |
-| Released wheel | `pip install https://github.com/Korrnals/mnemos/releases/download/v1.1.1/mnemos-1.1.1-py3-none-any.whl` |
-| Контейнер | `podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 --env MNEMOS_API__TOTP_MASTER_KEY=<key> ghcr.io/korrnals/mnemos:1.1.1` — см. [container-deployment.md](../admin/runbooks/container-deployment.md) |
+| Released wheel | `pip install https://github.com/Korrnals/mnemos/releases/download/v2.1.0/mnemos-2.1.0-py3-none-any.whl` |
+| Контейнер | `podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 --env MNEMOS_API__TOTP_MASTER_KEY=<key> ghcr.io/korrnals/mnemos:2.1.0` — см. [container-deployment.md](../admin/runbooks/container-deployment.md) |
 
 ### Опциональные экстры LLM-провайдеров
 
@@ -113,8 +113,8 @@ mnemos add --content "Hello world" --tags project:test agent:getting-started gcw
 
 Mnemos автоматически:
 
-1. **Записал запись в SQLite** по пути `~/.mnemos/mnemos.db`.
-2. **Отразил её в Obsidian-vault** `~/mnemos-vault/` как markdown-файл с YAML-фронтматером.
+1. **Записал запись в SQLite** по пути `~/.mnemos/data/mnemos.db`.
+2. **Отразил её в Obsidian-vault** `~/.mnemos/vault/` как markdown-файл с YAML-фронтматером.
 3. **Проверил контракт тегов** — `project:test` + `agent:getting-started` + `gcw:learning` — корректная тройка M2. Если пропустить один из тегов, вы получите `❌ Tag contract violation: ...` вместо подтверждения.
 
 Контракт тегов описан в [tag-contract.md](tag-contract.md). Коротко: каждая запись требует **ровно одного** `project:<slug>`, **ровно одного** `agent:<slug>` и **хотя бы одного** `gcw:<subtype>` (например, `gcw:learning`, `gcw:bug-pattern`, `gcw:decision`).
@@ -202,8 +202,8 @@ mnemos mcp-server
       "command": "mnemos",
       "args": ["mcp-server"],
       "env": {
-        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos",
-        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/mnemos-vault"
+        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos/data",
+        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/.mnemos/vault"
       }
     }
   }
@@ -211,3 +211,22 @@ mnemos mcp-server
 ```
 
 После сохранения VS Code отобразит инструменты `mnemos_*` в панели «tools» Copilot Chat. Полный каталог инструментов — в [mcp-tools.md](mcp-tools.md).
+
+> **Подсказка — режим auto-collect.** Установите `MNEMOS_AUTO_COLLECT=1` в env выше, чтобы Mnemos напоминал агенту вызывать `mnemos_save_context` каждые ~6 вызовов инструментов. См. [mcp-tools.md#auto-collect-mode](mcp-tools.md#auto-collect-mode) для компромиссов.
+
+---
+
+## Логирование
+
+Mnemos пишет логи в `~/.mnemos/logs/mnemos.log` по умолчанию (ротация, 10 МБ × 3 файла).
+Настройка через `config.yaml`:
+
+```yaml
+logging:
+  level: INFO                    # DEBUG | INFO | WARNING | ERROR
+  log_file: ~/.mnemos/logs/mnemos.log
+  max_file_size_mb: 10
+  backup_count: 3
+```
+
+CLI: `mnemos serve --verbose` для уровня DEBUG, `mnemos serve --log-file /path/to/log` для переопределения пути.

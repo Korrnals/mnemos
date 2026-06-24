@@ -9,7 +9,7 @@
 # Flags:
 #   --version VERSION   Mnemos version to install (default: latest from GitHub Releases)
 #   --extra EXTRAS      Comma-separated extras: mcp,ollama,openai,anthropic,gemini,dev,all (default: mcp)
-#   --venv PATH         Create a venv at PATH and install there (default: ~/.mnemos-venv)
+#   --venv PATH         Create a venv at PATH and install there (default: ~/.mnemos/venv)
 #   --no-venv           Install into the current Python (system/user), no venv
 #   --uv                Use uv instead of pip (auto-detected if available)
 #   --mcp               Set up VS Code MCP integration automatically (no prompt)
@@ -29,7 +29,7 @@ set -euo pipefail
 
 VERSION=""
 EXTRAS="mcp"
-VENV_PATH="${HOME}/.mnemos-venv"
+VENV_PATH="${HOME}/.mnemos/venv"
 NO_VENV=false
 USE_UV=false
 CONTAINER=false
@@ -173,10 +173,10 @@ EXTRA_BRACKET="[${EXTRAS}]"
 info "Installing mnemos${EXTRA_BRACKET} from ${WHEEL_URL}…"
 
 if [[ "$USE_UV" == true ]]; then
-  uv pip install "${WHEEL_URL}${EXTRA_BRACKET}"
+  uv pip install --reinstall --no-cache "${WHEEL_URL}${EXTRA_BRACKET}"
 else
   pip install --upgrade pip
-  pip install "${WHEEL_URL}${EXTRA_BRACKET}"
+  pip install --force-reinstall --no-cache-dir "${WHEEL_URL}${EXTRA_BRACKET}"
 fi
 
 # ── Resolve the mnemos binary ─────────────────────────────────────

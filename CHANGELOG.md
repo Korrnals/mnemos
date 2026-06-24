@@ -7,7 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **`include_raw` parameter now filters by status** — `manager.search()` was
+  accepting `include_raw` as a no-op. Now: `include_raw=False` (default) filters
+  FTS results to `published` + `processed` only, preserving the "only searches
+  published knowledge by default" contract. `include_raw=True` surfaces
+  `raw`/`processing` entries not yet pipeline-processed. Explicit `status`
+  parameter always takes precedence. The REST `/search` endpoint and
+  `mnemos_agent_recall` query path now pass `include_raw` through correctly.
+- **`mnemos_search` MCP tool gains `status` parameter** — the MCP schema was
+  missing `status` even though `manager.search()` accepted it. Callers can now
+  filter by `raw`/`processing`/`processed`/`published`/`archived` via MCP.
+  `include_raw` description corrected: it controls status filtering, not
+  `raw_content` inclusion.
+- **`mnemos_agent_recall` finds raw entries** — the query path now passes
+  `include_raw=True` so agent recall surfaces recently-added entries regardless
+  of pipeline status. The recency path (no query) already had no status filter.
+- **Project/agent tag case normalized in lax mode** — `project:Project-Umbra`
+  is now normalized to `project:project-umbra` (canonical lowercase) instead of
+  being replaced with `project:unknown`. Prevents duplicate namespaces from
+  mixed-case slugs. Strict mode is unchanged (still rejects uppercase).
+- **`search_type` indicator reflects actual mode** — when the vector leg is
+  empty (embeddings down or no vectors indexed), results now carry
+  `search_type="fts_only"` instead of `"hybrid"`, so callers can detect
+  degraded search mode.
+
+### Added
+
+- **`mnemos_stats` health fields** — `stats()` now returns `embedding_status`
+  (provider, vectors_indexed, degraded flag), `processor` (queue depth,
+  last_processed_at), and `search_health` (fts_available, vector_available,
+  mode). Callers can detect a stuck pipeline or degraded search.
+
+- **Wheel now includes `scripts/`** — `mcp-setup.sh`, `install.sh`, `deploy.sh`,
+  `setup-distrobox.sh` are packaged via hatchling `force-include` so
+  `mnemos integration setup` works from a pip-installed wheel, not just a source
+  checkout. `register_mcp()` now uses a 3-tier `_find_mcp_setup_script()` helper
+  (source-tree → `importlib.resources` → upward search) to locate the script.
+  Closes #52.
+
+## [2.1.0] — 2026-06-23
+
+### Added
+
+- **Consolidated directory layout** — all Mnemos data now lives under a single
+  root `~/.mnemos/` with subdirectories: `data/`, `vault/`, `logs/`, `cache/`,
+  `completion/`. Old scattered paths (`~/.mnemos-venv`, `~/mnemos-vault`) are
+  auto-migrated on first run (idempotent, non-destructive, skips custom paths).
+- **Logging configuration** — new `LoggingConfig` section in `config.yaml` with
+  `level`, `log_file`, `max_file_size_mb`, `backup_count`, `format`,
+  `date_format`. `setup_logging()` configures root logger with console +
+  `RotatingFileHandler` + uvicorn integration. CLI `--verbose/-v` flag for
+  DEBUG, `--log-file` option on `serve`.
+- **`mnemos doctor --paths`** — new flag showing all Mnemos paths in one table
+  (root, config, data_dir, db_path, vault, logs, cache, completion, mcp_config).
+  JSON output includes `"paths"` key.
+- **Shell completion fix** — completion script now stored as a file in
+  `~/.mnemos/completion/mnemos.{shell}` instead of inline `eval` in rc files.
+  `.bashrc`/`.zshrc` gets a single `source` line with `[ -f ... ] && source ...`
+  guard. Old `eval` entries auto-migrated. `_is_installed()` no longer matches
+  commented-out lines.
+
+### Changed
+
+- `MnemosConfig` defaults: `vault_path` → `~/.mnemos/vault`, `data_dir` →
+  `~/.mnemos/data` (was `~/mnemos-vault`, `~/.mnemos`).
+- `scripts/install.sh`: default venv path `~/.mnemos/venv` (was `~/.mnemos-venv`).
+- `scripts/mcp-setup.sh`: updated default paths.
+- `config.example.yaml`: new paths + `logging:` section.
+
+### Fixed
+
+- **Shell completion not working** — the `eval` line in `.bashrc` was
+  commented out (`#eval "$(mnemos --show-completion bash)"`), but
+  `_is_installed()` matched the marker inside the comment, reporting "already
+  installed" without fixing it. Now checks for active (uncommented) `source`
+  lines only.
+
+## [2.0.6] — 2026-06-22
+
+### Fixed
+
+- **MCP server `__main__` block missing** — `python -m mnemos.mcp_server`
+  imported the module but never called `main()`, so the server didn't
+  start. Added `if __name__ == "__main__"` block with `asyncio.run(main())`.
+- **MCP config pointed to source checkout** — `mcp-setup.sh` generated
+  config with `PYTHONPATH=src` pointing to the source directory. If the
+  source was deleted, MCP broke. Now uses the installed `mnemos mcp-server`
+  binary from `~/.mnemos-venv/bin/mnemos` — no source dependency.
+- **`mcp-setup.sh` couldn't overwrite stale entries** — added `--force`
+  flag to replace an existing `mnemos` entry (e.g. when migrating from
+  a source-checkout config to the installed binary).
+- **mypy `--strict` failures on numpy-typed code** — `vector_store.py`
+  `_pack`/`_unpack` returned `Any` from numpy calls; `embeddings/__init__.py`
+  iterated over chromadb's `Embedding?` TypeVar. Both now use explicit
+  `cast()` to the declared return types.
+- **mypy numpy stub syntax errors (PEP 695)** — added `ignore_errors = true`
+  to the `numpy` / `numpy.*` mypy overrides so the PEP 695 `type` statement
+  in the stubs doesn't break `--strict` on Python 3.12/3.13.
 
 ## [2.0.5] — 2026-06-22
 
