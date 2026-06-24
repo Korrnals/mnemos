@@ -16,7 +16,7 @@ dependencies = [
     # CVE-2026-4539 (pygments transitive via rich/pytest) fixed in 2.20.0;
     # GHSA-4xgf-cpjx-pc3j fixed in 2.14.2.
     "pydantic-settings>=2.14.2",
-    "pyyaml>=6.0",
+    "pyyaml>=6.0.3",
     "aiosqlite>=0.20",
     # Vector Search (includes onnxruntime for built-in embeddings — no torch needed)
     "chromadb>=0.5",
