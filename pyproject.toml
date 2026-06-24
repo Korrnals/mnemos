@@ -21,7 +21,7 @@ dependencies = [
     # Vector Search (includes onnxruntime for built-in embeddings — no torch needed)
     "chromadb>=0.5",
     # API
-    "fastapi>=0.115",
+    "fastapi>=0.138.0",
     # CVE-2026-40347/42561/53538/53539/53540 fixed in 0.0.31.
     "python-multipart>=0.0.31",  # multipart form data for POST /api/v1/import (UploadFile)
     "uvicorn[standard]>=0.30",
