@@ -378,6 +378,7 @@ async def search(query: SearchQuery) -> list[dict[str, Any]]:
         project=query.project,
         status=query.status,
         limit=query.limit,
+        include_raw=query.include_raw,
     )
     out = []
     for r in results:

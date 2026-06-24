@@ -40,6 +40,9 @@ lint-shell:  ## Run shellcheck on all shell scripts
 format:
 	ruff format src/ tests/
 
+format-check:
+	ruff format --check src/ tests/
+
 typecheck:
 	mypy --strict src/mnemos/
 
@@ -65,7 +68,7 @@ coverage:
 check-version:
 	@python -c "from mnemos import __version__; from importlib.metadata import version; v = version('mnemos'); assert __version__ == v, f'mismatch: __init__={__version__}, metadata={v}'; print(f'✓ version {v} consistent')"
 
-verify: lint typecheck test security security-reminder doctor check-version
+verify: format-check lint typecheck test security security-reminder doctor check-version
 	@echo "✅ All verification checks passed"
 
 # doctor gate: fail on actual failures (exit 1), allow warnings (exit 2).
