@@ -198,13 +198,38 @@ def add(
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search query"),
-    limit: int = typer.Option(10, "--limit", "-l"),
-    project: str = typer.Option(None, "--project", "-p"),
+    limit: int = typer.Option(10, "--limit", "-l", help="Max results"),
+    project: str = typer.Option(None, "--project", "-p", help="Filter by project slug"),
+    tags: str = typer.Option(None, "--tags", "-T", help="Comma-separated tags to filter by"),
+    include_raw: bool = typer.Option(
+        False,
+        "--include-raw",
+        help="Include raw/processing entries (skipped by default).",
+    ),
+    status: str = typer.Option(
+        None,
+        "--status",
+        help=(
+            "Filter by status (raw/processing/processed/published/archived). "
+            "Takes precedence over --include-raw."
+        ),
+    ),
     config: str = ConfigOption,
 ) -> None:
     """Search long-term memory (hybrid FTS + vector)."""
+    from mnemos.models import MemoryStatus
+
     mgr = get_manager(config)
-    results = mgr.search(query=query, project=project, limit=limit)
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+    status_enum = MemoryStatus(status) if status else None
+    results = mgr.search(
+        query=query,
+        tags=tag_list,
+        project=project,
+        limit=limit,
+        include_raw=include_raw,
+        status=status_enum,
+    )
     if not results:
         console.print("[yellow]No results found.[/yellow]")
         return
