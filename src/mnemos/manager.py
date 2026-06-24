@@ -539,10 +539,9 @@ class MemoryManager:
             },
             "processor": {
                 "queue_depth": queue_depth,
-                # last_processed_at is not yet tracked by pipeline runs;
-                # surfaced here so callers can detect a stuck pipeline once
-                # the worker records the timestamp.
-                "last_processed_at": None,
+                # Pipeline runs record their finish time in the meta table;
+                # None means the pipeline has never run yet.
+                "last_processed_at": self.sqlite.get_meta("pipeline_last_run"),
             },
             "search_health": {
                 "fts_available": True,  # FTS5 is always available (SQLite built-in)
@@ -955,6 +954,10 @@ class MemoryManager:
 
             pub = self.publish(syn.draft_id)
             published.append(pub)
+
+        # Record when the pipeline last finished so stats() / dashboards can
+        # detect a stuck pipeline (queue growing but last_processed_at stale).
+        self.sqlite.set_meta("pipeline_last_run", datetime.now(UTC).isoformat())
 
         return {
             "clusters": len(clusters),

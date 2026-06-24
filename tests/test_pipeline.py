@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -467,3 +468,27 @@ class TestRunPipeline:
             "failed_quality_gate": 0,
             "published_ids": [],
         }
+
+    def test_pipeline_records_last_run(self, tmp_manager):
+        """run_pipeline writes pipeline_last_run to meta; stats() surfaces it."""
+        mgr = tmp_manager
+        # Before any pipeline run, stats reports None.
+        assert mgr.stats()["processor"]["last_processed_at"] is None
+
+        _add_raw(mgr, "security vulnerability in auth module")
+        _add_raw(mgr, "auth module has SQL injection vulnerability")
+        _add_raw(mgr, "authentication layer security issue")
+
+        mgr.run_pipeline(similarity_threshold=0.5)
+
+        last_run = mgr.stats()["processor"]["last_processed_at"]
+        assert last_run is not None
+        # Must be an ISO-8601 string parseable back to a datetime.
+        datetime.fromisoformat(last_run)
+
+    def test_empty_pipeline_still_records_timestamp(self, tmp_manager):
+        """Even a no-op pipeline run (zero clusters) records its finish time."""
+        mgr = tmp_manager
+        assert mgr.stats()["processor"]["last_processed_at"] is None
+        mgr.run_pipeline()
+        assert mgr.stats()["processor"]["last_processed_at"] is not None
