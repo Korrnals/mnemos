@@ -11,6 +11,7 @@ Per-agent / per-project query helpers (M3).
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -29,6 +30,8 @@ from mnemos.models import (
     Project,
     Trace,
 )
+
+logger = logging.getLogger(__name__)
 
 # M15.2 — Whitelisted dispatch for dynamic UPDATE setters.
 # Maps public field name -> literal "column=?" SQL fragment. Bandit B608
@@ -476,6 +479,20 @@ class SQLiteStore:
             filter_version=_get("filter_version"),
         )
 
+    def rebuild_fts_index(self) -> int:
+        """Rebuild the FTS5 index from the memories table.
+
+        Use when the FTS5 external-content table is desynced from
+        ``memories`` (e.g. after INSERT OR REPLACE corruption or manual
+        row deletion).  Returns the number of rows indexed.
+        """
+        conn = self._get_conn()
+        conn.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
+        conn.commit()
+        count = int(conn.execute("SELECT count(*) FROM memories_fts").fetchone()[0])
+        self._invalidate_caches()
+        return count
+
     def _invalidate_caches(self) -> None:
         self._cache.invalidate(
             "tags",
@@ -492,46 +509,101 @@ class SQLiteStore:
     # ── CRUD ──────────────────────────────────────────────────────────────
 
     def save(self, memory: Memory) -> None:
+        """Insert or update a memory, keeping the FTS5 index consistent.
+
+        Uses UPDATE for existing rows (fires AFTER UPDATE trigger) and
+        INSERT for new rows (fires AFTER INSERT trigger).  Never uses
+        INSERT OR REPLACE — that fires the INSERT trigger with a new
+        rowid while the FTS5 external-content table still references the
+        old rowid, causing ``missing row N from content table`` errors.
+        """
         conn = self._get_conn()
-        conn.execute(
-            """INSERT OR REPLACE INTO memories
-               (id, content, title, tags, source, source_url, memory_type,
-                created_at, updated_at, metadata, file_path, category,
-                project, agent, status, quality_score, confidence,
-                source_coverage, cluster_id, derived_from, embedding_id,
-                raw_content, clean_content, filter_profile, filter_stats, filter_version)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                memory.id,
-                memory.content,
-                memory.auto_title(),
-                json.dumps(memory.tags, ensure_ascii=False),
-                memory.source.value,
-                memory.source_url,
-                memory.memory_type.value,
-                memory.created_at.isoformat(),
-                memory.updated_at.isoformat(),
-                json.dumps(memory.metadata, ensure_ascii=False),
-                memory.file_path,
-                memory.category,
-                memory.project,
-                memory.agent,
-                memory.status.value,
-                memory.quality_score,
-                memory.confidence,
-                memory.source_coverage,
-                memory.cluster_id,
-                json.dumps(memory.derived_from, ensure_ascii=False),
-                memory.embedding_id,
-                memory.raw_content,
-                memory.clean_content,
-                memory.filter_profile,
-                json.dumps(memory.filter_stats, ensure_ascii=False)
-                if memory.filter_stats
-                else None,
-                memory.filter_version,
-            ),
+        existing = conn.execute("SELECT 1 FROM memories WHERE id = ?", (memory.id,)).fetchone()
+        title = memory.auto_title()
+        tags_json = json.dumps(memory.tags, ensure_ascii=False)
+        meta_json = json.dumps(memory.metadata, ensure_ascii=False)
+        derived_json = json.dumps(memory.derived_from, ensure_ascii=False)
+        filter_stats_json = (
+            json.dumps(memory.filter_stats, ensure_ascii=False) if memory.filter_stats else None
         )
+        if existing:
+            conn.execute(
+                """UPDATE memories SET
+                   content = ?, title = ?, tags = ?, source = ?, source_url = ?,
+                   memory_type = ?, created_at = ?, updated_at = ?, metadata = ?,
+                   file_path = ?, category = ?, project = ?, agent = ?, status = ?,
+                   quality_score = ?, confidence = ?, source_coverage = ?,
+                   cluster_id = ?, derived_from = ?, embedding_id = ?,
+                   raw_content = ?, clean_content = ?, filter_profile = ?,
+                   filter_stats = ?, filter_version = ?
+                   WHERE id = ?""",
+                (
+                    memory.content,
+                    title,
+                    tags_json,
+                    memory.source.value,
+                    memory.source_url,
+                    memory.memory_type.value,
+                    memory.created_at.isoformat(),
+                    memory.updated_at.isoformat(),
+                    meta_json,
+                    memory.file_path,
+                    memory.category,
+                    memory.project,
+                    memory.agent,
+                    memory.status.value,
+                    memory.quality_score,
+                    memory.confidence,
+                    memory.source_coverage,
+                    memory.cluster_id,
+                    derived_json,
+                    memory.embedding_id,
+                    memory.raw_content,
+                    memory.clean_content,
+                    memory.filter_profile,
+                    filter_stats_json,
+                    memory.filter_version,
+                    memory.id,
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO memories
+                   (id, content, title, tags, source, source_url, memory_type,
+                    created_at, updated_at, metadata, file_path, category,
+                    project, agent, status, quality_score, confidence,
+                    source_coverage, cluster_id, derived_from, embedding_id,
+                    raw_content, clean_content, filter_profile, filter_stats, filter_version)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    memory.id,
+                    memory.content,
+                    title,
+                    tags_json,
+                    memory.source.value,
+                    memory.source_url,
+                    memory.memory_type.value,
+                    memory.created_at.isoformat(),
+                    memory.updated_at.isoformat(),
+                    meta_json,
+                    memory.file_path,
+                    memory.category,
+                    memory.project,
+                    memory.agent,
+                    memory.status.value,
+                    memory.quality_score,
+                    memory.confidence,
+                    memory.source_coverage,
+                    memory.cluster_id,
+                    derived_json,
+                    memory.embedding_id,
+                    memory.raw_content,
+                    memory.clean_content,
+                    memory.filter_profile,
+                    filter_stats_json,
+                    memory.filter_version,
+                ),
+            )
         conn.commit()
         self._invalidate_caches()
 
@@ -797,7 +869,15 @@ class SQLiteStore:
             "LIMIT ?"
         )
         params.append(limit)
-        rows = conn.execute(sql, params).fetchall()
+        try:
+            rows = conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "missing row" in str(exc) or "content table" in str(exc):
+                logger.warning("FTS5 index corrupted, auto-rebuilding: %s", exc)
+                self.rebuild_fts_index()
+                rows = conn.execute(sql, params).fetchall()
+            else:
+                raise
         results: list[tuple[Memory, float]] = []
         for row in rows:
             memory = self._row_to_memory(row)
