@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **FTS5 index rebuild** — `SQLiteStore.rebuild_fts_index()` rebuilds the FTS5
+  external-content table from the `memories` table. Use when the FTS5 index is
+  desynced from `memories` (e.g. after INSERT OR REPLACE corruption). CLI:
+  `mnemos fts rebuild`. MCP: `mnemos_reprocess` tool.
+- **Background processor** — `MemoryManager.start_background_processor()` runs
+  the pipeline (cluster, synthesize, quality_gate, publish) in a daemon thread
+  at configurable intervals (default 300s). The MCP server starts it
+  automatically on launch; CLI: `mnemos processor start|stop|status|run`.
+- **`mnemos_reprocess` MCP tool** — manually trigger the pipeline to drain the
+  raw/processing queue without waiting for the background processor interval.
+- **FTS5 auto-recovery** — `SQLiteStore.save()` catches `DatabaseError` from
+  FTS5 corruption, logs a warning, and calls `rebuild_fts_index()` automatically,
+  so search continues to work even if the index was desynced by a prior
+  INSERT OR REPLACE.
+
+### Fixed
+
+- **FTS5 corruption on save()** — `SQLiteStore.save()` used INSERT OR REPLACE
+  which could desync the FTS5 external-content table, causing
+  "fts5: missing row from content table" errors. The save method now detects
+  existing rows and uses UPDATE (which fires the correct AFTER UPDATE trigger)
+  instead of INSERT OR REPLACE. If corruption is detected, the FTS5 index is
+  rebuilt automatically.
+- **Background processor not running** — the MCP server had no background
+  processor, so raw entries added via `mnemos_add` never progressed through the
+  pipeline (raw, processing, processed, published). The MCP server now starts a
+  background processor thread on launch, draining the queue at configurable
+  intervals.
+- **Zero embeddings built** — with no background processor running, the
+  embedding pipeline never executed. The background processor now runs the full
+  pipeline (cluster, synthesize, quality_gate, publish), which generates
+  embeddings for published memories.
+
 ## [2.2.0] - 2026-06-24
 
 ### Added
