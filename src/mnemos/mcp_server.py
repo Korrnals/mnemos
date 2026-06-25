@@ -437,6 +437,22 @@ async def list_tools() -> list[Tool]:
             description="Get Mnemos health statistics and memory counts.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        Tool(
+            name="mnemos_reprocess",
+            description=(
+                "Manually trigger the knowledge pipeline to process "
+                "raw/processing entries into published knowledge. "
+                "Use when mnemos_stats shows a large queue_depth."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "agent": {"type": "string"},
+                    "limit": {"type": "integer", "default": 100},
+                },
+            },
+        ),
     ]
 
 
@@ -614,6 +630,12 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     # ── mnemos_stats ────────────────────────────────────────────────────────
     if name == "mnemos_stats":
         return mgr.stats()
+    # ── mnemos_reprocess ─────────────────────────────────────────────────────
+    if name == "mnemos_reprocess":
+        _project = args.get("project")
+        _agent = args.get("agent")
+        _limit = int(args.get("limit", 100))
+        return mgr.run_pipeline(project=_project, agent=_agent, limit=_limit)
     # ── mnemos_filter (M10) ─────────────────────────────────────────────────
     if name == "mnemos_filter":
         memory_id = args["memory_id"]
@@ -709,13 +731,21 @@ async def main() -> None:
     """Run the Mnemos MCP server over stdio."""
     from mnemos.logging_setup import setup_logging
 
-    setup_logging(load_settings())
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+    settings = load_settings()
+    setup_logging(settings)
+    # Start the background processor so raw entries are automatically
+    # clustered → synthesized → quality-gated → published.
+    mgr = get_manager()
+    mgr.start_background_processor()
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    finally:
+        mgr.stop_background_processor()
 
 
 if __name__ == "__main__":

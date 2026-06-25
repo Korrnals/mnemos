@@ -80,6 +80,8 @@ class MemoryManager:
             "results_counts": [],
         }
         self._search_stats_lock = threading.Lock()
+        self._processor_thread: threading.Thread | None = None
+        self._processor_stop: threading.Event | None = None
 
     @property
     def embedder(self) -> EmbeddingProvider:
@@ -88,6 +90,7 @@ class MemoryManager:
         return self._embedder
 
     def close(self) -> None:
+        self.stop_background_processor()
         self.sqlite.close()
         self.vectors.close()
 
@@ -985,6 +988,59 @@ class MemoryManager:
             "failed_quality_gate": len(failed_qg),
             "published_ids": [p.memory_id for p in published],
         }
+
+    # ── Background processor ──────────────────────────────────────────────
+
+    def start_background_processor(self, interval_sec: int = 300) -> None:
+        """Start a background thread that periodically runs the pipeline.
+
+        The processor drains the raw/processing queue by running
+        cluster → synthesize → quality_gate → publish.  It runs every
+        ``interval_sec`` seconds (default 300 = 5 min).
+
+        Safe to call multiple times — if already running, does nothing.
+        """
+        if self._processor_thread is not None:
+            return
+        self._processor_stop = threading.Event()
+        self._processor_thread = threading.Thread(
+            target=self._processor_loop,
+            args=(interval_sec,),
+            daemon=True,
+            name="mnemos-processor",
+        )
+        self._processor_thread.start()
+        logger.info("Background processor started (interval=%ds)", interval_sec)
+
+    def stop_background_processor(self) -> None:
+        """Stop the background processor thread."""
+        if self._processor_thread is None or self._processor_stop is None:
+            return
+        self._processor_stop.set()
+        self._processor_thread.join(timeout=10)
+        self._processor_thread = None
+        self._processor_stop = None
+        logger.info("Background processor stopped")
+
+    def _processor_loop(self, interval_sec: int) -> None:
+        """Background loop: run pipeline periodically."""
+        if self._processor_stop is None:
+            return
+        while not self._processor_stop.is_set():
+            try:
+                stats = self.stats()
+                queue_depth = stats.get("processor", {}).get("queue_depth", 0)
+                if queue_depth > 0:
+                    logger.info("Processor: queue_depth=%d, running pipeline", queue_depth)
+                    self.run_pipeline()
+            except Exception:
+                logger.exception("Background processor error")
+            self._processor_stop.wait(timeout=interval_sec)
+
+    @property
+    def processor_running(self) -> bool:
+        """Whether the background processor thread is active."""
+        return self._processor_thread is not None and self._processor_thread.is_alive()
 
     # ── Policy / DLQ (M5) ─────────────────────────────────────────────────
 

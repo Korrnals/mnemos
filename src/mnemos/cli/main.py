@@ -412,6 +412,53 @@ def stats(config: str = ConfigOption) -> None:
         console.print(f"  [bold]{k}[/bold]: {v}")
 
 
+@app.command(name="fts")
+def fts_cmd(
+    action: str = typer.Argument(..., help="Action: rebuild"),
+    config: str = ConfigOption,
+) -> None:
+    """FTS5 index management."""
+    mgr = get_manager(config)
+    if action == "rebuild":
+        count = mgr.sqlite.rebuild_fts_index()
+        console.print(f"[green]✓ FTS5 index rebuilt: {count} rows indexed[/green]")
+    else:
+        console.print(f"[red]Unknown action: {action}. Use 'rebuild'.[/red]")
+        raise typer.Exit(1)
+    mgr.close()
+
+
+@app.command(name="processor")
+def processor_cmd(
+    action: str = typer.Argument(..., help="Action: status|run|start|stop"),
+    config: str = ConfigOption,
+) -> None:
+    """Background processor management."""
+    mgr = get_manager(config)
+    if action == "status":
+        s = mgr.stats()
+        proc = s.get("processor", {})
+        console.print(f"  queue_depth: {proc.get('queue_depth', 'N/A')}")
+        console.print(f"  last_processed_at: {proc.get('last_processed_at', 'N/A')}")
+        console.print(f"  running: {mgr.processor_running}")
+    elif action == "run":
+        result = mgr.run_pipeline()
+        console.print(f"  clusters: {result['clusters']}")
+        console.print(f"  synthesized: {result['synthesized']}")
+        console.print(f"  published: {result['published']}")
+        console.print(f"  failed_quality_gate: {result['failed_quality_gate']}")
+    elif action == "start":
+        mgr.start_background_processor()
+        console.print("[green]✓ Background processor started[/green]")
+    elif action == "stop":
+        mgr.stop_background_processor()
+        console.print("[green]✓ Background processor stopped[/green]")
+    else:
+        console.print(f"[red]Unknown action: {action}. Use: status|run|start|stop[/red]")
+        raise typer.Exit(1)
+    mgr.close()
+
+
 # ── filter (M10) ───────────────────────────────────────────────────────────────
 
 
