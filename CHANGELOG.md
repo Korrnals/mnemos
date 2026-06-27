@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.3.0] - 2026-06-25
+### Fixed
+
+- **Project namespace case normalization** — `mnemos_save_context` built tags
+  manually without validation, and `_detect_project()` returned the raw folder
+  name (PascalCase), so PascalCase project slugs (e.g. `Project-Umbra`) split
+  the namespace from the canonical lowercase form (`project-umbra`). Read paths
+  (`search`, `recall`, `list_recent`) passed the `project` filter without
+  normalizing, so a filter `WHERE project='Project-Umbra'` missed lowercase
+  entries. A new public `normalize_project_slug()` helper is now applied at
+  every entry and exit point: `_detect_project`, `save_context`, `search`,
+  `agent_recall`, `recall_context`, `list_recent`. The live DB was migrated
+  (`Project-Umbra` merged into `project-umbra`, 4 entries).
+
+## [2.3.0] - 2026-06-25 - 2026-06-25
 
 ### Added
 
