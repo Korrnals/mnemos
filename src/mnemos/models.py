@@ -73,6 +73,19 @@ _AGENT_RE = re.compile(r"^agent:[a-z0-9_\-]{1,64}$")
 _GCW_RE = re.compile(r"^gcw:[a-z][a-z0-9\-]*$")
 
 
+def normalize_project_slug(value: str) -> str:
+    """Normalize a project or agent slug to canonical form.
+
+    Lowercases, strips surrounding whitespace, and replaces internal spaces
+    with hyphens. This is the SAME normalization applied by
+    ``validate_tag_contract`` lax mode, exposed for callers that build the
+    ``project`` / ``agent`` field directly (MCP ``save_context``, search
+    filters, ``_detect_project`` auto-detection) so that namespaces never
+    split on case (e.g. ``Project-Umbra`` vs ``project-umbra``).
+    """
+    return value.strip().lower().replace(" ", "-")
+
+
 class TagContractError(ValueError):
     """Raised when a tag set violates the GCW tag contract in strict mode."""
 

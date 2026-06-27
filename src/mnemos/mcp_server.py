@@ -27,6 +27,7 @@ from mnemos.models import (
     MemoryStatus,
     MemoryType,
     TagContractError,
+    normalize_project_slug,
     validate_tag_contract,
 )
 
@@ -66,7 +67,7 @@ def get_manager() -> Any:
 
 def _detect_project() -> str:
     """Auto-detect project name from current working directory."""
-    return Path(os.getcwd()).name
+    return normalize_project_slug(Path(os.getcwd()).name)
 
 
 def _checkpoint_reminder() -> str | None:
@@ -530,10 +531,11 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             except ValueError:
                 valid = ", ".join(s.value for s in MemoryStatus)
                 return f"❌ Invalid status '{status_str}'. Valid values: {valid}"
+        _search_project = args.get("project")
         results = mgr.search(
             query=args["query"],
             tags=args.get("tags"),
-            project=args.get("project"),
+            project=normalize_project_slug(_search_project) if _search_project else None,
             limit=args.get("limit", 10),
             include_raw=args.get("include_raw", False),
             status=status,
@@ -553,9 +555,10 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
 
     # ── mnemos_agent_recall (M3) ────────────────────────────────────────────
     if name == "mnemos_agent_recall":
+        _recall_project = args.get("project")
         recall_query = AgentRecallQuery(
-            agent=args["agent"],
-            project=args.get("project"),
+            agent=normalize_project_slug(args["agent"]),
+            project=normalize_project_slug(_recall_project) if _recall_project else None,
             query=args.get("query"),
             limit=args.get("limit", 20),
         )
@@ -574,7 +577,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
 
     # ── mnemos_save_context ─────────────────────────────────────────────────
     if name == "mnemos_save_context":
-        project = args.get("project") or _detect_project()
+        project = normalize_project_slug(args.get("project") or _detect_project())
         parts = [f"# Session checkpoint — {datetime.now(UTC).isoformat()}\n"]
         for field in ("goals", "completed", "in_progress", "decisions", "context"):
             if args.get(field):
@@ -589,7 +592,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
 
     # ── mnemos_recall_context ───────────────────────────────────────────────
     if name == "mnemos_recall_context":
-        project = args.get("project") or _detect_project()
+        project = normalize_project_slug(args.get("project") or _detect_project())
         memories = mgr.recall_context(project=project, query=args.get("query"), limit=5)
         if not memories:
             instructions = (
@@ -607,10 +610,11 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
 
     # ── mnemos_list_recent ──────────────────────────────────────────────────
     if name == "mnemos_list_recent":
+        _list_project = args.get("project")
         memories = mgr.list_recent(
             limit=args.get("limit", 10),
             tags=args.get("tags"),
-            project=args.get("project"),
+            project=normalize_project_slug(_list_project) if _list_project else None,
         )
         return [
             {
