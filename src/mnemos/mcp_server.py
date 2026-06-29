@@ -453,6 +453,63 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="mnemos_compress",
+            description=(
+                "Compress large content (tool output, logs, JSON) with ZERO data "
+                "loss. The original is cached in SQLite keyed by its hash; the "
+                "compressed output embeds a marker so the LLM can call "
+                "mnemos_retrieve to fetch the full original back. 70-90% token "
+                "reduction. Inspired by headroom's CCR (Apache 2.0)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Content to compress (>=500 chars to cache)",
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["log", "terminal", "code", "docs", "web", "default"],
+                        "description": "Filter profile (auto-detected if omitted)",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project slug to scope the cache entry (optional)",
+                    },
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="mnemos_retrieve",
+            description=(
+                "Retrieve the original uncompressed content for a CCR marker hash. "
+                "If query is omitted: returns the full original. If query is "
+                "provided: returns FTS5-ranked snippets from within the cached "
+                "original. Use the hash from a [compressed: <hash> | ...] marker."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hash": {
+                        "type": "string",
+                        "description": "SHA-256 hash from a CCR marker",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional search query for snippet retrieval",
+                    },
+                    "snippet_count": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Number of snippets when query is provided",
+                    },
+                },
+                "required": ["hash"],
+            },
+        ),
     ]
 
 
@@ -636,6 +693,20 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         _agent = args.get("agent")
         _limit = int(args.get("limit", 100))
         return mgr.run_pipeline(project=_project, agent=_agent, limit=_limit)
+    # ── mnemos_compress (P1-4 CCR) ───────────────────────────────────────────
+    if name == "mnemos_compress":
+        return mgr.compress_content(
+            args["text"],
+            profile=args.get("profile"),
+            project=args.get("project", "") or "",
+        )
+    # ── mnemos_retrieve (P1-4 CCR) ───────────────────────────────────────────
+    if name == "mnemos_retrieve":
+        return mgr.retrieve_content(
+            args["hash"],
+            query=args.get("query"),
+            snippet_count=args.get("snippet_count"),
+        )
     # ── mnemos_filter (M10) ─────────────────────────────────────────────────
     if name == "mnemos_filter":
         memory_id = args["memory_id"]

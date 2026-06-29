@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CCR reversible compression** — `mnemos_compress` and `mnemos_retrieve`
+  MCP tools. Compresses large content (tool output, logs, JSON) via the
+  existing 5-stage filter pipeline, caches the original in a new
+  `ccr_cache` SQLite table keyed by SHA-256, and embeds a parseable marker
+  so the LLM can retrieve the full original back with zero data loss.
+  70-90% token reduction. Configurable TTL (default 7 days) + LRU
+  eviction (default 10000 entries) + per-project scoping + FTS5 snippet
+  search within cached originals. Inspired by headroom's CCR
+  (https://github.com/headroomlabs-ai/headroom), Apache 2.0 — original
+  implementation integrated into the existing mnemos store.
+
 ### Changed
 
 ### Fixed
