@@ -163,7 +163,8 @@ control surfaces, and a storage layer you can read with your own eyes.
 | 🧠 | **Per-agent recall** | A focused recall surface scoped to each agent's project context |
 | ⚙️ | **Policy engine** | Schedule and trigger automation over the memory store |
 | 🧹 | **Context filter** | Five-stage noise stripper for logs / stdout before anything hits a model |
-| 📂 | **Path-scoped rules** | Ingest project rules and apply them by file path |
+| �️ | **Reversible compression (CCR)** | Compress large content with zero data loss — originals cached in SQLite, retrievable via hash marker |
+| �📂 | **Path-scoped rules** | Ingest project rules and apply them by file path |
 | 🗂️ | **Obsidian vault** | A markdown mirror humans can browse, edit, and grep |
 
 SQLite for metadata, a local numpy + SQLite vector index for recall, and an Obsidian-compatible vault
