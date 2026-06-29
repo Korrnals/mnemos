@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [2.4.0] - 2026-06-29
+
+### Added
+
 - **Single-memory passthrough** — `run_pipeline()` now promotes raw memories
   that don't form a cluster (min_cluster_size=2) directly to published via a
   lightweight synthesis path. Prevents the queue from growing unbounded when
