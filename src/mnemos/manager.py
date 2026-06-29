@@ -1181,6 +1181,74 @@ class MemoryManager:
         """Whether the background processor thread is active."""
         return self._processor_thread is not None and self._processor_thread.is_alive()
 
+    # ── CCR (P1-4) ─────────────────────────────────────────────────────────
+
+    def compress_content(
+        self,
+        text: str,
+        *,
+        profile: str | None = None,
+        project: str = "",
+    ) -> dict[str, Any]:
+        """Compress ``text`` via CCR and cache the original in SQLite.
+
+        Returns the CCR result dict (see ``mnemos.ccr.compress``).
+        """
+        from mnemos.ccr import compress
+
+        if not self.settings.ccr.enabled:
+            return {
+                "compressed_text": text,
+                "hash": "",
+                "original_size": len(text),
+                "compressed_size": len(text),
+                "reduction_pct": 0.0,
+                "marker": "",
+                "cached": False,
+                "profile": "disabled",
+            }
+        return compress(
+            text,
+            store=self.sqlite,
+            config=self.settings.ccr,
+            profile=profile,
+            project=project,
+        )
+
+    def retrieve_content(
+        self,
+        h: str,
+        *,
+        query: str | None = None,
+        snippet_count: int | None = None,
+    ) -> dict[str, Any]:
+        """Retrieve a CCR-cached original (or FTS5 snippets if ``query``)."""
+        from mnemos.ccr import retrieve
+
+        return retrieve(
+            h,
+            store=self.sqlite,
+            config=self.settings.ccr,
+            query=query,
+            snippet_count=snippet_count,
+        )
+
+    def ccr_cleanup(self) -> dict[str, int]:
+        """Run CCR TTL expiry + LRU eviction. Returns removal counts."""
+        from mnemos.ccr import cleanup
+
+        return cleanup(store=self.sqlite, config=self.settings.ccr)
+
+    def ccr_stats(self) -> dict[str, Any]:
+        """Return CCR cache statistics."""
+        return {
+            "enabled": self.settings.ccr.enabled,
+            "entries": self.sqlite.ccr_count(),
+            "ttl_days": self.settings.ccr.ttl_days,
+            "max_entries": self.settings.ccr.max_entries,
+            "min_size_chars": self.settings.ccr.min_size_chars,
+        }
+
     # ── Policy / DLQ (M5) ─────────────────────────────────────────────────
 
     def dlq_list(

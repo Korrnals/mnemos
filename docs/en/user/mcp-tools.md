@@ -42,6 +42,8 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_watch_stop`](#mnemos_watch_stop) | Stop the file watcher | no |
 | [`mnemos_watch_status`](#mnemos_watch_status) | Report watcher status | no |
 | [`mnemos_auto_collect_status`](#mnemos_auto_collect_status) | Compaction signal vector (M7) | no |
+| [`mnemos_compress`](#mnemos_compress) | Reversible compression (CCR) — cache original, embed marker | no |
+| [`mnemos_retrieve`](#mnemos_retrieve) | Retrieve a CCR-cached original or FTS5 snippets | no |
 | [`mnemos_stats`](#mnemos_stats) | Health counters and key paths | no |
 
 ---
@@ -632,6 +634,92 @@ Same shape as the CLI `mnemos stats` command — see [cli-reference.md#stats](cl
   "vectors": 120
 }
 ```
+
+---
+
+## `mnemos_compress`
+
+Compress large content (tool output, logs, JSON) with **zero data loss**. The original is cached in the `ccr_cache` SQLite table keyed by its SHA-256 hash; the compressed output embeds a short parseable marker so the LLM can call `mnemos_retrieve` to fetch the full original back on demand. Achieves 70–90% token reduction on typical logs and JSON.
+
+Content shorter than `min_size_chars` (default 500) is returned as-is — not cached, not compressed (tiny content has no token savings).
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `text` | string | **yes** | — | Content to compress. ≥500 chars to cache. |
+| `profile` | string | no | auto | One of `log`, `terminal`, `code`, `docs`, `web`, `default`. Auto-detected if omitted. |
+| `project` | string | no | `""` | Project slug to scope the cache entry. |
+
+### Output
+
+```json
+{
+  "compressed_text": "[compressed: a1b2... | 30000→900 chars | retrieve via mnemos_retrieve]\n...filtered content...",
+  "hash": "a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef12345678",
+  "original_size": 30000,
+  "compressed_size": 900,
+  "reduction_pct": 97.0,
+  "marker": "[compressed: a1b2... | 30000→900 chars | retrieve via mnemos_retrieve]",
+  "cached": true,
+  "profile": "log"
+}
+```
+
+### Marker format
+
+```text
+[compressed: <sha-256-hash> | <N>→<M> chars | retrieve via mnemos_retrieve]
+```
+
+The marker is the only overhead added on top of the filtered content. It is short, parseable, and LLM-friendly. The hash is content-addressed, so re-compressing the same text is a no-op (the cache entry is reused).
+
+### Example
+
+Compress a 30K-line build log → ~900 chars in the context window. When the LLM needs the full traceback, it calls `mnemos_retrieve` with the hash from the marker.
+
+---
+
+## `mnemos_retrieve`
+
+Retrieve the original uncompressed content for a CCR marker hash. If `query` is omitted, returns the full original. If `query` is provided, returns FTS5-ranked snippets from within the cached original — useful when the original is large and only a few lines are relevant.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `hash` | string | **yes** | — | SHA-256 hash from a `[compressed: ...]` marker. |
+| `query` | string | no | — | Search query for snippet retrieval. |
+| `snippet_count` | integer | no | `5` | Number of snippets when `query` is provided. |
+
+### Output (full retrieval)
+
+```json
+{
+  "hash": "a1b2...",
+  "found": true,
+  "original": "...full original text...",
+  "size_bytes": 30000,
+  "retrieval_count": 2
+}
+```
+
+### Output (snippet retrieval)
+
+```json
+{
+  "hash": "a1b2...",
+  "found": true,
+  "query": "Traceback",
+  "snippets": [
+    {"text": "Traceback (most recent call last):", "rank": 1.0},
+    {"text": "  File \"app.py\", line 42, in handler", "rank": 0.8}
+  ],
+  "retrieval_count": 3
+}
+```
+
+If the hash is absent from the cache (e.g. evicted by TTL or LRU), `found` is `false` with a `reason` field.
 
 ---
 

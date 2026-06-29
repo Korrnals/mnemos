@@ -99,6 +99,69 @@ and an Obsidian-compatible vault. A Web UI is planned as a separate project
 - Deduplication (by content hash + cosine similarity)
 - Automatic tag and metadata extraction
 
+### Reversible Compression (CCR)
+
+CCR (Compress-Cache-Retrieve) reduces the token cost of large content (tool output, logs, JSON) without losing data. It reuses the existing 5-stage context filter for compression and the existing SQLite store for caching — no separate database, no separate backup.
+
+#### Pipeline
+
+```mermaid
+flowchart LR
+    A[Raw text] --> B[Compress\n5-stage filter]
+    B --> C[Cache original\nSHA-256 keyed]
+    C --> D[Embed marker\nin compressed output]
+    D --> E[Compressed text\n+ marker]
+    F[mnemos_retrieve\nhash] --> G{query?}
+    G -->|no| H[Full original]
+    G -->|yes| I[FTS5 snippets\nranked]
+    C -.-> H
+    C -.-> I
+```
+
+1. **Compress** — `apply_filter` runs the 5-stage pipeline (profile-aware: `log`, `terminal`, `code`, `docs`, `web`, `default`). Achieves 86–96% reduction on logs and JSON.
+2. **Cache** — the original uncompressed text is stored in `ccr_cache` keyed by its SHA-256 hash. Content-addressed: re-compressing the same text is a no-op.
+3. **Embed marker** — a short parseable marker is prepended to the compressed output:
+   ```text
+   [compressed: <hash> | <N>→<M> chars | retrieve via mnemos_retrieve]
+   ```
+4. **Retrieve** — `mnemos_retrieve(hash)` returns the full original (zero data loss). `mnemos_retrieve(hash, query=...)` returns FTS5-ranked snippets within the cached original.
+
+#### Storage integration
+
+The `ccr_cache` table lives in the same SQLite database as `memories`:
+
+| Table | Purpose | Keyed by |
+|-------|---------|----------|
+| `ccr_cache` | Original uncompressed content | `hash` (SHA-256, PRIMARY KEY) |
+| `ccr_cache_fts` | FTS5 external-content index over `ccr_cache.original` | `rowid` |
+
+FTS5 is kept in sync via `AFTER INSERT/DELETE/UPDATE` triggers — no application-level sync code. Snippet retrieval uses the same FTS5 engine as memory search, scoped to a single cached original by `hash`.
+
+#### Eviction
+
+| Mechanism | Default | When it runs |
+|-----------|---------|--------------|
+| TTL expiry | 7 days | Explicit `ccr_cleanup()` (CLI / scheduler) |
+| LRU eviction | 10000 entries | Opportunistic, on every `compress` call |
+
+TTL cleanup is not run on every compress call (avoids the scan cost); invoke it via the CLI or a scheduler.
+
+#### Configuration
+
+```yaml
+ccr:
+  enabled: true            # master switch
+  ttl_days: 7             # cache entry lifetime
+  max_entries: 10000      # LRU eviction threshold
+  min_size_chars: 500     # below this, content is returned as-is
+  snippet_count: 5        # snippets returned by retrieve(query=...)
+  filter_budget: 4096     # token budget passed to apply_filter
+```
+
+Content below `min_size_chars` is returned as-is with `cached=false` and `reduction_pct=0` — tiny content has no token savings.
+
+---
+
 ### 4. Data Sources (Ingestors)
 
 | Source | Method | Format |
