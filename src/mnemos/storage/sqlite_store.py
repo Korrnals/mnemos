@@ -383,6 +383,53 @@ CREATE TABLE IF NOT EXISTS meta (
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- P1-4: CCR (Compress-Cache-Retrieve) reversible compression cache.
+-- Stores the ORIGINAL uncompressed content keyed by its SHA-256 hash.
+-- The compressed representation embeds a marker referencing this hash;
+-- mnemos_retrieve fetches the original back with zero data loss.
+-- Inspired by headroom's CCR (https://github.com/headroomlabs-ai/headroom),
+-- Apache 2.0 — we integrate into the existing mnemos store (one DB).
+CREATE TABLE IF NOT EXISTS ccr_cache (
+    hash             TEXT PRIMARY KEY,
+    original         TEXT NOT NULL,
+    project          TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL,
+    size_bytes       INTEGER NOT NULL DEFAULT 0,
+    retrieval_count  INTEGER NOT NULL DEFAULT 0,
+    last_retrieved_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ccr_cache_project   ON ccr_cache(project);
+CREATE INDEX IF NOT EXISTS idx_ccr_cache_created   ON ccr_cache(created_at);
+CREATE INDEX IF NOT EXISTS idx_ccr_cache_retrieval ON ccr_cache(retrieval_count);
+
+-- P1-4: FTS5 over cached originals so retrieve(query=...) can rank
+-- snippets without a separate DB. External-content table over ccr_cache.
+CREATE VIRTUAL TABLE IF NOT EXISTS ccr_cache_fts USING fts5(
+    hash UNINDEXED,
+    original,
+    content=ccr_cache,
+    content_rowid=rowid,
+    tokenize='unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS ccr_cache_ai AFTER INSERT ON ccr_cache BEGIN
+    INSERT INTO ccr_cache_fts(rowid, hash, original)
+    VALUES (new.rowid, new.hash, new.original);
+END;
+
+CREATE TRIGGER IF NOT EXISTS ccr_cache_ad AFTER DELETE ON ccr_cache BEGIN
+    INSERT INTO ccr_cache_fts(ccr_cache_fts, rowid, hash, original)
+    VALUES ('delete', old.rowid, old.hash, old.original);
+END;
+
+CREATE TRIGGER IF NOT EXISTS ccr_cache_au AFTER UPDATE ON ccr_cache BEGIN
+    INSERT INTO ccr_cache_fts(ccr_cache_fts, rowid, hash, original)
+    VALUES ('delete', old.rowid, old.hash, old.original);
+    INSERT INTO ccr_cache_fts(rowid, hash, original)
+    VALUES (new.rowid, new.hash, new.original);
+END;
 """
 
 _MIGRATIONS: list[tuple[str, str]] = [
@@ -1297,3 +1344,132 @@ class SQLiteStore:
         conn = self._get_conn()
         row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
+
+    # ── CCR cache (P1-4) ──────────────────────────────────────────────────
+
+    def ccr_store(
+        self,
+        *,
+        hash: str,
+        original: str,
+        project: str = "",
+    ) -> int:
+        """Insert a CCR cache entry (idempotent on hash).
+
+        Uses ``INSERT OR IGNORE`` so re-compressing the same content is a
+        no-op (the original is already cached). Returns the rowid of the
+        stored (or pre-existing) entry.
+        """
+        conn = self._get_conn()
+        now = datetime.now(UTC).isoformat()
+        size_bytes = len(original.encode("utf-8"))
+        conn.execute(
+            "INSERT OR IGNORE INTO ccr_cache "
+            "(hash, original, project, created_at, size_bytes, retrieval_count) "
+            "VALUES (?,?,?,?,?,0)",
+            (hash, original, project, now, size_bytes),
+        )
+        conn.commit()
+        row = conn.execute("SELECT rowid FROM ccr_cache WHERE hash=?", (hash,)).fetchone()
+        return int(row["rowid"]) if row else 0
+
+    def ccr_get(self, hash: str) -> dict[str, Any] | None:
+        """Fetch a CCR cache entry by hash and bump its retrieval counter.
+
+        Returns ``{"hash","original","project","created_at","size_bytes",
+        "retrieval_count"}`` or ``None`` if not found.
+        """
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM ccr_cache WHERE hash=?", (hash,)).fetchone()
+        if row is None:
+            return None
+        now = datetime.now(UTC).isoformat()
+        conn.execute(
+            "UPDATE ccr_cache SET retrieval_count=retrieval_count+1, "
+            "last_retrieved_at=? WHERE hash=?",
+            (now, hash),
+        )
+        conn.commit()
+        return {
+            "hash": row["hash"],
+            "original": row["original"],
+            "project": row["project"],
+            "created_at": row["created_at"],
+            "size_bytes": int(row["size_bytes"]),
+            "retrieval_count": int(row["retrieval_count"]) + 1,
+        }
+
+    def ccr_count(self) -> int:
+        """Total number of cached CCR entries."""
+        conn = self._get_conn()
+        return int(conn.execute("SELECT count(*) FROM ccr_cache").fetchone()[0])
+
+    def ccr_cleanup_ttl(self, ttl_days: int) -> int:
+        """Delete cache entries older than ``ttl_days``. Returns count deleted."""
+        conn = self._get_conn()
+        cutoff = (datetime.now(UTC)).isoformat()
+        # SQLite date math: subtract ttl_days from now via the modifiers.
+        cur = conn.execute(
+            "DELETE FROM ccr_cache WHERE date(created_at, '+' || ? || ' days') < date(?)",
+            (ttl_days, cutoff),
+        )
+        conn.commit()
+        return cur.rowcount or 0
+
+    def ccr_evict_lru(self, max_entries: int) -> int:
+        """Evict least-retrieved entries until count <= max_entries.
+
+        Ties on retrieval_count break by created_at (oldest first).
+        Returns count evicted.
+        """
+        conn = self._get_conn()
+        total = self.ccr_count()
+        if total <= max_entries:
+            return 0
+        excess = total - max_entries
+        cur = conn.execute(
+            "DELETE FROM ccr_cache WHERE hash IN ("
+            "  SELECT hash FROM ccr_cache "
+            "  ORDER BY retrieval_count ASC, created_at ASC "
+            "  LIMIT ?"
+            ")",
+            (excess,),
+        )
+        conn.commit()
+        return cur.rowcount or 0
+
+    def ccr_search(
+        self,
+        hash: str,
+        query: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """FTS5-ranked snippet search within a single cached original.
+
+        Returns a list of ``{"snippet","rank}`` dicts ordered by relevance.
+        Uses the same FTS5 query sanitisation as ``fts_search`` so the
+        user-supplied query cannot inject FTS5 operator syntax.
+        """
+        conn = self._get_conn()
+        fts_query = self._build_fts_query(query)
+        try:
+            rows = conn.execute(
+                "SELECT snippet(ccr_cache_fts, 1, '>>>', '<<<', ' ... ', 32) AS snip, "
+                "rank AS rank "
+                "FROM ccr_cache_fts WHERE ccr_cache_fts MATCH ? AND hash=? "
+                "ORDER BY rank LIMIT ?",
+                (fts_query, hash, limit),
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "missing row" in str(exc) or "content table" in str(exc):
+                logger.warning("ccr_cache_fts corrupted, skipping search: %s", exc)
+                return []
+            raise
+        return [{"snippet": str(r["snip"]), "rank": float(r["rank"])} for r in rows]
+
+    def ccr_delete_all(self) -> int:
+        """Drop every CCR cache entry. Used by tests and `mnemos ccr purge`."""
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM ccr_cache")
+        conn.commit()
+        return cur.rowcount or 0

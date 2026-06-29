@@ -170,6 +170,29 @@ class RuntimeConfig(BaseModel):
     uvicorn_workers: int = Field(default=1, ge=1, le=8)
 
 
+class CCRConfig(BaseModel):
+    """P1-4 — CCR (Compress-Cache-Retrieve) reversible compression.
+
+    Inspired by headroom's CCR (https://github.com/headroomlabs-ai/headroom),
+    Apache 2.0. We implement our own version integrated into the existing
+    mnemos SQLite store (one DB, one backup) with FTS5 snippet retrieval
+    and per-project scoping.
+    """
+
+    enabled: bool = True
+    # Cache entries older than this are eligible for cleanup (days).
+    ttl_days: int = Field(default=7, ge=1, le=365)
+    # LRU eviction kicks in when the entry count exceeds this.
+    max_entries: int = Field(default=10000, ge=100, le=1_000_000)
+    # Content shorter than this (chars) is returned as-is — not cached,
+    # not compressed (tiny content has no token savings).
+    min_size_chars: int = Field(default=500, ge=50, le=100_000)
+    # Number of snippet fragments returned by retrieve(query=...).
+    snippet_count: int = Field(default=5, ge=1, le=50)
+    # Token budget passed to apply_filter for the compress stage.
+    filter_budget: int = Field(default=4096, ge=256, le=1_000_000)
+
+
 class Settings(BaseSettings):
     mnemos: MnemosConfig = MnemosConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
@@ -180,6 +203,7 @@ class Settings(BaseSettings):
     llm: LLMConfig = LLMConfig()
     automation: AutomationConfig = AutomationConfig()
     runtime: RuntimeConfig = RuntimeConfig()
+    ccr: CCRConfig = CCRConfig()
     logging: LoggingConfig = LoggingConfig()
     # M5: declarative policy rules (loaded from YAML or set programmatically)
     policies: dict[str, Any] = Field(default_factory=dict)
