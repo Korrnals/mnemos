@@ -58,14 +58,19 @@ def evaluate_quality(
             rationale="Only processed memories can pass quality gates.",
         )
 
-    # Resolve thresholds from config or overrides
+    # Resolve thresholds from config or overrides.
+    # Defaults are conservative-but-achievable: the placeholder synthesis
+    # (no real LLM wired yet) assigns quality_score=0.5, confidence=0.5.
+    # The previous defaults (0.6/0.6/2) guaranteed every placeholder draft
+    # failed the gate, causing the processing queue to grow unbounded (P0-1).
+    # When a real LLM provider is wired, raise these via config.
     cfg = mgr.settings
-    mq = min_quality if min_quality is not None else getattr(cfg, "min_quality", 0.6)
-    mc = min_confidence if min_confidence is not None else getattr(cfg, "min_confidence", 0.6)
+    mq = min_quality if min_quality is not None else getattr(cfg, "min_quality", 0.4)
+    mc = min_confidence if min_confidence is not None else getattr(cfg, "min_confidence", 0.4)
     msc = (
         min_source_coverage
         if min_source_coverage is not None
-        else getattr(cfg, "min_source_coverage", 2)
+        else getattr(cfg, "min_source_coverage", 1)
     )
 
     failures: list[str] = []

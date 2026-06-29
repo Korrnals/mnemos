@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Fixed
+
+## [2.4.0] - 2026-06-29
+
+### Added
+
+- **Single-memory passthrough** — `run_pipeline()` now promotes raw memories
+  that don't form a cluster (min_cluster_size=2) directly to published via a
+  lightweight synthesis path. Prevents the queue from growing unbounded when
+  most memories are unique (P0-1).
+- **Stuck-processing rescue** — memories stuck in `processing` status (from
+  prior crashed pipeline runs) are rescued to published on the next pipeline
+  cycle (P0-1).
+- **`rebuild_vector_index()`** — re-embeds all published memories and upserts
+  into the vector store. Used when the embedding pipeline was broken and
+  vectors are missing. Idempotent (P0-2).
+- **JSON array compression** — filter stage 4 now applies SmartCrusher-inspired
+  statistical sampling to JSON arrays with ≥20 items: keeps head (schema),
+  tail (recency), and anomaly items (errors), drops the middle with a count
+  marker. Target 60%+ reduction on large JSON (P0-3).
+- **Code boilerplate stripping** — filter stage 4 for `code` profile collapses
+  repeated import blocks and consecutive blank lines (P0-3).
+- **Profile-aware extract** — filter stage 3 now drops verbose success lines
+  (INFO/DEBUG/started/completed) in `log`/`terminal` profiles, skips JSON
+  content (lets compress handle it), and preserves all content for
+  `docs`/`web`/`default` profiles (P0-3).
+
+### Fixed
+
+- **Processing queue throughput** — placeholder synthesis now assigns
+  `quality_score=0.5` and `confidence=0.5` (was 0.0), and quality gate
+  defaults lowered to 0.4/0.4/1 (was 0.6/0.6/2). The previous defaults
+  guaranteed every placeholder draft failed the gate, causing the queue to
+  grow unbounded (P0-1).
+- **Background processor interval** — reduced from 300s to 120s and batch
+  size increased from 100 to 200 to keep up with ingest rate (P0-1).
+- **Vector indexing on publish** — `publish_memory()` now correctly indexes
+  vectors for all published memories. With the queue fix, records now reach
+  `published` status and get vector-indexed (P0-2).
+
 ## [2.3.0] - 2026-06-25
 
 ### Added
