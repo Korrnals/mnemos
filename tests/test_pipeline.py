@@ -452,10 +452,16 @@ class TestRunPipeline:
 
         assert summary["clusters"] >= 1
         assert summary["synthesized"] >= 1
-        # Quality gate may pass or fail depending on default thresholds
-        # (default quality/confidence are 0.0 from synthesis placeholder)
-        # So we assert structure, not exact counts
-        assert isinstance(summary["published_ids"], list)
+        # With the P0-1 fix, placeholder synthesis assigns quality_score=0.5
+        # and confidence=0.5, which pass the lowered quality gate defaults
+        # (0.4/0.4/1). So the pipeline now actually publishes.
+        assert summary["published"] >= 1
+        assert len(summary["published_ids"]) >= 1
+        # Verify the published memory is in the vector store
+        for pid in summary["published_ids"]:
+            mem = mgr.sqlite.get(pid)
+            assert mem is not None
+            assert mem.status == MemoryStatus.PUBLISHED
 
     def test_empty_raw_pool(self, tmp_manager):
         """run_pipeline with no raw memories returns zero counts."""
@@ -466,6 +472,8 @@ class TestRunPipeline:
             "synthesized": 0,
             "published": 0,
             "failed_quality_gate": 0,
+            "single_promoted": 0,
+            "stuck_rescued": 0,
             "published_ids": [],
         }
 
@@ -492,3 +500,124 @@ class TestRunPipeline:
         assert mgr.stats()["processor"]["last_processed_at"] is None
         mgr.run_pipeline()
         assert mgr.stats()["processor"]["last_processed_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# P0-1: Queue throughput — single-memory passthrough + stuck rescue
+# ---------------------------------------------------------------------------
+
+
+class TestQueueThroughput:
+    """P0-1 regression: records must reach published, not pile up in queue."""
+
+    def test_single_memory_passthrough(self, tmp_manager):
+        """A single raw memory (no cluster) is promoted to published."""
+        mgr = tmp_manager
+        _add_raw(mgr, "unique standalone memory with no similar peers")
+
+        summary = mgr.run_pipeline()
+        assert summary["single_promoted"] >= 1
+        assert summary["published"] >= 1
+
+        # The memory should now be published
+        stats = mgr.stats()
+        assert stats["by_status"].get("raw", 0) == 0
+        assert stats["by_status"].get("published", 0) >= 1
+
+    def test_queue_drains_to_zero(self, tmp_manager):
+        """Multiple unique memories all get promoted; queue drops to 0."""
+        mgr = tmp_manager
+        for i in range(5):
+            _add_raw(mgr, f"completely unique content number {i} about topic {i}")
+
+        mgr.run_pipeline()
+        stats = mgr.stats()
+        queue = stats["processor"]["queue_depth"]
+        assert queue == 0, f"Queue not drained: {queue}"
+
+    def test_stuck_processing_rescued(self, tmp_manager):
+        """Memories stuck in 'processing' status are rescued to published."""
+        mgr = tmp_manager
+        # Create a memory and manually set it to processing (simulating a
+        # prior crashed pipeline run)
+        mem = _add_raw(mgr, "stuck memory from crashed pipeline")
+        mem.status = MemoryStatus.PROCESSING
+        mem.cluster_id = "orphan-cluster-id"
+        mgr.sqlite.save(mem)
+
+        summary = mgr.run_pipeline()
+        assert summary["stuck_rescued"] >= 1
+
+        rescued = mgr.sqlite.get(mem.id)
+        assert rescued.status == MemoryStatus.PUBLISHED
+
+    def test_quality_gate_passes_with_placeholder_scores(self, tmp_manager):
+        """Placeholder synthesis (quality=0.5) passes the lowered gate (0.4)."""
+        mgr = tmp_manager
+        _add_raw(mgr, "security vulnerability in auth module")
+        _add_raw(mgr, "auth module has SQL injection vulnerability")
+
+        clusters = cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        assert len(clusters) >= 1
+
+        syn = synthesize_cluster(mgr, clusters[0].cluster_id)
+        assert syn is not None
+        assert syn.quality_score == 0.5
+        assert syn.confidence == 0.5
+
+        qg = evaluate_quality(mgr, syn.draft_id)
+        assert qg.passed is True, f"Gate failed: {qg.failures}"
+
+
+# ---------------------------------------------------------------------------
+# P0-2: Vector search — rebuild + indexing on publish
+# ---------------------------------------------------------------------------
+
+
+class TestVectorRebuild:
+    """P0-2 regression: vector index must be populated for published records."""
+
+    def test_rebuild_vector_index(self, tmp_manager):
+        """rebuild_vector_index populates vectors for all published memories."""
+        mgr = tmp_manager
+        # Publish 3 memories directly
+        for i in range(3):
+            _add_raw(mgr, f"published memory {i} for vector rebuild")
+        # Promote to published via pipeline
+        mgr.run_pipeline()
+
+        published = mgr.sqlite.list_all(status=MemoryStatus.PUBLISHED, limit=100)
+        assert len(published) >= 3
+
+        # Vectors should already be indexed by publish_memory, but rebuild
+        # should be idempotent and not fail
+        result = mgr.rebuild_vector_index()
+        assert result["total"] >= 3
+        assert result["indexed"] >= 3
+        assert result["failed"] == 0
+
+        # Vector count should match published count
+        assert mgr.vectors.count() >= 3
+
+    def test_publish_indexes_vector(self, tmp_manager):
+        """publish_memory upserts a vector into the vector store."""
+        mgr = tmp_manager
+        mem = _add_raw(mgr, "memory to be published and vectorized")
+        mgr.run_pipeline()
+
+        published = mgr.sqlite.get(mem.id)
+        assert published.status == MemoryStatus.PUBLISHED
+
+        # Vector should exist
+        assert mgr.vectors.count() >= 1
+
+    def test_search_mode_hybrid_after_publish(self, tmp_manager):
+        """After publishing + vector indexing, search_health.mode = hybrid."""
+        mgr = tmp_manager
+        _add_raw(mgr, "memory for hybrid search mode test")
+        mgr.run_pipeline()
+
+        stats = mgr.stats()
+        assert stats["vectors"] > 0
+        assert stats["search_health"]["vector_available"] is True
+        assert stats["search_health"]["mode"] == "hybrid"

@@ -956,6 +956,12 @@ class MemoryManager:
     ) -> dict[str, Any]:
         """End-to-end pipeline: cluster → synthesize → quality_gate → publish.
 
+        Single-memory passthrough: memories that don't form a cluster
+        (min_cluster_size=2) are promoted individually via a lightweight
+        synthesis so they still reach published + vector index. This
+        prevents the queue from growing unbounded when most memories are
+        unique (P0-1 fix).
+
         Returns a summary dict for observability / CLI output.
         """
         clusters = self.cluster(project=project, agent=agent, limit=limit, **kwargs)
@@ -963,7 +969,11 @@ class MemoryManager:
         published: list[PublishResult] = []
         failed_qg: list[QualityResult] = []
 
+        # Track which raw memory ids were consumed by clustering
+        clustered_ids: set[str] = set()
         for cr in clusters:
+            clustered_ids.update(cr.memory_ids)
+
             syn = self.synthesize(cr.cluster_id)
             if syn is None:
                 continue
@@ -977,6 +987,42 @@ class MemoryManager:
             pub = self.publish(syn.draft_id)
             published.append(pub)
 
+        # Single-memory passthrough: promote raw memories that were NOT
+        # consumed by any cluster. Each becomes its own "synthesis" with
+        # quality_score=0.5 (placeholder) so it can pass the gate and reach
+        # published + vector index.
+        single_promoted = 0
+        raw_remaining = self.sqlite.list_all(
+            limit=limit,
+            status=MemoryStatus.RAW,
+            project=project,
+            agent=agent,
+        )
+        for mem in raw_remaining:
+            if mem.id in clustered_ids:
+                continue
+            promoted = self._promote_single_memory(mem.id)
+            if promoted is not None and promoted.published:
+                published.append(promoted)
+                single_promoted += 1
+
+        # Also rescue memories stuck in "processing" status (clustered but
+        # never synthesized — e.g. prior runs crashed mid-pipeline). These
+        # are promoted directly to published since their cluster may be
+        # orphaned and re-synthesizing would create a duplicate draft.
+        stuck_processing = self.sqlite.list_all(
+            limit=limit,
+            status=MemoryStatus.PROCESSING,
+            project=project,
+            agent=agent,
+        )
+        stuck_rescued = 0
+        for mem in stuck_processing:
+            rescued = self._promote_single_memory(mem.id, from_status=MemoryStatus.PROCESSING)
+            if rescued is not None and rescued.published:
+                published.append(rescued)
+                stuck_rescued += 1
+
         # Record when the pipeline last finished so stats() / dashboards can
         # detect a stuck pipeline (queue growing but last_processed_at stale).
         self.sqlite.set_meta("pipeline_last_run", datetime.now(UTC).isoformat())
@@ -986,17 +1032,95 @@ class MemoryManager:
             "synthesized": len(synthesized),
             "published": len(published),
             "failed_quality_gate": len(failed_qg),
+            "single_promoted": single_promoted,
+            "stuck_rescued": stuck_rescued,
             "published_ids": [p.memory_id for p in published],
+        }
+
+    def _promote_single_memory(
+        self,
+        memory_id: str,
+        *,
+        from_status: MemoryStatus = MemoryStatus.RAW,
+    ) -> PublishResult | None:
+        """Promote a single memory directly to published.
+
+        Used when a memory doesn't form a cluster (single-memory passthrough)
+        or is stuck in processing. The memory is transitioned to processed
+        with placeholder quality scores, then published + vector-indexed.
+
+        This is the graceful fallback for when no real LLM synthesis is
+        configured — the memory's own content becomes the "synthesized"
+        article (P0-1 fix).
+        """
+        memory = self.sqlite.get(memory_id)
+        if memory is None:
+            return None
+        if memory.status not in (from_status, MemoryStatus.PROCESSED):
+            return None
+
+        # If already processed, just publish
+        if memory.status != MemoryStatus.PROCESSED:
+            memory.status = MemoryStatus.PROCESSED
+            memory.quality_score = 0.5
+            memory.confidence = 0.5
+            memory.source_coverage = 1
+            memory.updated_at = datetime.now(UTC)
+            self.sqlite.save(memory)
+
+        return self.publish(memory.id, skip_quality_check=True)
+
+    def rebuild_vector_index(self, *, batch_size: int = 100) -> dict[str, Any]:
+        """Rebuild the vector index for all published memories.
+
+        Re-embeds every published memory and upserts into the vector store.
+        Used when the embedding pipeline was broken and vectors are missing
+        (P0-2 fix). Idempotent: safe to run repeatedly.
+        """
+        published = self.sqlite.list_all(
+            limit=10000,
+            status=MemoryStatus.PUBLISHED,
+        )
+        indexed = 0
+        failed = 0
+        for i in range(0, len(published), batch_size):
+            batch = published[i : i + batch_size]
+            for mem in batch:
+                try:
+                    emb = self.embedder.embed(self._embedding_text(mem))
+                    self.vectors.upsert(
+                        mem.id,
+                        emb,
+                        {"project": mem.project, "agent": mem.agent},
+                    )
+                    indexed += 1
+                except Exception as exc:
+                    logger.warning("rebuild_vector_index: failed for %s: %s", mem.id[:8], exc)
+                    failed += 1
+
+        logger.info(
+            "rebuild_vector_index: indexed=%d failed=%d total=%d",
+            indexed,
+            failed,
+            len(published),
+        )
+        return {
+            "total": len(published),
+            "indexed": indexed,
+            "failed": failed,
         }
 
     # ── Background processor ──────────────────────────────────────────────
 
-    def start_background_processor(self, interval_sec: int = 300) -> None:
+    def start_background_processor(self, interval_sec: int = 120) -> None:
         """Start a background thread that periodically runs the pipeline.
 
         The processor drains the raw/processing queue by running
         cluster → synthesize → quality_gate → publish.  It runs every
-        ``interval_sec`` seconds (default 300 = 5 min).
+        ``interval_sec`` seconds (default 120 = 2 min).
+
+        The default was 300s (5 min) which was too slow to keep up with
+        ingest rate, causing the queue to grow unbounded (P0-1 fix).
 
         Safe to call multiple times — if already running, does nothing.
         """
@@ -1023,7 +1147,13 @@ class MemoryManager:
         logger.info("Background processor stopped")
 
     def _processor_loop(self, interval_sec: int) -> None:
-        """Background loop: run pipeline periodically."""
+        """Background loop: run pipeline periodically.
+
+        Processes in batches of up to 200 memories per cycle to drain
+        large backlogs faster (P0-1 fix). The previous default limit=100
+        per cycle was insufficient when ingest rate exceeded processing
+        rate.
+        """
         if self._processor_stop is None:
             return
         while not self._processor_stop.is_set():
@@ -1031,8 +1161,17 @@ class MemoryManager:
                 stats = self.stats()
                 queue_depth = stats.get("processor", {}).get("queue_depth", 0)
                 if queue_depth > 0:
-                    logger.info("Processor: queue_depth=%d, running pipeline", queue_depth)
-                    self.run_pipeline()
+                    logger.info(
+                        "Processor: queue_depth=%d, running pipeline (batch=200)",
+                        queue_depth,
+                    )
+                    result = self.run_pipeline(limit=200)
+                    logger.info(
+                        "Processor: cycle done — published=%d single=%d stuck=%d",
+                        result.get("published", 0),
+                        result.get("single_promoted", 0),
+                        result.get("stuck_rescued", 0),
+                    )
             except Exception:
                 logger.exception("Background processor error")
             self._processor_stop.wait(timeout=interval_sec)

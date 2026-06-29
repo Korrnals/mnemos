@@ -26,6 +26,7 @@ from typer.testing import CliRunner
 
 from mnemos.cli.main import app as cli_app
 from mnemos.config import Settings
+from mnemos.filter.pipeline import apply_filter
 from mnemos.manager import MemoryManager
 from mnemos.models import MemoryCreate, MemorySource
 
@@ -592,3 +593,199 @@ class TestFilterStatsJsonStructure:
         assert "original_chars" in stats["reduction"]
         assert "final_chars" in stats["reduction"]
         assert stats["reduction"]["original_chars"] > 0
+
+
+# ---------------------------------------------------------------------------
+# P0-3: Content-type-aware filter — JSON arrays, code, profile-aware
+# ---------------------------------------------------------------------------
+
+
+class TestJsonArrayCompression:
+    """P0-3: JSON arrays get statistical sampling (SmartCrusher-inspired)."""
+
+    def test_large_json_array_sampled(self):
+        """JSON array with ≥20 items gets head+tail+anomalies, middle dropped."""
+        import json
+
+        # 50-item array — should trigger sampling
+        arr = [{"id": i, "value": 0, "name": f"item_{i}"} for i in range(50)]
+        # Add an anomaly in the middle
+        arr[25]["error"] = "connection timeout"
+        text = json.dumps(arr, indent=2)
+
+        result = apply_filter(text, profile="log")
+        clean = result["clean_content"]
+
+        # Should be significantly smaller
+        assert len(clean) < len(text) * 0.6, (
+            f"JSON compression insufficient: {len(clean)} vs {len(text)}"
+        )
+
+        # First items (schema) preserved
+        assert "item_0" in clean
+        # Last items (recency) preserved
+        assert "item_49" in clean
+        # Anomaly preserved
+        assert "timeout" in clean
+        # Compression marker present
+        assert "_compressed_marker" in clean
+
+    def test_small_json_array_not_sampled(self):
+        """JSON array with <20 items is left alone (not worth compressing)."""
+        import json
+
+        arr = [{"id": i} for i in range(10)]
+        text = json.dumps(arr, indent=2)
+
+        result = apply_filter(text, profile="log")
+        # No compression marker — too small to sample
+        assert "_compressed_marker" not in result["clean_content"]
+
+    def test_json_anomaly_detection_nonzero(self):
+        """Error indicators in JSON array items are kept as anomalies."""
+        from mnemos.filter.pipeline import _is_json_anomaly
+
+        # Error strings are anomalies
+        assert _is_json_anomaly("error: something") is True
+        assert _is_json_anomaly("ok") is False
+        # Dicts with error keys are anomalies
+        assert _is_json_anomaly({"error": "fail"}) is True
+        assert _is_json_anomaly({"error_code": 500}) is True
+        # Dicts with status fields indicating errors
+        assert _is_json_anomaly({"status": "error"}) is True
+        assert _is_json_anomaly({"level": "fatal"}) is True
+        # Dicts without error indicators are NOT anomalies
+        assert _is_json_anomaly({"value": 0}) is False
+        assert _is_json_anomaly({"id": 42, "name": "item"}) is False
+        # None and plain numbers are not anomalies
+        assert _is_json_anomaly(None) is False
+        assert _is_json_anomaly(42) is False
+        assert _is_json_anomaly(0) is False
+
+
+class TestCodeCompression:
+    """P0-3: Code blocks get boilerplate stripping (imports, blank lines)."""
+
+    def test_imports_collapsed(self):
+        """Repeated import lines are collapsed into a marker."""
+        text = "\n".join(
+            [
+                "import os",
+                "import sys",
+                "import json",
+                "import re",
+                "import logging",
+                "import pathlib",
+                "",
+                "def main():",
+                "    pass",
+            ]
+        )
+
+        result = apply_filter(text, profile="code")
+        clean = result["clean_content"]
+
+        # First import kept, rest collapsed
+        assert "import os" in clean
+        assert "def main" in clean
+        # Should have a marker for dropped imports
+        stats = result["stats"]["compress"]
+        assert stats.get("imports_dropped", 0) >= 1
+
+    def test_consecutive_blank_lines_collapsed(self):
+        """Multiple consecutive blank lines collapse to one."""
+        text = "import os\n\n\n\n\ndef main():\n    pass"
+        result = apply_filter(text, profile="code")
+        clean = result["clean_content"]
+        # No more than one consecutive blank line
+        assert "\n\n\n" not in clean
+
+
+class TestProfileAwareExtract:
+    """P0-3: Extract stage is profile-aware (aggressive for logs, light for docs)."""
+
+    def test_verbose_success_dropped_in_log(self):
+        """Verbose INFO/DEBUG lines are dropped in log profile."""
+        text = "\n".join(
+            [
+                "2024-01-15T10:30:00Z [INFO] process started",
+                "2024-01-15T10:30:01Z [DEBUG] loading config",
+                "2024-01-15T10:30:02Z [INFO] completed successfully",
+                "2024-01-15T10:30:03Z [ERROR] something broke",
+                "2024-01-15T10:30:04Z [INFO] cleanup done",
+            ]
+        )
+        result = apply_filter(text, profile="log")
+        clean = result["clean_content"]
+
+        # Error line preserved
+        assert "ERROR" in clean or "broke" in clean
+        # Verbose lines dropped (INFO/DEBUG without errors)
+        stats = result["stats"]["extract"]
+        assert stats.get("verbose_dropped", 0) >= 1
+
+    def test_docs_profile_preserves_content(self):
+        """Docs profile does not extract/drop — preserves full content."""
+        text = "# Title\n\nSome documentation content.\nMore docs here."
+        result = apply_filter(text, profile="docs")
+        # Extract stage should be a no-op for docs
+        assert result["stats"]["extract"]["signal_lines"] == 0
+
+
+class TestFilterReductionPct:
+    """P0-3: Overall reduction percentage rises to ≥40% on real-ish data."""
+
+    def test_log_reduction_above_40_pct(self):
+        """A realistic log with noise achieves ≥40% reduction."""
+        lines = []
+        for i in range(60):
+            lines.append(f"2024-01-15T10:30:{i:02d}Z [INFO] processing item {i}")
+        lines.append("2024-01-15T10:31:00Z [ERROR] failed to process item 60")
+        lines.append("Traceback (most recent call last):")
+        lines.append("  File 'app.py', line 42, in handler")
+        lines.append("ValueError: invalid input")
+        lines.append("Exited with code 1")
+        for i in range(30):
+            lines.append(f"2024-01-15T10:32:{i:02d}Z [INFO] cleanup step {i}")
+        text = "\n".join(lines)
+
+        result = apply_filter(text, profile="log")
+        original = len(text)
+        final = len(result["clean_content"])
+        reduction_pct = (1 - final / original) * 100
+
+        assert reduction_pct >= 40, f"Log reduction only {reduction_pct:.1f}% — target ≥40%"
+
+    def test_json_reduction_above_60_pct(self):
+        """A large JSON array achieves ≥60% reduction."""
+        import json
+
+        arr = [{"id": i, "value": 0, "name": f"item_{i}", "data": "x" * 50} for i in range(100)]
+        text = json.dumps(arr, indent=2)
+
+        result = apply_filter(text, profile="log")
+        original = len(text)
+        final = len(result["clean_content"])
+        reduction_pct = (1 - final / original) * 100
+
+        assert reduction_pct >= 60, f"JSON reduction only {reduction_pct:.1f}% — target ≥60%"
+
+    def test_no_signal_loss_on_errors(self):
+        """Filtering never drops error/warning/exit-code lines."""
+        text = "\n".join(
+            [
+                "2024-01-15T10:30:00Z [INFO] started",
+                "2024-01-15T10:30:01Z [INFO] running",
+                "2024-01-15T10:30:02Z [ERROR] critical failure",
+                "2024-01-15T10:30:03Z [WARNING] deprecated API",
+                "Exited with code 1",
+                "2024-01-15T10:30:04Z [INFO] done",
+            ]
+        )
+        result = apply_filter(text, profile="log")
+        clean = result["clean_content"]
+
+        # All signal lines must be preserved
+        assert "ERROR" in clean or "critical" in clean
+        assert "WARNING" in clean or "deprecated" in clean
+        assert "Exited with code 1" in clean

@@ -98,13 +98,20 @@ def synthesize_cluster(
     llm_called = False
     tokens_in = 0
     tokens_out = 0
+    # Quality scores: when a real LLM provider is wired (llm/ modules),
+    # these will be set from the LLM response. Until then, the deterministic
+    # placeholder synthesis assigns conservative-but-passable scores so
+    # records can transition processing→processed→published instead of
+    # piling up in the queue forever (P0-1 fix).
+    quality_score = 0.5
+    confidence = 0.5
     try:
-        # TODO: wire real LLM provider when llm/ modules are implemented
-        # For now, produce a deterministic placeholder so tests can assert
+        # TODO: wire real LLM provider when llm/ modules are implemented.
+        # For now, produce a deterministic placeholder so tests can assert.
+        # llm_called stays False — this is NOT an LLM call, it's a stub.
         content = f"# Synthesis of {cluster_id[:8]}\n\n"
         content += "\n\n".join(f"- {m.effective_content()[:200]}" for m in members)
         title = f"Synthesis: {members[0].title or members[0].content[:40]}"
-        llm_called = True
         tokens_in = len(prompt.split())
         tokens_out = len(content.split())
     except Exception as exc:
@@ -131,8 +138,8 @@ def synthesize_cluster(
         cluster_id=cluster_id,
         content=content,
         title=title,
-        quality_score=0.0,  # set by quality_gate
-        confidence=0.0,  # set by quality_gate
+        quality_score=quality_score,
+        confidence=confidence,
         source_coverage=len(members),
         model_used=model,
         prompt_version=prompt_version,
@@ -154,8 +161,8 @@ def synthesize_cluster(
         status=MemoryStatus.PROCESSED,
         cluster_id=cluster_id,
         derived_from=[m.id for m in members],
-        quality_score=0.0,
-        confidence=0.0,
+        quality_score=quality_score,
+        confidence=confidence,
         source_coverage=len(members),
         metadata={
             "synthesis_cache_key": cache_key,

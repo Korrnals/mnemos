@@ -24,8 +24,30 @@ logger = logging.getLogger(__name__)
 def _stage_dedup(text: str, threshold: float = 0.9) -> tuple[str, dict[str, Any]]:
     """Remove exact and near-duplicate lines.
 
+    JSON content is skipped — dedup would break JSON array structure by
+    removing repeated keys like `"value": 0`, making the array unparseable
+    for the compress stage's JSON sampling (P0-3 fix).
+
     Returns (deduped_text, stats).
     """
+    # Skip dedup for JSON content — preserve structure for compress stage
+    stripped = text.lstrip()
+    if stripped.startswith("[") or stripped.startswith("{"):
+        try:
+            import json as _json
+
+            _json.loads(text)
+            lines = text.splitlines()
+            return text, {
+                "lines_in": len(lines),
+                "lines_out": len(lines),
+                "exact_dups": 0,
+                "near_dups": 0,
+                "json_skipped": True,
+            }
+        except (ValueError, TypeError):
+            pass  # Not valid JSON, continue with normal dedup
+
     lines = text.splitlines()
     if not lines:
         return text, {"lines_in": 0, "lines_out": 0, "exact_dups": 0, "near_dups": 0}
@@ -150,9 +172,33 @@ _EXIT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Verbose success patterns — only dropped in log/terminal profiles
+_VERBOSE_RE = re.compile(
+    r"(?:^\s*\[\s*(?:debug|info|trace)\s*\]|"
+    r"^\s*(?:debug|info|trace)\s*:?\s|"
+    r"(?:started|completed|finished|succeeded|ok|done|ready)\s*\.?\s*$)",
+    re.IGNORECASE,
+)
+
+# Import patterns (Python, JS/TS, Go, Rust, Java, C) — for code compression
+_IMPORT_RE = re.compile(
+    r"^\s*(?:import\s|from\s+\S+\s+import\s|#include\s|use\s|"
+    r"require\s|const\s+\{.*\}\s*=\s*require)",
+    re.IGNORECASE,
+)
+
 
 def _stage_extract(text: str, profile: str) -> tuple[str, dict[str, Any]]:
     """Extract signal-rich lines and sample context.
+
+    Profile-aware (P0-3 fix):
+      - log/terminal: aggressive — keep only signal lines + context, drop
+        verbose success lines ("INFO", "DEBUG", "started", "completed").
+      - code: moderate — keep all lines (compression handled in stage 4).
+      - docs/web: light — return original, preserve content.
+      - JSON arrays: skip extraction — let stage 4 (compress) handle JSON
+        array sampling. Extracting signal lines from JSON would destroy
+        the array structure before compress can sample it.
 
     Returns (extracted_text, stats).
     """
@@ -160,8 +206,23 @@ def _stage_extract(text: str, profile: str) -> tuple[str, dict[str, Any]]:
     if not lines:
         return text, {"signal_lines": 0, "sampled": 0}
 
+    # Light touch for prose-heavy profiles — no extraction
+    if profile in ("docs", "web", "default"):
+        return text, {"signal_lines": 0, "sampled": 0}
+
+    # JSON content — skip extraction, let compress stage handle it
+    stripped = text.lstrip()
+    if stripped.startswith("[") or stripped.startswith("{"):
+        try:
+            import json as _json
+
+            _json.loads(text)
+            return text, {"signal_lines": 0, "sampled": 0, "json_skipped": True}
+        except (ValueError, TypeError):
+            pass  # Not valid JSON, continue with normal extraction
+
     signal_lines: list[tuple[int, str]] = []  # (idx, line)
-    sampled = 0
+    verbose_dropped = 0
 
     for idx, line in enumerate(lines):
         stripped = line.strip()
@@ -180,12 +241,19 @@ def _stage_extract(text: str, profile: str) -> tuple[str, dict[str, Any]]:
             for i in range(start, end):
                 if (i, lines[i]) not in signal_lines:
                     signal_lines.append((i, lines[i]))
+        elif profile in ("log", "terminal") and _VERBOSE_RE.search(stripped):
+            # Drop verbose success lines in aggressive profiles
+            verbose_dropped += 1
 
     if signal_lines:
         # Sort by original index and reconstruct
         signal_lines.sort(key=lambda x: x[0])
         out = "\n".join(line for _, line in signal_lines)
-        stats = {"signal_lines": len(signal_lines), "sampled": len(signal_lines)}
+        stats = {
+            "signal_lines": len(signal_lines),
+            "sampled": len(signal_lines),
+            "verbose_dropped": verbose_dropped,
+        }
         return out, stats
 
     # No signals found — return original with sampling for long content
@@ -197,7 +265,7 @@ def _stage_extract(text: str, profile: str) -> tuple[str, dict[str, Any]]:
             keep.add(i)
         out_lines = [lines[i] for i in sorted(keep)]
         sampled = len(lines) - len(out_lines)
-        stats = {"signal_lines": 0, "sampled": sampled}
+        stats = {"signal_lines": 0, "sampled": sampled, "verbose_dropped": verbose_dropped}
         return "\n".join(out_lines), stats
 
     return text, {"signal_lines": 0, "sampled": 0}
@@ -209,13 +277,48 @@ def _stage_extract(text: str, profile: str) -> tuple[str, dict[str, Any]]:
 def _stage_compress(text: str, profile: str) -> tuple[str, dict[str, Any]]:
     """Compress repetitive blocks (stack traces, repeated patterns).
 
+    Content-type-aware (P0-3 fix):
+      - JSON arrays: statistical sampling — keep schema (first items),
+        recency (last items), anomalies (errors/non-zero), drop middle.
+        Target 60%+ reduction on large JSON.
+      - Code blocks: drop repeated boilerplate (imports, blank lines),
+        keep signatures + errors.
+      - Logs: collapse repeated stack-trace frames (original behavior).
+      - Prose/docs: light touch — only collapse 3+ identical lines.
+
     Returns (compressed_text, stats).
     """
+    # JSON array sampling — detect JSON arrays and apply SmartCrusher-like
+    # statistical sampling (head + tail + anomalies, drop middle).
+    if profile in ("log", "terminal", "default", "web"):
+        json_result = _compress_json_arrays(text)
+        if json_result is not None:
+            compressed, j_stats = json_result
+            return compressed, {
+                "original_lines": text.count("\n") + 1,
+                "compressed_lines": compressed.count("\n") + 1,
+                "compressed_blocks": j_stats["blocks_collapsed"],
+                "json_arrays_sampled": j_stats["arrays_sampled"],
+                "json_items_in": j_stats["items_in"],
+                "json_items_out": j_stats["items_out"],
+            }
+
+    # Code boilerplate stripping
+    if profile == "code":
+        compressed, c_stats = _compress_code(text)
+        return compressed, {
+            "original_lines": text.count("\n") + 1,
+            "compressed_lines": compressed.count("\n") + 1,
+            "compressed_blocks": c_stats["boilerplate_blocks"],
+            "imports_dropped": c_stats["imports_dropped"],
+            "blank_lines_dropped": c_stats["blank_lines_dropped"],
+        }
+
+    # Log/terminal: collapse repeated stack-trace frames (original behavior)
     lines = text.splitlines()
     if len(lines) < 10:
         return text, {"original_lines": len(lines), "compressed_blocks": 0}
 
-    # Detect repeated block patterns (e.g., stack trace frames)
     out_lines: list[str] = []
     compressed_blocks = 0
     i = 0
@@ -252,6 +355,222 @@ def _stage_compress(text: str, profile: str) -> tuple[str, dict[str, Any]]:
         "compressed_blocks": compressed_blocks,
     }
     return result, stats
+
+
+# ── JSON array compression (SmartCrusher-inspired) ───────────────────────────
+
+
+def _compress_json_arrays(text: str) -> tuple[str, dict[str, Any]] | None:
+    """Compress JSON arrays via statistical sampling.
+
+    Strategy (headroom SmartCrusher-inspired):
+      - Keep first N items (schema/structure representative)
+      - Keep last N items (recency)
+      - Keep anomaly items (errors, non-zero values, non-null)
+      - Drop middle items, insert a marker
+
+    Only triggers on arrays with ≥20 items (small arrays not worth it).
+    Returns (compressed_text, stats) or None if no JSON arrays found.
+    """
+    import json as _json
+
+    # Find JSON array boundaries — look for lines that are pure JSON arrays
+    # or fenced JSON blocks. We scan for the largest JSON array in the text.
+    try:
+        # Try parsing the entire text as JSON first
+        data = _json.loads(text)
+        if isinstance(data, list) and len(data) >= 20:
+            compressed, arr_stats = _sample_json_array(data)
+            stats = {
+                "blocks_collapsed": 1,
+                "arrays_sampled": 1,
+                "items_in": arr_stats["items_in"],
+                "items_out": arr_stats["items_out"],
+            }
+            return _json.dumps(compressed, indent=2, ensure_ascii=False), stats
+    except (ValueError, TypeError):
+        pass
+
+    # Scan for embedded JSON arrays in fenced blocks or standalone
+    # Look for ```json ... ``` blocks or lines starting with [
+    array_pattern = re.compile(r"(\[[\s\S]*?\])", re.MULTILINE)
+    modified = False
+    stats_total: dict[str, Any] = {
+        "blocks_collapsed": 0,
+        "arrays_sampled": 0,
+        "items_in": 0,
+        "items_out": 0,
+    }
+
+    def _replace_array(match: re.Match[str]) -> str:
+        nonlocal modified
+        raw = match.group(1)
+        try:
+            arr = _json.loads(raw)
+        except (ValueError, TypeError):
+            return raw
+        if not isinstance(arr, list) or len(arr) < 20:
+            return raw
+        compressed, arr_stats = _sample_json_array(arr)
+        modified = True
+        stats_total["blocks_collapsed"] += 1
+        stats_total["arrays_sampled"] += 1
+        stats_total["items_in"] += arr_stats["items_in"]
+        stats_total["items_out"] += arr_stats["items_out"]
+        return _json.dumps(compressed, indent=2, ensure_ascii=False)
+
+    result = array_pattern.sub(_replace_array, text)
+    if not modified:
+        return None
+    return result, stats_total
+
+
+def _sample_json_array(arr: list[Any]) -> tuple[list[Any], dict[str, Any]]:
+    """Statistical sampling of a JSON array.
+
+    Keep: first 5 (schema), last 5 (recency), anomalies (errors/non-zero).
+    Drop: middle items, replaced with a count marker.
+    """
+    n = len(arr)
+    head = arr[:5]
+    tail = arr[-5:]
+    middle = arr[5:-5]
+
+    # Anomaly detection in middle: keep items with errors, non-zero, non-null
+    anomalies: list[Any] = []
+    for item in middle:
+        if _is_json_anomaly(item):
+            anomalies.append(item)
+
+    # Cap anomalies to avoid keeping too many
+    if len(anomalies) > 10:
+        anomalies = anomalies[:10]
+
+    dropped_count = len(middle) - len(anomalies)
+    result: list[Any] = []
+    result.extend(head)
+    if anomalies:
+        result.append(
+            {
+                "_compressed_marker": True,
+                "dropped": dropped_count,
+                "anomalies_kept": len(anomalies),
+            }
+        )
+        result.extend(anomalies)
+    else:
+        result.append({"_compressed_marker": True, "dropped": dropped_count})
+    result.extend(tail)
+
+    return result, {
+        "items_in": n,
+        "items_out": len(result),
+    }
+
+
+def _is_json_anomaly(item: Any) -> bool:
+    """Detect anomalous JSON items worth keeping (errors, non-zero, non-null).
+
+    Conservative detection — only flags items that genuinely look like
+    errors/anomalies, not every item with a non-zero numeric field.
+    """
+    if item is None:
+        return False
+    if isinstance(item, bool):
+        return item  # True is interesting (errors often flagged)
+    if isinstance(item, str):
+        lower = item.lower()
+        return any(
+            kw in lower
+            for kw in ("error", "fail", "warn", "exception", "critical", "fatal", "timeout")
+        )
+    if isinstance(item, dict):
+        # Check for error/status keys with error-like values
+        for k, v in item.items():
+            if not isinstance(k, str):
+                continue
+            kl = k.lower()
+            # Keys that indicate error/anomaly fields
+            if kl in ("error", "error_code", "error_message", "exception", "failure"):
+                return True
+            if kl in ("status", "level", "severity", "state"):
+                # Check if the value indicates an error
+                if isinstance(v, str):
+                    vl = v.lower()
+                    if any(kw in vl for kw in ("error", "fail", "fatal", "critical", "warn")):
+                        return True
+                if isinstance(v, bool) and v:
+                    return True
+        return False
+    if isinstance(item, list):
+        return any(_is_json_anomaly(v) for v in item)
+    # Numbers and other types — not anomalies by themselves
+    return False
+
+
+# ── Code compression ─────────────────────────────────────────────────────────
+
+
+def _compress_code(text: str) -> tuple[str, dict[str, Any]]:
+    """Compress code by dropping boilerplate (imports, blank lines).
+
+    Keeps: function/class signatures, logic, errors, comments with TODO/FIXME.
+    Drops: repeated import blocks, consecutive blank lines.
+    """
+    lines = text.splitlines()
+    out_lines: list[str] = []
+    total_imports_dropped = 0
+    blank_lines_dropped = 0
+    boilerplate_blocks = 0
+
+    in_import_block = False
+    import_block_start = -1
+    block_imports_dropped = 0
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Collapse consecutive blank lines (keep at most 1)
+        if not stripped:
+            if out_lines and out_lines[-1].strip() == "":
+                blank_lines_dropped += 1
+                continue
+            out_lines.append(line)
+            continue
+
+        # Import handling: keep first import, collapse rest into a marker
+        if _IMPORT_RE.match(stripped):
+            if not in_import_block:
+                in_import_block = True
+                import_block_start = len(out_lines)
+                block_imports_dropped = 0
+                out_lines.append(line)
+            else:
+                block_imports_dropped += 1
+                total_imports_dropped += 1
+                continue
+        else:
+            if in_import_block:
+                # End of import block — add marker if we dropped any
+                if block_imports_dropped > 0:
+                    marker = f"  # ... {block_imports_dropped} more imports ..."
+                    out_lines.insert(import_block_start + 1, marker)
+                    boilerplate_blocks += 1
+                in_import_block = False
+            out_lines.append(line)
+
+    # Handle trailing import block
+    if in_import_block and block_imports_dropped > 0:
+        marker = f"  # ... {block_imports_dropped} more imports ..."
+        out_lines.append(marker)
+        boilerplate_blocks += 1
+
+    result = "\n".join(out_lines)
+    return result, {
+        "boilerplate_blocks": boilerplate_blocks,
+        "imports_dropped": total_imports_dropped,
+        "blank_lines_dropped": blank_lines_dropped,
+    }
 
 
 # ── Stage 5: tokens ────────────────────────────────────────────────────────────
