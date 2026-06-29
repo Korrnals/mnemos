@@ -78,7 +78,7 @@ sentence-transformers = [
     "sentence-transformers>=3.0",
 ]
 openvino = [
-    "optimum[openvino]>=1.19",
+    "optimum[openvino]>=2.2.0",
 ]
 mcp = [
     "mcp[cli]>=1.0",
