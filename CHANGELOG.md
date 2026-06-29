@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [2.5.0] - 2026-06-29
+
+### Added
+
 - **CCR reversible compression** — `mnemos_compress` and `mnemos_retrieve`
   MCP tools. Compresses large content (tool output, logs, JSON) via the
   existing 5-stage filter pipeline, caches the original in a new
