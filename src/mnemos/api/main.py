@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
+import re
 import sys
+import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,10 +38,13 @@ from mnemos.models import (
     FilterRequest,
     Memory,
     MemoryCreate,
+    MemorySource,
     MemoryStatus,
+    MemoryType,
     RuleIngestRequest,
     RuleRemoveRequest,
     SearchQuery,
+    validate_tag_contract,
 )
 from mnemos.sessions import SessionStore
 from mnemos.sessions.api import router as sessions_router
@@ -310,7 +317,6 @@ async def metrics() -> dict[str, Any]:
 async def create_memory(data: MemoryCreate) -> Memory:
     mgr = get_manager()
     settings = mgr.settings
-    from mnemos.models import validate_tag_contract
 
     tags = validate_tag_contract(data.tags, strict=settings.mnemos.strict_tag_contract)
     data.tags = tags
@@ -580,6 +586,293 @@ async def remove_rule(data: RuleRemoveRequest) -> dict[str, Any]:
     if not result["removed"]:
         raise HTTPException(status_code=404, detail=f"Rule for {data.file_path} not found")
     return {"status": "removed", **result}
+
+
+# ── Auto-collect tracker (HTTP-local, mirrors MCP _checkpoint_tracker) ──────────
+
+_auto_collect_tracker = {"calls_since_save": 0, "last_save_ts": 0.0}
+_auto_collect_state = {
+    "enabled": os.environ.get("MNEMOS_AUTO_COLLECT", "").lower() in ("true", "1", "yes", "on"),
+}
+_auto_collect_lock = threading.Lock()
+
+
+def _track_http_call(is_save: bool = False) -> None:
+    """Track HTTP memory-work calls for the auto-collect signal vector."""
+    with _auto_collect_lock:
+        if is_save:
+            _auto_collect_tracker["calls_since_save"] = 0
+            _auto_collect_tracker["last_save_ts"] = time.monotonic()
+        else:
+            _auto_collect_tracker["calls_since_save"] += 1
+
+
+def _http_remind_calls() -> int:
+    return 6 if _auto_collect_state["enabled"] else 12
+
+
+def _http_remind_secs() -> int:
+    return 480 if _auto_collect_state["enabled"] else 900
+
+
+# ── Session context (save/recall) ──────────────────────────────────────────────
+
+
+class SaveContextRequest(BaseModel):
+    """Request body for POST /context/save — mirrors ``mnemos_save_context``.
+
+    Fields accept either a string or a list of strings. When a list is
+    provided, items are joined with newlines to form the markdown section
+    body. This matches the Hermes plugin schema which declares these as
+    ``type: array, items: {type: string}`` and the MCP tool which accepts
+    free-form strings (bullet lists).
+    """
+
+    project: str
+    goals: str | list[str] | None = None
+    completed: str | list[str] | None = None
+    in_progress: str | list[str] | None = None
+    decisions: str | list[str] | None = None
+    context: str | list[str] | None = None
+
+
+class RecallContextRequest(BaseModel):
+    """Request body for POST /context/recall — mirrors ``mnemos_recall_context``."""
+
+    project: str
+    query: str | None = None
+    limit: int = 5
+
+
+@app.post("/context/save", status_code=201)
+async def save_context(req: SaveContextRequest) -> dict[str, Any]:
+    """Save a session checkpoint memory tagged ``gcw:checkpoint``.
+
+    Mirrors the ``mnemos_save_context`` MCP tool. Builds structured Markdown
+    from the supplied fields and stores it as a ``SESSION_CONTEXT`` memory.
+    """
+    mgr = get_manager()
+    parts = [f"# Session checkpoint — {datetime.now(UTC).isoformat()}\n"]
+    for field in ("goals", "completed", "in_progress", "decisions", "context"):
+        val = getattr(req, field)
+        if val:
+            # Accept both str and list[str] — join lists with newlines.
+            if isinstance(val, list):
+                val = "\n".join(val)
+            parts.append(f"## {field.replace('_', ' ').title()}\n{val}\n")
+    content = "\n".join(parts)
+    tags = [f"project:{req.project}", "agent:user", "gcw:checkpoint"]
+    data = MemoryCreate(
+        content=content,
+        tags=tags,
+        source=MemorySource.MCP,
+        memory_type=MemoryType.SESSION_CONTEXT,
+    )
+    memory = mgr.add(data, project=req.project, agent="user")
+    _track_http_call(is_save=True)
+    return {"status": "saved", "id": str(memory.id), "title": memory.auto_title()}
+
+
+@app.post("/context/recall")
+async def recall_context(req: RecallContextRequest) -> dict[str, Any]:
+    """Recall the most recent checkpoint memories for a project.
+
+    Mirrors the ``mnemos_recall_context`` MCP tool.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    memories = mgr.recall_context(project=req.project, query=req.query, limit=req.limit)
+    if not memories:
+        return {
+            "project": req.project,
+            "checkpoints": [],
+            "message": "No context found. Start by saving context with POST /context/save.",
+        }
+    return {
+        "project": req.project,
+        "checkpoints": [
+            {
+                "id": m.id,
+                "title": m.auto_title(),
+                "content": m.effective_content(),
+                "tags": m.tags,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in memories
+        ],
+    }
+
+
+# ── Reversible content compression (CCR) ───────────────────────────────────────
+
+
+class CompressRequest(BaseModel):
+    """Request body for POST /compress — mirrors ``mnemos_compress``."""
+
+    text: str
+    profile: str | None = None
+    project: str = ""
+
+
+class RetrieveRequest(BaseModel):
+    """Request body for POST /retrieve — mirrors ``mnemos_retrieve``."""
+
+    hash: str
+    query: str | None = None
+    snippet_count: int | None = None
+
+
+@app.post("/compress")
+async def compress_content(req: CompressRequest) -> dict[str, Any]:
+    """Compress ``text`` via CCR and cache the original.
+
+    Mirrors the ``mnemos_compress`` MCP tool. Returns the CCR result dict
+    (compressed text, hash, sizes, reduction, marker, …).
+    """
+    _track_http_call()
+    mgr = get_manager()
+    return mgr.compress_content(req.text, profile=req.profile, project=req.project)
+
+
+@app.post("/retrieve")
+async def retrieve_content(req: RetrieveRequest) -> dict[str, Any]:
+    """Retrieve a CCR-cached original (or FTS5 snippets when ``query`` is set).
+
+    Mirrors the ``mnemos_retrieve`` MCP tool.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    return mgr.retrieve_content(req.hash, query=req.query, snippet_count=req.snippet_count)
+
+
+# ── Auto-collect signal vector ─────────────────────────────────────────────────
+
+
+@app.get("/auto-collect")
+async def auto_collect_status() -> dict[str, Any]:
+    """Compaction signal vector — mirrors ``mnemos_auto_collect_status``.
+
+    Returns the in-process call counter / elapsed-time signals plus
+    client-populated heuristic slots. The ``recommendation`` field is
+    ``"save_checkpoint"`` when either signal exceeds its threshold, else
+    ``"ok"``.
+    """
+    with _auto_collect_lock:
+        calls = _auto_collect_tracker["calls_since_save"]
+        elapsed = (
+            time.monotonic() - _auto_collect_tracker["last_save_ts"]
+            if _auto_collect_tracker["last_save_ts"]
+            else 0.0
+        )
+    call_threshold = _http_remind_calls()
+    secs_threshold = _http_remind_secs()
+    call_triggered = calls >= call_threshold
+    elapsed_triggered = elapsed > secs_threshold and calls > 0
+    return {
+        "auto_collect_enabled": _auto_collect_state["enabled"],
+        "signals": {
+            "call_counter": {
+                "calls_since_save": calls,
+                "threshold": call_threshold,
+                "triggered": call_triggered,
+            },
+            "elapsed_secs": {
+                "value": int(elapsed),
+                "threshold": secs_threshold,
+                "triggered": elapsed_triggered,
+            },
+            "context_size_heuristic": {"value": None, "note": "populated by client"},
+            "summary_marker_detected": {"value": None, "note": "populated by client"},
+            "reference_drop_heuristic": {"value": None, "note": "populated by client"},
+        },
+        "recommendation": ("save_checkpoint" if (call_triggered or elapsed_triggered) else "ok"),
+        "next_reminder_in_calls": max(0, call_threshold - calls),
+    }
+
+
+# ── URL ingest ─────────────────────────────────────────────────────────────────
+
+
+class IngestUrlRequest(BaseModel):
+    """Request body for POST /ingest-url — mirrors ``mnemos_ingest_url``."""
+
+    url: str
+    tags: list[str]
+
+
+@app.post("/ingest-url", status_code=201)
+async def ingest_url(req: IngestUrlRequest) -> dict[str, Any]:
+    """Fetch a web page, extract main text, and save it as a RAW memory.
+
+    Mirrors the ``mnemos_ingest_url`` MCP tool. Credentials embedded in the
+    URL are stripped before storage (OWASP A02). Tags are validated through
+    the project's tag contract.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    settings = mgr.settings
+    url_clean = re.sub(r"(https?://)([^@]*@)", r"\1", req.url)
+    tags = validate_tag_contract(req.tags, strict=settings.mnemos.strict_tag_contract)
+    project = next((t[len("project:") :] for t in tags if t.startswith("project:")), "")
+    agent = next((t[len("agent:") :] for t in tags if t.startswith("agent:")), "")
+    memory = mgr.ingest_url(url_clean, tags=tags, project=project, agent=agent)
+    return {"id": str(memory.id), "title": memory.auto_title(), "url": url_clean}
+
+
+# ── File watcher (M8) ─────────────────────────────────────────────────────────
+
+
+class WatchStartRequest(BaseModel):
+    """Request body for POST /watch/start — mirrors ``mnemos_watch_start``."""
+
+    paths: list[str] = []
+    scan: bool = True
+    include_rules: bool = False
+
+
+@app.post("/watch/start")
+async def watch_start(req: WatchStartRequest) -> dict[str, Any]:
+    """Start the background vault watcher.
+
+    Mirrors the ``mnemos_watch_start`` MCP tool. When ``paths`` is empty the
+    current working directory is watched. When ``include_rules`` is true the
+    watcher also ingests ``*.instructions.md`` rule files found under the
+    watched paths.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    paths = req.paths or [str(Path.cwd())]
+    mgr.watch_start(paths=paths, scan=req.scan, include_rules=req.include_rules)
+    return {
+        "status": "started",
+        "paths": paths,
+        "scan": req.scan,
+        "include_rules": req.include_rules,
+    }
+
+
+@app.post("/watch/stop")
+async def watch_stop() -> dict[str, str]:
+    """Stop the background vault watcher.
+
+    Mirrors the ``mnemos_watch_stop`` MCP tool. Idempotent — returns
+    ``{"status": "stopped"}`` whether or not a watcher was running.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    mgr.watch_stop()
+    return {"status": "stopped"}
+
+
+@app.get("/watch/status")
+async def watch_status() -> dict[str, Any]:
+    """Return the current watcher status.
+
+    Mirrors the ``mnemos_watch_status`` MCP tool. Returns ``{"running": bool}``.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    return mgr.watch_status()
 
 
 # ── Export / Import (M17 — backup/restore) ────────────────────────────────────

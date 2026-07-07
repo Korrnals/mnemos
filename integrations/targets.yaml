@@ -29,3 +29,13 @@ targets:
     deploy:
       instructions: "~/.cursor/rules/"
     format: copy
+
+  hermes:
+    detect:
+      - path: "~/.hermes/config.yaml"
+      - path: "$HERMES_HOME/config.yaml"
+    deploy:
+      plugin: "~/.hermes/plugins/mnemos/"
+      instructions: "~/.hermes/skills/"
+      skills: "~/.hermes/skills/"
+    format: copy

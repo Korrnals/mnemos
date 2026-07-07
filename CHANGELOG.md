@@ -13,7 +13,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-## [2.5.0] - 2026-06-29
+## [2.6.0] - 2026-07-07
+
+### Added
+
+- **Hermes Agent integration** — full `MemoryProvider` plugin for Hermes
+  Agent by Nous Research. Connects Mnemos to Hermes' pluggable memory
+  system via the HTTP API. Exposes all 15 `mnemos_*` tools as native
+  Hermes tools, with automatic prefetch, sync-turn, session-end
+  extraction, built-in memory mirroring, and circuit breaker. Config
+  via `hermes memory setup` or `memory.mnemos` in config.yaml. Plugin
+  at `integrations/hermes/`, target in `targets.yaml`.
+
+- **HTTP API: 9 new endpoints** — all MCP-only tools now have HTTP
+  equivalents, enabling the Hermes plugin (and any HTTP client) to
+  access the full tool surface:
+  - `POST /context/save` — session checkpoint (mirrors `mnemos_save_context`)
+  - `POST /context/recall` — session context recall (mirrors `mnemos_recall_context`)
+  - `POST /compress` — reversible compression CCR (mirrors `mnemos_compress`)
+  - `POST /retrieve` — CCR retrieval (mirrors `mnemos_retrieve`)
+  - `GET /auto-collect` — compaction signal vector (mirrors `mnemos_auto_collect_status`)
+  - `POST /ingest-url` — URL ingest with credential stripping (mirrors `mnemos_ingest_url`)
+  - `POST /watch/start` — file watcher start (mirrors `mnemos_watch_start`)
+  - `POST /watch/stop` — file watcher stop (mirrors `mnemos_watch_stop`)
+  - `GET /watch/status` — file watcher status (mirrors `mnemos_watch_status`)
+
+- **E2E tests** — 49 new tests covering all new HTTP endpoints and
+  the Hermes plugin (circuit breaker, config loading, tool schemas,
+  sync-turn significance filter, save_config target).
+
+### Changed
+
+- `SaveContextRequest` fields now accept `str | list[str]` — lists are
+  joined with newlines. This matches the Hermes plugin schema which
+  declares fields as `type: array`.
+
+- `_auto_collect_state` in HTTP API now reads `MNEMOS_AUTO_COLLECT`
+  env var (was hardcoded `False`). Aligns with the MCP server behavior.
+
+- `targets.yaml` — hermes target now includes `plugin` deploy path
+  (`~/.hermes/plugins/mnemos/`).
+
+- HTTP API docs (EN/RU) — documented all 9 new endpoints with request
+  bodies, responses, examples, and error codes.
+
+### Fixed
+
+- Plugin: default port corrected from `8787` to `8000` (matching
+  `mnemos serve --port 8000`).
+
+- Plugin: `_handle_add` now reads `title` from API response instead
+  of non-existent `auto_title` field.
+
+- Plugin: `save_config` now writes to `memory.mnemos` (was
+  `plugins.mnemos`), aligning with `hermes memory setup` wizard.
+
+- Plugin: `sync_turn` no longer saves every turn — only significant
+  turns (user message > 50 chars) or every Nth turn (default 10).
+  Honors Mnemos' "write sparingly" philosophy.
+
+- HTTP API docs: removed duplicate endpoint sections (EN/RU).
 
 ### Added
 

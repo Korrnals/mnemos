@@ -19,11 +19,14 @@ start/checkpoint/end).
 
 | Trigger | Action | Tool |
 |---------|--------|------|
-| **Before an architectural decision** — choosing a pattern, library, approach | Search memory for prior decisions on this topic | `mnemos_search` |
-| **When learning something non-obvious** — a gotcha, a hidden constraint, a surprising behaviour | Capture it as a learning or bug-pattern | `mnemos_add` |
-| **Before a web search** — querying the internet for a solution | Search memory first; the answer may already be stored | `mnemos_search` |
-| **When resuming work as a specific agent** — e.g. `cr-security-reviewer` re-entering | Recall this agent's recent entries | `mnemos_agent_recall` |
-| **When a decision is made** — design, process, or tradeoff chosen | Capture the decision and rationale | `mnemos_add` |
+|| **Before an architectural decision** — choosing a pattern, library, approach | Search memory for prior decisions on this topic | `mnemos_search` |
+|| **When learning something non-obvious** — a gotcha, a hidden constraint, a surprising behaviour | Capture it as a learning or bug-pattern | `mnemos_add` |
+|| **Before a web search** — querying the internet for a solution | Search memory first; the answer may already be stored | `mnemos_search` |
+|| **When resuming work as a specific agent** — e.g. `cr-security-reviewer` re-entering | Recall this agent's recent entries | `mnemos_agent_recall` |
+|| **When a decision is made** — design, process, or tradeoff chosen | Capture the decision and rationale | `mnemos_add` |
+|| **When a large tool output threatens to fill context** — long logs, big JSON dumps, verbose command output | Compress it before pasting into context; retrieve the original later if needed | `mnemos_compress` |
+|| **When retrieving the full original behind a CCR marker** — or searching within a cached original for specific lines | Retrieve by hash (full) or by hash + query (FTS5 snippets) | `mnemos_retrieve` |
+|| **When web research yields a useful page** — a docs page, a blog post, a Stack Overflow answer | Save the page directly to memory so future agents find it | `mnemos_ingest_url` |
 
 ---
 
@@ -93,6 +96,58 @@ mnemos_add(
 - Include the **why**, not just the **what**. A decision without rationale
   is a rule without justification — future agents cannot tell if it still
   applies.
+
+### Compress large tool outputs
+
+```text
+mnemos_compress(
+  text=<large content: logs, JSON, command output>,
+  profile=<log|terminal|code|docs|web|default>,  # optional, auto-detected
+  project=<current-project>                       # optional
+)
+```
+
+- Use when a tool output is large enough to crowd the context window
+  (typically ≥500 chars). The original is cached keyed by SHA-256 hash and a
+  short marker is returned in its place.
+- Keep the returned marker in context — pass its `hash` to
+  `mnemos_retrieve` to fetch the full original (or FTS5 snippets from within
+  it) on demand.
+- Achieves 70–90% token reduction on typical logs with zero data loss.
+
+### Retrieve a compressed original
+
+```text
+mnemos_retrieve(
+  hash=<SHA-256 hash from a [compressed: …] marker>,
+  query=<optional search query for snippet retrieval>,
+  snippet_count=<int, default 5>   # optional, only when query is set
+)
+```
+
+- Without `query`: returns the full cached original.
+- With `query`: returns FTS5-ranked snippets from within the original — useful
+  when only a few lines are relevant and the original is large.
+
+### Save web research to memory
+
+```text
+mnemos_ingest_url(
+  url=<HTTP/HTTPS URL of the page to save>,
+  tags=[
+    "project:<slug>",
+    "agent:<slug>",
+    "gcw:<subtype>"          # e.g. gcw:learning, gcw:decision, gcw:rule
+  ]
+)
+```
+
+- Fetches the page, extracts its main content (via trafilatura), and stores
+  it as a memory. Credentials embedded in the URL are stripped before
+  storage (OWASP A02).
+- Same M2 tag contract as `mnemos_add`. Returns `{id, title, url}`.
+- Use after web research so the finding is available to future agents via
+  `mnemos_search` without re-fetching.
 
 ---
 

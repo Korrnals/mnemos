@@ -282,6 +282,7 @@ In **auto-collect mode** (`MNEMOS_AUTO_COLLECT=1`), a `## 🔄 Auto-Collect Mode
 
 - `mnemos_save_context` — the matching writer
 - [architecture.md#session-context](../architecture/overview.md#session-context)
+- HTTP equivalent: [`POST /context/recall`](http-api.md#context-recall)
 
 ---
 
@@ -332,6 +333,7 @@ Mnemos synthesises the parts into a single Markdown memory tagged with `project:
 
 - `mnemos_recall_context` — the matching reader
 - Auto-collect mode: [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server)
+- HTTP equivalent: [`POST /context/save`](http-api.md#context-save)
 
 ---
 
@@ -375,6 +377,11 @@ List the most recent memory entries, oldest-last.
 }
 ```
 
+### Related
+
+- HTTP equivalent: [`GET /memories`](http-api.md#list-recent)
+- CLI equivalent: [`mnemos list`](cli-reference.md#list)
+
 ---
 
 ## `mnemos_list_tags`
@@ -409,6 +416,11 @@ None.
   "params": { "name": "mnemos_list_tags", "arguments": {} }
 }
 ```
+
+### Related
+
+- HTTP equivalent: [`GET /tags`](http-api.md#tags)
+- CLI equivalent: [`mnemos tags`](cli-reference.md#tags)
 
 ---
 
@@ -462,6 +474,7 @@ Fetch a web page, extract its main content (via `trafilatura`), and save it as a
 
 - CLI equivalent: [`mnemos add --url <URL>`](cli-reference.md#add)
 - HTTP equivalent: [`POST /memories` with manual content](http-api.md#create-memory)
+- HTTP equivalent: [`POST /ingest-url`](http-api.md#ingest-url)
 - Security: [security.md](../admin/security.md#ssrf-guard)
 
 ---
@@ -509,6 +522,11 @@ Start a background file watcher. New and modified files under the watched paths 
 - Default ignored dirs: `.git`, `node_modules`, `__pycache__`, `.venv`, `dist`, `build`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`.
 - Default watched extensions: `.md`, `.py`, `.js`, `.ts`, `.yaml`, `.yml`, `.toml`, `.json`, `.txt`, `.rst`, `.sh`, `.css`, `.html`, `.sql`.
 
+### Related
+
+- HTTP equivalent: [`POST /watch/start`](http-api.md#watch-start)
+- CLI equivalent: [`mnemos watch start`](cli-reference.md#watch-start)
+
 ---
 
 ## `mnemos_watch_stop`
@@ -524,6 +542,11 @@ None.
 ```text
 ✅ Watcher stopped.
 ```
+
+### Related
+
+- HTTP equivalent: [`POST /watch/stop`](http-api.md#watch-stop)
+- CLI equivalent: [`mnemos watch stop`](cli-reference.md#watch-stop)
 
 ---
 
@@ -546,6 +569,11 @@ None.
   "include_rules": false
 }
 ```
+
+### Related
+
+- HTTP equivalent: [`GET /watch/status`](http-api.md#watch-status)
+- CLI equivalent: [`mnemos watch status`](cli-reference.md#watch-status)
 
 ---
 
@@ -609,6 +637,11 @@ Set `MNEMOS_AUTO_COLLECT=1` in the server's environment. The reminder thresholds
 
 Tool descriptions also change (with `🔄 [AUTO-COLLECT] MANDATORY:` prefixes) so agents take the hints more seriously. **Recommended for production agents**, not for one-off scripts.
 
+### Related
+
+- HTTP equivalent: [`GET /auto-collect`](http-api.md#auto-collect)
+- CLI equivalent: [`mnemos auto-collect-status`](cli-reference.md#auto-collect-status)
+
 ---
 
 ## `mnemos_stats`
@@ -634,6 +667,11 @@ Same shape as the CLI `mnemos stats` command — see [cli-reference.md#stats](cl
   "vectors": 120
 }
 ```
+
+### Related
+
+- HTTP equivalent: [`GET /metrics`](http-api.md#metrics)
+- CLI equivalent: [`mnemos stats`](cli-reference.md#stats)
 
 ---
 
@@ -678,6 +716,11 @@ The marker is the only overhead added on top of the filtered content. It is shor
 
 Compress a 30K-line build log → ~900 chars in the context window. When the LLM needs the full traceback, it calls `mnemos_retrieve` with the hash from the marker.
 
+### Related
+
+- HTTP equivalent: [`POST /compress`](http-api.md#compress)
+- CLI equivalent: [`mnemos compress`](cli-reference.md#compress)
+
 ---
 
 ## `mnemos_retrieve`
@@ -720,6 +763,11 @@ Retrieve the original uncompressed content for a CCR marker hash. If `query` is 
 ```
 
 If the hash is absent from the cache (e.g. evicted by TTL or LRU), `found` is `false` with a `reason` field.
+
+### Related
+
+- HTTP equivalent: [`POST /retrieve`](http-api.md#retrieve)
+- CLI equivalent: [`mnemos retrieve`](cli-reference.md#retrieve)
 
 ---
 
