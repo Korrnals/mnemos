@@ -14,7 +14,7 @@
   <a href="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml"><img src="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab" alt="Python"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.3.0-blueviolet" alt="Version"></a>
+  <a href="https://github.com/Korrnals/mnemos/releases"><img src="https://img.shields.io/github/v/release/Korrnals/mnemos?label=version&color=blueviolet" alt="Version"></a>
 </p>
 
 <p align="center">
@@ -107,9 +107,11 @@ uv pip install -e ".[dev]"
 
 **Released wheel** (pin a specific version):
 
+<!-- version:pip -->
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v2.3.0/mnemos-2.3.0-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v2.6.0/mnemos-2.6.0-py3-none-any.whl
 ```
+<!-- /version:pip -->
 
 **Container one-liner** — pulls the image, creates volumes, starts on port 8787:
 
@@ -138,12 +140,16 @@ podman run -d --name mnemos \
   -v mnemos-data:/data \
   -v mnemos-vault:/vault \
   -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
-  ghcr.io/korrnals/mnemos:2.3.0
+<!-- version:image -->
+  ghcr.io/korrnals/mnemos:2.6.0
+<!-- /version:image -->
 
 curl -s http://localhost:8787/health | jq
 ```
 
-Tags: `:2.3.0` (pinned) · `:latest` (rolling). Works with `docker` too — swap `podman` for `docker`.
+<!-- version:tags -->
+Tags: `:2.6.0` (pinned) · `:latest` (rolling). Works with `docker` too — swap `podman` for `docker`.
+<!-- /version:tags -->
 
 </details>
 
