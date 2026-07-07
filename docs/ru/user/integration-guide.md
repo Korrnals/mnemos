@@ -417,7 +417,7 @@ Mnemos предоставляет нативный плагин `MemoryProvider`
 
 1. Запустите сервер Mnemos:
    ```bash
-   mnemos serve --host 127.0.0.1 --port 8000 &
+   mnemos serve --host 127.0.0.1 --port 8787 &
    ```
 
 2. Разверните интеграцию:
@@ -462,7 +462,7 @@ Mnemos предоставляет нативный плагин `MemoryProvider`
 
 | Ключ | По умолчанию | Описание |
 |------|--------------|----------|
-| `base_url` | `http://127.0.0.1:8000` | Базовый URL HTTP API Mnemos |
+| `base_url` | `http://127.0.0.1:8787` | Базовый URL HTTP API Mnemos |
 | `api_key` | (пусто) | Bearer-токен, если включена авторизация |
 | `project` | `hermes` | Slug проекта по умолчанию для контракта тегов |
 | `agent` | `hermes-default` | Slug агента по умолчанию для контракта тегов |

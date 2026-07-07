@@ -408,7 +408,7 @@ Mnemos provides a native `MemoryProvider` plugin for [Hermes Agent](https://herm
 
 1. Start Mnemos server:
    ```bash
-   mnemos serve --host 127.0.0.1 --port 8000 &
+   mnemos serve --host 127.0.0.1 --port 8787 &
    ```
 
 2. Deploy the integration:
@@ -453,7 +453,7 @@ Config is stored in `~/.hermes/config.yaml` under `memory.mnemos`:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `base_url` | `http://127.0.0.1:8000` | Mnemos HTTP API base URL |
+| `base_url` | `http://127.0.0.1:8787` | Mnemos HTTP API base URL |
 | `api_key` | (empty) | Bearer token if auth enabled |
 | `project` | `hermes` | Default project slug for tag contract |
 | `agent` | `hermes-default` | Default agent slug for tag contract |

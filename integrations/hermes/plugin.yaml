@@ -5,11 +5,11 @@ author: Korrnals
 license: MIT
 homepage: https://github.com/Korrnals/mnemos
 requires:
-  - "mnemos serve running at the configured base_url (default: http://127.0.0.1:8000)"
+  - "mnemos serve running at the configured base_url (default: http://127.0.0.1:8787)"
 config_keys:
   base_url:
     description: "Mnemos HTTP API base URL"
-    default: "http://127.0.0.1:8000"
+    default: "http://127.0.0.1:8787"
     env_var: MNEMOS_BASE_URL
   api_key:
     description: "Bearer token (if Mnemos auth enabled)"

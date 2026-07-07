@@ -59,8 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Plugin: default port corrected from `8787` to `8000` (matching
-  `mnemos serve --port 8000`).
+- Plugin: default port corrected to `8787` (matching the actual
+  `ApiConfig.port` default in `src/mnemos/config.py`). The original
+  plugin had `8787` which was correct; this entry documents the
+  verification.
 
 - Plugin: `_handle_add` now reads `title` from API response instead
   of non-existent `auto_title` field.

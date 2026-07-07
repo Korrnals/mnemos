@@ -16,7 +16,7 @@ Coverage:
   1. ``register()`` exists and ``MnemosMemoryProvider`` is importable.
   2. ``get_tool_schemas()`` returns exactly 15 schemas.
   3. Every schema name starts with ``mnemos_``.
-  4. ``_load_config()`` defaults (port 8000, not 8787).
+  4. ``_load_config()`` defaults (port 8787, the Mnemos default).
   5. Circuit breaker opens after 5 failures and closes after cooldown.
   6. ``is_available()`` returns False when the server is unreachable.
   7. ``get_config_schema()`` returns 7 fields with the expected keys.
@@ -113,7 +113,7 @@ from integrations.hermes import (  # noqa: E402
 def _make_provider(**overrides) -> MnemosMemoryProvider:
     """Build a provider with a config dict (skips env/yaml loading)."""
     cfg = {
-        "base_url": "http://127.0.0.1:8000",
+        "base_url": "http://127.0.0.1:8787",
         "api_key": "",
         "project": "hermes",
         "agent": "hermes-default",
@@ -180,8 +180,8 @@ class TestToolSchemas:
 
 
 class TestConfigLoading:
-    def test_default_base_url_port_8000(self, monkeypatch):
-        """Default base_url must be port 8000, not 8787."""
+    def test_default_base_url_port_8787(self, monkeypatch):
+        """Default base_url must be port 8787, the Mnemos default."""
         # Clear env overrides so the defaults are exercised.
         for var in (
             "MNEMOS_BASE_URL",
@@ -194,8 +194,8 @@ class TestConfigLoading:
         ):
             monkeypatch.delenv(var, raising=False)
         cfg = _load_config()
-        assert cfg["base_url"] == "http://127.0.0.1:8000"
-        assert ":8787" not in cfg["base_url"]
+        assert cfg["base_url"] == "http://127.0.0.1:8787"
+        assert ":8000" not in cfg["base_url"]
 
     def test_default_project_and_agent(self, monkeypatch):
         for var in ("MNEMOS_PROJECT", "MNEMOS_AGENT"):
@@ -289,10 +289,10 @@ class TestConfigSchema:
             "sync_interval",
         }
 
-    def test_base_url_default_is_8000(self):
+    def test_base_url_default_is_8787(self):
         p = _make_provider()
         base = next(f for f in p.get_config_schema() if f["key"] == "base_url")
-        assert base["default"] == "http://127.0.0.1:8000"
+        assert base["default"] == "http://127.0.0.1:8787"
 
     def test_api_key_marked_secret(self):
         p = _make_provider()

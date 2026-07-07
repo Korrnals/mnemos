@@ -7,7 +7,7 @@ this plugin talks to Mnemos via its HTTP API (``mnemos serve``).
 Installation::
 
     # 1. Start Mnemos server
-    mnemos serve --host 127.0.0.1 --port 8000 &
+    mnemos serve --host 127.0.0.1 --port 8787 &
 
     # 2. Copy this plugin into Hermes plugins dir
     cp -r integrations/hermes ~/.hermes/plugins/mnemos
@@ -25,7 +25,7 @@ Config (in $HERMES_HOME/config.yaml under ``memory.mnemos``):
     memory:
       provider: mnemos
       mnemos:
-        base_url: "http://127.0.0.1:8000"     # Mnemos HTTP API
+        base_url: "http://127.0.0.1:8787"     # Mnemos HTTP API
         api_key: ""                            # Bearer token if auth enabled
         project: "hermes"                      # default project tag
         agent: "hermes-default"                # default agent tag
@@ -35,7 +35,7 @@ Config (in $HERMES_HOME/config.yaml under ``memory.mnemos``):
 
 Or via env vars::
 
-    MNEMOS_BASE_URL       — HTTP API base (default: http://127.0.0.1:8000)
+    MNEMOS_BASE_URL       — HTTP API base (default: http://127.0.0.1:8787)
     MNEMOS_API_KEY        — Bearer token (default: empty)
     MNEMOS_PROJECT        — default project slug (default: hermes)
     MNEMOS_AGENT          — default agent slug (default: hermes-default)
@@ -124,7 +124,7 @@ def _load_config() -> dict:
     env vars or ``.env``.
     """
     config: dict[str, Any] = {
-        "base_url": os.environ.get("MNEMOS_BASE_URL", "http://127.0.0.1:8000"),
+        "base_url": os.environ.get("MNEMOS_BASE_URL", "http://127.0.0.1:8787"),
         "api_key": os.environ.get("MNEMOS_API_KEY", ""),
         "project": os.environ.get("MNEMOS_PROJECT", "hermes"),
         "agent": os.environ.get("MNEMOS_AGENT", "hermes-default"),
@@ -1641,7 +1641,7 @@ class MnemosMemoryProvider(MemoryProvider):
             {
                 "key": "base_url",
                 "description": "Mnemos HTTP API base URL",
-                "default": "http://127.0.0.1:8000",
+                "default": "http://127.0.0.1:8787",
                 "required": True,
                 "env_var": "MNEMOS_BASE_URL",
             },
