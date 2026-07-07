@@ -1,0 +1,37 @@
+name: mnemos
+description: "Mnemos — standalone memory & knowledge server for AI agents. Hybrid vector+FTS5 search, tag contract, Obsidian vault mirror, reversible compression (CCR), URL ingest, file watcher. Connects to Mnemos HTTP API (mnemos serve). Exposes 15 tools: mnemos_search, mnemos_add, mnemos_recall_context, mnemos_save_context, mnemos_agent_recall, mnemos_list_recent, mnemos_list_tags, mnemos_ingest_url, mnemos_compress, mnemos_retrieve, mnemos_auto_collect_status, mnemos_stats, mnemos_watch_start, mnemos_watch_stop, mnemos_watch_status."
+version: "2.6.0"
+author: Korrnals
+license: MIT
+homepage: https://github.com/Korrnals/mnemos
+requires:
+  - "mnemos serve running at the configured base_url (default: http://127.0.0.1:8787)"
+config_keys:
+  base_url:
+    description: "Mnemos HTTP API base URL"
+    default: "http://127.0.0.1:8787"
+    env_var: MNEMOS_BASE_URL
+  api_key:
+    description: "Bearer token (if Mnemos auth enabled)"
+    secret: true
+    env_var: MNEMOS_API_KEY
+  project:
+    description: "Default project slug for tag contract"
+    default: "hermes"
+    env_var: MNEMOS_PROJECT
+  agent:
+    description: "Default agent slug for tag contract"
+    default: "hermes-default"
+    env_var: MNEMOS_AGENT
+  auto_sync:
+    description: "Mirror built-in memory writes and sync significant turns"
+    default: "true"
+    env_var: MNEMOS_AUTO_SYNC
+  prefetch_limit:
+    description: "Max results in prefetch (before each turn)"
+    default: "5"
+    env_var: MNEMOS_PREFETCH_LIMIT
+  sync_interval:
+    description: "Sync every Nth turn (in addition to significant turns where user message > 50 chars)"
+    default: "10"
+    env_var: MNEMOS_SYNC_INTERVAL

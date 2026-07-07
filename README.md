@@ -81,8 +81,9 @@ mnemos integration setup
 ```
 
 This deploys memory-usage instructions, skills, and a prompt mode to your
-agent harness (GCW `~/.copilot/`, generic Copilot, Cursor). Agents will now
-*know when and how* to use Mnemos memory — not just have the tools available.
+agent harness (GCW `~/.copilot/`, generic Copilot, Cursor, and Hermes Agent
+`~/.hermes/`). Agents will now *know when and how* to use Mnemos memory — not
+just have the tools available.
 
 Add `--wire-agents --all` to also grant `mnemos/*` tools to GCW agent
 frontmatter in the same pass. See the
@@ -249,7 +250,7 @@ The same `MemoryManager` powers all three interfaces. Pick the one that fits you
 | Surface | Use it when… | Reference |
 |---------|--------------|-----------|
 | **CLI** — `mnemos …` | You live in a shell, want fast ad-hoc add / search, or are scripting cron jobs | [cli-reference.md](docs/en/user/cli-reference.md) |
-| **HTTP** — `mnemos serve` | You have a non-MCP client — a web dashboard, a mobile app, a CI runner | [http-api.md](docs/en/user/http-api.md) |
+| **HTTP** — `mnemos serve` | You have a non-MCP client — a web dashboard, a mobile app, a CI runner, or **Hermes Agent** via its MemoryProvider plugin | [http-api.md](docs/en/user/http-api.md) |
 | **MCP** — `mnemos mcp-server` | You are VS Code Copilot or any MCP-aware agent — the path the GCW family takes | [mcp-tools.md](docs/en/user/mcp-tools.md) |
 
 The MCP surface also exposes the **A2A Sessions API** (M16) — a persistent backend for multi-step agent
@@ -300,6 +301,11 @@ GCW repo ships a thin stub plugin (`plugins/mnemos-integration`) that runs in a 
 Mnemos is reachable; once the MCP server is up, the stub transparently switches to `mnemos_*` tools
 without code changes. The shared contract is the [tag schema](docs/en/user/tag-contract.md) —
 `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>` — that every memory entry must carry.
+
+Mnemos also integrates with [Hermes Agent](https://hermes-agent.nousresearch.com/) by Nous Research via a
+native `MemoryProvider` plugin at `integrations/hermes/`. The plugin exposes all 15 `mnemos_*` tools as
+native Hermes tools, with automatic prefetch, sync-turn, and built-in memory mirroring. See
+`integrations/hermes/` and the [integration guide](docs/en/user/integration-guide.md#hermes-agent) for details.
 
 ---
 

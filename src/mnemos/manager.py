@@ -401,7 +401,22 @@ class MemoryManager:
     def recall_context(
         self, *, project: str, query: str | None = None, limit: int = 5
     ) -> list[Memory]:
-        """Return most recent checkpoint memories for a project."""
+        """Return most recent checkpoint memories for a project.
+
+        When ``query`` is provided, a hybrid search scoped to
+        ``gcw:checkpoint`` tags is used to rank checkpoints by relevance,
+        then the top ``limit`` are returned. When ``query`` is omitted,
+        checkpoints are returned by recency only.
+        """
+        if query:
+            results = self.search(
+                query=query,
+                tags=["gcw:checkpoint"],
+                project=project,
+                limit=limit,
+            )
+            return [r.memory for r in results]
+
         memories = self.sqlite.list_all(
             limit=limit * 3,
             project=project,

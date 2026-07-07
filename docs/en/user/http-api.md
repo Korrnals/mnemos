@@ -398,6 +398,386 @@ curl -s "http://127.0.0.1:8000/recall/agent/cr-security-reviewer?project=mnemos&
 
 ---
 
+## Session context (save / recall)
+
+These endpoints mirror the `mnemos_save_context` and `mnemos_recall_context`
+plugin tools. They store and retrieve `session_context` memories tagged
+`gcw:checkpoint`, enabling an agent to restore its working state across
+sessions or after context compaction.
+
+### `POST /context/save` — save a session checkpoint
+
+Builds structured Markdown from the supplied fields and stores it as a
+`SESSION_CONTEXT` memory tagged `gcw:checkpoint`. Mirrors the
+`mnemos_save_context` plugin tool.
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `project` | string | **yes** | — | Project slug to scope the checkpoint. |
+| `goals` | string | no | — | One-sentence active goal. |
+| `completed` | string | no | — | Bullets of completed work. |
+| `in_progress` | string | no | — | Immediate next action. |
+| `decisions` | string | no | — | Decisions worth surviving. |
+| `context` | string | no | — | File paths, architecture notes, gotchas. |
+
+**Response 201**
+
+```json
+{
+  "status": "saved",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "Session checkpoint — 2026-07-07T12:00:00+00:00"
+}
+```
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/context/save \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "mnemos",
+    "goals": "Finish HTTP API docs for all 15 tools",
+    "completed": "- Updated plugin.yaml\n- Updated prompt mode",
+    "in_progress": "Document /context/save and /context/recall",
+    "decisions": "- CCR endpoints go before Knowledge pipeline section",
+    "context": "See docs/en/user/http-api.md"
+  }'
+```
+
+**Errors**
+
+| Code | Cause |
+|------|-------|
+| `422` | Missing required `project` field (Pydantic validation) |
+| `500` | SQLite / vault write failure |
+
+### `POST /context/recall` — recall session context
+
+Returns the most recent checkpoint memories for a project, optionally
+filtered by a sub-query. Mirrors the `mnemos_recall_context` plugin tool.
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `project` | string | **yes** | — | Project slug to recall. |
+| `query` | string | no | — | Optional FTS / vector sub-query to focus results. |
+| `limit` | int | no | `5` | Max checkpoints to return. |
+
+**Response 200 — with prior context**
+
+```json
+{
+  "project": "mnemos",
+  "checkpoints": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "title": "Session checkpoint — 2026-07-07T12:00:00+00:00",
+      "content": "# Session checkpoint — 2026-07-07T12:00:00+00:00\n\n## Goals\nFinish HTTP API docs for all 15 tools\n",
+      "tags": ["project:mnemos", "agent:user", "gcw:checkpoint"],
+      "created_at": "2026-07-07T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+**Response 200 — no prior context**
+
+```json
+{
+  "project": "mnemos",
+  "checkpoints": [],
+  "message": "No context found. Start by saving context with POST /context/save."
+}
+```
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/context/recall \
+  -H "Content-Type: application/json" \
+  -d '{"project": "mnemos", "limit": 3}'
+```
+
+---
+
+## Reversible compression (CCR)
+
+These endpoints implement **Compress-Cache-Retrieve (CCR)** — zero-data-loss
+compression for large content (logs, JSON, command output). The original is
+cached keyed by its SHA-256 hash; a short parseable marker is embedded in
+the compressed text so the full original can be retrieved on demand.
+Typical reduction is 70–90% on logs.
+
+### `POST /compress` — compress content
+
+Compresses `text` via CCR, caches the original, and returns the compressed
+text plus a marker containing the hash. Content shorter than ~500 chars is
+returned as-is (not cached). Mirrors the `mnemos_compress` plugin tool.
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `text` | string | **yes** | — | Content to compress. ≥500 chars to cache. |
+| `profile` | string | no | auto | Filter profile: `log`, `terminal`, `code`, `docs`, `web`, `default`. Auto-detected if omitted. |
+| `project` | string | no | `""` | Project slug to scope the cache entry. |
+
+**Response 200**
+
+```json
+{
+  "compressed_text": "[compressed: a1b2c3... 8.2KB → 0.9KB (89%)]\n## Top 5 lines by frequency\nERROR Connection refused (×42)\n...",
+  "hash": "a1b2c3d4e5f6...",
+  "original_size": 8200,
+  "compressed_size": 900,
+  "reduction_pct": 89.0,
+  "marker": "[compressed: a1b2c3... 8.2KB → 0.9KB (89%)]",
+  "cached": true,
+  "profile": "log"
+}
+```
+
+When `cached` is `false` (content < ~500 chars), `hash` is empty and
+`compressed_text` equals the input `text`.
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/compress \
+  -H "Content-Type: application/json" \
+  -d '{"text": "<8KB of log output>", "profile": "log", "project": "mnemos"}'
+```
+
+### `POST /retrieve` — retrieve a CCR-cached original
+
+Retrieves the original uncompressed content for a CCR marker hash. If
+`query` is omitted, returns the full original. If `query` is provided,
+returns FTS5-ranked snippets from within the cached original — useful when
+the original is large and only a few lines are relevant. Mirrors the
+`mnemos_retrieve` plugin tool.
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `hash` | string | **yes** | — | SHA-256 hash from a `[compressed: ...]` marker. |
+| `query` | string | no | — | Search query for snippet retrieval. |
+| `snippet_count` | int | no | `5` | Number of snippets when `query` is provided. |
+
+**Response 200 — full retrieval (no `query`)**
+
+```json
+{
+  "hash": "a1b2c3d4e5f6...",
+  "found": true,
+  "original": "<full original text>",
+  "size_bytes": 8200,
+  "retrieval_count": 1
+}
+```
+
+**Response 200 — snippet retrieval (with `query`)**
+
+```json
+{
+  "hash": "a1b2c3d4e5f6...",
+  "found": true,
+  "query": "Connection refused",
+  "snippets": [
+    "ERROR Connection refused (×42)",
+    "WARN Retrying after Connection refused on host:3306"
+  ],
+  "retrieval_count": 1
+}
+```
+
+**Response 200 — not found**
+
+```json
+{
+  "hash": "000000000000...",
+  "found": false,
+  "retrieval_count": 0
+}
+```
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/retrieve \
+  -H "Content-Type: application/json" \
+  -d '{"hash": "a1b2c3d4e5f6...", "query": "Connection refused", "snippet_count": 3}'
+```
+
+---
+
+## Auto-collect signal
+
+### `GET /auto-collect` — compaction signal vector
+
+Returns the in-process call counter / elapsed-time signals plus
+client-populated heuristic slots. The `recommendation` field is
+`"save_checkpoint"` when either the call counter or the elapsed-time signal
+exceeds its threshold, else `"ok"`. Mirrors the `mnemos_auto_collect_status`
+plugin tool.
+
+**Response 200**
+
+```json
+{
+  "auto_collect_enabled": true,
+  "signals": {
+    "call_counter": {
+      "calls_since_save": 12,
+      "threshold": 25,
+      "triggered": false
+    },
+    "elapsed_secs": {
+      "value": 3600,
+      "threshold": 1800,
+      "triggered": true
+    },
+    "context_size_heuristic": {"value": null, "note": "populated by client"},
+    "summary_marker_detected": {"value": null, "note": "populated by client"},
+    "reference_drop_heuristic": {"value": null, "note": "populated by client"}
+  },
+  "recommendation": "save_checkpoint",
+  "next_reminder_in_calls": 13
+}
+```
+
+**Example**
+
+```bash
+curl -s http://127.0.0.1:8000/auto-collect
+```
+
+---
+
+## URL ingest
+
+### `POST /ingest-url` — fetch and save a web page
+
+Fetches a web page, extracts its main text (via trafilatura), and saves it
+as a `RAW` memory. Credentials embedded in the URL are stripped before
+storage (OWASP A02). Tags are validated through the project's tag contract.
+Mirrors the `mnemos_ingest_url` plugin tool.
+
+**Request body**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | **yes** | HTTP/HTTPS URL to fetch. |
+| `tags` | string[] | **yes** | Must include `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>`. |
+
+**Response 201**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "FastAPI dependency injection guide",
+  "url": "https://fastapi.tiangolo.com/tutorial/dependencies/"
+}
+```
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/ingest-url \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://fastapi.tiangolo.com/tutorial/dependencies/",
+    "tags": ["project:mnemos", "agent:tech-lead", "gcw:learning"]
+  }'
+```
+
+**Errors**
+
+| Code | Cause |
+|------|-------|
+| `422` | Missing required tag (`project:`, `agent:`, or `gcw:`) or missing `url` |
+| `500` | Fetch failure, extraction failure, or SQLite / vault write failure |
+
+---
+
+## File watcher (M8)
+
+These endpoints manage a background vault watcher that auto-indexes new and
+modified files into Mnemos. They mirror the `mnemos_watch_start`,
+`mnemos_watch_stop`, and `mnemos_watch_status` plugin tools.
+
+### `POST /watch/start` — start the file watcher
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `paths` | string[] | no | `[cwd]` | Directories to watch. |
+| `scan` | bool | no | `true` | Run an initial scan to catch up on existing files. |
+| `include_rules` | bool | no | `false` | Also watch `*.instructions.md` rule files. |
+
+**Response 200**
+
+```json
+{
+  "status": "started",
+  "paths": ["/home/you/projects/mnemos"],
+  "scan": true,
+  "include_rules": false
+}
+```
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/watch/start \
+  -H "Content-Type: application/json" \
+  -d '{"paths": ["/home/you/projects/mnemos"], "include_rules": true}'
+```
+
+### `POST /watch/stop` — stop the file watcher
+
+Idempotent — returns `{"status": "stopped"}` whether or not a watcher was
+running.
+
+**Response 200**
+
+```json
+{"status": "stopped"}
+```
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/watch/stop
+```
+
+### `GET /watch/status` — watcher status
+
+**Response 200**
+
+```json
+{
+  "running": true,
+  "paths": ["/home/you/projects/mnemos"],
+  "files_queued": 3,
+  "files_indexed": 42,
+  "include_rules": false
+}
+```
+
+**Example**
+
+```bash
+curl -s http://127.0.0.1:8000/watch/status
+```
+
+---
+
 ## Knowledge pipeline (M4)
 
 ### `POST /process` — run end-to-end pipeline
@@ -770,4 +1150,4 @@ npx @openapitools/openapi-generator-cli generate \
 
 ---
 
-_Last updated: 2026-06-17_
+_Last updated: 2026-07-07_

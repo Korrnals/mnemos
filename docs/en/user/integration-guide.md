@@ -400,6 +400,80 @@ the `mnemos-tag-contract` skill, and the `mnemos-memory` prompt mode.
 
 ---
 
+## Hermes Agent
+
+Mnemos provides a native `MemoryProvider` plugin for [Hermes Agent](https://hermes-agent.nousresearch.com/) by Nous Research. The plugin connects Mnemos to Hermes' pluggable memory system via the HTTP API.
+
+### Installation
+
+1. Start Mnemos server:
+   ```bash
+   mnemos serve --host 127.0.0.1 --port 8787 &
+   ```
+
+2. Deploy the integration:
+   ```bash
+   mnemos integration setup --target hermes
+   ```
+   This copies the plugin to `~/.hermes/plugins/mnemos/` and deploys skills/instructions to `~/.hermes/skills/`.
+
+3. Activate via the wizard:
+   ```bash
+   hermes memory setup
+   ```
+   Select "mnemos" from the provider list and configure the base URL.
+
+4. Restart your Hermes session (`/restart` in gateway, or relaunch CLI).
+
+### Tools
+
+The plugin exposes all 15 `mnemos_*` tools as native Hermes tools:
+
+| Tool | HTTP endpoint |
+|------|--------------|
+| `mnemos_search` | POST /search |
+| `mnemos_add` | POST /memories |
+| `mnemos_recall_context` | POST /context/recall |
+| `mnemos_save_context` | POST /context/save |
+| `mnemos_agent_recall` | GET /recall/agent/{name} |
+| `mnemos_list_recent` | GET /memories |
+| `mnemos_list_tags` | GET /tags |
+| `mnemos_stats` | GET /metrics |
+| `mnemos_auto_collect_status` | GET /auto-collect |
+| `mnemos_ingest_url` | POST /ingest-url |
+| `mnemos_compress` | POST /compress |
+| `mnemos_retrieve` | POST /retrieve |
+| `mnemos_watch_start` | POST /watch/start |
+| `mnemos_watch_stop` | POST /watch/stop |
+| `mnemos_watch_status` | GET /watch/status |
+
+### Configuration
+
+Config is stored in `~/.hermes/config.yaml` under `memory.mnemos`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `base_url` | `http://127.0.0.1:8787` | Mnemos HTTP API base URL |
+| `api_key` | (empty) | Bearer token if auth enabled |
+| `project` | `hermes` | Default project slug for tag contract |
+| `agent` | `hermes-default` | Default agent slug for tag contract |
+| `auto_sync` | `true` | Mirror built-in memory writes and sync significant turns |
+| `prefetch_limit` | `5` | Max results in prefetch (before each turn) |
+| `sync_interval` | `10` | Sync every Nth turn |
+
+### Architecture
+
+The plugin implements the Hermes `MemoryProvider` ABC:
+
+- **prefetch()** — hybrid search before each turn → context injection
+- **sync_turn()** — saves significant turns (user > 50 chars or every Nth)
+- **on_memory_write()** — mirrors built-in MEMORY.md/USER.md writes to Mnemos
+- **on_session_end()** — extracts key facts from the conversation
+- **on_pre_compress()** — extracts facts before context compression
+- **Circuit breaker** — 5 failures → 120s cooldown
+
+---
+
 ## Versioning
 
 Every file in the integration layer carries a version stamp:

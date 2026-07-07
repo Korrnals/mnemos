@@ -36,10 +36,24 @@ Mnemos is a fork of [`ai-brain`](../../README.md#source-upstream-license) — se
 | M15 | Production Hardening | ✅ | — | `make verify`: ruff + mypy --strict + bandit + pip-audit + tests; see ADR 0013 |
 | M16 | A2A Sessions API | ✅ | — | Five HTTP endpoints; persistent backend for GCW multi-step chains |
 | M17 | CI Pipeline | ✅ | — | GitHub Actions workflow gates `make verify` on every PR |
+| M18 | Hermes Agent Integration | ✅ | 49 | Native `MemoryProvider` plugin for Hermes Agent; 9 new HTTP endpoints; see ADR 0014 |
 | M20 | Docs Overhaul | 🔄 | — | This slice — `docs/` rebuilt, README curated, link map repaired |
+
+### M18 — Hermes Agent integration (v2.6.0) ✅
+
+**Goal:** Native MemoryProvider plugin for Hermes Agent by Nous Research.
+
+**Delivered:**
+- `integrations/hermes/` — full MemoryProvider plugin (15 tools, circuit breaker, prefetch, sync)
+- 9 new HTTP API endpoints (context/save, context/recall, compress, retrieve, auto-collect, ingest-url, watch/*)
+- `targets.yaml` — hermes target with plugin deploy
+- 49 E2E tests covering all new endpoints and plugin
+- Full documentation (EN/RU): http-api.md, mcp-tools.md, integration-guide.md
+
+**Status:** ✅ Shipped in v2.6.0
 
 ## Evolution
 
 The M-numbering is the implementation contract; the [ADR set](adr/) is the design contract. When in doubt about *why* a milestone made the choices it made, read the matching ADR. The current architectural shape is captured in [architecture overview](../en/architecture/overview.md); the data model is in §2, the state machines in §3.
 
-A new milestone (M18+) opens only when a senior agent raises a task ticket under [tasks/](https://github.com/Korrnals/mnemos/tree/main/tasks) and the planning session locks the scope.
+A new milestone (M19+) opens only when a senior agent raises a task ticket under [tasks/](https://github.com/Korrnals/mnemos/tree/main/tasks) and the planning session locks the scope.

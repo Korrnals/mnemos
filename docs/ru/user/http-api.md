@@ -398,6 +398,387 @@ curl -s "http://127.0.0.1:8000/recall/agent/cr-security-reviewer?project=mnemos&
 
 ---
 
+## Контекст сессии (save / recall)
+
+Эти эндпоинты зеркалируют плагин-инструменты `mnemos_save_context` и
+`mnemos_recall_context`. Они сохраняют и извлекают записи типа
+`session_context` с тегом `gcw:checkpoint`, позволяя агенту восстановить
+рабочее состояние между сессиями или после компакции контекста.
+
+### `POST /context/save` — сохранить чекпойнт сессии
+
+Формирует структурированный Markdown из переданных полей и сохраняет его как
+запись `SESSION_CONTEXT` с тегом `gcw:checkpoint`. Зеркалирует плагин-инструмент
+`mnemos_save_context`.
+
+**Тело запроса**
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|---------- |
+| `project` | string | **да** | — | Slug проекта для чекпойнта. |
+| `goals` | string | нет | — | Активная цель одним предложением. |
+| `completed` | string | нет | — | Список завершённой работы. |
+| `in_progress` | string | нет | — | Ближайшее следующее действие. |
+| `decisions` | string | нет | — | Решения, которые стоит сохранить. |
+| `context` | string | нет | — | Пути к файлам, заметки по архитектуре, подводные камни. |
+
+**Ответ 201**
+
+```json
+{
+  "status": "saved",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "Session checkpoint — 2026-07-07T12:00:00+00:00"
+}
+```
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/context/save \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "mnemos",
+    "goals": "Закончить HTTP API доки для всех 15 инструментов",
+    "completed": "- Обновлён plugin.yaml\n- Обновлён prompt mode",
+    "in_progress": "Документировать /context/save и /context/recall",
+    "decisions": "- CCR-эндпоинты идут перед секцией Knowledge pipeline",
+    "context": "См. docs/en/user/http-api.md"
+  }'
+```
+
+**Ошибки**
+
+| Код | Причина |
+|-----|-------- |
+| `422` | Отсутствует обязательное поле `project` (валидация Pydantic) |
+| `500` | Сбой записи SQLite / vault |
+
+### `POST /context/recall` — отозвать контекст сессии
+
+Возвращает последние чекпойнт-записи для проекта, опционально отфильтрованные
+подзапросом. Зеркалирует плагин-инструмент `mnemos_recall_context`.
+
+**Тело запроса**
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|---------- |
+| `project` | string | **да** | — | Slug проекта для отзыва. |
+| `query` | string | нет | — | Опциональный FTS/векторный подзапрос для фокуса. |
+| `limit` | int | нет | `5` | Максимум чекпойнтов. |
+
+**Ответ 200 — с контекстом**
+
+```json
+{
+  "project": "mnemos",
+  "checkpoints": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "title": "Session checkpoint — 2026-07-07T12:00:00+00:00",
+      "content": "# Session checkpoint — 2026-07-07T12:00:00+00:00\n\n## Goals\nЗакончить HTTP API доки для всех 15 инструментов\n",
+      "tags": ["project:mnemos", "agent:user", "gcw:checkpoint"],
+      "created_at": "2026-07-07T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+**Ответ 200 — нет контекста**
+
+```json
+{
+  "project": "mnemos",
+  "checkpoints": [],
+  "message": "No context found. Start by saving context with POST /context/save."
+}
+```
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/context/recall \
+  -H "Content-Type: application/json" \
+  -d '{"project": "mnemos", "limit": 3}'
+```
+
+---
+
+## Обратимое сжатие (CCR)
+
+Эти эндпоинты реализуют **Compress-Cache-Retrieve (CCR)** — сжатие без потери
+данных для большого контента (логи, JSON, вывод команд). Оригинал кэшируется
+по SHA-256 хэшу; в сжатый текст встраивается короткий парсируемый маркер,
+чтобы полный оригинал можно было извлечь по требованию. Типичное сжатие —
+70–90% на логах.
+
+### `POST /compress` — сжать контент
+
+Сжимает `text` через CCR, кэширует оригинал и возвращает сжатый текст плюс
+маркер с хэшем. Контент короче ~500 символов возвращается как есть (не
+кэшируется). Зеркалирует плагин-инструмент `mnemos_compress`.
+
+**Тело запроса**
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|---------- |
+| `text` | string | **да** | — | Контент для сжатия. ≥500 символов для кэширования. |
+| `profile` | string | нет | авто | Профиль фильтра: `log`, `terminal`, `code`, `docs`, `web`, `default`. Авто-определение, если опущен. |
+| `project` | string | нет | `""` | Slug проекта для области кэша. |
+
+**Ответ 200**
+
+```json
+{
+  "compressed_text": "[compressed: a1b2c3... 8.2KB → 0.9KB (89%)]\n## Top 5 lines by frequency\nERROR Connection refused (×42)\n...",
+  "hash": "a1b2c3d4e5f6...",
+  "original_size": 8200,
+  "compressed_size": 900,
+  "reduction_pct": 89.0,
+  "marker": "[compressed: a1b2c3... 8.2KB → 0.9KB (89%)]",
+  "cached": true,
+  "profile": "log"
+}
+```
+
+При `cached: false` (контент < ~500 символов) поле `hash` пустое, а
+`compressed_text` равен входному `text`.
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/compress \
+  -H "Content-Type: application/json" \
+  -d '{"text": "<8KB логов>", "profile": "log", "project": "mnemos"}'
+```
+
+### `POST /retrieve` — извлечь оригинал из CCR-кэша
+
+Извлекает оригинальный несжатый контент по хэшу маркера CCR. Если `query`
+опущен — возвращает полный оригинал. Если `query` задан — возвращает
+FTS5-ранжированные сниппеты из оригинала (полезно, когда оригинал большой,
+а релевантны несколько строк). Зеркалирует плагин-инструмент
+`mnemos_retrieve`.
+
+**Тело запроса**
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|---------- |
+| `hash` | string | **да** | — | SHA-256 хэш из маркера `[compressed: ...]`. |
+| `query` | string | нет | — | Поисковый запрос для извлечения сниппетов. |
+| `snippet_count` | int | нет | `5` | Количество сниппетов при заданном `query`. |
+
+**Ответ 200 — полное извлечение (без `query`)**
+
+```json
+{
+  "hash": "a1b2c3d4e5f6...",
+  "found": true,
+  "original": "<полный оригинальный текст>",
+  "size_bytes": 8200,
+  "retrieval_count": 1
+}
+```
+
+**Ответ 200 — извлечение сниппетов (с `query`)**
+
+```json
+{
+  "hash": "a1b2c3d4e5f6...",
+  "found": true,
+  "query": "Connection refused",
+  "snippets": [
+    "ERROR Connection refused (×42)",
+    "WARN Retrying after Connection refused on host:3306"
+  ],
+  "retrieval_count": 1
+}
+```
+
+**Ответ 200 — не найдено**
+
+```json
+{
+  "hash": "000000000000...",
+  "found": false,
+  "retrieval_count": 0
+}
+```
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/retrieve \
+  -H "Content-Type: application/json" \
+  -d '{"hash": "a1b2c3d4e5f6...", "query": "Connection refused", "snippet_count": 3}'
+```
+
+---
+
+## Сигнал авто-сбора
+
+### `GET /auto-collect` — вектор сигналов компакции
+
+Возвращает счётчик вызовов в процессе / сигналы прошедшего времени плюс
+клиентские эвристические слоты. Поле `recommendation` равно
+`"save_checkpoint"`, когда счётчик вызовов или прошедшее время превышают
+порог, иначе `"ok"`. Зеркалирует плагин-инструмент
+`mnemos_auto_collect_status`.
+
+**Ответ 200**
+
+```json
+{
+  "auto_collect_enabled": true,
+  "signals": {
+    "call_counter": {
+      "calls_since_save": 12,
+      "threshold": 25,
+      "triggered": false
+    },
+    "elapsed_secs": {
+      "value": 3600,
+      "threshold": 1800,
+      "triggered": true
+    },
+    "context_size_heuristic": {"value": null, "note": "populated by client"},
+    "summary_marker_detected": {"value": null, "note": "populated by client"},
+    "reference_drop_heuristic": {"value": null, "note": "populated by client"}
+  },
+  "recommendation": "save_checkpoint",
+  "next_reminder_in_calls": 13
+}
+```
+
+**Пример**
+
+```bash
+curl -s http://127.0.0.1:8000/auto-collect
+```
+
+---
+
+## URL-ингест
+
+### `POST /ingest-url` — получить и сохранить веб-страницу
+
+Загружает веб-страницу, извлекает основной текст (через trafilatura) и
+сохраняет как `RAW`-запись. Учётные данные, встроенные в URL, удаляются
+перед сохранением (OWASP A02). Теги валидируются через теговый контракт
+проекта. Зеркалирует плагин-инструмент `mnemos_ingest_url`.
+
+**Тело запроса**
+
+| Поле | Тип | Обязательное | Описание |
+|------|-----|--------------|---------- |
+| `url` | string | **да** | HTTP/HTTPS URL для загрузки. |
+| `tags` | string[] | **да** | Должны включать `project:<slug>`, `agent:<slug>` и хотя бы один `gcw:<subtype>`. |
+
+**Ответ 201**
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "FastAPI dependency injection guide",
+  "url": "https://fastapi.tiangolo.com/tutorial/dependencies/"
+}
+```
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/ingest-url \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://fastapi.tiangolo.com/tutorial/dependencies/",
+    "tags": ["project:mnemos", "agent:tech-lead", "gcw:learning"]
+  }'
+```
+
+**Ошибки**
+
+| Код | Причина |
+|-----|-------- |
+| `422` | Отсутствует обязательный тег (`project:`, `agent:` или `gcw:`) или отсутствует `url` |
+| `500` | Сбой загрузки, сбой извлечения или сбой записи SQLite / vault |
+
+---
+
+## Файловый наблюдатель (M8)
+
+Эти эндпоинты управляют фоновым наблюдателем хранилища, который
+автоматически индексирует новые и изменённые файлы в Mnemos. Они зеркалируют
+плагин-инструменты `mnemos_watch_start`, `mnemos_watch_stop` и
+`mnemos_watch_status`.
+
+### `POST /watch/start` — запустить файловый наблюдатель
+
+**Тело запроса**
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|---------- |
+| `paths` | string[] | нет | `[cwd]` | Директории для наблюдения. |
+| `scan` | bool | нет | `true` | Выполнить начальное сканирование для существующих файлов. |
+| `include_rules` | bool | нет | `false` | Также наблюдать `*.instructions.md` файлы правил. |
+
+**Ответ 200**
+
+```json
+{
+  "status": "started",
+  "paths": ["/home/you/projects/mnemos"],
+  "scan": true,
+  "include_rules": false
+}
+```
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/watch/start \
+  -H "Content-Type: application/json" \
+  -d '{"paths": ["/home/you/projects/mnemos"], "include_rules": true}'
+```
+
+### `POST /watch/stop` — остановить файловый наблюдатель
+
+Идемпотентный — возвращает `{"status": "stopped"}` независимо от того, был
+ли запущен наблюдатель.
+
+**Ответ 200**
+
+```json
+{"status": "stopped"}
+```
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/watch/stop
+```
+
+### `GET /watch/status` — статус наблюдателя
+
+**Ответ 200**
+
+```json
+{
+  "running": true,
+  "paths": ["/home/you/projects/mnemos"],
+  "files_queued": 3,
+  "files_indexed": 42,
+  "include_rules": false
+}
+```
+
+**Пример**
+
+```bash
+curl -s http://127.0.0.1:8000/watch/status
+```
+
+---
+
 ## Пайплайн знаний (M4)
 
 ### `POST /process` — запустить end-to-end пайплайн
@@ -770,4 +1151,4 @@ npx @openapitools/openapi-generator-cli generate \
 
 ---
 
-_Последнее обновление: 2026-06-17_
+_Последнее обновление: 2026-07-07_

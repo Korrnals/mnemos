@@ -8,8 +8,9 @@ description: Mnemos session lifecycle — recall at start, checkpoint on compact
 
 ## Applies to / Применяется ко всем агентам
 
-Every agent with access to `mnemos_*` MCP tools must follow this lifecycle.
-Memory that is never recalled is wasted; context that is never saved is lost.
+Every agent with access to `mnemos_*` tools (HTTP API or MCP) must follow
+this lifecycle. Memory that is never recalled is wasted; context that is
+never saved is lost.
 
 ---
 
@@ -25,7 +26,7 @@ Memory that is never recalled is wasted; context that is never saved is lost.
 
 - A summary banner or "context compressed" notice from the harness.
 - Sudden loss of references to earlier turns (tool outputs, file reads).
-- `mnemos_auto_collect_status` returns a composite recommendation of `checkpoint`.
+- `mnemos_auto_collect_status` returns a composite recommendation of `save_checkpoint` (available over HTTP via `GET /auto-collect` and as an MCP tool).
 - Conversation exceeds ~30 turns since the last checkpoint.
 - Several large tool outputs accumulated in the context window.
 
