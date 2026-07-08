@@ -1045,9 +1045,7 @@ class TestTotpRequiredFlag:
         with TestClient(test_app) as tc:
             store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
             past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
-            _token_id, plaintext = store.create_token(
-                expires_at=past, totp_required=False
-            )
+            _token_id, plaintext = store.create_token(expires_at=past, totp_required=False)
             r = tc.get("/memories", headers={"Authorization": f"Bearer {plaintext}"})
             assert r.status_code == 401
         _cleanup(mgr)

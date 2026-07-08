@@ -165,9 +165,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 request.state.auth_token = token_row
                 request.state.auth_bearer = True
                 direct_bearer_admitted = True
-                logger.debug(
-                    "auth: direct-bearer admit for token_id=[REDACTED] (totp_required=0)"
-                )
+                logger.debug("auth: direct-bearer admit for token_id=[REDACTED] (totp_required=0)")
 
         if direct_bearer_admitted:
             return await _call_next(request)
