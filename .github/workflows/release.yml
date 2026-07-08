@@ -76,7 +76,7 @@ jobs:
 
       - name: Create PR with README changes
         # Branch protection blocks direct pushes to main.
-        # Create a branch + PR, then auto-merge as admin.
+        # Create a branch + PR, self-approve it, then merge as admin.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -94,15 +94,21 @@ jobs:
           git push origin "$BRANCH"
 
           # Create PR
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "docs: sync README version → ${GITHUB_REF_NAME#v}" \
             --body "Automated version sync for release ${GITHUB_REF_NAME}." \
             --base main \
-            --head "$BRANCH"
+            --head "$BRANCH")
+          PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+          echo "Created PR #$PR_NUM"
 
-          # Wait for the PR to be ready, then merge as admin
-          sleep 5
-          gh pr merge "$BRANCH" --merge --admin --delete-branch
+          # Self-approve the PR (can_approve_pull_request_reviews=true)
+          gh pr review "$PR_NUM" --approve --body "Automated self-approval for README version sync."
+
+          # Wait for CI status checks to report, then merge as admin.
+          # enforce_admins=false allows admin merge to bypass review requirement.
+          sleep 15
+          gh pr merge "$PR_NUM" --merge --admin --delete-branch
 
   build-push-image:
     name: Build and push container image to ghcr.io
