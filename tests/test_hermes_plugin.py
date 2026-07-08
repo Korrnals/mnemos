@@ -193,6 +193,19 @@ class TestConfigLoading:
             "MNEMOS_SYNC_INTERVAL",
         ):
             monkeypatch.delenv(var, raising=False)
+
+        # Prevent _load_config from reading the host Hermes config.yaml
+        # (which may contain a deployed base_url that overrides the default).
+        # _load_config imports load_config/cfg_get lazily from hermes_cli.config,
+        # so we stub the module before it is imported.
+        import sys
+        import types
+
+        stub = types.ModuleType("hermes_cli.config")
+        stub.load_config = lambda *a, **kw: {}
+        stub.cfg_get = lambda *a, **kw: None
+        monkeypatch.setitem(sys.modules, "hermes_cli.config", stub)
+
         cfg = _load_config()
         assert cfg["base_url"] == "http://127.0.0.1:8787"
         assert ":8000" not in cfg["base_url"]
