@@ -146,17 +146,42 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if auth_store is None:
             return _json_response('{"detail":"Auth service unavailable"}', 503)
 
+        # 6b. Direct-bearer fast path: if the bearer has the API-token prefix
+        # (``mnk_``), look up the token row and, when it is active and
+        # ``totp_required`` is false, admit the request directly without a
+        # session. This allows tokens created with ``--no-totp`` to be used
+        # as plain bearer credentials (no login/verify/session flow).
+        direct_bearer_admitted = False
+        if bearer is not None and bearer.startswith("mnk_"):
+            from mnemos.api.auth_store import hash_token as _hash_token
+
+            token_row = auth_store.get_token_by_hash(_hash_token(bearer))
+            if (
+                token_row is not None
+                and auth_store.is_token_active(token_row)
+                and not int(str(token_row.get("totp_required", 1) or 0))
+            ):
+                # TOTP not required — admit directly.
+                request.state.auth_token = token_row
+                request.state.auth_bearer = True
+                direct_bearer_admitted = True
+                logger.debug("auth: direct-bearer admit for token_id=[REDACTED] (totp_required=0)")
+
+        if direct_bearer_admitted:
+            return await _call_next(request)
+
+        if api_config.behind_tls_proxy:
+            client_ip: str | None = resolve_client_ip(request, api_config)
+        else:
+            client = request.client
+            client_ip = client.host if client else None
+
         session = auth_store.get_session_by_hash(session_hash)
         # Finding auth-6: when behind a TLS proxy AND the peer is a trusted
         # proxy, derive client IP from the validated X-Forwarded-For header
         # rather than the proxy IP itself. Otherwise the pinned IP would be
         # the proxy IP and pinning would be a no-op against an attacker
         # behind the same proxy.
-        if api_config.behind_tls_proxy:
-            client_ip: str | None = resolve_client_ip(request, api_config)
-        else:
-            client = request.client
-            client_ip = client.host if client else None
 
         if session is None or not auth_store.is_session_valid(
             session,

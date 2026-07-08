@@ -30,6 +30,17 @@ COPY integrations/ ./integrations/
 COPY scripts/ ./scripts/
 RUN pip install --no-cache-dir ".[mcp]"
 
+# Pre-download ChromaDB's default embedding model (all-MiniLM-L6-v2 ONNX, ~90MB)
+# so vector search works offline out of the box. Set HOME so ChromaDB's
+# Path.home() / .cache / chroma resolves to a writable location.
+ENV HOME=/data
+RUN mkdir -p /data/.cache/chroma/onnx_models/all-MiniLM-L6-v2 && \
+    python3 -c "\
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; \
+DefaultEmbeddingFunction() \
+" && \
+    echo 'Embedding model pre-downloaded successfully'
+
 # Default directories
 RUN mkdir -p /data /vault
 

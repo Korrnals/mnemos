@@ -351,7 +351,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     failure_count         INTEGER NOT NULL DEFAULT 0,
     totp_failure_count    INTEGER NOT NULL DEFAULT 0,
     totp_last_step        INTEGER,
-    revoked               INTEGER NOT NULL DEFAULT 0
+    revoked               INTEGER NOT NULL DEFAULT 0,
+    totp_required         INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS auth_sessions (

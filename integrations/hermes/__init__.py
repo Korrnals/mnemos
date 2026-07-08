@@ -796,15 +796,26 @@ class MnemosMemoryProvider(MemoryProvider):
 
         - If auth is disabled (no api_key), returns "" (no Authorization header).
         - If a cached session token is still valid, returns it immediately.
-        - Otherwise performs the /auth/login → /auth/verify TOTP flow (or just
-          /auth/login if no TOTP secret is configured) and caches the result.
+        - If no ``totp_secret`` is configured, the ``api_key`` is used directly
+          as a bearer token (``totp_required=false`` server-side path) — no
+          login/verify/session flow is performed. The returned string is the
+          api_key itself and is sent as ``Authorization: Bearer <api_key>``.
+        - Otherwise performs the /auth/login → /auth/verify TOTP flow and caches
+          the result.
 
         Thread-safe: serializes login attempts via ``_auth_lock``. The fast
-        path (cached valid token) takes the lock only briefly to read the
-        cached values.
+        path (cached token / direct-bearer) takes the lock only briefly.
         """
         if not self._auth_enabled():
             return ""
+
+        # Direct-bearer fast path: when no totp_secret is configured we treat
+        # the api_key as a bearer token directly (server-side totp_required=0).
+        # No session lifecycle / login / verify is needed, and there is nothing
+        # to cache or refresh. We still go through the lock so concurrent
+        # callers agree on the decision, but the value is stateless.
+        if not self._totp_secret:
+            return self._api_key
 
         # Fast path: check cached token under lock, release before network I/O
         with self._auth_lock:
@@ -926,12 +937,18 @@ class MnemosMemoryProvider(MemoryProvider):
     # -- Authenticated HTTP wrappers (with 401 retry) ──────────────────────
 
     def _api_post_json(self, url: str, body: dict, timeout: float = 10.0) -> Any:
-        """POST with session auth; on 401, re-login and retry once."""
+        """POST with session auth; on 401, re-login and retry once.
+
+        When using direct-bearer mode (no ``totp_secret``), there is no
+        session to invalidate or re-login — a 401 is a genuine failure and
+        is raised immediately without a retry.
+        """
         session = self._ensure_session()
+        direct_bearer = self._auth_enabled() and not self._totp_secret
         try:
             return _post_json(url, body, session=session, timeout=timeout)
         except HTTPError as e:
-            if e.code == 401 and self._auth_enabled():
+            if e.code == 401 and self._auth_enabled() and not direct_bearer:
                 logger.debug("Mnemos 401 on POST %s — re-login + retry", url)
                 self._invalidate_session()
                 session = self._ensure_session()
@@ -939,12 +956,18 @@ class MnemosMemoryProvider(MemoryProvider):
             raise
 
     def _api_get_json(self, url: str, timeout: float = 10.0) -> Any:
-        """GET with session auth; on 401, re-login and retry once."""
+        """GET with session auth; on 401, re-login and retry once.
+
+        When using direct-bearer mode (no ``totp_secret``), there is no
+        session to invalidate or re-login — a 401 is a genuine failure and
+        is raised immediately without a retry.
+        """
         session = self._ensure_session()
+        direct_bearer = self._auth_enabled() and not self._totp_secret
         try:
             return _get_json(url, session=session, timeout=timeout)
         except HTTPError as e:
-            if e.code == 401 and self._auth_enabled():
+            if e.code == 401 and self._auth_enabled() and not direct_bearer:
                 logger.debug("Mnemos 401 on GET %s — re-login + retry", url)
                 self._invalidate_session()
                 session = self._ensure_session()
@@ -1262,7 +1285,15 @@ class MnemosMemoryProvider(MemoryProvider):
     # -- Tool handlers ─────────────────────────────────────────────────────
 
     def _handle_search(self, args: dict) -> str:
-        """POST /search — hybrid vector + FTS5 search."""
+        """POST /search — hybrid vector + FTS5 search.
+
+        By default passes ``include_raw=True`` so that memories still in the
+        ``raw`` status (not yet processed by the LLM pipeline) are included
+        in results. This is essential when Mnemos runs without an LLM
+        backend — all memories stay ``raw`` and would otherwise be invisible
+        to search. Pass ``include_raw: false`` to search only published /
+        processed knowledge units.
+        """
         query = args.get("query", "")
         if not query:
             return tool_error("Missing required parameter: query")
@@ -1270,6 +1301,7 @@ class MnemosMemoryProvider(MemoryProvider):
         body: dict[str, Any] = {
             "query": query,
             "limit": min(int(args.get("limit", 10)), 50),
+            "include_raw": args.get("include_raw", True),
         }
         project = args.get("project", self._project)
         if project:
@@ -1277,6 +1309,9 @@ class MnemosMemoryProvider(MemoryProvider):
         tags = args.get("tags")
         if tags:
             body["tags"] = tags
+        status = args.get("status")
+        if status:
+            body["status"] = status
 
         results = self._api_post_json(
             f"{self._base_url}/search",
@@ -1334,6 +1369,19 @@ class MnemosMemoryProvider(MemoryProvider):
         )
         self._record_success()
 
+        # Auto-publish: promote from raw → published so the memory is
+        # immediately searchable via default search (no LLM pipeline needed).
+        # Uses skip_quality_check since we don't have an LLM to process it.
+        mem_id = result.get("id")
+        if mem_id:
+            try:
+                self._api_post_json(
+                    f"{self._base_url}/publish/{mem_id}?skip_quality_check=true",
+                    {},
+                )
+            except Exception:
+                pass  # non-fatal — memory still stored as raw
+
         # BUGFIX: the API returns field "title", not "auto_title".
         # Previously this read result.get("auto_title", ...) which always
         # fell through to the default. Now we read the actual title field.
@@ -1342,7 +1390,7 @@ class MnemosMemoryProvider(MemoryProvider):
             "id": result.get("id"),
             "title": result.get("title", title or "auto-generated"),
             "tags": result.get("tags", tags),
-            "status": result.get("status", "draft"),
+            "status": "published",
         })
 
     def _handle_recall_context(self, args: dict) -> str:

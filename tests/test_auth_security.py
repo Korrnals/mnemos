@@ -910,3 +910,195 @@ class TestAbsoluteSessionLifetime:
             assert store.is_session_valid(row) is True
         finally:
             store.close()
+
+
+# ---------------------------------------------------------------------------
+# totp_required flag — per-token direct-bearer admission
+# ---------------------------------------------------------------------------
+
+
+class TestTotpRequiredFlag:
+    """Per-token ``totp_required`` flag.
+
+    When ``totp_required=0`` (False) a ``mnk_`` bearer token can be used
+    directly for API requests — no login/verify/session flow needed. When
+    ``totp_required=1`` (True, the default) the existing TOTP / session flow
+    is required.
+    """
+
+    def test_schema_migration_adds_column_default_1(self, tmp_settings):
+        """``_ensure_columns`` adds ``totp_required`` with default 1 to a
+        pre-existing table that lacks it, and existing rows get 1."""
+        import sqlite3
+        from datetime import UTC, datetime
+
+        db_path = tmp_settings.db_path
+        # Build a legacy auth_tokens schema without totp_required.
+        raw = sqlite3.connect(str(db_path))
+        raw.execute(
+            "CREATE TABLE auth_tokens ("
+            "token_id TEXT PRIMARY KEY, "
+            "token_sha256 TEXT NOT NULL UNIQUE, "
+            "name TEXT, "
+            "totp_secret_encrypted BLOB, "
+            "created_at TEXT NOT NULL, "
+            "expires_at TEXT, "
+            "disabled_at TEXT, "
+            "failure_count INTEGER NOT NULL DEFAULT 0, "
+            "totp_failure_count INTEGER NOT NULL DEFAULT 0, "
+            "totp_last_step INTEGER, "
+            "revoked INTEGER NOT NULL DEFAULT 0"
+            ")"
+        )
+        raw.execute(
+            "INSERT INTO auth_tokens "
+            "(token_id, token_sha256, name, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("tid_legacy01", "deadbeef" * 8, "legacy", datetime.now(UTC).isoformat()),
+        )
+        raw.commit()
+        raw.close()
+
+        store = AuthStore(db_path)
+        try:
+            row = store.get_token_by_id("tid_legacy01")
+            assert row is not None
+            assert int(str(row["totp_required"])) == 1
+        finally:
+            store.close()
+
+    def test_create_token_totp_required_false_persists(self, tmp_settings):
+        store = AuthStore(tmp_settings.db_path)
+        try:
+            token_id, _plaintext = store.create_token(totp_required=False)
+            row = store.get_token_by_id(token_id)
+            assert row is not None
+            assert int(str(row["totp_required"])) == 0
+        finally:
+            store.close()
+
+    def test_create_token_default_totp_required_true(self, tmp_settings):
+        store = AuthStore(tmp_settings.db_path)
+        try:
+            token_id, _plaintext = store.create_token()
+            row = store.get_token_by_id(token_id)
+            assert row is not None
+            assert int(str(row["totp_required"])) == 1
+        finally:
+            store.close()
+
+    def test_direct_bearer_admits_totp_required_false(self, tmp_settings):
+        """A ``mnk_`` token with totp_required=0 admitted directly via the
+        middleware without a session — GET returns non-401."""
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            _token_id, plaintext = store.create_token(totp_required=False)
+            # Use the bearer directly (no login) — must NOT be 401/403.
+            r = tc.get("/memories", headers={"Authorization": f"Bearer {plaintext}"})
+            assert r.status_code not in {401, 403}
+        _cleanup(mgr)
+
+    def test_direct_bearer_post_accepted_totp_required_false(self, tmp_settings):
+        """A totp_required=0 bearer can POST (CSRF satisfied via header)."""
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            _token_id, plaintext = store.create_token(totp_required=False)
+            r = tc.post(
+                "/memories",
+                json={"content": "test", "tags": ["agent:test", "project:p", "gcw:checkpoint"]},
+                headers={"Authorization": f"Bearer {plaintext}"},
+            )
+            assert r.status_code not in {401, 403}
+        _cleanup(mgr)
+
+    def test_totp_required_true_token_not_admitted_directly(self, tmp_settings):
+        """A totp_required=1 (default) ``mnk_`` bearer is NOT admitted
+        directly — it must go through login/verify to get a session. The
+        middleware should fall through to session validation, which fails
+        (no session) → 401."""
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            _token_id, plaintext = store.create_token()  # totp_required=True
+            r = tc.get("/memories", headers={"Authorization": f"Bearer {plaintext}"})
+            assert r.status_code == 401
+        _cleanup(mgr)
+
+    def test_direct_bearer_revoked_token_rejected(self, tmp_settings):
+        """Revocation still applies to direct-bearer tokens."""
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            token_id, plaintext = store.create_token(totp_required=False)
+            store.revoke_token(token_id)
+            r = tc.get("/memories", headers={"Authorization": f"Bearer {plaintext}"})
+            assert r.status_code == 401
+        _cleanup(mgr)
+
+    def test_direct_bearer_expired_token_rejected(self, tmp_settings):
+        """Expiry still applies to direct-bearer tokens."""
+        from datetime import UTC, datetime, timedelta
+
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+            _token_id, plaintext = store.create_token(expires_at=past, totp_required=False)
+            r = tc.get("/memories", headers={"Authorization": f"Bearer {plaintext}"})
+            assert r.status_code == 401
+        _cleanup(mgr)
+
+    def test_direct_bearer_locked_token_rejected(self, tmp_settings):
+        """Temporary lockout still applies to direct-bearer tokens."""
+        from datetime import UTC, datetime
+
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            token_id, plaintext = store.create_token(totp_required=False)
+            # Simulate a fresh lockout.
+            store._conn.execute(
+                "UPDATE auth_tokens SET disabled_at = ? WHERE token_id = ?",
+                (datetime.now(UTC).isoformat(), token_id),
+            )
+            store._conn.commit()
+            r = tc.get("/memories", headers={"Authorization": f"Bearer {plaintext}"})
+            assert r.status_code == 401
+        _cleanup(mgr)
+
+    def test_session_token_not_mistaken_for_bearer(self, tmp_settings):
+        """A session token (no ``mnk_`` prefix) must NOT trigger the
+        direct-bearer fast path — it goes through normal session validation."""
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            store: AuthStore = tc.app.state.auth_store  # type: ignore[attr-defined]
+            # Create a totp_required=0 token, then mint a real session.
+            token_id, _bearer = store.create_token(totp_required=False)
+            session_plaintext, _ = store.create_session(token_id=token_id, ttl_sec=3600)
+            # The session token has no mnk_ prefix — must be validated as a
+            # session, not as a direct bearer. Should succeed (session valid).
+            r = tc.get(
+                "/memories",
+                headers={"Authorization": f"Bearer {session_plaintext}"},
+            )
+            assert r.status_code not in {401, 403}
+            # Sanity: an arbitrary non-mnk string is not admitted.
+            r2 = tc.get(
+                "/memories",
+                headers={"Authorization": "Bearer not-a-real-token"},
+            )
+            assert r2.status_code == 401
+        _cleanup(mgr)
+
+    def test_list_tokens_includes_totp_required(self, tmp_settings):
+        store = AuthStore(tmp_settings.db_path)
+        try:
+            tid_yes, _ = store.create_token()  # totp_required=True
+            tid_no, _ = store.create_token(totp_required=False)
+            rows = {t["token_id"]: t for t in store.list_tokens()}
+            assert int(str(rows[tid_yes]["totp_required"])) == 1
+            assert int(str(rows[tid_no]["totp_required"])) == 0
+        finally:
+            store.close()

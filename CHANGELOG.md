@@ -9,9 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`totp_required` per-token flag**: tokens with `totp_required=False` can use bearer directly (no login/verify/session needed). Enables proper M2M authentication without TOTP code reuse issues.
+- **`--no-totp` CLI flag** for `mnemos auth token create`: creates API tokens without TOTP requirement.
+- **Direct bearer middleware path**: middleware accepts `mnk_`-prefixed bearer tokens with `totp_required=0` directly, skipping session validation.
+- **`skip_quality_check` query param** on `POST /publish/{memory_id}`: allows publishing memories from `raw` status without LLM pipeline.
+- **Pre-downloaded embedding model**: `all-MiniLM-L6-v2` ONNX model (~90MB) pre-downloaded in Docker image, enabling vector search out of the box without internet access.
+- **`HOME=/data` env in Containerfile**: fixes ChromaDB `/.cache` permission denied error.
+- **`include_raw` parameter** in plugin search: defaults to `true` so memories in `raw` status are searchable.
+- **Auto-publish on add**: plugin publishes memories after creation so they're immediately searchable.
+
 ### Changed
 
+- **Plugin auth refactor**: when `totp_secret` is not configured, plugin uses API token directly instead of TOTP login/verify flow.
+- **`/auth/me` response** now includes `totp_required` field for token introspection.
+- **Token list** displays `totp_required` column (yes/no).
+
 ### Fixed
+
+- **Search returns 0 results**: memories stayed in `raw` status without LLM pipeline; `include_raw=true` default in plugin + auto-publish resolves this.
+- **Embeddings `/.cache` permission denied**: `HOME=/data` env var + pre-download in Containerfile.
+- **TOTP code reuse for M2M**: API tokens with `totp_required=False` bypass TOTP entirely.
+- **`/publish/{id}` only accepted `processed` memories**: now accepts `raw` with `skip_quality_check=true`.
 
 ## [2.6.1] — 2026-07-07
 

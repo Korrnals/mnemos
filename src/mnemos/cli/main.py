@@ -660,6 +660,13 @@ def _auth_store(config: str | None = None) -> AuthStore:
 def token_create(
     name: str = typer.Option(None, "--name", "-n", help="Human-readable label"),
     expires: str = typer.Option(None, "--expires", "-e", help="ISO-8601 expiry, e.g. 2027-01-01"),
+    no_totp: bool = typer.Option(
+        False,
+        "--no-totp",
+        help="Create a token that can be used directly as a bearer without "
+        "the login/verify/session flow (sets totp_required=false). By default "
+        "tokens require TOTP.",
+    ),
     config: str = ConfigOption,
 ) -> None:
     """Mint a new bearer token and print it ONCE."""
@@ -682,7 +689,9 @@ def token_create(
                     "[dim]Expected ISO-8601, e.g. 2027-01-01 or 2027-01-01T00:00:00[/dim]"
                 )
                 raise typer.Exit(1) from None
-        token_id, plaintext = store.create_token(name=name, expires_at=normalized_expires)
+        token_id, plaintext = store.create_token(
+            name=name, expires_at=normalized_expires, totp_required=not no_totp
+        )
     finally:
         store.close()
     console.print("[green]✓[/green] Token created:")
@@ -702,14 +711,17 @@ def token_list(config: str = ConfigOption) -> None:
     if not tokens:
         console.print("[yellow]No tokens found.[/yellow]")
         return
-    table = Table("token_id", "name", "created_at", "expires_at", "disabled_at")
+    table = Table("token_id", "name", "created_at", "expires_at", "disabled_at", "totp_required")
     for t in tokens:
+        totp_req = t.get("totp_required", 1)
+        totp_str = "no" if totp_req is not None and int(str(totp_req)) == 0 else "yes"
         table.add_row(
             str(t.get("token_id", "")),
             str(t.get("name") or ""),
             str(t.get("created_at", "")),
             str(t.get("expires_at") or ""),
             str(t.get("disabled_at") or ""),
+            totp_str,
         )
     console.print(table)
 

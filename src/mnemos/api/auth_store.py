@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     failure_count         INTEGER NOT NULL DEFAULT 0,
     totp_failure_count    INTEGER NOT NULL DEFAULT 0,
     totp_last_step        INTEGER,
-    revoked               INTEGER NOT NULL DEFAULT 0
+    revoked               INTEGER NOT NULL DEFAULT 0,
+    totp_required         INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -129,6 +130,10 @@ class AuthStore:
             self._conn.execute(
                 "UPDATE auth_tokens SET disabled_at = NULL WHERE disabled_at = 'permanent'"
             )
+        if "totp_required" not in existing:
+            self._conn.execute(
+                "ALTER TABLE auth_tokens ADD COLUMN totp_required INTEGER NOT NULL DEFAULT 1"
+            )
 
     # ── Token management ──────────────────────────────────────────────────────
 
@@ -136,22 +141,28 @@ class AuthStore:
         self,
         name: str | None = None,
         expires_at: str | None = None,
+        totp_required: bool = True,
     ) -> tuple[str, str]:
         """Mint a new bearer token.
 
         Returns ``(token_id, plaintext_bearer)``.  The plaintext is shown
         **once** — only its SHA-256 hash is stored.
+
+        When ``totp_required`` is ``False`` the token can be used directly as
+        a bearer for API requests (no login/verify/session flow needed). The
+        default ``True`` preserves backward-compatible TOTP-enforcement.
         """
         plaintext = TOKEN_PREFIX + secrets.token_urlsafe(32)
         sha256 = hash_token(plaintext)
         token_id = "tid_" + secrets.token_hex(8)
         now = datetime.now(UTC).isoformat()
+        totp_flag = 1 if totp_required else 0
         with self._lock:
             self._conn.execute(
                 "INSERT INTO auth_tokens "
-                "(token_id, token_sha256, name, created_at, expires_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (token_id, sha256, name, now, expires_at),
+                "(token_id, token_sha256, name, created_at, expires_at, totp_required) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (token_id, sha256, name, now, expires_at, totp_flag),
             )
             self._conn.commit()
         return token_id, plaintext
@@ -161,7 +172,7 @@ class AuthStore:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT token_id, name, created_at, expires_at, disabled_at, revoked, "
-                "failure_count, totp_failure_count "
+                "failure_count, totp_failure_count, totp_required "
                 "FROM auth_tokens ORDER BY created_at"
             )
             return [dict(row) for row in cur.fetchall()]
