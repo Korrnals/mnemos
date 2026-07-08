@@ -43,18 +43,7 @@ DefaultEmbeddingFunction() \
     echo 'Embedding model pre-downloaded to /opt/model-cache'
 
 # Entrypoint script: copies pre-downloaded model into the mounted PVC on first boot
-RUN cat > /app/entrypoint.sh <<'SCRIPT'
-#!/bin/bash
-set -e
-# Copy embedding model cache to PVC if not already present
-if [ ! -d /data/.cache/chroma/onnx_models/all-MiniLM-L6-v2 ]; then
-    echo "[entrypoint] Copying pre-downloaded embedding model to /data ..."
-    mkdir -p /data/.cache/chroma
-    cp -r /opt/model-cache/.cache/chroma/* /data/.cache/chroma/ 2>/dev/null || true
-    echo "[entrypoint] Embedding model ready."
-fi
-exec "$@"
-SCRIPT
+COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # Default directories
