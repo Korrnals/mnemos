@@ -1,6 +1,6 @@
-"""Mnemos — standalone memory & knowledge server for GCW agents.
+"""Mnemos — standalone memory & knowledge server for AI agents.
 
-Productionised for the GCW (GitHub Copilot Workflow) agent family.
+Productionised for the GitHub Copilot Workflow agent family and Hermes Agent.
 """
 
 from __future__ import annotations

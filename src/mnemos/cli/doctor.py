@@ -287,12 +287,12 @@ def _check_tag_contract(settings: Any) -> CheckResult:
 
 
 def _check_agent_wiring() -> CheckResult:
-    """Check GCW agent MCP wiring status in ``~/.copilot/agents``.
+    """Check Copilot agent MCP wiring status in ``~/.copilot/agents``.
 
     * PASS — all detected agents have mnemos tools wired (or are skipped
       via ``tool_profile``).
     * WARN — some agents are unwired (lists the count).
-    * SKIP — no agents directory found (non-GCW setup).
+    * SKIP — no agents directory found (non-Copilot setup).
     """
     try:
         from mnemos.cli.agent_wiring import DEFAULT_AGENTS_DIR, verify_agents
@@ -301,7 +301,7 @@ def _check_agent_wiring() -> CheckResult:
             return CheckResult(
                 "Agent wiring",
                 CheckStatus.WARN,
-                f"no agents directory at {DEFAULT_AGENTS_DIR} (non-GCW setup)",
+                f"no agents directory at {DEFAULT_AGENTS_DIR} (non-Copilot setup)",
             )
 
         summary = verify_agents()
@@ -480,7 +480,7 @@ def _fix_integration_stale() -> tuple[bool, str]:
 
 
 def _fix_agent_wiring() -> tuple[bool, str]:
-    """Wire mnemos/* into all unwired GCW agents."""
+    """Wire mnemos/* into all unwired Copilot agents."""
     from mnemos.cli.agent_wiring import detect_agents, wire_agents
     from mnemos.cli.util import _resolve_agents_to_wire
 

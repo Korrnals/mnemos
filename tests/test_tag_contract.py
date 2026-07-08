@@ -260,7 +260,7 @@ class TestMemoryTagContractIntegration:
 # ---------------------------------------------------------------------------
 
 
-class TestGCWSubtypes:
+class TestMnemosSubtypes:
     """All documented mnemos: subtypes must be in the allowed set."""
 
     EXPECTED: ClassVar[set[str]] = {

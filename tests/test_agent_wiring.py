@@ -237,7 +237,7 @@ class TestDetectAgents:
         """Regression: agent files with unquoted ``:`` in description values.
 
         Real-world agent files like ``mnemos-curator.agent.md`` have:
-            description: (GCW) Curator ... STUB mode: operates on ...
+            description: (Copilot) Curator ... STUB mode: operates on ...
 
         The ``:`` in "STUB mode:" confuses the YAML parser (it looks like a
         nested mapping). The frontmatter library raises ScannerError. We
@@ -251,7 +251,7 @@ class TestDetectAgents:
         path.write_text(
             "---\n"
             'name: "GCW: Mnemos Curator"\n'
-            "description: (GCW) Curator commands for memory hygiene — "
+            "description: (Copilot) Curator commands for memory hygiene — "
             "curate/rollup/audit. STUB mode: operates on file-based memory.\n"
             "---\n"
             "You are a curator.\n",

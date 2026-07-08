@@ -143,7 +143,7 @@ mnemos.models.TagContractError
 |--------------------|---------|
 | `exactly one project:` | 0 или ≥2 тегов `project:` |
 | `exactly one agent:` | 0 или ≥2 тегов `agent:` |
-| `at least one gcw:` | Нет тега `mnemos:` |
+| `at least one mnemos:` | Нет тега `mnemos:` |
 | `invalid mnemos: subtype` | Подтип не входит в допустимое множество |
 | `invalid slug for project:` | Slug содержит заглавные буквы или спецсимволы |
 | `invalid slug for agent:` | Slug содержит заглавные буквы или спецсимволы |

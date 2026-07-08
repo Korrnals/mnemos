@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 app = typer.Typer(
     name="mnemos",
-    help="Mnemos — standalone memory & knowledge server for GCW agents.",
+    help="Mnemos — standalone memory & knowledge server for AI agents.",
     no_args_is_help=True,
 )
 console = Console()
@@ -67,7 +67,7 @@ def main(
         ),
     ] = False,
 ) -> None:
-    """Mnemos — standalone memory & knowledge server for GCW agents."""
+    """Mnemos — standalone memory & knowledge server for AI agents."""
     global _verbose
     _verbose = verbose
 

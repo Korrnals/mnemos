@@ -1,20 +1,20 @@
-# A2A Sessions API (M16 — GCW v0.6.0)
+# A2A Sessions API (M16)
 
 **🌐 Language / Язык:** English · [Русский](../../ru/architecture/a2a-sessions.md)
 
 > **Status**: Implemented in Mnemos M16
-> **Audience**: GCW agents / MCP gcw-orchestrator
+> **Audience**: AI agents / MCP orchestrator
 > **Base URL**: `http://localhost:8787/v1/` (loopback by default)
 > **Source spec**: `docs/a2a/mnemos-requirements.md`
 
-Mnemos exposes 5 HTTP endpoints for the GCW A2A routing layer. They give
-GCW a persistent backend for conversation sessions and per-step turn
+Mnemos exposes 5 HTTP endpoints for the A2A routing layer. They give
+agents a persistent backend for conversation sessions and per-step turn
 history, so multi-step agent chains survive restarts and cross-session
 context is searchable.
 
-If Mnemos is unavailable, GCW's MCP layer falls back to a file-based log
+If Mnemos is unavailable, the MCP layer falls back to a file-based log
 (`~/.gcw/a2a-messages.jsonl`) — Mnemos is **not** a single point of
-failure for GCW.
+failure for agents.
 
 ---
 
@@ -327,16 +327,16 @@ ones. Up to 5 decisions are returned, in the order they appear.
 
 ---
 
-## Failure modes (GCW perspective)
+## Failure modes (agent perspective)
 
-| Mnemos behaviour  | What GCW should do |
+| Mnemos behaviour  | What the agent should do |
 |-------------------|--------------------|
 | `5xx` response    | Retry up to 3 times with exponential backoff, then fall back to file-based log. |
 | Connection refused / timeout > 2s | Skip persistence — continue processing without `context_pointer`. |
 | `4xx` (validation)| Do NOT retry. Log the error and continue. |
 | Successful `2xx`  | Use the returned `context_pointer` to address the turn in later steps. |
 
-Mnemos itself does not implement these retries — that's the GCW MCP
+Mnemos itself does not implement these retries — that's the MCP
 layer's job. See `docs/a2a/mnemos-requirements.md` for the full contract.
 
 ---

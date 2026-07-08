@@ -263,7 +263,7 @@ CREATE INDEX IF NOT EXISTS idx_dlq_memory    ON dlq(memory_id);
 CREATE INDEX IF NOT EXISTS idx_dlq_cluster  ON dlq(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_dlq_retry      ON dlq(next_retry_at);
 
--- M16: A2A Sessions (GCW v0.6.0 — persistent backend for A2A routing)
+-- M16: A2A Sessions (persistent backend for A2A routing)
 CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL DEFAULT '',

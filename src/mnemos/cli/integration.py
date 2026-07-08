@@ -2,7 +2,7 @@
 
 This module is the engine behind the `mnemos util-*` CLI subcommands. It:
 
-* Detects installed agent harnesses (GCW, generic Copilot, Cursor) via
+* Detects installed agent harnesses (Copilot, generic Copilot, Cursor) via
   ``integrations/targets.yaml``.
 * Deploys the shipped pack (``integrations/{instructions,skills,prompts}/``)
   into each detected harness, stamping every file with a version header so

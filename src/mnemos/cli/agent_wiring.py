@@ -1,4 +1,4 @@
-"""Agent MCP wiring — add ``mnemos/*`` tools to GCW agent frontmatter.
+"""Agent MCP wiring — add ``mnemos/*`` tools to Copilot agent frontmatter.
 
 This module extends the integration layer with **agent MCP wiring**: it
 detects ``*.agent.md`` files in ``~/.copilot/agents/``, parses their YAML
@@ -10,7 +10,7 @@ Design constraints:
 * **Only ``tools:`` is touched** — never ``model:``, ``model_tier:``,
   ``agents:``, or any other frontmatter key.
 * **Agents with ``tool_profile:`` are skipped** — those are resolved by
-  the GCW installer, not by us. Mutating them would be overwritten on the
+  the Copilot installer, not by us. Mutating them would be overwritten on the
   next ``make install-all``.
 * **Idempotent** — re-running does not duplicate ``mnemos/*`` entries.
 * **Formatting preserved** — we use ``python-frontmatter`` which round-trips
@@ -60,7 +60,7 @@ __all__ = [
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-#: Default GCW agents directory (``~/.copilot/agents``).
+#: Default Copilot agents directory (``~/.copilot/agents``).
 DEFAULT_AGENTS_DIR = Path.home() / ".copilot" / "agents"
 
 #: Individual mnemos MCP tool names used in **precise** mode.
@@ -166,7 +166,7 @@ def _quote_unquoted_yaml_value(value: str) -> str:
 
     Real-world agent files have descriptions like::
 
-        description: (GCW) Curator ... STUB mode: operates on file memory.
+        description: (Copilot) Curator ... STUB mode: operates on file memory.
 
     The ``:`` in ``STUB mode:`` is parsed by YAML as a nested mapping key,
     which raises ``mapping values are not allowed in this context``. Quoting
@@ -436,7 +436,7 @@ def wire_agent(
             path=agent_path,
             name=name,
             status=WireStatus.SKIPPED_TOOL_PROFILE,
-            note="uses tool_profile (resolved by GCW installer)",
+            note="uses tool_profile (resolved by Copilot installer)",
         )
 
     tools = metadata.get("tools")
