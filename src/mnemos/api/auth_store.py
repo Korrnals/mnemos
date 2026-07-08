@@ -40,6 +40,8 @@ def _parse_datetime_utc(value: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt
+
+
 # auth-12: absolute session cap (7 days) regardless of sliding refresh.
 MAX_SESSION_LIFETIME_SEC = 7 * 24 * 3600
 
