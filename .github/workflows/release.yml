@@ -64,6 +64,7 @@ jobs:
     needs: [build-dist]
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -73,17 +74,35 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           bash scripts/sync-readme-version.sh "$VERSION"
 
-      - name: Commit and push if changed
+      - name: Create PR with README changes
+        # Branch protection blocks direct pushes to main.
+        # Create a branch + PR, then auto-merge as admin.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if git diff --quiet -- README.md README.ru.md; then
+            echo "README already up to date — nothing to commit."
+            exit 0
+          fi
+
+          BRANCH="chore/sync-readme-${GITHUB_REF_NAME#v}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
           git add README.md README.ru.md
-          if git diff --cached --quiet; then
-            echo "README already up to date — nothing to commit."
-          else
-            git commit -m "docs: sync README version → ${GITHUB_REF_NAME#v}"
-            git push origin HEAD:main
-          fi
+          git commit -m "docs: sync README version → ${GITHUB_REF_NAME#v}"
+          git push origin "$BRANCH"
+
+          # Create PR
+          gh pr create \
+            --title "docs: sync README version → ${GITHUB_REF_NAME#v}" \
+            --body "Automated version sync for release ${GITHUB_REF_NAME}." \
+            --base main \
+            --head "$BRANCH"
+
+          # Wait for the PR to be ready, then merge as admin
+          sleep 5
+          gh pr merge "$BRANCH" --merge --admin --delete-branch
 
   build-push-image:
     name: Build and push container image to ghcr.io

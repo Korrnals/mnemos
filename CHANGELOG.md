@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+## [2.7.3] - 2026-07-08
+
+### Fixed
+- **README sync workflow** — release workflow now creates a PR + auto-merge instead of direct push to protected `main` branch (was failing on branch protection)
+- Added `pull-requests: write` permission to sync-readme job
+
 ## [2.7.2] - 2026-07-08
 
 ### Added
