@@ -335,7 +335,7 @@ def setup_cmd(
         typer.Option(
             "--target",
             "-t",
-            help="Target harness: all | gcw | generic-copilot | cursor (default: all detected)",
+            help="Target harness: all | copilot | generic-copilot | cursor (default: all detected)",
         ),
     ] = "all",
     dry_run: Annotated[

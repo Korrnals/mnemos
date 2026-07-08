@@ -153,8 +153,8 @@ class TestPolicyEngine:
         """A rule with matching conditions fires its actions."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             quality_score=0.9,
@@ -176,8 +176,8 @@ class TestPolicyEngine:
         """A rule with non-matching conditions does NOT fire."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.RAW,
             quality_score=0.9,
@@ -194,8 +194,8 @@ class TestPolicyEngine:
         """ALL conditions in a rule must match for it to fire."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             quality_score=0.5,
@@ -216,8 +216,8 @@ class TestPolicyEngine:
         """enabled=False prevents rule from firing."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
         )
@@ -234,8 +234,8 @@ class TestPolicyEngine:
         """Higher-priority rules are evaluated first (affects logging, not logic)."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
         )
@@ -261,14 +261,14 @@ class TestPolicyEngine:
         """tags_include requires all listed tags to be present."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
         )
         rule = PolicyRule(
             name="tag-filter",
-            conditions=[PolicyCondition(tags_include=["gcw:learning"])],
+            conditions=[PolicyCondition(tags_include=["mnemos:learning"])],
             actions=[PolicyAction(action="publish")],
         )
         actions = evaluate_rules(mem, [rule])
@@ -278,14 +278,14 @@ class TestPolicyEngine:
         """tags_exclude prevents firing if any listed tag is present."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
         )
         rule = PolicyRule(
             name="exclude-tag",
-            conditions=[PolicyCondition(tags_exclude=["gcw:learning"])],
+            conditions=[PolicyCondition(tags_exclude=["mnemos:learning"])],
             actions=[PolicyAction(action="publish")],
         )
         actions = evaluate_rules(mem, [rule])
@@ -312,7 +312,7 @@ class TestPolicyEngine:
 
     def test_empty_rules_list(self):
         """No rules → no actions."""
-        mem = Memory(content="x", tags=["project:p", "agent:a", "gcw:learning"])
+        mem = Memory(content="x", tags=["project:p", "agent:a", "mnemos:learning"])
         actions = evaluate_rules(mem, [])
         assert actions == []
 
@@ -324,8 +324,8 @@ class TestPolicyEngine:
         """
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             source_coverage=5,
@@ -343,8 +343,8 @@ class TestPolicyEngine:
         """Regression: min_source_coverage must NOT fire when coverage < threshold."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             source_coverage=1,
@@ -361,8 +361,8 @@ class TestPolicyEngine:
         """min_source_coverage treats missing source_coverage (None) as 0."""
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             source_coverage=None,
@@ -387,8 +387,8 @@ class TestTriggers:
         mgr = tmp_manager
         mem = Memory(
             content="note",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
         )
         on_memory_saved(mgr, mem)  # should not raise
@@ -408,8 +408,8 @@ class TestTriggers:
         }
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
         )
@@ -497,8 +497,8 @@ class TestTriggersCoverage:
         }
         mem = Memory(
             content="x",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
             status=MemoryStatus.PUBLISHED,
         )
@@ -522,8 +522,8 @@ class TestTriggersCoverage:
         }
         mem = Memory(
             content="x",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
         )
         # No assertion — the action is a logger.warning, so we just confirm
@@ -544,8 +544,8 @@ class TestTriggersCoverage:
         }
         mem = Memory(
             content="x",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
             status=MemoryStatus.RAW,
         )
@@ -568,8 +568,8 @@ class TestTriggersCoverage:
         }
         mem = Memory(
             content="x",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
             status=MemoryStatus.RAW,
         )
@@ -591,8 +591,8 @@ class TestTriggersCoverage:
         }
         mem = Memory(
             content="x",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
         )
         on_memory_saved(mgr, mem)  # must not raise
@@ -614,8 +614,8 @@ class TestTriggersCoverage:
         }
         mem = Memory(
             content="x",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
         )
         on_memory_saved(mgr, mem)
@@ -634,8 +634,8 @@ class TestTriggersCoverage:
         }
         mem = Memory(
             content="x",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
             status=MemoryStatus.RAW,
         )
@@ -695,8 +695,8 @@ class TestTriggersCoverage:
         }
         mem = Memory(
             content="x",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
             status=MemoryStatus.PROCESSED,
         )
@@ -730,8 +730,8 @@ class TestSchedulerCoverage:
         mgr.sqlite.save(
             Memory(
                 content="seed",
-                tags=["project:gcw", "agent:qa", "gcw:learning"],
-                project="gcw",
+                tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+                project="mnemos",
                 agent="qa",
                 status=MemoryStatus.RAW,
             )
@@ -752,8 +752,8 @@ class TestSchedulerCoverage:
             mgr.sqlite.save(
                 Memory(
                     content=f"m{i}",
-                    tags=["project:gcw", "agent:qa", "gcw:learning"],
-                    project="gcw",
+                    tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+                    project="mnemos",
                     agent="qa",
                     status=MemoryStatus.PROCESSING,
                     cluster_id=cid,
@@ -775,8 +775,8 @@ class TestSchedulerCoverage:
         mgr.sqlite.save(
             Memory(
                 content="proc",
-                tags=["project:gcw", "agent:qa", "gcw:learning"],
-                project="gcw",
+                tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+                project="mnemos",
                 agent="qa",
                 status=MemoryStatus.PROCESSING,
                 cluster_id=cid,
@@ -786,8 +786,8 @@ class TestSchedulerCoverage:
         mgr.sqlite.save(
             Memory(
                 content="draft",
-                tags=["project:gcw", "agent:qa", "gcw:learning"],
-                project="gcw",
+                tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+                project="mnemos",
                 agent="qa",
                 status=MemoryStatus.PROCESSED,
                 cluster_id=cid,
@@ -805,8 +805,8 @@ class TestSchedulerCoverage:
         mgr.sqlite.save(
             Memory(
                 content="orphan",
-                tags=["project:gcw", "agent:qa", "gcw:learning"],
-                project="gcw",
+                tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+                project="mnemos",
                 agent="qa",
                 status=MemoryStatus.PROCESSING,
                 cluster_id=None,
@@ -822,8 +822,8 @@ class TestSchedulerCoverage:
         mgr = tmp_manager
         mem = Memory(
             content="ready",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
             status=MemoryStatus.PROCESSED,
         )
@@ -843,8 +843,8 @@ class TestSchedulerCoverage:
         mgr = tmp_manager
         mem = Memory(
             content="bad",
-            tags=["project:gcw", "agent:qa", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:qa", "mnemos:learning"],
+            project="mnemos",
             agent="qa",
             status=MemoryStatus.PROCESSED,
         )

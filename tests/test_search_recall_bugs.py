@@ -80,10 +80,10 @@ def _make_create(
     project: str = "test-project",
     status: MemoryStatus = MemoryStatus.RAW,
 ) -> MemoryCreate:
-    """Build a MemoryCreate with valid GCW tags and explicit status."""
+    """Build a MemoryCreate with valid Mnemos tags and explicit status."""
     return MemoryCreate(
         content=content,
-        tags=[f"project:{project}", f"agent:{agent}", "gcw:learning"],
+        tags=[f"project:{project}", f"agent:{agent}", "mnemos:learning"],
         status=status,
     )
 
@@ -259,7 +259,7 @@ class TestTagNormalization:
     def test_lax_mode_normalizes_uppercase_project(self):
         """Lax mode normalizes project:Project-Umbra → project:project-umbra."""
         result = validate_tag_contract(
-            ["project:Project-Umbra", "agent:test-agent", "gcw:learning"],
+            ["project:Project-Umbra", "agent:test-agent", "mnemos:learning"],
             strict=False,
         )
         assert "project:project-umbra" in result
@@ -269,7 +269,7 @@ class TestTagNormalization:
     def test_lax_mode_normalizes_uppercase_agent(self):
         """Lax mode normalizes agent:Test-Agent → agent:test-agent."""
         result = validate_tag_contract(
-            ["project:test-project", "agent:Test-Agent", "gcw:learning"],
+            ["project:test-project", "agent:Test-Agent", "mnemos:learning"],
             strict=False,
         )
         assert "agent:test-agent" in result
@@ -279,7 +279,7 @@ class TestTagNormalization:
     def test_lax_mode_normalizes_spaces_to_hyphens(self):
         """Spaces in slugs are replaced with hyphens."""
         result = validate_tag_contract(
-            ["project:My Project", "agent:test-agent", "gcw:learning"],
+            ["project:My Project", "agent:test-agent", "mnemos:learning"],
             strict=False,
         )
         assert "project:my-project" in result
@@ -288,7 +288,7 @@ class TestTagNormalization:
         """Strict mode still raises TagContractError for uppercase slugs."""
         with pytest.raises(TagContractError):
             validate_tag_contract(
-                ["project:Project-Umbra", "agent:test-agent", "gcw:learning"],
+                ["project:Project-Umbra", "agent:test-agent", "mnemos:learning"],
                 strict=True,
             )
 
@@ -296,7 +296,7 @@ class TestTagNormalization:
         """Slugs with truly invalid chars (not just case) fall back to unknown."""
         # Dots are not in [a-z0-9_-], and lowercasing does not help
         result = validate_tag_contract(
-            ["project:invalid.slug", "agent:test-agent", "gcw:learning"],
+            ["project:invalid.slug", "agent:test-agent", "mnemos:learning"],
             strict=False,
         )
         assert "project:unknown" in result
@@ -304,7 +304,7 @@ class TestTagNormalization:
 
     def test_lax_mode_preserves_valid_tags(self):
         """Already-valid lowercase tags pass through unchanged."""
-        tags = ["project:valid-proj", "agent:valid-agent", "gcw:decision"]
+        tags = ["project:valid-proj", "agent:valid-agent", "mnemos:decision"]
         result = validate_tag_contract(tags, strict=False)
         assert result == tags
 

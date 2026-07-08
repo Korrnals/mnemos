@@ -50,7 +50,7 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 
 ## `mnemos_add`
 
-Create a new memory entry. The MCP layer enforces the GCW tag contract ([M2](tag-contract.md)) before writing.
+Create a new memory entry. The MCP layer enforces the Mnemos tag contract ([M2](tag-contract.md)) before writing.
 
 ### Input
 
@@ -58,7 +58,7 @@ Create a new memory entry. The MCP layer enforces the GCW tag contract ([M2](tag
 |-------|------|----------|---------|-------------|
 | `content` | string | **yes** | — | Text to remember. |
 | `title` | string | no | auto | Short title. |
-| `tags` | string[] | **yes** | — | Must include `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>`. |
+| `tags` | string[] | **yes** | — | Must include `project:<slug>`, `agent:<slug>`, and at least one `mnemos:<subtype>`. |
 | `memory_type` | string | no | `note` | One of `note`, `fact`, `snippet`, `bookmark`, `conversation`. |
 | `filter_profile` | string | no | auto | One of `log`, `terminal`, `code`, `docs`, `web`, `default`. Drives M10 context filter. |
 
@@ -83,7 +83,7 @@ Create a new memory entry. The MCP layer enforces the GCW tag contract ([M2](tag
     "name": "mnemos_add",
     "arguments": {
       "content": "Use uv, not pip",
-      "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"]
+      "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"]
     }
   }
 }
@@ -93,7 +93,7 @@ Create a new memory entry. The MCP layer enforces the GCW tag contract ([M2](tag
 
 | Error | Cause |
 |-------|-------|
-| `❌ Tag contract violation: ...` | Missing `project:`, `agent:`, or `gcw:` tag. |
+| `❌ Tag contract violation: ...` | Missing `project:`, `agent:`, or `mnemos:` tag. |
 | `❌ Error: ...` | SQLite write failure, vault write failure, or embed failure (the latter is non-fatal — see [architecture overview](../architecture/overview.md#vector-store)). |
 
 ### Related
@@ -126,7 +126,7 @@ Hybrid search: FTS5 (full-text) + vector + Reciprocal Rank Fusion. Only `publish
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "title": "Use uv, not pip",
     "content": "Use uv, not pip — it's faster and resolves transitive CVE closure correctly.",
-    "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"],
+    "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"],
     "score": 0.812,
     "search_type": "hybrid",
     "status": "published"
@@ -186,7 +186,7 @@ When `query` is omitted, the tool returns recent entries (recency-ordered). When
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "title": "Bandit B608 hardcoded SQL — flag for triage",
     "content": "Found hardcoded SQL in src/legacy/loader.py:42 ...",
-    "tags": ["project:mnemos", "agent:cr-security-reviewer", "gcw:bug-pattern"],
+    "tags": ["project:mnemos", "agent:cr-security-reviewer", "mnemos:bug-pattern"],
     "created_at": "2026-06-15T10:42:00+00:00",
     "status": "published"
   }
@@ -301,7 +301,7 @@ Persist a session checkpoint. Agents should call this **proactively**: after mea
 | `decisions` | string | no | — | Key technical decisions + rationale. |
 | `context` | string | no | — | Other context (file paths, architecture, gotchas). |
 
-Mnemos synthesises the parts into a single Markdown memory tagged with `project:<slug>`, `agent:user`, and `gcw:checkpoint`.
+Mnemos synthesises the parts into a single Markdown memory tagged with `project:<slug>`, `agent:user`, and `mnemos:checkpoint`.
 
 ### Output
 
@@ -356,7 +356,7 @@ List the most recent memory entries, oldest-last.
   {
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "title": "Use uv, not pip",
-    "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"],
+    "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"],
     "status": "raw",
     "created_at": "2026-06-15T10:42:00+00:00"
   }
@@ -399,10 +399,10 @@ None.
   "project:mnemos": 142,
   "agent:tech-writer": 23,
   "agent:sre": 41,
-  "gcw:learning": 67,
-  "gcw:bug-pattern": 12,
-  "gcw:decision": 8,
-  "gcw:checkpoint": 14
+  "mnemos:learning": 67,
+  "mnemos:bug-pattern": 12,
+  "mnemos:decision": 8,
+  "mnemos:checkpoint": 14
 }
 ```
 
@@ -458,7 +458,7 @@ Fetch a web page, extract its main content (via `trafilatura`), and save it as a
     "name": "mnemos_ingest_url",
     "arguments": {
       "url": "https://example.com/article",
-      "tags": ["project:research", "agent:user", "gcw:learning"]
+      "tags": ["project:research", "agent:user", "mnemos:learning"]
     }
   }
 }
@@ -793,9 +793,9 @@ The `mnemos_add` and `mnemos_ingest_url` tools reject calls that violate the M2 
 |-----|--------|-------------|---------|
 | `project:<slug>` | `[a-z0-9][a-z0-9\-_]{0,63}` | exactly 1 | Binds to a codebase / initiative |
 | `agent:<slug>` | `[a-z0-9][a-z0-9\-_]{0,63}` | exactly 1 | Authoring agent |
-| `gcw:<subtype>` | `[a-z][a-z0-9\-]*` | at least 1 | Cognitive category |
+| `mnemos:<subtype>` | `[a-z][a-z0-9\-]*` | at least 1 | Cognitive category |
 
-Valid `gcw:` subtypes: `session`, `bug-pattern`, `learning`, `decision`, `rule`, `open-question`, `checkpoint`, `legacy`.
+Valid `mnemos:` subtypes: `session`, `bug-pattern`, `learning`, `decision`, `rule`, `open-question`, `checkpoint`, `legacy`.
 
 Full reference: [tag-contract.md](tag-contract.md).
 

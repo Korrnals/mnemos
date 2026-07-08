@@ -25,13 +25,13 @@ from mnemos.models import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
-VALID_TAGS = ["project:myproject", "agent:copilot", "gcw:learning"]
+VALID_TAGS = ["project:myproject", "agent:copilot", "mnemos:learning"]
 
 VALID_TAGS_ALL = [
     "project:myproject",
     "agent:copilot",
-    "gcw:learning",
-    "gcw:decision",
+    "mnemos:learning",
+    "mnemos:decision",
     "source:chat",
     "applyTo:src/**/*.py",
 ]
@@ -52,12 +52,12 @@ class TestValidateTagContractHappyPath:
         assert set(result) == set(VALID_TAGS_ALL)
 
     def test_returns_original_list_unchanged(self):
-        tags = ["project:x", "agent:y", "gcw:session"]
+        tags = ["project:x", "agent:y", "mnemos:session"]
         result = validate_tag_contract(tags)
         assert result == tags
 
-    def test_multiple_gcw_subtypes_allowed(self):
-        tags = ["project:x", "agent:y", "gcw:session", "gcw:checkpoint"]
+    def test_multiple_mnemos_subtypes_allowed(self):
+        tags = ["project:x", "agent:y", "mnemos:session", "mnemos:checkpoint"]
         result = validate_tag_contract(tags)
         assert sorted(result) == sorted(tags)
 
@@ -70,14 +70,14 @@ class TestValidateTagContractHappyPath:
 class TestValidateTagContractStrictRaises:
     def test_missing_project_raises(self):
         with pytest.raises(TagContractError, match="project:"):
-            validate_tag_contract(["agent:copilot", "gcw:learning"], strict=True)
+            validate_tag_contract(["agent:copilot", "mnemos:learning"], strict=True)
 
     def test_missing_agent_raises(self):
         with pytest.raises(TagContractError, match="agent:"):
-            validate_tag_contract(["project:myproject", "gcw:learning"], strict=True)
+            validate_tag_contract(["project:myproject", "mnemos:learning"], strict=True)
 
-    def test_missing_gcw_raises(self):
-        with pytest.raises(TagContractError, match="gcw:"):
+    def test_missing_mnemos_raises(self):
+        with pytest.raises(TagContractError, match="mnemos:"):
             validate_tag_contract(["project:myproject", "agent:copilot"], strict=True)
 
     def test_empty_list_raises(self):
@@ -87,35 +87,35 @@ class TestValidateTagContractStrictRaises:
     def test_multiple_project_raises(self):
         with pytest.raises(TagContractError, match="exactly one"):
             validate_tag_contract(
-                ["project:a", "project:b", "agent:y", "gcw:learning"],
+                ["project:a", "project:b", "agent:y", "mnemos:learning"],
                 strict=True,
             )
 
     def test_multiple_agent_raises(self):
         with pytest.raises(TagContractError, match="exactly one"):
             validate_tag_contract(
-                ["project:x", "agent:a", "agent:b", "gcw:learning"],
+                ["project:x", "agent:a", "agent:b", "mnemos:learning"],
                 strict=True,
             )
 
-    def test_invalid_gcw_subtype_raises(self):
-        with pytest.raises(TagContractError, match="gcw:"):
+    def test_invalid_mnemos_subtype_raises(self):
+        with pytest.raises(TagContractError, match="mnemos:"):
             validate_tag_contract(
-                ["project:x", "agent:y", "gcw:invalid-subtype"],
+                ["project:x", "agent:y", "mnemos:invalid-subtype"],
                 strict=True,
             )
 
     def test_invalid_project_slug_raises(self):
         with pytest.raises(TagContractError, match="project:"):
             validate_tag_contract(
-                ["project:Invalid Slug!", "agent:y", "gcw:learning"],
+                ["project:Invalid Slug!", "agent:y", "mnemos:learning"],
                 strict=True,
             )
 
     def test_invalid_agent_slug_raises(self):
         with pytest.raises(TagContractError, match="agent:"):
             validate_tag_contract(
-                ["project:x", "agent:bad name here", "gcw:learning"],
+                ["project:x", "agent:bad name here", "mnemos:learning"],
                 strict=True,
             )
 
@@ -128,17 +128,17 @@ class TestValidateTagContractStrictRaises:
 class TestValidateTagContractLaxMode:
     def test_lax_allows_missing_project_with_patch(self):
         """In lax mode, missing required tags do NOT raise — they may be patched."""
-        tags = ["agent:copilot", "gcw:learning"]
+        tags = ["agent:copilot", "mnemos:learning"]
         # Should not raise; behaviour: either patch or return as-is
         result = validate_tag_contract(tags, strict=False)
         assert isinstance(result, list)
 
     def test_lax_allows_missing_agent(self):
-        tags = ["project:myproject", "gcw:learning"]
+        tags = ["project:myproject", "mnemos:learning"]
         result = validate_tag_contract(tags, strict=False)
         assert isinstance(result, list)
 
-    def test_lax_allows_missing_gcw(self):
+    def test_lax_allows_missing_mnemos(self):
         tags = ["project:myproject", "agent:copilot"]
         result = validate_tag_contract(tags, strict=False)
         assert isinstance(result, list)
@@ -147,14 +147,14 @@ class TestValidateTagContractLaxMode:
         """Multiple project: tags are always an error — ambiguous context."""
         with pytest.raises(TagContractError, match="exactly one"):
             validate_tag_contract(
-                ["project:a", "project:b", "agent:y", "gcw:learning"],
+                ["project:a", "project:b", "agent:y", "mnemos:learning"],
                 strict=False,
             )
 
     def test_lax_still_raises_on_multiple_agent(self):
         with pytest.raises(TagContractError, match="exactly one"):
             validate_tag_contract(
-                ["project:x", "agent:a", "agent:b", "gcw:learning"],
+                ["project:x", "agent:a", "agent:b", "mnemos:learning"],
                 strict=False,
             )
 
@@ -170,18 +170,18 @@ class TestTagContractModel:
         assert tc.project == "myproject"
         assert tc.agent == "copilot"
 
-    def test_gcw_subtypes_extracted(self):
-        tags = ["project:x", "agent:y", "gcw:session", "gcw:checkpoint"]
+    def test_mnemos_subtypes_extracted(self):
+        tags = ["project:x", "agent:y", "mnemos:session", "mnemos:checkpoint"]
         tc = TagContract(tags=tags)
-        assert "session" in tc.gcw_subtypes
-        assert "checkpoint" in tc.gcw_subtypes
+        assert "session" in tc.mnemos_subtypes
+        assert "checkpoint" in tc.mnemos_subtypes
 
     def test_invalid_tags_raise_validation_error_in_strict(self):
         with pytest.raises(ValidationError):
-            TagContract(tags=["agent:copilot", "gcw:learning"], strict=True)
+            TagContract(tags=["agent:copilot", "mnemos:learning"], strict=True)
 
     def test_lax_model_accepts_incomplete_tags(self):
-        tc = TagContract(tags=["agent:copilot", "gcw:learning"], strict=False)
+        tc = TagContract(tags=["agent:copilot", "mnemos:learning"], strict=False)
         assert isinstance(tc, TagContract)
 
     def test_immutable_tags_list(self):
@@ -209,7 +209,7 @@ class TestMemoryTagContractIntegration:
         with pytest.raises((TagContractError, ValidationError)):
             Memory(
                 content="Test.",
-                tags=["agent:copilot", "gcw:learning"],
+                tags=["agent:copilot", "mnemos:learning"],
                 project="",
                 agent="copilot",
                 strict_tags=True,
@@ -256,12 +256,12 @@ class TestMemoryTagContractIntegration:
 
 
 # ---------------------------------------------------------------------------
-# GCW subtype catalogue
+# Mnemos subtype catalogue
 # ---------------------------------------------------------------------------
 
 
 class TestGCWSubtypes:
-    """All documented gcw: subtypes must be in the allowed set."""
+    """All documented mnemos: subtypes must be in the allowed set."""
 
     EXPECTED: ClassVar[set[str]] = {
         "session",
@@ -276,13 +276,13 @@ class TestGCWSubtypes:
 
     def test_all_expected_subtypes_valid(self):
         for subtype in self.EXPECTED:
-            tags = [f"gcw:{subtype}", "project:x", "agent:y"]
+            tags = [f"mnemos:{subtype}", "project:x", "agent:y"]
             result = validate_tag_contract(tags, strict=True)
-            assert any(f"gcw:{subtype}" in t for t in result)
+            assert any(f"mnemos:{subtype}" in t for t in result)
 
     def test_unknown_subtype_invalid(self):
         with pytest.raises(TagContractError):
             validate_tag_contract(
-                ["project:x", "agent:y", "gcw:totally-unknown"],
+                ["project:x", "agent:y", "mnemos:totally-unknown"],
                 strict=True,
             )

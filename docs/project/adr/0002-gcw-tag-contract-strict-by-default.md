@@ -1,4 +1,4 @@
-# 0002. GCW tag contract is strict by default at the MCP layer
+# 0002. Mnemos tag contract is strict by default at the MCP layer
 
 *Historical artifact — English only.*
 
@@ -17,13 +17,13 @@ wants this cleaned up in Mnemos so that:
 
 - `agent:gcw-tech-lead` is always present
 - `project:gcw` (or another project slug) is always present
-- at least one `gcw:*` namespace tag is always present
-  (`gcw:session`, `gcw:bug-pattern`, `gcw:learning`, `gcw:decision`, `gcw:rule`,
-  `gcw:open-question`, `gcw:checkpoint`, `gcw:legacy`)
+- at least one `mnemos:*` namespace tag is always present
+  (`mnemos:session`, `mnemos:bug-pattern`, `mnemos:learning`, `mnemos:decision`, `mnemos:rule`,
+  `mnemos:open-question`, `mnemos:checkpoint`, `mnemos:legacy`)
 
 ## Decision
 
-We will enforce the GCW tag contract at the **MCP `mnemos_add` layer**, not the storage
+We will enforce the Mnemos tag contract at the **MCP `mnemos_add` layer**, not the storage
 layer, because:
 
 1. MCP is the only public surface that produces records — the CLI is for human use and
@@ -35,7 +35,7 @@ layer, because:
 
 A `strict_tag_contract: bool` setting (default `true` for new installs, `false` during
 M13 migration) controls enforcement. When `false`, Mnemos auto-tags incoming records
-with `gcw:legacy` and `agent:unknown` and logs a warning.
+with `mnemos:legacy` and `agent:unknown` and logs a warning.
 
 ## Consequences
 
@@ -50,7 +50,7 @@ with `gcw:legacy` and `agent:unknown` and logs a warning.
 
 - Developers writing ad-hoc CLI scripts must add the required tags or set
   `strict_tag_contract=false`. Friction is intentional.
-- The `gcw:legacy` tag pollutes the namespace slightly. Acceptable; it lets operators
+- The `mnemos:legacy` tag pollutes the namespace slightly. Acceptable; it lets operators
   filter "old migrated records" out of recall results.
 
 **Neutral**
@@ -69,7 +69,7 @@ with `gcw:legacy` and `agent:unknown` and logs a warning.
 
 ## References
 
-- `PLAN.md` §"Phase M2 — GCW Tag Contract"
+- `PLAN.md` §"Phase M2 — Mnemos Tag Contract"
 - `ARCHITECTURE.md` §2 (TagContract section)
 - `docs/tag-contract.md` — operator-facing schema
 - `tests/test_tag_contract.py` — 31 tests

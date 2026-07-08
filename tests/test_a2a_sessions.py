@@ -90,7 +90,7 @@ def session(client: TestClient) -> dict:
     """Create one session and return its body as a dict."""
     resp = client.post(
         "/v1/sessions",
-        json={"user_id": "abyss", "metadata": {"workspace": "gcw"}},
+        json={"user_id": "abyss", "metadata": {"workspace": "mnemos"}},
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -163,8 +163,8 @@ def _write_turn(
     role: str = "a2a_message",
     content: str = "Need a migration for orders.archived_at column.",
     message_id: str | None = "msg-x7y8z9",
-    from_: str = "gcw-senior-system-engineer",
-    to: str = "gcw-senior-dba",
+    from_: str = "mnemos-senior-system-engineer",
+    to: str = "mnemos-senior-dba",
     outcome: str | None = "delivered",
     tags: list[str] | None = None,
 ) -> dict:
@@ -272,8 +272,8 @@ class TestLoadTurn:
         body = resp.json()
         assert body["turn_id"] == "turn-1"
         assert body["role"] == "a2a_message"
-        assert body["from"] == "gcw-senior-system-engineer"
-        assert body["to"] == "gcw-senior-dba"
+        assert body["from"] == "mnemos-senior-system-engineer"
+        assert body["to"] == "mnemos-senior-dba"
         assert body["context_pointer"] == f"memory://{session['session_id']}#step-1"
         # In summary mode, content must NOT be present
         assert body.get("content") is None

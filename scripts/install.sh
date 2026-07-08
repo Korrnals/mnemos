@@ -297,7 +297,7 @@ echo "  • Run 'mnemos integration setup' to deploy behavioral instructions to 
 echo "  • Run 'mnemos doctor' to verify your installation"
 echo ""
 ok "Try it:"
-printf "    mnemos add 'Hello' --tags project:test,agent:setup,gcw:learning\n"
+printf "    mnemos add 'Hello' --tags project:test,agent:setup,mnemos:learning\n"
 printf "    mnemos search 'Hello'\n"
 if [[ "${EXTRAS}" == *mcp* && "$MCP_DONE" == false ]]; then
   echo ""

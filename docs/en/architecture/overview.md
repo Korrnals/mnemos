@@ -176,9 +176,9 @@ Content below `min_size_chars` is returned as-is with `cached=false` and `reduct
 
 #### CLI (Typer)
 ```bash
-mnemos add "Note about something important" --tags project:mnemos agent:user gcw:learning   # quick add
-mnemos add --file ./document.pdf --tags project:mnemos agent:user gcw:learning              # from a file
-mnemos add --url https://example.com --tags project:research agent:user gcw:learning        # ingest a URL
+mnemos add "Note about something important" --tags project:mnemos agent:user mnemos:learning   # quick add
+mnemos add --file ./document.pdf --tags project:mnemos agent:user mnemos:learning              # from a file
+mnemos add --url https://example.com --tags project:research agent:user mnemos:learning        # ingest a URL
 mnemos search "how to configure nginx"             # hybrid search (FTS5 + vector + RRF)
 mnemos search "CVE" --project mnemos --limit 20    # project-scoped search
 mnemos recall --agent tech-writer --limit 20       # recent entries for an agent (M3)

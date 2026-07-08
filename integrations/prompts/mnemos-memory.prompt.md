@@ -44,7 +44,7 @@ If no prior context: `Memory: no prior context for <project>`.
 mnemos_search(
   query=<natural language query>,
   project=<current-project>,
-  tags=["gcw:decision"],
+  tags=["mnemos:decision"],
   limit=10
 )
 ```
@@ -65,9 +65,9 @@ Every write must carry:
 |-----|-------------|---------|
 | `project:<slug>` | **exactly 1** | `project:mnemos` |
 | `agent:<slug>` | **exactly 1** | `agent:tech-lead` (or `agent:user`) |
-| `gcw:<subtype>` | **at least 1** | `gcw:decision` |
+| `mnemos:<subtype>` | **at least 1** | `mnemos:decision` |
 
-### Valid gcw subtypes
+### Valid mnemos subtypes
 
 `session`, `checkpoint`, `bug-pattern`, `learning`, `decision`, `rule`,
 `open-question`, `legacy`
@@ -85,7 +85,7 @@ mnemos_add(
   tags=[
     "project:mnemos",
     "agent:tech-lead",
-    "gcw:bug-pattern",
+    "mnemos:bug-pattern",
     "severity:medium",
     "stack:sqlite"
   ],

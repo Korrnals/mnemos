@@ -81,7 +81,7 @@ podman-compose up -d
 ## Verify
 
 ```bash
-mnemos add "Hello Mnemos" --tags "project:test,agent:manual,gcw:learning"
+mnemos add "Hello Mnemos" --tags "project:test,agent:manual,mnemos:learning"
 mnemos search "Hello"
 mnemos recall --agent manual --project test
 ```

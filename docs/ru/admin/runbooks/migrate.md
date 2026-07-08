@@ -43,10 +43,10 @@ mnemos migrate-from-ai-brain
 
 ## Обработка контракта тегов
 
-Унаследованные записи ai-brain без тегов `project:` / `agent:` / `gcw:` получают:
+Унаследованные записи ai-brain без тегов `project:` / `agent:` / `mnemos:` получают:
 - `project:legacy`
 - `agent:unknown`
-- `gcw:legacy`
+- `mnemos:legacy`
 
 После миграции просмотрите и перетегируйте важные записи:
 

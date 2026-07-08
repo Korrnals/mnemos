@@ -2,7 +2,7 @@
 
 Converts legacy ai-brain SQLite DB + vault into Mnemos format.
 Key transformations:
-  - tags: add project:legacy, agent:unknown, gcw:legacy
+  - tags: add project:legacy, agent:unknown, mnemos:legacy
   - status: preserved (raw/processing/processed/published/archived)
   - source: ai-brain TELEGRAM → Mnemos MCP (closest match)
   - Memory fields: parent_ids → derived_from, content_ru/content_en → metadata
@@ -56,15 +56,55 @@ _LEGACY_TO_MNEMOS_STATUS: dict[str, MemoryStatus] = {
 
 
 def _migrate_tags(old_tags: list[str]) -> list[str]:
-    """Add GCW contract tags to legacy tags."""
-    tags = list(old_tags)
+    """Add Mnemos contract tags to legacy tags and migrate gcw: → mnemos:."""
+    tags = []
+    for t in old_tags:
+        # Migrate legacy gcw: tags → mnemos:
+        if t.startswith("gcw:"):
+            tags.append(f"mnemos:{t[4:]}")
+        else:
+            tags.append(t)
     if not any(t.startswith("project:") for t in tags):
         tags.append("project:legacy")
     if not any(t.startswith("agent:") for t in tags):
         tags.append("agent:unknown")
-    if not any(t.startswith("gcw:") for t in tags):
-        tags.append("gcw:legacy")
+    if not any(t.startswith("mnemos:") for t in tags):
+        tags.append("mnemos:legacy")
     return tags
+
+
+def migrate_gcw_to_mnemos_tags(db_path: Path) -> dict[str, int]:
+    """Migrate existing gcw: tags in the Mnemos DB to mnemos: tags.
+
+    Converts all tag arrays in the memories table that contain ``gcw:<subtype>``
+    entries to ``mnemos:<subtype>``. Idempotent — safe to run multiple times.
+
+    Returns:
+        Summary dict with counts: ``{"memories_updated": N, "tags_converted": N}``
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    updated = 0
+    converted = 0
+    try:
+        cur = conn.execute("SELECT id, tags FROM memories")
+        for row in cur.fetchall():
+            tags = json.loads(row["tags"]) if row["tags"] else []
+            new_tags = [f"mnemos:{t[4:]}" if t.startswith("gcw:") else t for t in tags]
+            if new_tags != tags:
+                conn.execute(
+                    "UPDATE memories SET tags = ? WHERE id = ?",
+                    (json.dumps(new_tags), row["id"]),
+                )
+                updated += 1
+                converted += sum(1 for t in tags if t.startswith("gcw:"))
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info("Migrated %d tags across %d memories (gcw: → mnemos:)", converted, updated)
+    return {"memories_updated": updated, "tags_converted": converted}
 
 
 def _migrate_memory(row: sqlite3.Row) -> MemoryCreate:

@@ -256,7 +256,7 @@ def _check_tag_contract(settings: Any) -> CheckResult:
     try:
         conn = sqlite3.connect(str(db_path))
         try:
-            # tags is stored as JSON array; we check for project:/agent:/gcw: prefixes.
+            # tags is stored as JSON array; we check for project:/agent:/mnemos: prefixes.
             rows = conn.execute("SELECT tags FROM memories").fetchall()
         finally:
             conn.close()
@@ -271,8 +271,8 @@ def _check_tag_contract(settings: Any) -> CheckResult:
             continue
         has_project = any(t.startswith("project:") for t in tags)
         has_agent = any(t.startswith("agent:") for t in tags)
-        has_gcw = any(t.startswith("gcw:") for t in tags)
-        if not (has_project and has_agent and has_gcw):
+        has_mnemos = any(t.startswith("mnemos:") for t in tags)
+        if not (has_project and has_agent and has_mnemos):
             non_conformant += 1
 
     if non_conformant > 0:

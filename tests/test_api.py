@@ -104,13 +104,13 @@ class TestMemories:
             "/memories",
             json={
                 "content": "Test memory",
-                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:reviewer", "mnemos:learning"],
             },
         )
         assert resp.status_code == 201
         data = resp.json()
         assert data["content"] == "Test memory"
-        assert "project:gcw" in data["tags"]
+        assert "project:mnemos" in data["tags"]
 
     def test_get_memory(self, client):
         # Create first
@@ -118,7 +118,7 @@ class TestMemories:
             "/memories",
             json={
                 "content": "Fetch me",
-                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:reviewer", "mnemos:learning"],
             },
         )
         mem_id = create_resp.json()["id"]
@@ -136,14 +136,14 @@ class TestMemories:
             "/memories",
             json={
                 "content": "One",
-                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:reviewer", "mnemos:learning"],
             },
         )
         client.post(
             "/memories",
             json={
                 "content": "Two",
-                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:reviewer", "mnemos:learning"],
             },
         )
 
@@ -156,7 +156,7 @@ class TestMemories:
             "/memories",
             json={
                 "content": "Raw note",
-                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:reviewer", "mnemos:learning"],
                 "status": "raw",
             },
         )
@@ -176,7 +176,7 @@ class TestSearch:
             "/memories",
             json={
                 "content": "kubernetes deployment patterns",
-                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:reviewer", "mnemos:learning"],
             },
         )
         resp = client.post(
@@ -211,14 +211,14 @@ class TestTagFilterExactMatch:
             "/memories",
             json={
                 "content": "mnemos backend memory",
-                "tags": ["project:mnemos", "agent:backend", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:backend", "mnemos:learning"],
             },
         )
         client.post(
             "/memories",
             json={
                 "content": "mnemos eyes frontend memory",
-                "tags": ["project:mnemos-eyes", "agent:frontend", "gcw:learning"],
+                "tags": ["project:mnemos-eyes", "agent:frontend", "mnemos:learning"],
             },
         )
 
@@ -236,14 +236,14 @@ class TestTagFilterExactMatch:
             "/memories",
             json={
                 "content": "memory with both tags",
-                "tags": ["project:mnemos", "agent:backend", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:backend", "mnemos:learning"],
             },
         )
         client.post(
             "/memories",
             json={
                 "content": "memory with only one tag",
-                "tags": ["project:mnemos", "agent:frontend", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:frontend", "mnemos:learning"],
             },
         )
 
@@ -275,7 +275,7 @@ class TestVectorSearchStatusFilter:
             "/memories",
             json={
                 "content": "published kubernetes note",
-                "tags": ["project:mnemos", "agent:backend", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:backend", "mnemos:learning"],
                 "status": "published",
             },
         )
@@ -285,7 +285,7 @@ class TestVectorSearchStatusFilter:
             "/memories",
             json={
                 "content": "raw kubernetes note",
-                "tags": ["project:mnemos", "agent:backend", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:backend", "mnemos:learning"],
                 "status": "raw",
             },
         )
@@ -320,7 +320,7 @@ class TestAgentRecall:
             "/memories",
             json={
                 "content": "Security review note",
-                "tags": ["project:gcw", "agent:security-reviewer", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:security-reviewer", "mnemos:learning"],
             },
         )
         resp = client.get("/recall/agent/security-reviewer?limit=10")
@@ -464,7 +464,7 @@ class TestContextFilter:
             json={
                 "content": "Line 1\nLine 2\nLine 3",
                 "title": "Test",
-                "tags": ["project:test", "agent:api-test", "gcw:learning"],
+                "tags": ["project:test", "agent:api-test", "mnemos:learning"],
                 "source": "cli",
             },
         )
@@ -496,14 +496,14 @@ class TestTags:
             "/memories",
             json={
                 "content": "Alpha",
-                "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+                "tags": ["project:mnemos", "agent:reviewer", "mnemos:learning"],
             },
         )
         client.post(
             "/memories",
             json={
                 "content": "Beta",
-                "tags": ["project:gcw", "agent:reviewer", "gcw:decision"],
+                "tags": ["project:mnemos", "agent:reviewer", "mnemos:decision"],
             },
         )
         resp = client.get("/tags")
@@ -514,9 +514,9 @@ class TestTags:
             assert set(item.keys()) == {"tag", "count"}
             assert isinstance(item["tag"], str)
             assert isinstance(item["count"], int)
-        # project:gcw and agent:reviewer appear in both memories
+        # project:mnemos and agent:reviewer appear in both memories
         by_tag = {item["tag"]: item["count"] for item in items}
-        assert by_tag["project:gcw"] == 2
+        assert by_tag["project:mnemos"] == 2
         assert by_tag["agent:reviewer"] == 2
         # Tags that appear twice should come before tags that appear once
         counts = [item["count"] for item in items]
@@ -524,24 +524,28 @@ class TestTags:
 
     def test_structure_stable_order(self, client):
         """Verify list (not dict) - order is deterministic (count desc)."""
-        for content, tag in [("A", "gcw:learning"), ("B", "gcw:learning"), ("C", "gcw:decision")]:
+        for content, tag in [
+            ("A", "mnemos:learning"),
+            ("B", "mnemos:learning"),
+            ("C", "mnemos:decision"),
+        ]:
             client.post(
                 "/memories",
                 json={
                     "content": content,
-                    "tags": ["project:gcw", "agent:test", tag],
+                    "tags": ["project:mnemos", "agent:test", tag],
                 },
             )
         resp = client.get("/tags")
         assert resp.status_code == 200
         items = resp.json()
         assert isinstance(items, list)
-        # project:gcw and agent:test both appear 3 times - must be first two
+        # project:mnemos and agent:test both appear 3 times - must be first two
         top_counts = [it["count"] for it in items[:2]]
         assert all(c == 3 for c in top_counts)
-        # gcw:learning appears 2 times, gcw:decision 1 time - order preserved
-        learning = next(it for it in items if it["tag"] == "gcw:learning")
-        decision = next(it for it in items if it["tag"] == "gcw:decision")
+        # mnemos:learning appears 2 times, mnemos:decision 1 time - order preserved
+        learning = next(it for it in items if it["tag"] == "mnemos:learning")
+        decision = next(it for it in items if it["tag"] == "mnemos:decision")
         assert learning["count"] == 2
         assert decision["count"] == 1
         assert items.index(learning) < items.index(decision)

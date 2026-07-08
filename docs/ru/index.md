@@ -69,7 +69,7 @@ mnemos mcp-server
 | Инструмент | Назначение |
 |-----------|-----------|
 | `mnemos_search` | Гибридный поиск FTS5 + вектор (опубликованные записи) |
-| `mnemos_add` | Создать запись памяти — **соблюдает контракт тегов GCW** |
+| `mnemos_add` | Создать запись памяти — **соблюдает контракт тегов Mnemos** |
 | `mnemos_agent_recall` | Recall по агенту (M3) — фильтр по slug агента |
 | `mnemos_save_context` | Сохранить чекпоинт сессии |
 | `mnemos_recall_context` | Восстановить последний чекпоинт проекта |
@@ -110,7 +110,7 @@ mnemos mcp-server
 - [Справочник MCP-инструментов](user/mcp-tools.md) — все инструменты `mnemos_*` *(Wave 2)*
 - [Справочник HTTP API](user/http-api.md) — все эндпоинты, тела запросов и ответов *(Wave 2)*
 - [Справочник CLI](user/cli-reference.md) — все подкоманды `mnemos` *(Wave 2)*
-- [Контракт тегов](user/tag-contract.md) — схема M2: `project:`, `agent:`, `gcw:` *(Wave 2)*
+- [Контракт тегов](user/tag-contract.md) — схема M2: `project:`, `agent:`, `mnemos:` *(Wave 2)*
 - [Контекстный фильтр](user/context-filter.md) — пятиступенчатый очиститель шума (dedup, noise, extract, compress, tokens) с профилями и автофильтром.
 
 ---

@@ -31,7 +31,7 @@ We will:
 3. Mass-rename the Python package `ai_brain` → `mnemos`, the CLI entry `brain` → `mnemos`,
    every MCP tool `brain_*` → `mnemos_*`, every env var `AI_BRAIN_*` → `MNEMOS_*`.
 4. Update default paths (`~/.ai-brain/` → `~/.mnemos/`, `~/brain-vault/` → `~/mnemos-vault/`).
-5. Add the GCW tag contract (`project:*`, `agent:*`, `gcw:*`) as the schema for
+5. Add the Mnemos tag contract (`project:*`, `agent:*`, `mnemos:*`) as the schema for
    `mnemos_add`, with a `strict_tag_contract` flag for migration.
 6. After the rename, treat `ai-brain` as a frozen, archived project with a DEPRECATED
    notice in its README.

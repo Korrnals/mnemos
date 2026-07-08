@@ -201,7 +201,7 @@ curl -s http://127.0.0.1:8000/tags
 [
   {"tag": "project:mnemos", "count": 142},
   {"tag": "agent:tech-writer", "count": 58},
-  {"tag": "gcw:learning", "count": 41}
+  {"tag": "mnemos:learning", "count": 41}
 ]
 ```
 
@@ -219,7 +219,7 @@ curl -s http://127.0.0.1:8000/tags
 |------|-----|--------------|-------------|---------- |
 | `content` | string | **да** | — | Основной текст. |
 | `title` | string | нет | авто | Краткий заголовок. |
-| `tags` | string[] | **да** | — | Должны включать `project:<slug>`, `agent:<slug>` и хотя бы один `gcw:<subtype>`. |
+| `tags` | string[] | **да** | — | Должны включать `project:<slug>`, `agent:<slug>` и хотя бы один `mnemos:<subtype>`. |
 | `source` | string | нет | `manual` | Одно из `manual`, `web`, `file`, `mcp`, `obsidian`, `cli`, `rule`, `synthesized`. |
 | `source_url` | string | нет | — | URL происхождения. |
 | `memory_type` | string | нет | `note` | Одно из `note`, `fact`, `snippet`, `bookmark`, `conversation`, `session_context`. |
@@ -237,7 +237,7 @@ curl -s -X POST http://127.0.0.1:8000/memories \
   -H "Content-Type: application/json" \
   -d '{
     "content": "Use uv, not pip — it resolves transitive CVE closure correctly.",
-    "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"]
+    "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"]
   }'
 ```
 
@@ -246,7 +246,7 @@ curl -s -X POST http://127.0.0.1:8000/memories \
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "content": "Use uv, not pip — it resolves transitive CVE closure correctly.",
   "title": "Use uv, not pip",
-  "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"],
+  "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"],
   "source": "manual",
   "memory_type": "note",
   "status": "raw",
@@ -263,7 +263,7 @@ curl -s -X POST http://127.0.0.1:8000/memories \
 
 | Код | Причина |
 |-----|-------- |
-| `422` | Отсутствует обязательный тег (`project:`, `agent:` или `gcw:`) |
+| `422` | Отсутствует обязательный тег (`project:`, `agent:` или `mnemos:`) |
 | `500` | Сбой записи SQLite / vault |
 
 ### `GET /memories/{memory_id}` — получить одну запись
@@ -351,7 +351,7 @@ curl -s -X POST http://127.0.0.1:8000/search \
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "title": "Use uv, not pip",
     "content": "Use uv, not pip — it resolves transitive CVE closure correctly.",
-    "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"],
+    "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"],
     "score": 0.812,
     "search_type": "hybrid"
   }
@@ -402,13 +402,13 @@ curl -s "http://127.0.0.1:8000/recall/agent/cr-security-reviewer?project=mnemos&
 
 Эти эндпоинты зеркалируют плагин-инструменты `mnemos_save_context` и
 `mnemos_recall_context`. Они сохраняют и извлекают записи типа
-`session_context` с тегом `gcw:checkpoint`, позволяя агенту восстановить
+`session_context` с тегом `mnemos:checkpoint`, позволяя агенту восстановить
 рабочее состояние между сессиями или после компакции контекста.
 
 ### `POST /context/save` — сохранить чекпойнт сессии
 
 Формирует структурированный Markdown из переданных полей и сохраняет его как
-запись `SESSION_CONTEXT` с тегом `gcw:checkpoint`. Зеркалирует плагин-инструмент
+запись `SESSION_CONTEXT` с тегом `mnemos:checkpoint`. Зеркалирует плагин-инструмент
 `mnemos_save_context`.
 
 **Тело запроса**
@@ -477,7 +477,7 @@ curl -s -X POST http://127.0.0.1:8000/context/save \
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "title": "Session checkpoint — 2026-07-07T12:00:00+00:00",
       "content": "# Session checkpoint — 2026-07-07T12:00:00+00:00\n\n## Goals\nЗакончить HTTP API доки для всех 15 инструментов\n",
-      "tags": ["project:mnemos", "agent:user", "gcw:checkpoint"],
+      "tags": ["project:mnemos", "agent:user", "mnemos:checkpoint"],
       "created_at": "2026-07-07T12:00:00+00:00"
     }
   ]
@@ -672,7 +672,7 @@ curl -s http://127.0.0.1:8000/auto-collect
 | Поле | Тип | Обязательное | Описание |
 |------|-----|--------------|---------- |
 | `url` | string | **да** | HTTP/HTTPS URL для загрузки. |
-| `tags` | string[] | **да** | Должны включать `project:<slug>`, `agent:<slug>` и хотя бы один `gcw:<subtype>`. |
+| `tags` | string[] | **да** | Должны включать `project:<slug>`, `agent:<slug>` и хотя бы один `mnemos:<subtype>`. |
 
 **Ответ 201**
 
@@ -691,7 +691,7 @@ curl -s -X POST http://127.0.0.1:8000/ingest-url \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://fastapi.tiangolo.com/tutorial/dependencies/",
-    "tags": ["project:mnemos", "agent:tech-lead", "gcw:learning"]
+    "tags": ["project:mnemos", "agent:tech-lead", "mnemos:learning"]
   }'
 ```
 
@@ -699,7 +699,7 @@ curl -s -X POST http://127.0.0.1:8000/ingest-url \
 
 | Код | Причина |
 |-----|-------- |
-| `422` | Отсутствует обязательный тег (`project:`, `agent:` или `gcw:`) или отсутствует `url` |
+| `422` | Отсутствует обязательный тег (`project:`, `agent:` или `mnemos:`) или отсутствует `url` |
 | `500` | Сбой загрузки, сбой извлечения или сбой записи SQLite / vault |
 
 ---

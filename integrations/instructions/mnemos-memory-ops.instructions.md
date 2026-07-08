@@ -38,7 +38,7 @@ start/checkpoint/end).
 mnemos_search(
   query=<natural language query>,
   project=<current-project>,   # optional, scope to project
-  tags=["gcw:decision"],        # optional, narrow by tag
+  tags=["mnemos:decision"],        # optional, narrow by tag
   limit=10
 )
 ```
@@ -70,7 +70,7 @@ mnemos_add(
   tags=[
     "project:<slug>",
     "agent:<slug>",
-    "gcw:learning"              # or gcw:bug-pattern, gcw:decision, gcw:rule
+    "mnemos:learning"              # or mnemos:bug-pattern, mnemos:decision, mnemos:rule
   ],
   title=<short title>           # optional, auto-generated if omitted
 )
@@ -88,7 +88,7 @@ mnemos_add(
   tags=[
     "project:<slug>",
     "agent:<slug>",
-    "gcw:decision"
+    "mnemos:decision"
   ]
 )
 ```
@@ -137,7 +137,7 @@ mnemos_ingest_url(
   tags=[
     "project:<slug>",
     "agent:<slug>",
-    "gcw:<subtype>"          # e.g. gcw:learning, gcw:decision, gcw:rule
+    "mnemos:<subtype>"          # e.g. mnemos:learning, mnemos:decision, mnemos:rule
   ]
 )
 ```

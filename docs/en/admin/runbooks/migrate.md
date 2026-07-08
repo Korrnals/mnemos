@@ -37,16 +37,16 @@ mnemos migrate-from-ai-brain
 
 This will:
 1. Back up existing Mnemos DB (if any)
-2. Migrate all memories with GCW tag contract applied in **lax mode**
+2. Migrate all memories with Mnemos tag contract applied in **lax mode**
 3. Copy vault files preserving directory structure
 4. Map ai-brain sources → Mnemos sources (telegram → mcp)
 
 ## Tag contract handling
 
-Legacy ai-brain entries without `project:` / `agent:` / `gcw:` tags get:
+Legacy ai-brain entries without `project:` / `agent:` / `mnemos:` tags get:
 - `project:legacy`
 - `agent:unknown`
-- `gcw:legacy`
+- `mnemos:legacy`
 
 After migration, review and retag important entries:
 

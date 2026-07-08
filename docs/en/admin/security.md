@@ -194,7 +194,7 @@ completeness — they are **not** part of M15.2.
   and `..` segments in vault filenames. `path_scoped.py` uses
   `Path.resolve()` to keep watchers inside the watched root.
 - **M2 tag contract** — `models.py::validate_tag_contract` enforces
-  the `project:` / `agent:` / `gcw:` prefix taxonomy at the MCP layer.
+  the `project:` / `agent:` / `mnemos:` prefix taxonomy at the MCP layer.
 - **M9 SSRF guard** — `_validate_url` (covered in §2).
 - **M6 traces** — every LLM-bound step is recorded with latency, token
   counts, and a `rationale_summary`. This is the audit log; no separate
@@ -358,7 +358,7 @@ Tag filtering in `SQLiteStore.list_all` uses `tags LIKE '%"tag"%'` which
 matches on the JSON string. This is an **exact tag match** — the
 `%"tag"%` pattern ensures the tag is matched as a complete JSON string
 element, not as a substring of another tag. For example, filtering by
-`gcw:decision` does not match `gcw:decision-review`.
+`mnemos:decision` does not match `mnemos:decision-review`.
 
 The `get_all_tags` aggregate uses `json_each(memories.tags)` to iterate
 the JSON array directly — no string matching, no false positives.
@@ -388,5 +388,5 @@ mnemos add --url http://169.254.169.254/  # rejected, not stored
 git check-ignore -v config.yaml .env     # should list .gitignore:line
 
 # Confirm tag exact match
-mnemos search --tags gcw:decision         # does not match gcw:decision-review
+mnemos search --tags mnemos:decision         # does not match mnemos:decision-review
 ```

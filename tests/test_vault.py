@@ -51,11 +51,11 @@ def _make_memory(**overrides) -> Memory:
     defaults: dict = dict(
         content="# Hello world\n\nSome body content.",
         title="Hello world",
-        tags=["project:gcw", "agent:qa", "gcw:learning"],
+        tags=["project:mnemos", "agent:qa", "mnemos:learning"],
         source=MemorySource.MANUAL,
         source_url=None,
         memory_type=MemoryType.NOTE,
-        project="gcw",
+        project="mnemos",
         agent="qa",
         status=MemoryStatus.PUBLISHED,
     )
@@ -169,7 +169,7 @@ class TestMemoryToFile:
 
     def test_writes_tags_into_frontmatter(self, vm: VaultManager) -> None:
         """All tags appear in the frontmatter list."""
-        mem = _make_memory(tags=["project:gcw", "agent:qa", "gcw:learning", "custom-tag"])
+        mem = _make_memory(tags=["project:mnemos", "agent:qa", "mnemos:learning", "custom-tag"])
         path = vm.memory_to_file(mem)
         post = frontmatter.load(str(path))
         assert list(post.metadata["tags"]) == mem.tags

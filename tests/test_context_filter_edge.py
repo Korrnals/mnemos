@@ -58,7 +58,7 @@ def mgr() -> MemoryManager:
         m.close()
 
 
-_VALID_TAGS = ["project:test", "agent:filter-test", "gcw:learning"]
+_VALID_TAGS = ["project:test", "agent:filter-test", "mnemos:learning"]
 
 
 # ── FTS5 desync fix robustness ────────────────────────────────────────────────

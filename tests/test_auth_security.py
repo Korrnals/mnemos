@@ -198,7 +198,7 @@ class TestAuthRequired:
             # Cookie-only POST (no Authorization header) → CSRF guard must reject
             r = tc.post(
                 "/memories",
-                json={"content": "test", "tags": ["agent:test", "project:p", "gcw:checkpoint"]},
+                json={"content": "test", "tags": ["agent:test", "project:p", "mnemos:checkpoint"]},
                 cookies={"mnemos_session": session_plaintext},
             )
             assert r.status_code == 403
@@ -214,7 +214,7 @@ class TestAuthRequired:
             # POST with Bearer header → CSRF guard should pass (201 or 422/400 from domain)
             r = tc.post(
                 "/memories",
-                json={"content": "test", "tags": ["agent:test", "project:p", "gcw:checkpoint"]},
+                json={"content": "test", "tags": ["agent:test", "project:p", "mnemos:checkpoint"]},
                 headers={"Authorization": f"Bearer {session_plaintext}"},
             )
             # Not rejected by auth/CSRF (status must NOT be 401 or 403)
@@ -1007,7 +1007,7 @@ class TestTotpRequiredFlag:
             _token_id, plaintext = store.create_token(totp_required=False)
             r = tc.post(
                 "/memories",
-                json={"content": "test", "tags": ["agent:test", "project:p", "gcw:checkpoint"]},
+                json={"content": "test", "tags": ["agent:test", "project:p", "mnemos:checkpoint"]},
                 headers={"Authorization": f"Bearer {plaintext}"},
             )
             assert r.status_code not in {401, 403}

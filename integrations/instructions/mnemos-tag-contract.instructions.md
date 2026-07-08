@@ -35,27 +35,27 @@ Every `mnemos_add` / `mnemos_ingest_url` call must include:
 |-----|--------|-------------|---------|
 | `project:<slug>` | `[a-z0-9][a-z0-9\-_]*` | **exactly 1** | Binds entry to a codebase / initiative |
 | `agent:<slug>` | `[a-z0-9][a-z0-9\-_]*` | **exactly 1** | Agent that authored the memory (use `agent:user` for user-authored) |
-| `gcw:<subtype>` | see table below | **at least 1** | Cognitive category |
+| `mnemos:<subtype>` | see table below | **at least 1** | Cognitive category |
 
-### GCW subtypes (whitelist)
+### Mnemos subtypes (whitelist)
 
 | Subtype | When to use |
 |---------|-------------|
-| `gcw:session` | Session continuity snapshots |
-| `gcw:checkpoint` | Mid-session compaction-resilient checkpoints |
-| `gcw:bug-pattern` | Recurring failure modes, root-cause patterns |
-| `gcw:learning` | Non-obvious facts acquired during a task |
-| `gcw:decision` | Explicit architectural / product decisions + rationale |
-| `gcw:rule` | Hard constraints and invariants |
-| `gcw:open-question` | Unresolved questions requiring future investigation |
-| `gcw:legacy` | Migrated entries from ai-brain or pre-contract stores |
+| `mnemos:session` | Session continuity snapshots |
+| `mnemos:checkpoint` | Mid-session compaction-resilient checkpoints |
+| `mnemos:bug-pattern` | Recurring failure modes, root-cause patterns |
+| `mnemos:learning` | Non-obvious facts acquired during a task |
+| `mnemos:decision` | Explicit architectural / product decisions + rationale |
+| `mnemos:rule` | Hard constraints and invariants |
+| `mnemos:open-question` | Unresolved questions requiring future investigation |
+| `mnemos:legacy` | Migrated entries from ai-brain or pre-contract stores |
 
 ### Optional tags (accepted, not required)
 
 | Tag | Format | Purpose |
 |-----|--------|---------|
 | `source:<slug>` | any string | Origin of the entry (chat, file, url, …) |
-| `applyTo:<glob>` | file glob | Scope a `gcw:rule` to specific file paths |
+| `applyTo:<glob>` | file glob | Scope a `mnemos:rule` to specific file paths |
 | `milestone:<id>` | any string | Links entry to a project milestone |
 | `domain:<slug>` | any string | Domain sub-classifier within a project |
 | `severity:<level>` | `low\|medium\|high\|critical` | Severity for bug-patterns |
@@ -72,7 +72,7 @@ for new installs):
 
 - Missing any required tag → `TagContractError`, write rejected.
 - Multiple `project:` or `agent:` tags → `TagContractError` (always ambiguous).
-- Invalid `gcw:<subtype>` (not in whitelist) → `TagContractError`.
+- Invalid `mnemos:<subtype>` (not in whitelist) → `TagContractError`.
 - Malformed slug (bad characters) → `TagContractError`.
 
 In lax mode (`strict_tag_contract=false`, for migrations), missing required
@@ -89,7 +89,7 @@ mnemos_add(
   tags=[
     "project:mnemos",
     "agent:tech-lead",
-    "gcw:bug-pattern",
+    "mnemos:bug-pattern",
     "severity:medium",
     "stack:sqlite"
   ],
@@ -103,7 +103,7 @@ mnemos_add(
 
 - **Never omit required tags.** If you do not know the project or agent,
   determine it before calling `mnemos_add`. Do not guess.
-- **Do not invent new `gcw:` subtypes.** If you need a category that does not
+- **Do not invent new `mnemos:` subtypes.** If you need a category that does not
   exist, propose it via PR to the tag contract — do not use an ad-hoc value.
 - **One `project:` per entry.** If a learning spans projects, write one entry
   per project, or use `project:shared` if it is genuinely cross-project.

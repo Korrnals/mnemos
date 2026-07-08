@@ -404,14 +404,14 @@ class MemoryManager:
         """Return most recent checkpoint memories for a project.
 
         When ``query`` is provided, a hybrid search scoped to
-        ``gcw:checkpoint`` tags is used to rank checkpoints by relevance,
+        ``mnemos:checkpoint`` tags is used to rank checkpoints by relevance,
         then the top ``limit`` are returned. When ``query`` is omitted,
         checkpoints are returned by recency only.
         """
         if query:
             results = self.search(
                 query=query,
-                tags=["gcw:checkpoint"],
+                tags=["mnemos:checkpoint"],
                 project=project,
                 limit=limit,
             )
@@ -420,7 +420,7 @@ class MemoryManager:
         memories = self.sqlite.list_all(
             limit=limit * 3,
             project=project,
-            tags=["gcw:checkpoint"],
+            tags=["mnemos:checkpoint"],
         )
         # Sort by recency and trim
         memories.sort(key=lambda m: m.created_at, reverse=True)

@@ -24,18 +24,18 @@ from mnemos.mcp_server import _dispatch, call_tool, list_tools
 
 # Minimum valid arguments per registered tool.
 # Tags for mnemos_add / mnemos_ingest_url include the required
-# project:/agent:/gcw: trio so validate_tag_contract (mocked in routing tests)
+# project:/agent:/mnemos: trio so validate_tag_contract (mocked in routing tests)
 # does not need real validation logic.
 _TOOL_ARGS: dict[str, dict] = {
     "mnemos_add": {
         "content": "smoke content",
-        "tags": ["project:smoke", "agent:qa", "gcw:decision"],
+        "tags": ["project:smoke", "agent:qa", "mnemos:decision"],
     },
     "mnemos_agent_recall": {"agent": "qa-agent"},
     "mnemos_auto_collect_status": {},
     "mnemos_ingest_url": {
         "url": "https://example.com",
-        "tags": ["project:smoke", "agent:qa", "gcw:decision"],
+        "tags": ["project:smoke", "agent:qa", "mnemos:decision"],
     },
     "mnemos_list_recent": {},
     "mnemos_list_tags": {},

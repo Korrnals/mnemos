@@ -86,35 +86,35 @@ mnemos add [CONTENT] [OPTIONS]
 |--------|---------|-------------|
 | `CONTENT` (positional) | — | Text to remember. If omitted, reads from stdin. |
 | `--title / -t` | auto | Short title. Auto-generated from content if omitted. |
-| `--tags / -T` | `""` | Comma-separated tags (e.g. `project:test,agent:me,gcw:learning`). |
+| `--tags / -T` | `""` | Comma-separated tags (e.g. `project:test,agent:me,mnemos:learning`). |
 | `--file / -f` | — | Import the contents of a file. Mutually exclusive with `CONTENT` and `--url`. |
 | `--url / -u` | — | Fetch and ingest a URL. Requires tags. |
 | `--source / -s` | `cli` | Memory source enum: `manual`, `web`, `file`, `mcp`, `obsidian`, `cli`, `rule`, `synthesized`. |
 | `--type` | `note` | Memory type: `note`, `fact`, `snippet`, `bookmark`, `conversation`, `session_context`. |
 | `--config / -c` | — | Path to `config.yaml`. |
 
-> **Tag contract.** Every entry must have `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>`. The CLI enforces this in strict mode (the default). See [tag-contract.md](tag-contract.md) for the full schema.
+> **Tag contract.** Every entry must have `project:<slug>`, `agent:<slug>`, and at least one `mnemos:<subtype>`. The CLI enforces this in strict mode (the default). See [tag-contract.md](tag-contract.md) for the full schema.
 
 ### Examples
 
 ```bash
 # Inline content
-mnemos add --content "Use uv, not pip" --tags project:mnemos agent:tech-writer gcw:learning
+mnemos add --content "Use uv, not pip" --tags project:mnemos agent:tech-writer mnemos:learning
 
 # With a title
 mnemos add "Always validate SQL with parameterized queries" \
   --title "SQL safety rule" \
-  --tags "project:mnemos,agent:security,gcw:rule,severity:high"
+  --tags "project:mnemos,agent:security,mnemos:rule,severity:high"
 
 # From a file
-mnemos add --file ~/notes/architecture.md --tags project:mnemos agent:tech-lead gcw:decision
+mnemos add --file ~/notes/architecture.md --tags project:mnemos agent:tech-lead mnemos:decision
 
 # From a URL (fetches, extracts, saves)
-mnemos add --url https://example.com/article --tags project:research agent:user gcw:learning
+mnemos add --url https://example.com/article --tags project:research agent:user mnemos:learning
 
 # From stdin
 echo "Pinned CVE-2026-45829 in chromadb 1.5.9" \
-  | mnemos add --tags project:mnemos agent:sre gcw:bug-pattern,severity:medium
+  | mnemos add --tags project:mnemos agent:sre mnemos:bug-pattern,severity:medium
 ```
 
 ---
@@ -187,7 +187,7 @@ mnemos recall --agent sre --project mnemos --limit 25
 
 ## `tags-validate`
 
-Validate the GCW tag contract across an existing Mnemos vault directory. Reports entries that violate the M2 schema.
+Validate the Mnemos tag contract across an existing Mnemos vault directory. Reports entries that violate the M2 schema.
 
 ```text
 mnemos tags-validate VAULT_PATH
@@ -341,7 +341,7 @@ mnemos migrate-from-ai-brain [OPTIONS]
 The migrator:
 
 - Translates legacy `source` values (e.g. `telegram` → `mcp`).
-- **Patches the tag contract** — every legacy entry gets `project:legacy`, `agent:unknown`, `gcw:legacy` added if missing.
+- **Patches the tag contract** — every legacy entry gets `project:legacy`, `agent:unknown`, `mnemos:legacy` added if missing.
 - Preserves the original `status` (`raw` / `processing` / `processed` / `published` / `archived`).
 - Migrates `content_ru` / `content_en` columns into `metadata` (no data loss).
 - Migrates `parent_ids` into `metadata.parent_ids`.

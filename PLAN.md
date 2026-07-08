@@ -9,7 +9,7 @@
 > - Context Filter (M10): обязательная v1-подсистема (pre-LLM фильтрация шума + дедуп + чистый контекст).
 > - Cache Center (M11): отложен в v2; идемпотентность из M5 покрывает основную выгоду.
 
-**TL;DR**: Форкаем пользовательский проект `ai-brain` (`/var/home/abyss/LABs/AI/ai-brain/`) в новый самостоятельный продукт **Mnemos** (`/var/home/abyss/LABs/AI/mnemos/`, эта директория). Сохраняем всё лучшее (FastAPI + Typer CLI + MCP-сервер + ChromaDB/SQLite FTS5 + RRF + Obsidian vault + Auto-Collect), и доводим до production-зрелости: GCW tag contract на уровне MCP-валидатора, first-class per-agent recall, knowledge pipeline (raw→processing→processed→published), automation-first/policy engine, explainability layer, улучшенный compaction-detection, авто-инжест path-scoped rules, **обязательный Context Filter перед отправкой в модель**, аудит bugs/CRs, миграционный CLI и архивирование ai-brain. Cache Center откладываем в v2.
+**TL;DR**: Форкаем пользовательский проект `ai-brain` (`/var/home/abyss/LABs/AI/ai-brain/`) в новый самостоятельный продукт **Mnemos** (`/var/home/abyss/LABs/AI/mnemos/`, эта директория). Сохраняем всё лучшее (FastAPI + Typer CLI + MCP-сервер + ChromaDB/SQLite FTS5 + RRF + Obsidian vault + Auto-Collect), и доводим до production-зрелости: Mnemos tag contract на уровне MCP-валидатора, first-class per-agent recall, knowledge pipeline (raw→processing→processed→published), automation-first/policy engine, explainability layer, улучшенный compaction-detection, авто-инжест path-scoped rules, **обязательный Context Filter перед отправкой в модель**, аудит bugs/CRs, миграционный CLI и архивирование ai-brain. Cache Center откладываем в v2.
 
 **Локация**: `/var/home/abyss/LABs/AI/mnemos/` (рядом с архивируемым `ai-brain`).
 **Лицензия**: наследуем из ai-brain.
@@ -34,11 +34,11 @@
 
 ---
 
-## Phase M2 — GCW Tag Contract enforcement at MCP layer
+## Phase M2 — Mnemos Tag Contract enforcement at MCP layer
 
-1. Добавить модель `TagContract` в `mnemos/models.py`: schema с обязательными `project:<...>` + `agent:<...>` + ≥1 `gcw:*`, плюс whitelist префиксов (`severity:`, `stack:`, `applyTo:`, `source:`).
+1. Добавить модель `TagContract` в `mnemos/models.py`: schema с обязательными `project:<...>` + `agent:<...>` + ≥1 `mnemos:*`, плюс whitelist префиксов (`severity:`, `stack:`, `applyTo:`, `source:`).
 2. Конфиг-флаг `strict_tag_contract: bool` (default `true` для новых установок, `false` для legacy миграций) в `mnemos/config.py`.
-3. Валидатор в `mnemos_add` MCP-инструменте: при `strict_tag_contract=true` отказываем с понятным сообщением «missing required tag: project:* / agent:* / gcw:*». При `false` — warning в логах + автодобавление `gcw:legacy` + `agent:unknown`.
+3. Валидатор в `mnemos_add` MCP-инструменте: при `strict_tag_contract=true` отказываем с понятным сообщением «missing required tag: project:* / agent:* / mnemos:*». При `false` — warning в логах + автодобавление `mnemos:legacy` + `agent:unknown`.
 4. CLI команда `mnemos tags validate <vault>` — проверка существующего vault на соответствие контракту, отчёт по non-conformant записям.
 5. Документация: новая `docs/tag-contract.md` со схемой + примерами + миграционным гайдом.
 6. Тесты: `tests/test_tag_contract.py` — happy-path, missing tags, invalid prefix, strict/lax modes.
@@ -139,7 +139,7 @@
 1. File-watcher mode для путей `.github/instructions/*.instructions.md` в проектных репах (опционально включается через конфиг или CLI flag `mnemos watch --include-rules`).
 2. При обнаружении файла — парсим frontmatter (`applyTo:` glob), парсим body как markdown, создаём knowledge unit с:
    - `status=published` (rules — это уже отшлифованные знания)
-   - tags: `gcw:rule`, `project:<repo>`, `applyTo:<glob>`, `source:path-scoped-rule`
+   - tags: `mnemos:rule`, `project:<repo>`, `applyTo:<glob>`, `source:path-scoped-rule`
    - content: markdown body
 3. `mnemos_recall_context` и `mnemos_search` при наличии параметра `current_file_path` бустят rules с matching `applyTo:` glob в топ результатов.
 4. При изменении/удалении файла — обновляем/удаляем соответствующий knowledge unit.
@@ -233,7 +233,7 @@
 ## Phase M13 — Migration tool
 
 1. CLI команда `mnemos migrate-from-ai-brain --source ~/.ai-brain --vault ~/brain-vault` — импортирует существующий ai-brain SQLite + vault в Mnemos формат.
-2. Применяет tag contract в **lax mode** (`strict_tag_contract=false`) к импортируемым записям, чтобы старые записи без `agent:` тега не отвергались. Помечает их `gcw:legacy` + `agent:unknown`.
+2. Применяет tag contract в **lax mode** (`strict_tag_contract=false`) к импортируемым записям, чтобы старые записи без `agent:` тега не отвергались. Помечает их `mnemos:legacy` + `agent:unknown`.
 3. Создаёт backup перед миграцией.
 4. Dry-run режим: показывает что будет импортировано без записи.
 5. Тесты: миграция test-fixture vault'а ai-brain.
@@ -314,7 +314,7 @@ M1 (fork & rebrand) ─┬─> M2 (tag contract) ──┬──> M4 (pipeline) 
 
 - **Источник правды**: форк, не обёртка. Mnemos владеет данными, схемой, MCP-интерфейсом. Upstream ai-brain — historical reference.
 - **Совместимость**: миграционный CLI (M13) — единственная гарантия. Никакой runtime-совместимости со старыми `brain_*` инструментами (clean break).
-- **GCW tag contract — встроенный**, не опциональный (но настраиваемый через `strict_tag_contract` для миграции).
+- **Mnemos tag contract — встроенный**, не опциональный (но настраиваемый через `strict_tag_contract` для миграции).
 - **Knowledge Pipeline — обязательная фича v1** (M4). Это главная архитектурная доработка vs ai-brain.
 - **Context Filter — обязательная v1 фича** (M10).
 - **Cache Center — v2** (M11 deferred).

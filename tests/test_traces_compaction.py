@@ -61,7 +61,7 @@ class TestTraceRecorder:
     def test_records_latency(self, tmp_store):
         """TraceRecorder calculates latency_ms automatically."""
         recorder = TraceRecorder(store=tmp_store)
-        with recorder.record("synthesize", "gcw", "llm_call", item_id="abc") as trace:
+        with recorder.record("synthesize", "mnemos", "llm_call", item_id="abc") as trace:
             trace.tokens_in = 100
             trace.tokens_out = 50
             trace.llm_called = True
@@ -75,7 +75,7 @@ class TestTraceRecorder:
     def test_persists_to_sqlite(self, tmp_store):
         """Trace with store persists to SQLite traces table."""
         recorder = TraceRecorder(store=tmp_store)
-        with recorder.record("publish", "gcw", "vector_upsert") as trace:
+        with recorder.record("publish", "mnemos", "vector_upsert") as trace:
             trace.rationale_summary = "Published and indexed."
 
         rows = tmp_store.list_traces(task_label="publish", limit=10)
@@ -86,7 +86,7 @@ class TestTraceRecorder:
     def test_no_store_logs_only(self, tmp_store):
         """TraceRecorder without store does not crash; logs only."""
         recorder = TraceRecorder(store=None)
-        with recorder.record("cluster", "gcw", "embed") as trace:
+        with recorder.record("cluster", "mnemos", "embed") as trace:
             trace.rationale_summary = "Clustered 5 items."
         # No persistence; just ensure no exception
         assert trace.rationale_summary == "Clustered 5 items."
@@ -95,7 +95,7 @@ class TestTraceRecorder:
         """Even if the wrapped code raises, trace is persisted."""
         recorder = TraceRecorder(store=tmp_store)
         try:
-            with recorder.record("synthesize", "gcw", "llm_call") as trace:
+            with recorder.record("synthesize", "mnemos", "llm_call") as trace:
                 trace.tokens_in = 200
                 raise RuntimeError("LLM failure")
         except RuntimeError:
@@ -110,7 +110,7 @@ class TestTraceRecorder:
         long_text = "x" * 500
         trace = Trace(
             task_label="test",
-            project="gcw",
+            project="mnemos",
             step="step",
             rationale_summary=long_text,
         )
@@ -125,7 +125,7 @@ class TestTraceRecorder:
 class TestLegacyRecordTrace:
     def test_logs_only_no_crash(self):
         """Legacy record_trace works without a store."""
-        with record_trace("synthesize", "gcw", "llm_call") as trace:
+        with record_trace("synthesize", "mnemos", "llm_call") as trace:
             trace.tokens_in = 100
             trace.tokens_out = 50
             trace.rationale_summary = "Legacy trace."

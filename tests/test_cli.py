@@ -110,7 +110,7 @@ def test_add_creates_memory(isolated_config: Path) -> None:
             "add",
             "hello world",  # positional content
             "--tags",
-            "project:cli-smoke,agent:cli,gcw:test",
+            "project:cli-smoke,agent:cli,mnemos:test",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -484,7 +484,7 @@ class TestTagsNormalize:
             mem = Memory(
                 content=f"test content for {slug_project}",
                 title="test",
-                tags=[f"project:{slug_project}", f"agent:{slug_agent}", "gcw:test"],
+                tags=[f"project:{slug_project}", f"agent:{slug_agent}", "mnemos:test"],
                 source=MemorySource.CLI,
                 memory_type=MemoryType.NOTE,
                 status=MemoryStatus.RAW,
@@ -514,7 +514,7 @@ class TestTagsNormalize:
         mem = Memory(
             content="dry-run test",
             title="test",
-            tags=["project:MixedCase", "agent:UpperAgent", "gcw:test"],
+            tags=["project:MixedCase", "agent:UpperAgent", "mnemos:test"],
             source=MemorySource.CLI,
             memory_type=MemoryType.NOTE,
             status=MemoryStatus.RAW,
@@ -540,7 +540,7 @@ class TestTagsNormalize:
         mem = Memory(
             content="clean tags",
             title="test",
-            tags=["project:clean", "agent:bot", "gcw:test"],
+            tags=["project:clean", "agent:bot", "mnemos:test"],
             source=MemorySource.CLI,
             memory_type=MemoryType.NOTE,
             status=MemoryStatus.RAW,
@@ -568,7 +568,7 @@ class TestTagsNormalize:
         mem = Memory(
             content="fts corruption regression unique marker ALPHA",
             title="regression",
-            tags=["project:MyProject", "agent:SeniorAgent", "gcw:test"],
+            tags=["project:MyProject", "agent:SeniorAgent", "mnemos:test"],
             source=MemorySource.CLI,
             memory_type=MemoryType.NOTE,
             # PUBLISHED so default search (no include_raw) can find it.
@@ -599,7 +599,7 @@ class TestTagsNormalize:
         mem = Memory(
             content="denormalised column check",
             title="test",
-            tags=["project:My-Project", "agent:Senior-Agent", "gcw:test"],
+            tags=["project:My-Project", "agent:Senior-Agent", "mnemos:test"],
             source=MemorySource.CLI,
             memory_type=MemoryType.NOTE,
             status=MemoryStatus.RAW,
@@ -630,7 +630,7 @@ class TestTagsNormalize:
         mem = Memory(
             content="space normalization check",
             title="test",
-            tags=["project:My Project", "agent:Some Agent", "gcw:test"],
+            tags=["project:My Project", "agent:Some Agent", "mnemos:test"],
             source=MemorySource.CLI,
             memory_type=MemoryType.NOTE,
             status=MemoryStatus.RAW,
@@ -671,7 +671,7 @@ class TestCliSearchFlags:
         mem = Memory(
             content=content,
             title=title,
-            tags=["project:search-flags", "agent:test", "gcw:test"],
+            tags=["project:search-flags", "agent:test", "mnemos:test"],
             source=MemorySource.CLI,
             memory_type=MemoryType.NOTE,
             status=MemoryStatus(status),

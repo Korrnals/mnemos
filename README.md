@@ -54,13 +54,13 @@ The installer does everything for you — no Python or venv knowledge required:
 
 ```bash
 mnemos add "First memory — Mnemos remembers across sessions" \
-  --tags project:mnemos,agent:tech-writer,gcw:learning
+  --tags project:mnemos,agent:tech-writer,mnemos:learning
 
 mnemos search "remembers across sessions"
 ```
 
 That's the whole loop: **write, find, never lose it.** Every entry carries a
-[tag contract](docs/en/user/tag-contract.md) (`project:` / `agent:` / `gcw:`) so memories stay organised.
+[tag contract](docs/en/user/tag-contract.md) (`project:` / `agent:` / `mnemos:`) so memories stay organised.
 
 ### 3 · Connect VS Code (MCP)
 
@@ -109,7 +109,7 @@ uv pip install -e ".[dev]"
 
 <!-- version:pip -->
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v2.7.7/mnemos-2.7.7-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v2.7.8/mnemos-2.7.8-py3-none-any.whl
 ```
 <!-- /version:pip -->
 
@@ -290,7 +290,7 @@ gods' benefit. They were for the songs.
 | [mcp-tools.md](docs/en/user/mcp-tools.md) | Every `mnemos_*` tool exposed to VS Code Copilot |
 | [http-api.md](docs/en/user/http-api.md) | Every HTTP endpoint (memory CRUD + A2A Sessions, M16) |
 | [a2a-sessions.md](docs/en/architecture/a2a-sessions.md) | Agent-to-agent conversation contract (M16) |
-| [tag-contract.md](docs/en/user/tag-contract.md) | The `project:` / `agent:` / `gcw:` schema enforced on every memory |
+| [tag-contract.md](docs/en/user/tag-contract.md) | The `project:` / `agent:` / `mnemos:` schema enforced on every memory |
 | [security.md](docs/en/admin/security.md) | Threat model, SSRF guard, FTS5 escape, HF Hub pinning |
 | [runbooks/](docs/en/admin/runbooks/) | Install, migrate, backup / restore, dependency updates |
 | [container-deployment.md](docs/en/admin/runbooks/container-deployment.md) | Build, push, compose, podman, Kubernetes, quadlet |
@@ -306,7 +306,7 @@ Mnemos is the standalone backing store for the **GCW (GitHub Copilot Workflow)**
 GCW repo ships a thin stub plugin (`plugins/mnemos-integration`) that runs in a degraded file-mode until
 Mnemos is reachable; once the MCP server is up, the stub transparently switches to `mnemos_*` tools
 without code changes. The shared contract is the [tag schema](docs/en/user/tag-contract.md) —
-`project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>` — that every memory entry must carry.
+`project:<slug>`, `agent:<slug>`, and at least one `mnemos:<subtype>` — that every memory entry must carry.
 
 Mnemos also integrates with [Hermes Agent](https://hermes-agent.nousresearch.com/) by Nous Research via a
 native `MemoryProvider` plugin at `integrations/hermes/`. The plugin exposes all 15 `mnemos_*` tools as
