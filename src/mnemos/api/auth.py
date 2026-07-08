@@ -300,5 +300,6 @@ async def me(request: Request) -> dict[str, Any]:
     return {
         "token_id": token_id,
         "totp": token_row.get("totp_secret_encrypted") is not None,
+        "totp_required": bool(int(str(token_row.get("totp_required", 1) or 1))),
         "expires_at": session.get("expires_at"),
     }

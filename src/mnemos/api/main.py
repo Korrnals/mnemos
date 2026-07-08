@@ -463,10 +463,19 @@ async def trigger_synthesize(cluster_id: str) -> dict[str, Any]:
 
 
 @app.post("/publish/{memory_id}")
-async def publish_memory_endpoint(memory_id: str) -> dict[str, Any]:
-    """Publish a processed memory to the vector index."""
+async def publish_memory_endpoint(
+    memory_id: str,
+    skip_quality_check: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Publish a memory to the vector index.
+
+    When ``skip_quality_check=true``, bypasses the processed-status
+    requirement so memories can be published directly from ``raw``
+    status without an LLM pipeline. This enables search to work
+    immediately in deployments without a configured LLM backend.
+    """
     mgr = get_manager()
-    result = mgr.publish(memory_id)
+    result = mgr.publish(memory_id, skip_quality_check=skip_quality_check)
     if not result.published:
         raise HTTPException(
             status_code=400,
