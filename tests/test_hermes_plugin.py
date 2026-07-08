@@ -271,10 +271,10 @@ class TestIsAvailable:
 
 
 class TestConfigSchema:
-    def test_seven_fields(self):
+    def test_eight_fields(self):
         p = _make_provider()
         schema = p.get_config_schema()
-        assert len(schema) == 7
+        assert len(schema) == 8
 
     def test_expected_keys(self):
         p = _make_provider()
@@ -282,12 +282,18 @@ class TestConfigSchema:
         assert keys == {
             "base_url",
             "api_key",
+            "totp_secret",
             "project",
             "agent",
             "auto_sync",
             "prefetch_limit",
             "sync_interval",
         }
+
+    def test_totp_secret_marked_secret(self):
+        p = _make_provider()
+        totp = next(f for f in p.get_config_schema() if f["key"] == "totp_secret")
+        assert totp.get("secret") is True
 
     def test_base_url_default_is_8787(self):
         p = _make_provider()
