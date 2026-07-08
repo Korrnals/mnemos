@@ -665,7 +665,22 @@ def token_create(
     """Mint a new bearer token and print it ONCE."""
     store = _auth_store(config)
     try:
-        token_id, plaintext = store.create_token(name=name, expires_at=expires)
+        # Normalize expires_at to offset-aware ISO-8601 (UTC).
+        # Accepts naive dates like "2027-12-31" and converts to "2027-12-31T00:00:00+00:00".
+        normalized_expires: str | None = None
+        if expires:
+            try:
+                from datetime import UTC, datetime
+
+                dt = datetime.fromisoformat(expires)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=UTC)
+                normalized_expires = dt.isoformat()
+            except ValueError:
+                console.print(f"[red]Invalid expiry format: {expires}[/red]")
+                console.print("[dim]Expected ISO-8601, e.g. 2027-01-01 or 2027-01-01T00:00:00[/dim]")
+                raise typer.Exit(1)
+        token_id, plaintext = store.create_token(name=name, expires_at=normalized_expires)
     finally:
         store.close()
     console.print("[green]✓[/green] Token created:")

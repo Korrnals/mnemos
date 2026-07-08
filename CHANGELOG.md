@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+## [2.6.1] — 2026-07-07
+
+### Fixed
+
+- **Critical: `TypeError` when comparing offset-naive and offset-aware datetimes in auth_store**
+  (`is_token_active`, `is_challenge_valid`, `is_session_valid`).
+  Token `expires_at` from CLI (e.g. `--expires 2027-12-31`) was stored as offset-naive,
+  while `datetime.now(UTC)` is offset-aware — Python raises `TypeError` on comparison.
+  Added `_parse_datetime_utc()` helper that normalizes any ISO-8601 string to UTC-aware.
+- **CLI: `mnemos auth token create --expires` now normalizes to offset-aware ISO-8601**
+  before storing. Prevents the naive-datetime bug at the source.
+
 ## [2.6.0] - 2026-07-07
 
 ### Added

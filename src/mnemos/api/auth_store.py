@@ -27,6 +27,19 @@ LOGIN_LOCKOUT_THRESHOLD = 10
 TOTP_LOCKOUT_THRESHOLD = 3
 CHALLENGE_MAX_ATTEMPTS = 5
 CHALLENGE_TTL_SEC = 120
+
+
+def _parse_datetime_utc(value: str) -> datetime:
+    """Parse an ISO-8601 string and return an offset-aware UTC datetime.
+
+    Handles both offset-aware (``2026-07-07T23:05:15+00:00``) and
+    offset-naive (``2027-12-31`` or ``2027-12-31T00:00:00``) strings.
+    Naive strings are assumed to be UTC.
+    """
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 # auth-12: absolute session cap (7 days) regardless of sliding refresh.
 MAX_SESSION_LIFETIME_SEC = 7 * 24 * 3600
 
@@ -189,7 +202,7 @@ class AuthStore:
         expires_at = token_row.get("expires_at")
         if expires_at is not None:
             try:
-                if datetime.now(UTC) > datetime.fromisoformat(str(expires_at)):
+                if datetime.now(UTC) > _parse_datetime_utc(str(expires_at)):
                     return False
             except ValueError:
                 return False
@@ -356,7 +369,7 @@ class AuthStore:
     def is_challenge_valid(self, challenge_row: dict[str, object]) -> bool:
         """Return ``True`` iff the challenge is unexpired and has attempts remaining."""
         try:
-            expires = datetime.fromisoformat(str(challenge_row["expires_at"]))
+            expires = _parse_datetime_utc(str(challenge_row["expires_at"]))
         except ValueError:
             return False
         if datetime.now(UTC) > expires:
@@ -438,8 +451,8 @@ class AuthStore:
         ``expires_at`` forward.
         """
         try:
-            expires = datetime.fromisoformat(str(session_row["expires_at"]))
-            created = datetime.fromisoformat(str(session_row["created_at"]))
+            expires = _parse_datetime_utc(str(session_row["expires_at"]))
+            created = _parse_datetime_utc(str(session_row["created_at"]))
         except ValueError:
             return False
         now = datetime.now(UTC)
