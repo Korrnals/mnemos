@@ -68,7 +68,7 @@ def _add_memory(
     status: MemoryStatus = MemoryStatus.PUBLISHED,
     tags: list[str] | None = None,
 ) -> str:
-    tags = tags or [f"project:{project}", f"agent:{agent}", "gcw:learning"]
+    tags = tags or [f"project:{project}", f"agent:{agent}", "mnemos:learning"]
     mem = mgr.add(
         MemoryCreate(content=content, tags=tags, source=MemorySource.CLI, status=status),
         project=project,
@@ -236,14 +236,14 @@ class TestExportFilters:
         assert payload["memories"][0]["status"] == "published"
 
     def test_filter_by_tags(self, mgr, tmp_path):
-        _add_memory(mgr, "a", tags=["project:mnemos", "agent:x", "gcw:learning"])
-        _add_memory(mgr, "b", tags=["project:mnemos", "agent:x", "gcw:decision"])
+        _add_memory(mgr, "a", tags=["project:mnemos", "agent:x", "mnemos:learning"])
+        _add_memory(mgr, "b", tags=["project:mnemos", "agent:x", "mnemos:decision"])
         out = tmp_path / "subset.json"
         run_export(
             mgr,
             fmt=ExportFormat.JSON,
             output=out,
-            filt=ExportFilter(tags=["gcw:decision"]),
+            filt=ExportFilter(tags=["mnemos:decision"]),
         )
         payload = json.loads(out.read_text())
         assert len(payload["memories"]) == 1

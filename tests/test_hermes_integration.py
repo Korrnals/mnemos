@@ -360,7 +360,7 @@ class TestIngestUrl:
                 "/ingest-url",
                 json={
                     "url": "https://user:secret@example.com/page",
-                    "tags": ["project:test", "agent:test", "gcw:learning"],
+                    "tags": ["project:test", "agent:test", "mnemos:learning"],
                 },
             )
         assert resp.status_code == 201
@@ -394,7 +394,7 @@ class TestIngestUrl:
                 "/ingest-url",
                 json={
                     "url": "https://example.com/docs",
-                    "tags": ["project:test", "agent:test", "gcw:learning"],
+                    "tags": ["project:test", "agent:test", "mnemos:learning"],
                 },
             )
         assert resp.status_code == 201

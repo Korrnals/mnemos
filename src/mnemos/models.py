@@ -46,11 +46,11 @@ class MemoryStatus(StrEnum):
     ARCHIVED = "archived"
 
 
-# ── GCW Tag Contract (M2) ──────────────────────────────────────────────────────
+# ── Mnemos Tag Contract (M2) ──────────────────────────────────────────────────────
 
 
-# Valid gcw:* subtypes (enforced when strict_tag_contract=True)
-GCW_TAG_SUBTYPES: frozenset[str] = frozenset(
+# Valid mnemos:* subtypes (enforced when strict_tag_contract=True)
+MNEMOS_TAG_SUBTYPES: frozenset[str] = frozenset(
     {
         "session",
         "bug-pattern",
@@ -70,15 +70,15 @@ ALLOWED_OPTIONAL_PREFIXES: frozenset[str] = frozenset(
 
 _PROJECT_RE = re.compile(r"^project:[a-z0-9_\-]{1,64}$")
 _AGENT_RE = re.compile(r"^agent:[a-z0-9_\-]{1,64}$")
-_GCW_RE = re.compile(r"^gcw:[a-z][a-z0-9\-]*$")
+_MNEMOS_RE = re.compile(r"^mnemos:[a-z][a-z0-9\-]*$")
 
 
 class TagContractError(ValueError):
-    """Raised when a tag set violates the GCW tag contract in strict mode."""
+    """Raised when a tag set violates the Mnemos tag contract in strict mode."""
 
 
 def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
-    """Validate tags against the GCW tag contract.
+    """Validate tags against the Mnemos tag contract.
 
     Args:
         tags: The list of tag strings to validate.
@@ -92,9 +92,23 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
     Raises:
         TagContractError: If strict=True and any contract requirement is not met.
     """
+    # Backward compat: gcw: is accepted as an alias for mnemos:
+    # Old memories with gcw: tags are auto-migrated to mnemos: on validation.
+    _migrated: list[str] = []
+    for t in tags:
+        if t.startswith("gcw:"):
+            subtype = t[4:]
+            if subtype in MNEMOS_TAG_SUBTYPES:
+                _migrated.append(f"mnemos:{subtype}")
+            else:
+                _migrated.append(t)  # invalid gcw: subtype, keep as-is for error msg
+        else:
+            _migrated.append(t)
+    tags = _migrated
+
     project_tags = [t for t in tags if t.startswith("project:")]
     agent_tags = [t for t in tags if t.startswith("agent:")]
-    gcw_tags = [t for t in tags if t.startswith("gcw:")]
+    mnemos_tags = [t for t in tags if t.startswith("mnemos:")]
 
     # Errors that are fatal even in lax mode (ambiguous context, can't auto-patch)
     fatal_errors: list[str] = []
@@ -124,28 +138,28 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
             f"invalid agent: tag format '{agent_tags[0]}' (must match agent:[a-z0-9_-]{{1,64}})"
         )
 
-    # --- Require at least one gcw:* tag ---
-    if not gcw_tags:
+    # --- Require at least one mnemos:* tag ---
+    if not mnemos_tags:
         patchable_errors.append(
-            "missing required tag: gcw:<subtype> "
-            f"(valid subtypes: {', '.join(sorted(GCW_TAG_SUBTYPES))})"
+            "missing required tag: mnemos:<subtype> "
+            f"(valid subtypes: {', '.join(sorted(MNEMOS_TAG_SUBTYPES))})"
         )
     else:
-        for gcw_tag in gcw_tags:
-            if not _GCW_RE.match(gcw_tag):
-                patchable_errors.append(f"invalid gcw: tag format: '{gcw_tag}'")
+        for mnemos_tag in mnemos_tags:
+            if not _MNEMOS_RE.match(mnemos_tag):
+                patchable_errors.append(f"invalid mnemos: tag format: '{mnemos_tag}'")
             else:
-                subtype = gcw_tag[len("gcw:") :]
-                if subtype not in GCW_TAG_SUBTYPES:
+                subtype = mnemos_tag[len("mnemos:") :]
+                if subtype not in MNEMOS_TAG_SUBTYPES:
                     patchable_errors.append(
-                        f"invalid gcw: subtype '{subtype}' — "
-                        f"allowed: {', '.join(sorted(GCW_TAG_SUBTYPES))}"
+                        f"invalid mnemos: subtype '{subtype}' — "
+                        f"allowed: {', '.join(sorted(MNEMOS_TAG_SUBTYPES))}"
                     )
 
     # Always fatal errors raise regardless of strict flag
     if fatal_errors:
         raise TagContractError(
-            "GCW tag contract violation(s) (always fatal):\n"
+            "Mnemos tag contract violation(s) (always fatal):\n"
             + "\n".join(f"  - {e}" for e in fatal_errors)
         )
 
@@ -154,7 +168,7 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
 
     if strict:
         raise TagContractError(
-            "GCW tag contract violation(s):\n" + "\n".join(f"  - {e}" for e in patchable_errors)
+            "Mnemos tag contract violation(s):\n" + "\n".join(f"  - {e}" for e in patchable_errors)
         )
 
     # Lax mode: patch the tag list rather than reject
@@ -199,8 +213,8 @@ def validate_tag_contract(tags: list[str], *, strict: bool = True) -> list[str]:
     elif not agent_tags:
         patched.append("agent:unknown")
 
-    if not gcw_tags:
-        patched.append("gcw:legacy")
+    if not mnemos_tags:
+        patched.append("mnemos:legacy")
     return patched
 
 
@@ -211,7 +225,7 @@ class TagContract(BaseModel):
     strict: bool = Field(default=True, exclude=True)
     project: str = ""
     agent: str = ""
-    gcw_subtypes: frozenset[str] = Field(default_factory=frozenset, exclude=True)
+    mnemos_subtypes: frozenset[str] = Field(default_factory=frozenset, exclude=True)
 
     @model_validator(mode="after")
     def _validate_and_extract(self) -> TagContract:
@@ -224,9 +238,9 @@ class TagContract(BaseModel):
                 self.project = tag[len("project:") :]
             elif tag.startswith("agent:") and not self.agent:
                 self.agent = tag[len("agent:") :]
-            elif tag.startswith("gcw:"):
-                subtypes.add(tag[len("gcw:") :])
-        self.gcw_subtypes = frozenset(subtypes)
+            elif tag.startswith("mnemos:"):
+                subtypes.add(tag[len("mnemos:") :])
+        self.mnemos_subtypes = frozenset(subtypes)
         return self
 
 
@@ -237,7 +251,7 @@ class Memory(BaseModel):
     """Single unified memory entry — status-driven pipeline model.
 
     Field groups:
-      - GCW tag contract denormalisations (project, agent)
+      - Mnemos tag contract denormalisations (project, agent)
       - Knowledge pipeline fields (quality_score, confidence, cluster_id, derived_from …)
       - Context Filter fields (raw_content, clean_content, filter_profile …) — M10
       - Embedding tracking (embedding_id)
@@ -255,7 +269,7 @@ class Memory(BaseModel):
     file_path: str | None = None
     category: str | None = None
 
-    # ── GCW tag contract (denormalised from tags, set by MCP/TagContract layer) ──
+    # ── Mnemos tag contract (denormalised from tags, set by MCP/TagContract layer) ──
     project: str = ""
     agent: str = ""
 
@@ -285,7 +299,7 @@ class Memory(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     # ── Validation control (not stored) ────────────────────────────────────
-    # Set strict_tags=True to enforce GCW tag contract on construction.
+    # Set strict_tags=True to enforce Mnemos tag contract on construction.
     strict_tags: bool = Field(default=False, exclude=True)
 
     @model_validator(mode="after")

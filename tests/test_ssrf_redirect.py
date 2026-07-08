@@ -45,7 +45,7 @@ def manager() -> MemoryManager:  # type: ignore[misc]
         mgr.close()
 
 
-TAGS = ["project:test", "agent:test", "gcw:test"]
+TAGS = ["project:test", "agent:test", "mnemos:test"]
 # 8.8.8.8 is a public IP (Google DNS) -- passes _validate_url without DNS.
 INITIAL_URL = "https://8.8.8.8/"
 

@@ -74,10 +74,10 @@ def _make_create(
     project: str = "test-project",
     status: MemoryStatus = MemoryStatus.RAW,
 ) -> MemoryCreate:
-    """Build a MemoryCreate with valid GCW tags and explicit status."""
+    """Build a MemoryCreate with valid Mnemos tags and explicit status."""
     return MemoryCreate(
         content=content,
-        tags=[f"project:{project}", f"agent:{agent}", "gcw:learning"],
+        tags=[f"project:{project}", f"agent:{agent}", "mnemos:learning"],
         status=status,
     )
 
@@ -307,7 +307,7 @@ class TestTagNormalizationStripsSpaces:
         hyphens from unstripped spaces).
         """
         result = validate_tag_contract(
-            ["project: My Project ", "agent: a", "gcw:learning"],
+            ["project: My Project ", "agent: a", "mnemos:learning"],
             strict=False,
         )
         assert "project:my-project" in result, (
@@ -321,7 +321,7 @@ class TestTagNormalizationStripsSpaces:
     def test_tag_normalization_strips_spaces_agent(self):
         """agent: tags also get stripped."""
         result = validate_tag_contract(
-            ["project:p", "agent: My Agent ", "gcw:learning"],
+            ["project:p", "agent: My Agent ", "mnemos:learning"],
             strict=False,
         )
         assert "agent:my-agent" in result
@@ -367,7 +367,7 @@ class TestTagsNormalizeCliStripsSpaces:
                 "add",
                 "content for normalize test",
                 "--tags",
-                "project: My Project ,agent:cli,gcw:test",
+                "project: My Project ,agent:cli,mnemos:test",
             ],
         )
         assert add_result.exit_code == 0, add_result.output

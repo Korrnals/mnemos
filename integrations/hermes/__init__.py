@@ -311,7 +311,7 @@ MNEMOS_SEARCH_SCHEMA: dict[str, Any] = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    'Tag filters, e.g. ["gcw:decision", "gcw:learning"].'
+                    'Tag filters, e.g. ["mnemos:decision", "mnemos:learning"].'
                 ),
             },
             "limit": {
@@ -329,9 +329,9 @@ MNEMOS_ADD_SCHEMA: dict[str, Any] = {
     "description": (
         "Add a memory entry to Mnemos. Tag contract is mandatory: "
         "exactly one project:<slug>, one agent:<slug>, and at least one "
-        "gcw:<subtype>. Write what you would want to read back in 30 days. "
+        "mnemos:<subtype>. Write what you would want to read back in 30 days. "
         "One idea per entry.\n\n"
-        "gcw subtypes: session, checkpoint, bug-pattern, learning, "
+        "mnemos subtypes: session, checkpoint, bug-pattern, learning, "
         "decision, rule, open-question, legacy."
     ),
     "parameters": {
@@ -346,7 +346,7 @@ MNEMOS_ADD_SCHEMA: dict[str, Any] = {
                 "items": {"type": "string"},
                 "description": (
                     'Required tags: ["project:<slug>", "agent:<slug>", '
-                    '"gcw:<subtype>"]. Optional: severity:, stack:, '
+                    '"mnemos:<subtype>"]. Optional: severity:, stack:, '
                     "source:, applyTo:, domain:."
                 ),
             },
@@ -403,7 +403,7 @@ MNEMOS_SAVE_CONTEXT_SCHEMA: dict[str, Any] = {
     "description": (
         "Save a session checkpoint to Mnemos — structured context "
         "capturing current goals, completed work, in-progress items, "
-        "decisions, and free-form context. Tagged as a gcw:checkpoint "
+        "decisions, and free-form context. Tagged as a mnemos:checkpoint "
         "for later recall via mnemos_recall_context.\n\n"
         "Use at meaningful milestones: end of a work session, before "
         "context compression, or when pivoting topics. Write sparingly."
@@ -643,7 +643,7 @@ MNEMOS_INGEST_URL_SCHEMA: dict[str, Any] = {
                 "items": {"type": "string"},
                 "description": (
                     'Required tags: ["project:<slug>", "agent:<slug>", '
-                    '"gcw:<subtype>"].'
+                    '"mnemos:<subtype>"].'
                 ),
             },
         },
@@ -732,7 +732,7 @@ class MnemosMemoryProvider(MemoryProvider):
 
     - ``prefetch()``:           mnemos /search before each turn → context injection
     - ``sync_turn()``:          mnemos /memories after significant turns → auto-save
-    - ``on_session_end()``:     extract key facts → single gcw:session entry
+    - ``on_session_end()``:     extract key facts → single mnemos:session entry
     - ``on_memory_write()``:    mirror builtin memory writes → Mnemos
     - ``on_pre_compress()``:    extract facts before context compression
     - ``on_session_switch()``:  reset per-session counters on /reset, /new
@@ -1066,7 +1066,7 @@ class MnemosMemoryProvider(MemoryProvider):
             "save a web page as a memory. Use mnemos_watch_start / "
             "mnemos_watch_stop / mnemos_watch_status to manage the "
             "background file watcher.\n"
-            "Tag contract: project:<slug> + agent:<slug> + gcw:<subtype> "
+            "Tag contract: project:<slug> + agent:<slug> + mnemos:<subtype> "
             "(session|checkpoint|bug-pattern|learning|decision|rule|"
             "open-question|legacy). Search first, write sparingly, never "
             "block on memory failure."
@@ -1171,7 +1171,7 @@ class MnemosMemoryProvider(MemoryProvider):
                     "tags": [
                         f"project:{self._project}",
                         f"agent:{self._agent}",
-                        "gcw:session",
+                        "mnemos:session",
                     ],
                     "source": "mcp",
                     "memory_type": "conversation",
@@ -1348,7 +1348,7 @@ class MnemosMemoryProvider(MemoryProvider):
         if not tags:
             return tool_error(
                 "Missing required parameter: tags. "
-                "Required: project:<slug>, agent:<slug>, gcw:<subtype>"
+                "Required: project:<slug>, agent:<slug>, mnemos:<subtype>"
             )
 
         body: dict[str, Any] = {
@@ -1665,7 +1665,7 @@ class MnemosMemoryProvider(MemoryProvider):
         if not tags:
             return tool_error(
                 "Missing required parameter: tags. "
-                "Required: project:<slug>, agent:<slug>, gcw:<subtype>"
+                "Required: project:<slug>, agent:<slug>, mnemos:<subtype>"
             )
 
         body: dict[str, Any] = {"url": url, "tags": tags}
@@ -1735,7 +1735,7 @@ class MnemosMemoryProvider(MemoryProvider):
         if action != "add" or not content:
             return
 
-        gcw_subtype = "rule" if target == "user" else "learning"
+        mnemos_subtype = "rule" if target == "user" else "learning"
         agent_tag = "user" if target == "user" else self._agent
 
         try:
@@ -1744,7 +1744,7 @@ class MnemosMemoryProvider(MemoryProvider):
                 "tags": [
                     f"project:{self._project}",
                     f"agent:{agent_tag}",
-                    f"gcw:{gcw_subtype}",
+                    f"mnemos:{mnemos_subtype}",
                 ],
                 "source": "mcp",
                 "memory_type": "fact",
@@ -1797,7 +1797,7 @@ class MnemosMemoryProvider(MemoryProvider):
 
     def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         """Extract key facts from the conversation and save as a single
-        ``gcw:session`` entry.
+        ``mnemos:session`` entry.
 
         This is the right place for session-level memory — not per-turn.
         We extract user messages and assistant summaries, synthesize a
@@ -1852,7 +1852,7 @@ class MnemosMemoryProvider(MemoryProvider):
                     "tags": [
                         f"project:{self._project}",
                         f"agent:{self._agent}",
-                        "gcw:session",
+                        "mnemos:session",
                     ],
                     "source": "mcp",
                     "memory_type": "conversation",

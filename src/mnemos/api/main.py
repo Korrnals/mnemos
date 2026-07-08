@@ -676,7 +676,7 @@ class RecallContextRequest(BaseModel):
 
 @app.post("/context/save", status_code=201)
 async def save_context(req: SaveContextRequest) -> dict[str, Any]:
-    """Save a session checkpoint memory tagged ``gcw:checkpoint``.
+    """Save a session checkpoint memory tagged ``mnemos:checkpoint``.
 
     Mirrors the ``mnemos_save_context`` MCP tool. Builds structured Markdown
     from the supplied fields and stores it as a ``SESSION_CONTEXT`` memory.
@@ -691,7 +691,7 @@ async def save_context(req: SaveContextRequest) -> dict[str, Any]:
                 val = "\n".join(val)
             parts.append(f"## {field.replace('_', ' ').title()}\n{val}\n")
     content = "\n".join(parts)
-    tags = [f"project:{req.project}", "agent:user", "gcw:checkpoint"]
+    tags = [f"project:{req.project}", "agent:user", "mnemos:checkpoint"]
     data = MemoryCreate(
         content=content,
         tags=tags,

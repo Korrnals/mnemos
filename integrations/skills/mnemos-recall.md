@@ -25,7 +25,7 @@ decisions, before web searches, and when resuming work on a topic.
    mnemos_search(
      query=<natural language query>,
      project=<current-project>,
-     tags=["gcw:decision"],     # or gcw:bug-pattern, gcw:learning
+     tags=["mnemos:decision"],     # or mnemos:bug-pattern, mnemos:learning
      limit=10
    )
    ```

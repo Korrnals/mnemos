@@ -20,7 +20,7 @@ Mnemos is a fork of [`ai-brain`](../../README.md#source-upstream-license) — se
 | # | Milestone | Status | Tests | Notes |
 |---|-----------|--------|-------|-------|
 | M1 | Fork & Rebrand | ✅ | — | Full git history preserved; `ai-brain` → `mnemos` rename; see ADR 0001 |
-| M2 | GCW Tag Contract | ✅ | 31 | Strict-mode enforcement at the MCP layer; see ADR 0002 |
+| M2 | Mnemos Tag Contract | ✅ | 31 | Strict-mode enforcement at the MCP layer; see ADR 0002 |
 | M3 | Per-agent Recall | ✅ | 16 | New `mnemos_agent_recall` MCP tool + `GET /recall/agent/{name}` |
 | M4 | Knowledge Pipeline | ✅ | 24 | `raw → processing → processed → published`; vector gated on `published` (ADR 0003) |
 | M5 | Policy Engine | ✅ | 24 | Scheduler + event triggers + DLQ + idempotency; deferred cache from M11 |

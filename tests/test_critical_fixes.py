@@ -31,7 +31,7 @@ def _make_memory(mid: str = "m1", content: str = "hello world") -> Memory:
         id=mid,
         content=content,
         title="test",
-        tags=["project:test", "agent:test", "gcw:learning"],
+        tags=["project:test", "agent:test", "mnemos:learning"],
         source=MemorySource.MANUAL,
         source_url=None,
         memory_type=MemoryType.NOTE,

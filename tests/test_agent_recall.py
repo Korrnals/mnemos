@@ -64,10 +64,10 @@ def tmp_sqlite(tmp_settings):
 
 
 def _memory_create(content: str, agent: str, project: str, **kwargs) -> MemoryCreate:
-    """Build a MemoryCreate with valid GCW tag contract tags."""
+    """Build a MemoryCreate with valid Mnemos tag contract tags."""
     return MemoryCreate(
         content=content,
-        tags=[f"project:{project}", f"agent:{agent}", "gcw:learning"],
+        tags=[f"project:{project}", f"agent:{agent}", "mnemos:learning"],
         **kwargs,
     )
 
@@ -76,7 +76,7 @@ def _memory_obj(content: str, agent: str, project: str, **kwargs) -> Memory:
     """Build a full Memory object for direct SQLiteStore use."""
     return Memory(
         content=content,
-        tags=[f"project:{project}", f"agent:{agent}", "gcw:learning"],
+        tags=[f"project:{project}", f"agent:{agent}", "mnemos:learning"],
         project=project,
         agent=agent,
         **kwargs,
@@ -153,9 +153,9 @@ class TestAgentRecallRecencyMode:
     def test_returns_recent_entries_for_agent(self, tmp_manager):
         """Without query, returns the most recent N entries for the agent."""
         mgr = tmp_manager
-        _add_via_manager(mgr, "first", "reviewer", "gcw")
-        _add_via_manager(mgr, "second", "reviewer", "gcw")
-        _add_via_manager(mgr, "other", "architect", "gcw")
+        _add_via_manager(mgr, "first", "reviewer", "mnemos")
+        _add_via_manager(mgr, "second", "reviewer", "mnemos")
+        _add_via_manager(mgr, "other", "architect", "mnemos")
 
         q = AgentRecallQuery(agent="reviewer", limit=10)
         results = mgr.agent_recall(q)
@@ -168,9 +168,9 @@ class TestAgentRecallRecencyMode:
     def test_excludes_other_agents(self, tmp_manager):
         """Entries belonging to a different agent are not returned."""
         mgr = tmp_manager
-        _add_via_manager(mgr, "r1", "reviewer", "gcw")
-        _add_via_manager(mgr, "a1", "architect", "gcw")
-        _add_via_manager(mgr, "r2", "reviewer", "gcw")
+        _add_via_manager(mgr, "r1", "reviewer", "mnemos")
+        _add_via_manager(mgr, "a1", "architect", "mnemos")
+        _add_via_manager(mgr, "r2", "reviewer", "mnemos")
 
         q = AgentRecallQuery(agent="reviewer", limit=10)
         results = mgr.agent_recall(q)
@@ -182,21 +182,21 @@ class TestAgentRecallRecencyMode:
     def test_project_scope(self, tmp_manager):
         """Project filter further narrows the agent's recent entries."""
         mgr = tmp_manager
-        _add_via_manager(mgr, "p-gcw", "reviewer", "gcw")
+        _add_via_manager(mgr, "p-mnemos", "reviewer", "mnemos")
         _add_via_manager(mgr, "p-docs", "reviewer", "docs")
-        _add_via_manager(mgr, "p-gcw-2", "reviewer", "gcw")
+        _add_via_manager(mgr, "p-mnemos-2", "reviewer", "mnemos")
 
-        q = AgentRecallQuery(agent="reviewer", project="gcw", limit=10)
+        q = AgentRecallQuery(agent="reviewer", project="mnemos", limit=10)
         results = mgr.agent_recall(q)
 
         assert len(results) == 2
-        assert all(r.memory.project == "gcw" for r in results)
+        assert all(r.memory.project == "mnemos" for r in results)
 
     def test_respects_limit(self, tmp_manager):
         """Limit is passed through to the underlying list query."""
         mgr = tmp_manager
         for i in range(5):
-            _add_via_manager(mgr, f"m{i}", "reviewer", "gcw")
+            _add_via_manager(mgr, f"m{i}", "reviewer", "mnemos")
 
         q = AgentRecallQuery(agent="reviewer", limit=2)
         results = mgr.agent_recall(q)
@@ -206,7 +206,7 @@ class TestAgentRecallRecencyMode:
     def test_empty_result(self, tmp_manager):
         """No entries for the requested agent → empty list."""
         mgr = tmp_manager
-        _add_via_manager(mgr, "only-architect", "architect", "gcw")
+        _add_via_manager(mgr, "only-architect", "architect", "mnemos")
 
         q = AgentRecallQuery(agent="reviewer", limit=10)
         results = mgr.agent_recall(q)
@@ -229,20 +229,20 @@ class TestAgentRecallWithQuery:
             mgr,
             "security vulnerability in auth module",
             "reviewer",
-            "gcw",
+            "mnemos",
             status=MemoryStatus.PUBLISHED,
         )
         _add_via_manager(
             mgr,
             "refactor database schema",
             "architect",
-            "gcw",
+            "mnemos",
             status=MemoryStatus.PUBLISHED,
         )
 
         # Manually upsert a dummy embedding so vector search can find it
         dummy_emb = [0.1] * 384
-        mgr.vectors.upsert(m1.id, dummy_emb, {"project": "gcw", "agent": "reviewer"})
+        mgr.vectors.upsert(m1.id, dummy_emb, {"project": "mnemos", "agent": "reviewer"})
 
         # Mock embedder so query embedding matches the dummy
         mgr._embedder = MagicMock()
@@ -263,7 +263,7 @@ class TestAgentRecallWithQuery:
             mgr,
             "deploy pipeline fix",
             "reviewer",
-            "gcw",
+            "mnemos",
             status=MemoryStatus.PUBLISHED,
         )
         _add_via_manager(
@@ -275,14 +275,14 @@ class TestAgentRecallWithQuery:
         )
 
         dummy_emb = [0.2] * 384
-        mgr.vectors.upsert(m1.id, dummy_emb, {"project": "gcw", "agent": "reviewer"})
+        mgr.vectors.upsert(m1.id, dummy_emb, {"project": "mnemos", "agent": "reviewer"})
         mgr._embedder = MagicMock()
         mgr._embedder.embed.return_value = dummy_emb
 
-        q = AgentRecallQuery(agent="reviewer", project="gcw", query="deploy", limit=10)
+        q = AgentRecallQuery(agent="reviewer", project="mnemos", query="deploy", limit=10)
         results = mgr.agent_recall(q)
 
-        assert all(r.memory.project == "gcw" for r in results)
+        assert all(r.memory.project == "mnemos" for r in results)
         assert all(r.memory.agent == "reviewer" for r in results)
 
     def test_no_false_positives_from_other_agents(self, tmp_manager):
@@ -293,14 +293,14 @@ class TestAgentRecallWithQuery:
             mgr,
             "shared keyword alpha",
             "reviewer",
-            "gcw",
+            "mnemos",
             status=MemoryStatus.PUBLISHED,
         )
         _add_via_manager(
             mgr,
             "shared keyword alpha",
             "architect",
-            "gcw",
+            "mnemos",
             status=MemoryStatus.PUBLISHED,
         )
 
@@ -308,7 +308,7 @@ class TestAgentRecallWithQuery:
         mgr.vectors.upsert(
             m_reviewer.id,
             dummy_emb,
-            {"project": "gcw", "agent": "reviewer"},
+            {"project": "mnemos", "agent": "reviewer"},
         )
         mgr._embedder = MagicMock()
         mgr._embedder.embed.return_value = dummy_emb
@@ -328,7 +328,7 @@ class TestAgentRecallEdgeCases:
     def test_agent_slug_without_prefix(self, tmp_manager):
         """AgentRecallQuery.agent is the bare slug (no 'agent:' prefix)."""
         mgr = tmp_manager
-        _add_via_manager(mgr, "content", "security-reviewer", "gcw")
+        _add_via_manager(mgr, "content", "security-reviewer", "mnemos")
 
         q = AgentRecallQuery(agent="security-reviewer", limit=10)
         results = mgr.agent_recall(q)
@@ -339,7 +339,7 @@ class TestAgentRecallEdgeCases:
     def test_limit_zero(self, tmp_manager):
         """limit=0 should return an empty list gracefully."""
         mgr = tmp_manager
-        _add_via_manager(mgr, "content", "reviewer", "gcw")
+        _add_via_manager(mgr, "content", "reviewer", "mnemos")
 
         q = AgentRecallQuery(agent="reviewer", limit=0)
         results = mgr.agent_recall(q)
@@ -349,7 +349,7 @@ class TestAgentRecallEdgeCases:
     def test_nonexistent_project(self, tmp_manager):
         """Project that has no entries for the agent → empty list."""
         mgr = tmp_manager
-        _add_via_manager(mgr, "content", "reviewer", "gcw")
+        _add_via_manager(mgr, "content", "reviewer", "mnemos")
 
         q = AgentRecallQuery(agent="reviewer", project="nonexistent", limit=10)
         results = mgr.agent_recall(q)

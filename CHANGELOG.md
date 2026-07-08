@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+## [2.7.8] - 2026-07-09
+
+### Fixed
+- **Background processor not running in HTTP API**: `mgr.start_background_processor()` and `mgr.stop_background_processor()` added to the FastAPI lifespan. Without this, memories added via `POST /memories` stayed in `raw` status forever — the pipeline (cluster → synthesize → quality-gate → publish) never ran. Same bug class as the MCP server fix in [2.3.0].
+
+### Changed
+- **Tag contract rename `gcw:` → `mnemos:`**: all tag subtypes renamed from `gcw:<subtype>` to `mnemos:<subtype>` (e.g. `gcw:learning` → `mnemos:learning`). Mnemos is an independent project — the `gcw` prefix was a leftover from the GCW agent family. 76 files, 456 lines updated across src, tests, docs, integrations.
+- **Integration target `gcw` → `copilot`**: the harness target detecting `~/.copilot/` is now named `copilot` instead of `gcw`. CLI help updated.
+
+### Backward Compatibility
+- **`gcw:` tags accepted as alias for `mnemos:`**: `validate_tag_contract()` auto-migrates `gcw:<subtype>` to `mnemos:<subtype>` for valid subtypes. Old memories with `gcw:` tags continue to work without manual migration. Invalid `gcw:` subtypes (not in whitelist) are preserved as-is for error reporting.
+
 ## [2.7.6] - 2026-07-09
 
 ### Added
@@ -905,7 +917,7 @@ PRs cannot regress the green state.
 
 ### Added
 - **M1**: Fork & rebrand from ai-brain with full git history preserved.
-- **M2**: GCW Tag Contract enforcement at MCP layer (`project:*`, `agent:*`, `gcw:*` required in strict mode).
+- **M2**: Mnemos Tag Contract enforcement at MCP layer (`project:*`, `agent:*`, `mnemos:*` required in strict mode).
 - **M3**: First-class per-agent recall (`mnemos_agent_recall`, `/recall/agent/{name}`).
 - **M4**: Knowledge Pipeline (raw → processing → processed → published) with clustering, synthesis, quality gates, and publish stages.
 - **M5**: Policy engine with scheduler, event triggers, declarative rules, DLQ, and idempotency.

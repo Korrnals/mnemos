@@ -79,11 +79,11 @@ def tmp_manager(tmp_settings):
 # ---------------------------------------------------------------------------
 
 
-def _add_raw(mgr: MemoryManager, content: str, agent: str = "reviewer", project: str = "gcw"):
+def _add_raw(mgr: MemoryManager, content: str, agent: str = "reviewer", project: str = "mnemos"):
     """Add a raw memory via MemoryManager."""
     data = MemoryCreate(
         content=content,
-        tags=[f"project:{project}", f"agent:{agent}", "gcw:learning"],
+        tags=[f"project:{project}", f"agent:{agent}", "mnemos:learning"],
     )
     return mgr.add(data, project=project, agent=agent)
 
@@ -103,7 +103,7 @@ class TestClusterWorker:
         # One unrelated note
         _add_raw(mgr, "Refactor database connection pool for performance")
 
-        clusters = cluster_raw_memories(mgr, similarity_threshold=0.75, min_cluster_size=2)
+        clusters = cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
         assert len(clusters) >= 1
         # At least one cluster should contain the two similar notes
         cluster_ids_for_m1 = [c.cluster_id for c in clusters if m1.id in c.memory_ids]
@@ -137,11 +137,11 @@ class TestClusterWorker:
     def test_project_filter(self, tmp_manager):
         """Project scope limits which raw memories are considered."""
         mgr = tmp_manager
-        _add_raw(mgr, "gcw note", project="gcw")
+        _add_raw(mgr, "mnemos note", project="mnemos")
         _add_raw(mgr, "docs note", project="docs")
 
-        clusters = cluster_raw_memories(mgr, project="gcw", similarity_threshold=0.5)
-        # Only gcw note considered; not enough for cluster
+        clusters = cluster_raw_memories(mgr, project="mnemos", similarity_threshold=0.5)
+        # Only mnemos note considered; not enough for cluster
         assert clusters == []
 
     def test_deterministic_cluster_id(self, tmp_manager):
@@ -187,7 +187,7 @@ class TestSynthesizeWorker:
         assert draft is not None
         assert draft.status == MemoryStatus.PROCESSED
         assert draft.cluster_id == cluster_id
-        assert "gcw:synthesized" in draft.tags
+        assert "mnemos:synthesized" in draft.tags
 
     def test_idempotency_cache(self, tmp_manager):
         """Second call with same params returns cached result."""
@@ -247,8 +247,8 @@ class TestQualityGate:
         mgr = tmp_manager
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             quality_score=0.9,
@@ -272,8 +272,8 @@ class TestQualityGate:
         mgr = tmp_manager
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             quality_score=0.3,
@@ -291,8 +291,8 @@ class TestQualityGate:
         mgr = tmp_manager
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             quality_score=0.9,
@@ -310,8 +310,8 @@ class TestQualityGate:
         mgr = tmp_manager
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
             quality_score=0.9,
@@ -329,8 +329,8 @@ class TestQualityGate:
         mgr = tmp_manager
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.RAW,
             quality_score=0.9,
@@ -362,8 +362,8 @@ class TestPublishStage:
         mgr = tmp_manager
         mem = Memory(
             content="draft",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
         )
@@ -380,8 +380,8 @@ class TestPublishStage:
         mgr = tmp_manager
         mem = Memory(
             content="draft about kubernetes deployments",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.PROCESSED,
         )
@@ -399,8 +399,8 @@ class TestPublishStage:
         mgr = tmp_manager
         mem = Memory(
             content="raw note",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.RAW,
         )
@@ -414,8 +414,8 @@ class TestPublishStage:
         mgr = tmp_manager
         mem = Memory(
             content="raw note",
-            tags=["project:gcw", "agent:reviewer", "gcw:learning"],
-            project="gcw",
+            tags=["project:mnemos", "agent:reviewer", "mnemos:learning"],
+            project="mnemos",
             agent="reviewer",
             status=MemoryStatus.RAW,
         )

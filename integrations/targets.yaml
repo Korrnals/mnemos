@@ -7,7 +7,7 @@
 # Future formats (symlink, template) can be added without breaking the schema.
 
 targets:
-  gcw:
+  copilot:
     detect:
       - path: "~/.copilot/instructions"
       - path: "~/.copilot/skills"

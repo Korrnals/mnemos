@@ -269,7 +269,7 @@ def mgr():
         m.close()
 
 
-_VALID_TAGS = ["project:test", "agent:filter-test", "gcw:learning"]
+_VALID_TAGS = ["project:test", "agent:filter-test", "mnemos:learning"]
 
 
 class TestAutoFilterOnAdd:
@@ -480,7 +480,7 @@ class TestSearchReturnsCleanContent:
         raw = "\x1b[31mcheckpoint content\x1b[0m"
         data = MemoryCreate(
             content=raw,
-            tags=["project:recall-test", "agent:user", "gcw:checkpoint"],
+            tags=["project:recall-test", "agent:user", "mnemos:checkpoint"],
             source=MemorySource.MCP,
         )
         memory = mgr.add(data, project="recall-test", agent="user")

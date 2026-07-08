@@ -104,10 +104,10 @@ flowchart TB
 Required composition for any `mnemos_add`:
 - exactly one `project:<slug>` tag
 - exactly one `agent:<slug>` tag (or `agent:user` for human-authored)
-- ≥1 tag from `gcw:*` namespace (`gcw:session`, `gcw:bug-pattern`, `gcw:learning`, `gcw:decision`, `gcw:rule`, `gcw:open-question`, `gcw:checkpoint`, `gcw:legacy`)
+- ≥1 tag from `mnemos:*` namespace (`mnemos:session`, `mnemos:bug-pattern`, `mnemos:learning`, `mnemos:decision`, `mnemos:rule`, `mnemos:open-question`, `mnemos:checkpoint`, `mnemos:legacy`)
 - Optional whitelisted prefixes: `severity:`, `stack:`, `applyTo:`, `source:`
 
-Enforcement: at MCP layer when `strict_tag_contract=true` (default for new installs). Lax mode tags legacy records `gcw:legacy` + `agent:unknown` automatically.
+Enforcement: at MCP layer when `strict_tag_contract=true` (default for new installs). Lax mode tags legacy records `mnemos:legacy` + `agent:unknown` automatically.
 
 ### `Trace`
 
@@ -150,7 +150,7 @@ classDiagram
         +bool strict
         +str project
         +str agent
-        +list~str~ gcw_subtypes
+        +list~str~ mnemos_subtypes
     }
     class Trace {
         +str id
@@ -186,7 +186,7 @@ classDiagram
 | `mnemos_search` | hybrid search (FTS + vector + RRF) over `published` |
 | `mnemos_recall_context` | session-init: most recent N for a project |
 | `mnemos_agent_recall` | filter by `agent:` (+ optional project / query) — **new in Mnemos** |
-| `mnemos_save_context` | checkpoint-style write with auto-tagged `gcw:checkpoint` |
+| `mnemos_save_context` | checkpoint-style write with auto-tagged `mnemos:checkpoint` |
 | `mnemos_list_recent` | recency-ordered listing |
 | `mnemos_list_tags` | tag directory |
 | `mnemos_ingest_url` | URL ingest → raw |
@@ -319,7 +319,7 @@ Auto-collect signals (weighted, configurable in `~/.mnemos/auto_collect.yaml`):
 
 File watcher on `.github/instructions/*.instructions.md` in configured repos. On change:
 - Parse frontmatter (`applyTo:` glob).
-- Create / update a `Memory` with `status=published`, tags `gcw:rule`, `project:<repo>`, `applyTo:<glob>`, `source:path-scoped-rule`.
+- Create / update a `Memory` with `status=published`, tags `mnemos:rule`, `project:<repo>`, `applyTo:<glob>`, `source:path-scoped-rule`.
 - On delete → remove memory + vector entry.
 
 This makes path-scoped rules first-class searchable knowledge instead of inert instruction files.
@@ -594,7 +594,7 @@ flowchart LR
     T2 --> M2
     T3 --> M3
     T4 --> M4
-    T5 -->|"gcw:checkpoint → add()"| M1
+    T5 -->|"mnemos:checkpoint → add()"| M1
     T6 --> M5
     T7 --> M6
     T8 --> M7
@@ -669,4 +669,4 @@ flowchart TD
 - ai-brain repo: `/var/home/abyss/LABs/AI/ai-brain/`
 - ai-brain knowledge-pipeline concept: `ai-brain/docs/knowledge-pipeline-concept.md` (v0.4 roadmap)
 - GCW stub plugin: `GithubCopilotWorkflow/plugins/mnemos-integration/`
-- GCW tag contract skill: `GithubCopilotWorkflow/skills/mnemos-tag-contract/SKILL.md`
+- Mnemos tag contract skill: `GithubCopilotWorkflow/skills/mnemos-tag-contract/SKILL.md`

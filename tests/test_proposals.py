@@ -315,7 +315,7 @@ class TestAddDryRun:
                 "add",
                 content,
                 "--tags",
-                "project:dry,agent:test,gcw:learning",
+                "project:dry,agent:test,mnemos:learning",
                 "--dry-run",
             ],
         )
@@ -341,7 +341,7 @@ class TestAddDryRun:
                 "add",
                 "some content that will not be saved",
                 "--tags",
-                "project:dry,agent:test,gcw:learning",
+                "project:dry,agent:test,mnemos:learning",
                 "--dry-run",
             ],
         )
@@ -354,7 +354,7 @@ class TestAddDryRun:
         isolated_config: Path,
     ) -> None:
         """``--dry-run`` with invalid tags raises TagContractError (strict mode)."""
-        # Missing required project:/agent:/gcw: tags.
+        # Missing required project:/agent:/mnemos: tags.
         result = runner.invoke(
             app,
             ["add", "content", "--tags", "random-tag", "--dry-run"],
@@ -378,7 +378,7 @@ class TestAddDryRun:
                 "--file",
                 str(content_file),
                 "--tags",
-                "project:dry,agent:test,gcw:learning",
+                "project:dry,agent:test,mnemos:learning",
                 "--dry-run",
             ],
         )
@@ -398,7 +398,7 @@ class TestAddDryRun:
                 "--url",
                 "https://example.com",
                 "--tags",
-                "project:dry,agent:test,gcw:learning",
+                "project:dry,agent:test,mnemos:learning",
                 "--dry-run",
             ],
         )

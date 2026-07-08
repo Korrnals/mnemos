@@ -129,31 +129,31 @@ def agents_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def _isolate_gcw_target(
+def _isolate_copilot_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Monkeypatch load_targets so the gcw target is detected under tmp_path.
+    """Monkeypatch load_targets so the copilot target is detected under tmp_path.
 
-    Without this, ``_resolve_targets("gcw")`` checks the real
+    Without this, ``_resolve_targets("copilot")`` checks the real
     ``~/.copilot/instructions`` and ``~/.copilot/skills`` paths, which do
     not exist on CI runners — causing the CLI to exit early before reaching
     agent wiring. This fixture creates the detect/deploy dirs under
     ``tmp_path`` and patches ``load_targets`` in both ``mnemos.cli.util``
-    and ``mnemos.cli.integration`` so the gcw target is always "detected".
+    and ``mnemos.cli.integration`` so the copilot target is always "detected".
     """
     instructions_dir = tmp_path / "copilot" / "instructions"
     skills_dir = tmp_path / "copilot" / "skills"
     instructions_dir.mkdir(parents=True)
     skills_dir.mkdir(parents=True)
 
-    gcw_target = Target(
-        name="gcw",
+    copilot_target = Target(
+        name="copilot",
         detect_paths=(instructions_dir, skills_dir),
         deploy_map={"instructions": instructions_dir, "skills": skills_dir},
         format="copy",
     )
-    config = TargetsConfig(targets=(gcw_target,))
+    config = TargetsConfig(targets=(copilot_target,))
     monkeypatch.setattr("mnemos.cli.util.load_targets", lambda: config)
     monkeypatch.setattr("mnemos.cli.integration.load_targets", lambda config_path=None: config)
 
@@ -497,7 +497,7 @@ class TestCliSetupWireAgents:
         self,
         agents_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        _isolate_gcw_target: None,
+        _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents --all`` wires all unwired agents."""
         monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
@@ -509,7 +509,7 @@ class TestCliSetupWireAgents:
                 "integration",
                 "setup",
                 "--target",
-                "gcw",
+                "copilot",
                 "--no-mcp",
                 "--wire-agents",
                 "--all",
@@ -534,7 +534,7 @@ class TestCliSetupWireAgents:
         self,
         agents_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        _isolate_gcw_target: None,
+        _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents --select name`` wires only the specified agent."""
         monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
@@ -546,7 +546,7 @@ class TestCliSetupWireAgents:
                 "integration",
                 "setup",
                 "--target",
-                "gcw",
+                "copilot",
                 "--no-mcp",
                 "--wire-agents",
                 "--select",
@@ -568,7 +568,7 @@ class TestCliSetupWireAgents:
         self,
         agents_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        _isolate_gcw_target: None,
+        _isolate_copilot_target: None,
     ) -> None:
         """``--no-wire-agents`` skips agent wiring entirely."""
         monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
@@ -582,7 +582,7 @@ class TestCliSetupWireAgents:
                 "integration",
                 "setup",
                 "--target",
-                "gcw",
+                "copilot",
                 "--no-mcp",
                 "--no-wire-agents",
             ],
@@ -598,7 +598,7 @@ class TestCliSetupWireAgents:
         self,
         agents_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        _isolate_gcw_target: None,
+        _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents --all --precise`` uses individual tool names."""
         monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
@@ -610,7 +610,7 @@ class TestCliSetupWireAgents:
                 "integration",
                 "setup",
                 "--target",
-                "gcw",
+                "copilot",
                 "--no-mcp",
                 "--wire-agents",
                 "--all",
@@ -631,7 +631,7 @@ class TestCliSetupWireAgents:
         self,
         agents_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        _isolate_gcw_target: None,
+        _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents --all --dry-run`` does not modify files."""
         monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
@@ -645,7 +645,7 @@ class TestCliSetupWireAgents:
                 "integration",
                 "setup",
                 "--target",
-                "gcw",
+                "copilot",
                 "--no-mcp",
                 "--wire-agents",
                 "--all",
@@ -660,7 +660,7 @@ class TestCliSetupWireAgents:
         self,
         agents_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        _isolate_gcw_target: None,
+        _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents`` and ``--no-wire-agents`` are mutually exclusive."""
         monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
@@ -672,7 +672,7 @@ class TestCliSetupWireAgents:
                 "integration",
                 "setup",
                 "--target",
-                "gcw",
+                "copilot",
                 "--no-mcp",
                 "--wire-agents",
                 "--no-wire-agents",
@@ -693,7 +693,7 @@ class TestCliVerifyAgentsSection:
         self,
         agents_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        _isolate_gcw_target: None,
+        _isolate_copilot_target: None,
     ) -> None:
         """``integration verify`` prints an agents wiring summary."""
         monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
@@ -701,7 +701,7 @@ class TestCliVerifyAgentsSection:
 
         result = runner.invoke(
             app,
-            ["integration", "verify", "--target", "gcw"],
+            ["integration", "verify", "--target", "copilot"],
         )
 
         # Verify may exit 1 if integration files are stale, but the agents
@@ -713,7 +713,7 @@ class TestCliVerifyAgentsSection:
         self,
         agents_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        _isolate_gcw_target: None,
+        _isolate_copilot_target: None,
     ) -> None:
         """Unwired agent names appear in the verify output."""
         monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
@@ -721,7 +721,7 @@ class TestCliVerifyAgentsSection:
 
         result = runner.invoke(
             app,
-            ["integration", "verify", "--target", "gcw"],
+            ["integration", "verify", "--target", "copilot"],
         )
 
         assert "Unwired:" in result.output

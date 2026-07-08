@@ -158,13 +158,13 @@ async def list_tools() -> list[Tool]:
         (
             "🔄 [AUTO-COLLECT] Proactively save discoveries, patterns, decisions, gotchas, "
             "and any reusable knowledge. Tags MUST include project:<slug>, agent:<slug>, "
-            "and at least one gcw:<subtype> tag."
+            "and at least one mnemos:<subtype> tag."
         )
         if _ac
         else (
             "Add a new entry to long-term memory. "
-            "Tags MUST include: project:<slug>, agent:<slug>, and gcw:<subtype>. "
-            "Valid gcw subtypes: session, bug-pattern, learning, decision, rule, "
+            "Tags MUST include: project:<slug>, agent:<slug>, and mnemos:<subtype>. "
+            "Valid mnemos subtypes: session, bug-pattern, learning, decision, rule, "
             "open-question, checkpoint, legacy."
         )
     )
@@ -238,7 +238,7 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Tags. REQUIRED: project:<slug>, agent:<slug>, gcw:<subtype>. "
+                            "Tags. REQUIRED: project:<slug>, agent:<slug>, mnemos:<subtype>. "
                             "Optional: severity:, stack:, applyTo:, source: prefixes."
                         ),
                     },
@@ -385,7 +385,7 @@ async def list_tools() -> list[Tool]:
                     "tags": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Tags (must include project:, agent:, gcw:)",
+                        "description": "Tags (must include project:, agent:, mnemos:)",
                     },
                 },
                 "required": ["url", "tags"],
@@ -637,7 +637,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             if args.get(field):
                 parts.append(f"## {field.replace('_', ' ').title()}\n{args[field]}\n")
         content = "\n".join(parts)
-        tags = [f"project:{project}", "agent:user", "gcw:checkpoint"]
+        tags = [f"project:{project}", "agent:user", "mnemos:checkpoint"]
         data = MemoryCreate(content=content, tags=tags, source=MemorySource.MCP)
         memory = mgr.add(data, project=project, agent="user")
         _track_call(is_save=True)

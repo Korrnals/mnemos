@@ -28,22 +28,22 @@ beyond the current session.
 
    | Tag | When |
    |-----|------|
-   | `gcw:bug-pattern` | A class of bug; want future reviews to catch it. |
-   | `gcw:learning` | An insight to avoid re-learning. |
-   | `gcw:decision` | A design/process choice + rationale. |
-   | `gcw:rule` | A hard constraint or invariant. |
-   | `gcw:open-question` | An unresolved question to revisit. |
+   | `mnemos:bug-pattern` | A class of bug; want future reviews to catch it. |
+   | `mnemos:learning` | An insight to avoid re-learning. |
+   | `mnemos:decision` | A design/process choice + rationale. |
+   | `mnemos:rule` | A hard constraint or invariant. |
+   | `mnemos:open-question` | An unresolved question to revisit. |
 
 2. **Compose the content** — markdown, one idea per entry:
 
-   - For `gcw:bug-pattern`: describe the bug class, how to spot it, and the
+   - For `mnemos:bug-pattern`: describe the bug class, how to spot it, and the
      fix pattern.
-   - For `gcw:learning`: state the insight and the context in which it
+   - For `mnemos:learning`: state the insight and the context in which it
      applies.
-   - For `gcw:decision`: state the decision, the rationale, and the
+   - For `mnemos:decision`: state the decision, the rationale, and the
      alternatives considered.
-   - For `gcw:rule`: state the rule and the scope (`applyTo:` tag).
-   - For `gcw:open-question`: state the question and what is needed to
+   - For `mnemos:rule`: state the rule and the scope (`applyTo:` tag).
+   - For `mnemos:open-question`: state the question and what is needed to
      resolve it.
 
 3. **Assemble the tags** (mandatory):
@@ -52,7 +52,7 @@ beyond the current session.
    tags=[
      "project:<slug>",
      "agent:<slug>",
-     "gcw:<subtype>"
+     "mnemos:<subtype>"
    ]
    ```
 
@@ -72,7 +72,7 @@ beyond the current session.
 5. **Confirm with a one-line notice**:
 
    ```text
-   mnemos: wrote <gcw:subtype> / <title>
+   mnemos: wrote <mnemos:subtype> / <title>
    ```
 
 ## DISCIPLINE

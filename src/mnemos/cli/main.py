@@ -600,6 +600,7 @@ def mcp_server_cmd(config: str = ConfigOption) -> None:
 # ── migrate (M13) ──────────────────────────────────────────────────────────────
 # Subcommand tree:
 #   mnemos migrate from-ai-brain   — migrate ai-brain data to Mnemos format
+#   mnemos migrate tags            — migrate gcw: tags → mnemos: tags
 
 _migrate_app = typer.Typer(
     name="migrate", help="Migrate data from other memory systems.", no_args_is_help=True
@@ -643,6 +644,35 @@ def migrate(
         console.print(f"[yellow]⚠[/yellow] Errors: {len(summary['errors'])}")
     if dry_run:
         console.print("[cyan]Dry run — no changes written.[/cyan]")
+
+
+@_migrate_app.command(name="tags")
+def migrate_tags(
+    config: str = ConfigOption,
+) -> None:
+    """Migrate legacy gcw: tags to mnemos: tags in the database.
+
+    Converts all ``gcw:<subtype>`` tags in existing memories to
+    ``mnemos:<subtype>``. Idempotent — safe to run multiple times.
+    """
+    from mnemos.cli.migrate import migrate_gcw_to_mnemos_tags
+
+    settings = load_settings(config)
+    settings.resolve_paths()
+    settings.apply_runtime_env()
+    db_path = settings.db_path
+
+    if not db_path.exists():
+        console.print(f"[red]✗[/red] Database not found: {db_path}")
+        raise typer.Exit(1)
+
+    with console.status("[bold green]Migrating gcw: → mnemos: tags..."):
+        summary = migrate_gcw_to_mnemos_tags(db_path)
+
+    console.print(f"[green]✓[/green] Memories updated: {summary['memories_updated']}")
+    console.print(f"[green]✓[/green] Tags converted: {summary['tags_converted']}")
+    if summary["memories_updated"] == 0:
+        console.print("[cyan]No gcw: tags found — nothing to migrate.[/cyan]")
 
 
 # ── auth (T-AUTH, ADR-0014) ───────────────────────────────────────────────────

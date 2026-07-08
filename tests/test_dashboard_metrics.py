@@ -136,18 +136,18 @@ class TestDashboardStats:
         _add_memory(
             client,
             "alpha",
-            ["project:mnemos", "agent:tech-lead", "gcw:learning"],
+            ["project:mnemos", "agent:tech-lead", "mnemos:learning"],
         )
         _add_memory(
             client,
             "beta",
-            ["project:gcw", "agent:code-reviewer", "gcw:decision"],
+            ["project:other", "agent:code-reviewer", "mnemos:decision"],
         )
         resp = client.get("/api/v1/stats")
         data = resp.json()
         assert data["volume"]["memories_total"] == 2
         assert data["volume"]["by_project"].get("mnemos") == 1
-        assert data["volume"]["by_project"].get("gcw") == 1
+        assert data["volume"]["by_project"].get("other") == 1
         assert data["volume"]["by_agent"].get("tech-lead") == 1
         assert data["volume"]["by_agent"].get("code-reviewer") == 1
         assert data["volume"]["by_type"].get("note") == 2
@@ -169,7 +169,7 @@ class TestTimeseries:
         _add_memory(
             client,
             "today",
-            ["project:mnemos", "agent:test", "gcw:learning"],
+            ["project:mnemos", "agent:test", "mnemos:learning"],
         )
         resp = client.get("/api/v1/stats/timeseries")
         assert resp.status_code == 200
@@ -210,7 +210,7 @@ class TestPrometheusMetrics:
         _add_memory(
             client,
             "prom test",
-            ["project:mnemos", "agent:test", "gcw:learning"],
+            ["project:mnemos", "agent:test", "mnemos:learning"],
         )
         resp = client.get("/api/v1/metrics")
         assert resp.status_code == 200
@@ -231,7 +231,7 @@ class TestPrometheusMetrics:
         _add_memory(
             client,
             "labeled",
-            ["project:mnemos", "agent:tech-lead", "gcw:learning"],
+            ["project:mnemos", "agent:tech-lead", "mnemos:learning"],
         )
         text = client.get("/api/v1/metrics").text
         # Label format: metric{label="value"} number
@@ -263,13 +263,13 @@ class TestMemoryFilters:
         _add_memory(
             client,
             "raw one",
-            ["project:test", "agent:test", "gcw:learning"],
+            ["project:test", "agent:test", "mnemos:learning"],
             status="raw",
         )
         _add_memory(
             client,
             "published one",
-            ["project:test", "agent:test", "gcw:learning"],
+            ["project:test", "agent:test", "mnemos:learning"],
             status="published",
         )
         resp = client.get("/memories?status=published")
@@ -282,12 +282,12 @@ class TestMemoryFilters:
         _add_memory(
             client,
             "mnemos mem",
-            ["project:mnemos", "agent:test", "gcw:learning"],
+            ["project:mnemos", "agent:test", "mnemos:learning"],
         )
         _add_memory(
             client,
-            "gcw mem",
-            ["project:gcw", "agent:test", "gcw:learning"],
+            "other mem",
+            ["project:other", "agent:test", "mnemos:learning"],
         )
         resp = client.get("/memories?project=mnemos")
         assert resp.status_code == 200
@@ -299,12 +299,12 @@ class TestMemoryFilters:
         _add_memory(
             client,
             "agent a",
-            ["project:test", "agent:alpha", "gcw:learning"],
+            ["project:test", "agent:alpha", "mnemos:learning"],
         )
         _add_memory(
             client,
             "agent b",
-            ["project:test", "agent:beta", "gcw:learning"],
+            ["project:test", "agent:beta", "mnemos:learning"],
         )
         resp = client.get("/memories?agent=alpha")
         assert resp.status_code == 200
@@ -316,24 +316,24 @@ class TestMemoryFilters:
         _add_memory(
             client,
             "both tags",
-            ["project:mnemos", "agent:test", "gcw:learning"],
+            ["project:mnemos", "agent:test", "mnemos:learning"],
         )
         _add_memory(
             client,
             "one tag only",
-            ["project:mnemos", "agent:test", "gcw:decision"],
+            ["project:mnemos", "agent:test", "mnemos:decision"],
         )
-        resp = client.get("/memories?tags=gcw:learning,project:mnemos")
+        resp = client.get("/memories?tags=mnemos:learning,project:mnemos")
         assert resp.status_code == 200
         items = resp.json()
         assert len(items) == 1
-        assert "gcw:learning" in items[0]["tags"]
+        assert "mnemos:learning" in items[0]["tags"]
 
     def test_filter_by_date_range(self, client):
         _add_memory(
             client,
             "recent",
-            ["project:test", "agent:test", "gcw:learning"],
+            ["project:test", "agent:test", "mnemos:learning"],
         )
         resp = client.get("/memories?since=2026-01-01&until=2026-06-01")
         assert resp.status_code == 200
@@ -344,7 +344,7 @@ class TestMemoryFilters:
         _add_memory(
             client,
             "recent",
-            ["project:test", "agent:test", "gcw:learning"],
+            ["project:test", "agent:test", "mnemos:learning"],
         )
         resp = client.get("/memories?since=2026-06-19")
         assert resp.status_code == 200
@@ -355,7 +355,7 @@ class TestMemoryFilters:
             _add_memory(
                 client,
                 f"item {i}",
-                ["project:test", "agent:test", "gcw:learning"],
+                ["project:test", "agent:test", "mnemos:learning"],
             )
         resp = client.get("/memories?limit=2&offset=0")
         page1 = resp.json()
@@ -376,19 +376,19 @@ class TestMemoryFilters:
         _add_memory(
             client,
             "match",
-            ["project:mnemos", "agent:tech-lead", "gcw:learning"],
+            ["project:mnemos", "agent:tech-lead", "mnemos:learning"],
             status="raw",
         )
         _add_memory(
             client,
             "no match project",
-            ["project:gcw", "agent:tech-lead", "gcw:learning"],
+            ["project:other", "agent:tech-lead", "mnemos:learning"],
             status="raw",
         )
         _add_memory(
             client,
             "no match status",
-            ["project:mnemos", "agent:tech-lead", "gcw:learning"],
+            ["project:mnemos", "agent:tech-lead", "mnemos:learning"],
             status="published",
         )
         resp = client.get("/memories?status=raw&project=mnemos&agent=tech-lead")
@@ -408,7 +408,7 @@ class TestSearchInstrumentation:
         _add_memory(
             client,
             "kubernetes deploy",
-            ["project:test", "agent:test", "gcw:learning"],
+            ["project:test", "agent:test", "mnemos:learning"],
         )
         # Perform 3 searches (include_raw: newly added entries are raw)
         for _ in range(3):
@@ -426,7 +426,7 @@ class TestSearchInstrumentation:
         _add_memory(
             client,
             "prom search",
-            ["project:test", "agent:test", "gcw:learning"],
+            ["project:test", "agent:test", "mnemos:learning"],
         )
         client.post("/search", json={"query": "prom", "limit": 5})
         text = client.get("/api/v1/metrics").text

@@ -153,7 +153,7 @@ def synthesize_cluster(
     processed = Memory(
         content=result.content,
         title=result.title,
-        tags=[*members[0].tags, "gcw:synthesized"],
+        tags=[*members[0].tags, "mnemos:synthesized"],
         source=MemorySource.SYNTHESIZED,
         memory_type=MemoryType.NOTE,
         project=members[0].project,

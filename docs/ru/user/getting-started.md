@@ -102,7 +102,7 @@ make verify
 CLI построен на Typer и выводит таблицы через Rich. Добавьте первую запись:
 
 ```bash
-mnemos add --content "Hello world" --tags project:test agent:getting-started gcw:learning
+mnemos add --content "Hello world" --tags project:test agent:getting-started mnemos:learning
 ```
 
 Ожидаемый вывод:
@@ -115,9 +115,9 @@ Mnemos автоматически:
 
 1. **Записал запись в SQLite** по пути `~/.mnemos/data/mnemos.db`.
 2. **Отразил её в Obsidian-vault** `~/.mnemos/vault/` как markdown-файл с YAML-фронтматером.
-3. **Проверил контракт тегов** — `project:test` + `agent:getting-started` + `gcw:learning` — корректная тройка M2. Если пропустить один из тегов, вы получите `❌ Tag contract violation: ...` вместо подтверждения.
+3. **Проверил контракт тегов** — `project:test` + `agent:getting-started` + `mnemos:learning` — корректная тройка M2. Если пропустить один из тегов, вы получите `❌ Tag contract violation: ...` вместо подтверждения.
 
-Контракт тегов описан в [tag-contract.md](tag-contract.md). Коротко: каждая запись требует **ровно одного** `project:<slug>`, **ровно одного** `agent:<slug>` и **хотя бы одного** `gcw:<subtype>` (например, `gcw:learning`, `gcw:bug-pattern`, `gcw:decision`).
+Контракт тегов описан в [tag-contract.md](tag-contract.md). Коротко: каждая запись требует **ровно одного** `project:<slug>`, **ровно одного** `agent:<slug>` и **хотя бы одного** `mnemos:<subtype>` (например, `mnemos:learning`, `mnemos:bug-pattern`, `mnemos:decision`).
 
 > **Замечание.** Только что добавленные записи получают статус `raw`. Индекс векторного поиска включает только записи в статусе `published`. Чтобы перевести запись в `published`, запустите пайплайн (см. [runbook по установке](../admin/runbooks/install.md)) или воспользуйтесь HTTP API `POST /process` (см. [http-api.md](http-api.md)).
 
@@ -138,7 +138,7 @@ mnemos search "hello"
 ┃ Score ┃ Title      ┃ Tags                                  ┃ Status   ┃
 ┡━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
 │ 1.000 │ Hello world│ project:test, agent:getting-started, │ raw      │
-│       │            │ gcw:learning                          │          │
+│       │            │ mnemos:learning                          │          │
 └───────┴────────────┴──────────────────────────────────────┴──────────┘
 ```
 
@@ -165,7 +165,7 @@ mnemos recall --agent getting-started
 
 ```text
 Hello world  (550e8400…)
-  tags: project:test, agent:getting-started, gcw:learning
+  tags: project:test, agent:getting-started, mnemos:learning
 ```
 
 Комбинируйте с `--project` для дополнительного сужения:

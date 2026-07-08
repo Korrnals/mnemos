@@ -111,7 +111,7 @@ class TestTargetsConfig:
         """load_targets() with no arg resolves the shipped targets.yaml."""
         cfg = load_targets()
         names = [t.name for t in cfg.targets]
-        assert "gcw" in names
+        assert "copilot" in names
         assert "generic-copilot" in names
         assert "cursor" in names
 
@@ -684,7 +684,7 @@ class TestDeployEdgeCases:
         silently skip skills and prompts — no noisy SKIPPED rows.
 
         Not every target supports every artefact kind (e.g. generic-copilot
-        only has prompts, gcw has instructions+skills). Unsupported kinds
+        only has prompts, copilot has instructions+skills). Unsupported kinds
         are skipped silently with a debug log, not reported as SKIPPED in
         the result (which made users think something was broken).
         """

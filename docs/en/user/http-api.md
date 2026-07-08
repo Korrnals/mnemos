@@ -201,7 +201,7 @@ curl -s http://127.0.0.1:8000/tags
 [
   {"tag": "project:mnemos", "count": 142},
   {"tag": "agent:tech-writer", "count": 58},
-  {"tag": "gcw:learning", "count": 41}
+  {"tag": "mnemos:learning", "count": 41}
 ]
 ```
 
@@ -219,7 +219,7 @@ M2 tag contract is enforced server-side. The endpoint derives `project` and `age
 |-------|------|----------|---------|-------------|
 | `content` | string | **yes** | — | Primary text. |
 | `title` | string | no | auto | Short title. |
-| `tags` | string[] | **yes** | — | Must include `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>`. |
+| `tags` | string[] | **yes** | — | Must include `project:<slug>`, `agent:<slug>`, and at least one `mnemos:<subtype>`. |
 | `source` | string | no | `manual` | One of `manual`, `web`, `file`, `mcp`, `obsidian`, `cli`, `rule`, `synthesized`. |
 | `source_url` | string | no | — | Origin URL. |
 | `memory_type` | string | no | `note` | One of `note`, `fact`, `snippet`, `bookmark`, `conversation`, `session_context`. |
@@ -237,7 +237,7 @@ curl -s -X POST http://127.0.0.1:8000/memories \
   -H "Content-Type: application/json" \
   -d '{
     "content": "Use uv, not pip — it resolves transitive CVE closure correctly.",
-    "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"]
+    "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"]
   }'
 ```
 
@@ -246,7 +246,7 @@ curl -s -X POST http://127.0.0.1:8000/memories \
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "content": "Use uv, not pip — it resolves transitive CVE closure correctly.",
   "title": "Use uv, not pip",
-  "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"],
+  "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"],
   "source": "manual",
   "memory_type": "note",
   "status": "raw",
@@ -263,7 +263,7 @@ curl -s -X POST http://127.0.0.1:8000/memories \
 
 | Code | Cause |
 |------|-------|
-| `422` | Missing required tag (`project:`, `agent:`, or `gcw:`) |
+| `422` | Missing required tag (`project:`, `agent:`, or `mnemos:`) |
 | `500` | SQLite / vault write failure |
 
 ### `GET /memories/{memory_id}` — read one
@@ -351,7 +351,7 @@ curl -s -X POST http://127.0.0.1:8000/search \
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "title": "Use uv, not pip",
     "content": "Use uv, not pip — it resolves transitive CVE closure correctly.",
-    "tags": ["project:mnemos", "agent:tech-writer", "gcw:learning"],
+    "tags": ["project:mnemos", "agent:tech-writer", "mnemos:learning"],
     "score": 0.812,
     "search_type": "hybrid"
   }
@@ -402,13 +402,13 @@ curl -s "http://127.0.0.1:8000/recall/agent/cr-security-reviewer?project=mnemos&
 
 These endpoints mirror the `mnemos_save_context` and `mnemos_recall_context`
 plugin tools. They store and retrieve `session_context` memories tagged
-`gcw:checkpoint`, enabling an agent to restore its working state across
+`mnemos:checkpoint`, enabling an agent to restore its working state across
 sessions or after context compaction.
 
 ### `POST /context/save` — save a session checkpoint
 
 Builds structured Markdown from the supplied fields and stores it as a
-`SESSION_CONTEXT` memory tagged `gcw:checkpoint`. Mirrors the
+`SESSION_CONTEXT` memory tagged `mnemos:checkpoint`. Mirrors the
 `mnemos_save_context` plugin tool.
 
 **Request body**
@@ -477,7 +477,7 @@ filtered by a sub-query. Mirrors the `mnemos_recall_context` plugin tool.
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "title": "Session checkpoint — 2026-07-07T12:00:00+00:00",
       "content": "# Session checkpoint — 2026-07-07T12:00:00+00:00\n\n## Goals\nFinish HTTP API docs for all 15 tools\n",
-      "tags": ["project:mnemos", "agent:user", "gcw:checkpoint"],
+      "tags": ["project:mnemos", "agent:user", "mnemos:checkpoint"],
       "created_at": "2026-07-07T12:00:00+00:00"
     }
   ]
@@ -672,7 +672,7 @@ Mirrors the `mnemos_ingest_url` plugin tool.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `url` | string | **yes** | HTTP/HTTPS URL to fetch. |
-| `tags` | string[] | **yes** | Must include `project:<slug>`, `agent:<slug>`, and at least one `gcw:<subtype>`. |
+| `tags` | string[] | **yes** | Must include `project:<slug>`, `agent:<slug>`, and at least one `mnemos:<subtype>`. |
 
 **Response 201**
 
@@ -691,7 +691,7 @@ curl -s -X POST http://127.0.0.1:8000/ingest-url \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://fastapi.tiangolo.com/tutorial/dependencies/",
-    "tags": ["project:mnemos", "agent:tech-lead", "gcw:learning"]
+    "tags": ["project:mnemos", "agent:tech-lead", "mnemos:learning"]
   }'
 ```
 
@@ -699,7 +699,7 @@ curl -s -X POST http://127.0.0.1:8000/ingest-url \
 
 | Code | Cause |
 |------|-------|
-| `422` | Missing required tag (`project:`, `agent:`, or `gcw:`) or missing `url` |
+| `422` | Missing required tag (`project:`, `agent:`, or `mnemos:`) or missing `url` |
 | `500` | Fetch failure, extraction failure, or SQLite / vault write failure |
 
 ---

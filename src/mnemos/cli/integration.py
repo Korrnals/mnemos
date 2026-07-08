@@ -119,7 +119,7 @@ def _resolve_pack_targets() -> Path:
 
 @dataclass(frozen=True)
 class Target:
-    """A single harness target (e.g. ``gcw``, ``cursor``)."""
+    """A single harness target (e.g. ``copilot``, ``cursor``)."""
 
     name: str
     detect_paths: tuple[Path, ...]
@@ -450,7 +450,7 @@ class IntegrationManager:
             if dest_dir is None:
                 # Target doesn't accept this artefact kind — skip silently.
                 # Not every target supports every kind (e.g. generic-copilot
-                # only has prompts, gcw has instructions+skills). Logging a
+                # only has prompts, copilot has instructions+skills). Logging a
                 # noisy "no deploy map" row for every unsupported kind makes
                 # the output look like something is broken when it isn't.
                 logger.debug(

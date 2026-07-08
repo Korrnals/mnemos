@@ -69,7 +69,7 @@ Set `MNEMOS_AUTO_COLLECT=1` in the env block above to make Mnemos prompt your ag
 | Tool | Purpose |
 |------|---------|
 | `mnemos_search` | Hybrid FTS5 + vector search (published memories) |
-| `mnemos_add` | Create a memory — **enforces the GCW tag contract** |
+| `mnemos_add` | Create a memory — **enforces the Mnemos tag contract** |
 | `mnemos_agent_recall` | Per-agent recall (M3) — filter by agent slug |
 | `mnemos_save_context` | Persist a session checkpoint |
 | `mnemos_recall_context` | Restore the latest checkpoint for a project |
@@ -108,7 +108,7 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 - [MCP Tools Reference](user/mcp-tools.md) — every `mnemos_*` tool exposed to VS Code Copilot.
 - [HTTP API Reference](user/http-api.md) — every endpoint, request / response shape, error code.
 - [CLI Reference](user/cli-reference.md) — every `mnemos` subcommand with flags, defaults, and examples.
-- [Tag Contract](user/tag-contract.md) — the M2 schema enforced on every memory (`project:`, `agent:`, `gcw:`).
+- [Tag Contract](user/tag-contract.md) — the M2 schema enforced on every memory (`project:`, `agent:`, `mnemos:`).
 - [Context Filter](user/context-filter.md) — the five-stage noise stripper (dedup, noise, extract, compress, tokens) with profiles and auto-filter.
 
 ---

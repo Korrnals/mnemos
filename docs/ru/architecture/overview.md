@@ -176,9 +176,9 @@ ccr:
 
 #### CLI (Typer)
 ```bash
-mnemos add "Заметка о важном" --tags project:mnemos agent:user gcw:learning   # быстрое добавление
-mnemos add --file ./document.pdf --tags project:mnemos agent:user gcw:learning              # из файла
-mnemos add --url https://example.com --tags project:research agent:user gcw:learning        # ингест URL
+mnemos add "Заметка о важном" --tags project:mnemos agent:user mnemos:learning   # быстрое добавление
+mnemos add --file ./document.pdf --tags project:mnemos agent:user mnemos:learning              # из файла
+mnemos add --url https://example.com --tags project:research agent:user mnemos:learning        # ингест URL
 mnemos search "как настроить nginx"               # гибридный поиск (FTS5 + vector + RRF)
 mnemos search "CVE" --project mnemos --limit 20    # поиск в пределах проекта
 mnemos recall --agent tech-writer --limit 20       # последние записи агента (M3)

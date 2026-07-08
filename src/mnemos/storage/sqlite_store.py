@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS memories (
     metadata         TEXT NOT NULL DEFAULT '{}',
     file_path        TEXT,
     category         TEXT,
-    -- GCW tag contract denormalisations (M2)
+    -- Mnemos tag contract denormalisations (M2)
     project          TEXT NOT NULL DEFAULT '',
     agent            TEXT NOT NULL DEFAULT '',
     -- Knowledge pipeline (M4)

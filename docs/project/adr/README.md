@@ -28,7 +28,7 @@ documented elsewhere, or anything that fits in a code comment.
 | ADR | Title | Status | Date |
 |---|---|---|---|
 | [0001](0001-fork-from-ai-brain.md) | Fork ai-brain into a standalone Mnemos product | Accepted | 2026-05-15 |
-| [0002](0002-gcw-tag-contract-strict-by-default.md) | GCW tag contract is strict by default at the MCP layer | Accepted | 2026-05-15 |
+| [0002](0002-gcw-tag-contract-strict-by-default.md) | Mnemos tag contract is strict by default at the MCP layer | Accepted | 2026-05-15 |
 | [0003](0003-knowledge-pipeline-vector-gating.md) | Knowledge Pipeline: gate vector indexing on `status="published"` | Accepted | 2026-05-15 |
 | [0004](0004-context-filter-mandatory-v1.md) | Context Filter is a mandatory v1 feature (raw + clean dual storage) | Accepted | 2026-05-15 |
 | [0005](0005-cache-center-deferred-to-v2.md) | Cache Center is deferred to v2 (idempotency from M5 covers v1) | Accepted | 2026-05-15 |

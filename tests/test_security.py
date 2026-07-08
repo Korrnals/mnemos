@@ -36,7 +36,7 @@ def manager():
 
 @pytest.fixture
 def sample_memory(manager):
-    data = MemoryCreate(content="sample content", tags=["project:test", "agent:test", "gcw:test"])
+    data = MemoryCreate(content="sample content", tags=["project:test", "agent:test", "mnemos:test"])
     return manager.add(data, project="test", agent="test")
 
 
@@ -98,7 +98,7 @@ class TestUrlValidation:
             mock_client_cls.return_value.__enter__.return_value = mock_client
             manager.ingest_url(
                 "https://example.com/",
-                tags=["project:test", "agent:test", "gcw:test"],
+                tags=["project:test", "agent:test", "mnemos:test"],
                 project="test",
                 agent="test",
             )

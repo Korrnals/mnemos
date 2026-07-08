@@ -102,7 +102,7 @@ If `pip-audit` complains about a pinned CVE, see [dependency-updates runbook](..
 The CLI uses Typer and prints a Rich-formatted table. Add your first entry:
 
 ```bash
-mnemos add --content "Hello world" --tags project:test agent:getting-started gcw:learning
+mnemos add --content "Hello world" --tags project:test agent:getting-started mnemos:learning
 ```
 
 Expected output:
@@ -115,9 +115,9 @@ Mnemos automatically:
 
 1. **Wrote the entry to SQLite** at `~/.mnemos/mnemos.db`.
 2. **Mirrored it to your Obsidian vault** at `~/.mnemos/vault/` as a markdown file with YAML frontmatter.
-3. **Validated the tag contract** — `project:test` + `agent:getting-started` + `gcw:learning` is a valid M2 trio. If you skip one, you get `❌ Tag contract violation: ...` instead.
+3. **Validated the tag contract** — `project:test` + `agent:getting-started` + `mnemos:learning` is a valid M2 trio. If you skip one, you get `❌ Tag contract violation: ...` instead.
 
-The tag contract is documented in [tag-contract.md](tag-contract.md). The short version: every memory needs **exactly one** `project:<slug>`, **exactly one** `agent:<slug>`, and **at least one** `gcw:<subtype>` (e.g. `gcw:learning`, `gcw:bug-pattern`, `gcw:decision`).
+The tag contract is documented in [tag-contract.md](tag-contract.md). The short version: every memory needs **exactly one** `project:<slug>`, **exactly one** `agent:<slug>`, and **at least one** `mnemos:<subtype>` (e.g. `mnemos:learning`, `mnemos:bug-pattern`, `mnemos:decision`).
 
 > **Note.** Newly added memories start in the `raw` state. The vector search index only includes `published` memories. To move a memory to `published`, run the pipeline (see [install runbook](../admin/runbooks/install.md)) or use the HTTP API `POST /process` (see [http-api.md](http-api.md#knowledge-pipeline-m4)).
 
@@ -138,7 +138,7 @@ Expected output (Rich table):
 ┃ Score ┃ Title      ┃ Tags                                  ┃ Status   ┃
 ┡━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
 │ 1.000 │ Hello world│ project:test, agent:getting-started, │ raw      │
-│       │            │ gcw:learning                          │          │
+│       │            │ mnemos:learning                          │          │
 └───────┴────────────┴──────────────────────────────────────┴──────────┘
 ```
 
@@ -165,7 +165,7 @@ Expected output (Rich list):
 
 ```text
 Hello world  (550e8400…)
-  tags: project:test, agent:getting-started, gcw:learning
+  tags: project:test, agent:getting-started, mnemos:learning
 ```
 
 Combine with `--project` to scope further:
@@ -265,7 +265,7 @@ mnemos migrate-from-ai-brain
 The migrator:
 
 - Translates legacy `source: telegram` → `source: mcp`, and similar for every source type.
-- **Patches the tag contract** — every legacy entry gets `project:legacy`, `agent:unknown`, `gcw:legacy` added.
+- **Patches the tag contract** — every legacy entry gets `project:legacy`, `agent:unknown`, `mnemos:legacy` added.
 - Preserves `status: raw / processing / processed / published / archived`.
 - Migrates the `content_ru` / `content_en` columns into `metadata` (no data loss).
 

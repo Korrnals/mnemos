@@ -285,7 +285,7 @@ Validates the tag contract, runs the five-stage filter pipeline, and
 prints stats — without writing anything to the store.
 
 ```bash
-mnemos add "long log output..." --tags "project:mnemos,agent:tech-lead,gcw:trace" --dry-run
+mnemos add "long log output..." --tags "project:mnemos,agent:tech-lead,mnemos:trace" --dry-run
 ```
 
 Output:
@@ -392,7 +392,7 @@ Every `mnemos_add` and `mnemos_ingest_url` call must carry:
 
 - **exactly one** `project:<slug>`
 - **exactly one** `agent:<slug>` (or `agent:user`)
-- **at least one** `gcw:<subtype>`
+- **at least one** `mnemos:<subtype>`
 
 See [tag-contract.md](tag-contract.md) for the full schema. The integration
 layer reinforces this in three places: the `mnemos-tag-contract` instruction,

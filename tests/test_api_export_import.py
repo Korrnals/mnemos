@@ -59,7 +59,7 @@ def _add(client, content: str = "test") -> dict:
         "/memories",
         json={
             "content": content,
-            "tags": ["project:gcw", "agent:reviewer", "gcw:learning"],
+            "tags": ["project:mnemos", "agent:reviewer", "mnemos:learning"],
         },
     )
     assert resp.status_code == 201
@@ -83,16 +83,16 @@ class TestApiExport:
         mgr.add(
             MemoryCreate(
                 content="b",
-                tags=["project:other", "agent:x", "gcw:learning"],
+                tags=["project:other", "agent:x", "mnemos:learning"],
                 source=MemorySource.CLI,
             ),
             project="other",
             agent="x",
         )
-        resp = client.post("/api/v1/export", json={"format": "json", "project": "gcw"})
+        resp = client.post("/api/v1/export", json={"format": "json", "project": "mnemos"})
         assert resp.status_code == 200
         payload = json.loads(resp.content)
-        assert all(m["project"] == "gcw" for m in payload["memories"])
+        assert all(m["project"] == "mnemos" for m in payload["memories"])
 
     def test_export_gzip_compression(self, client):
         _add(client, "compress me")
