@@ -109,7 +109,7 @@ uv pip install -e ".[dev]"
 
 <!-- version:pip -->
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v2.7.4/mnemos-2.7.4-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v2.7.5/mnemos-2.7.5-py3-none-any.whl
 ```
 <!-- /version:pip -->
 
@@ -141,14 +141,14 @@ podman run -d --name mnemos \
   -v mnemos-vault:/vault \
   -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
 <!-- version:image -->
-  ghcr.io/korrnals/mnemos:2.7.4
+  ghcr.io/korrnals/mnemos:2.7.5
 <!-- /version:image -->
 
 curl -s http://localhost:8787/health | jq
 ```
 
 <!-- version:tags -->
-Tags: `:2.7.4` (pinned) · `:latest` (rolling). Works with `docker` too — swap `podman` for `docker`.
+Tags: `:2.7.5` (pinned) · `:latest` (rolling). Works with `docker` too — swap `podman` for `docker`.
 <!-- /version:tags -->
 
 </details>
