@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+## [2.7.6] - 2026-07-08
+
+### Fixed
+- **README sync workflow** — poll for CI completion (up to 10 min), then admin merge. Handles `CLEAN`, `UNSTABLE`, `BEHIND` states. 15-min job timeout.
+
 ## [2.7.5] - 2026-07-08
 
 ### Fixed

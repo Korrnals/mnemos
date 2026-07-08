@@ -62,6 +62,7 @@ jobs:
     name: Sync version in README files
     runs-on: ubuntu-latest
     needs: [build-dist]
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -103,18 +104,23 @@ jobs:
           echo "Created PR #$PR_NUM"
 
           # Merge as admin. enforce_admins=false allows bypassing review
-          # requirement. Retry a few times in case GitHub needs a moment
-          # to register the PR as mergeable.
-          for i in 1 2 3 4 5; do
-            echo "Merge attempt $i..."
-            if gh pr merge "$PR_NUM" --merge --admin --delete-branch; then
-              echo "Merged successfully."
-              exit 0
+          # requirement, but CI status checks must still pass first.
+          # Strategy: poll until CI completes, then admin-merge.
+          echo "Waiting for CI to pass before admin merge..."
+          for i in $(seq 1 40); do
+            STATUS=$(gh pr view "$PR_NUM" --json mergeStateStatus -q '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
+            echo "  attempt $i: mergeStateStatus=$STATUS"
+            # CLEAN = all checks pass; UNSTABLE = checks pass with non-required failures;
+            # BEHIND = mergeable but main moved (admin merge handles this).
+            if [ "$STATUS" = "CLEAN" ] || [ "$STATUS" = "UNSTABLE" ] || [ "$STATUS" = "BEHIND" ]; then
+              if gh pr merge "$PR_NUM" --merge --admin --delete-branch; then
+                echo "Merged successfully on attempt $i (status=$STATUS)."
+                exit 0
+              fi
             fi
-            echo "Merge failed, waiting 15s..."
             sleep 15
           done
-          echo "ERROR: could not merge PR #$PR_NUM after 5 attempts" >&2
+          echo "ERROR: PR #$PR_NUM did not become mergeable after 10 minutes" >&2
           exit 1
 
   build-push-image:
