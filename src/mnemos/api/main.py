@@ -446,6 +446,18 @@ async def trigger_process(
     return {"status": "ok", **summary}
 
 
+@app.post("/reindex")
+async def reindex_vectors(batch_size: int = Query(default=100, le=1000)) -> dict[str, Any]:
+    """Rebuild the vector index for all published memories.
+
+    Re-embeds every published memory and upserts into the vector store.
+    Use after enabling embeddings or switching embedding models.
+    """
+    mgr = get_manager()
+    result = mgr.rebuild_vector_index(batch_size=batch_size)
+    return {"status": "ok", **result}
+
+
 @app.post("/synthesize")
 async def trigger_synthesize(cluster_id: str) -> dict[str, Any]:
     """Trigger LLM synthesis for a cluster."""

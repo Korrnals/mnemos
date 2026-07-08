@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+## [2.7.2] - 2026-07-08
+
+### Added
+- **CLI `reindex` command** — `mnemos reindex` rebuilds vector index for all published memories
+- **API `POST /reindex`** endpoint — trigger vector rebuild via HTTP (with `batch_size` query param)
+
+### Fixed
+- **Embeddings pre-download for PVC mounts** — model now pre-downloaded to `/opt/model-cache` (inside image layer) and copied to `/data/.cache` on first boot via `entrypoint.sh` (fixes: `/data` volume mount hid pre-downloaded model)
+- **External `entrypoint.sh`** instead of heredoc in Containerfile (GitHub Actions imagebuilder compatibility)
+
 - **`totp_required` per-token flag**: tokens with `totp_required=False` can use bearer directly (no login/verify/session needed). Enables proper M2M authentication without TOTP code reuse issues.
 - **`--no-totp` CLI flag** for `mnemos auth token create`: creates API tokens without TOTP requirement.
 - **Direct bearer middleware path**: middleware accepts `mnk_`-prefixed bearer tokens with `totp_required=0` directly, skipping session validation.

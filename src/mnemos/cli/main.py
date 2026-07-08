@@ -459,6 +459,27 @@ def processor_cmd(
     mgr.close()
 
 
+# ── reindex ───────────────────────────────────────────────────────────────────
+
+
+@app.command(name="reindex")
+def reindex_cmd(
+    batch_size: int = typer.Option(100, "--batch-size", "-b", help="Batch size for embedding"),
+    config: str = ConfigOption,
+) -> None:
+    """Rebuild the vector index for all published memories.
+
+    Re-embeds every published memory and upserts into the vector store.
+    Use after enabling embeddings or switching embedding models.
+    """
+    mgr = get_manager(config)
+    result = mgr.rebuild_vector_index(batch_size=batch_size)
+    console.print(f"  [cyan]total: {result['total']}[/cyan]")
+    console.print(f"  [green]indexed: {result['indexed']}[/green]")
+    console.print(f"  [red]failed: {result['failed']}[/red]")
+    mgr.close()
+
+
 # ── filter (M10) ───────────────────────────────────────────────────────────────
 
 
