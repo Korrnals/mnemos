@@ -2,7 +2,7 @@
 
 **🌐 Language / Язык:** [English](../../en/admin/security.md) · Русский
 
-> **Владелец**: GCW Senior Security Engineer
+> **Владелец**: Mnemos Security Engineer
 > **Статус**: Актуальна — последний аудит 2026-06-15
 > **Область**: Mnemos memory & knowledge server (форк ai-brain)
 > **Вне области**: M16 A2A Sessions API (новый модуль, отдельная модель угроз)
@@ -31,7 +31,7 @@ Mnemos — **local-first, single-tenant, file-backed** сервер памяти
 |---------|-------------------|----------------------|-------------|
 | `ingest_url` (HTTP fetch) | Процесс Mnemos | Публичный интернет (любой URL от пользователя) | SSRF-блоклист — см. §2 |
 | Загрузка с HF Hub (`ONNXHubProvider`) | Процесс Mnemos | HuggingFace Hub | Закреплённый `revision=` (CWE-494) — см. §3 |
-| MCP stdio | Процесс Mnemos | Локальный GCW-агент | Граница прав Unix; аутентификация не нужна (loopback) |
+| MCP stdio | Процесс Mnemos | Локальный AI-агент | Граница прав Unix; аутентификация не нужна (loopback) |
 | FastAPI HTTP API | Процесс Mnemos | Локальные процессы (loopback) | Привязка к loopback по умолчанию; нет удалённой поверхности в v1 |
 | FTS5 search (`fts_search`) | Процесс Mnemos | Строка поискового запроса | FTS5 escape — см. §4 |
 | `update_fields` динамический SQL | Процесс Mnemos | `**kwargs` от вызывающих | Ограниченный dispatch по колонкам — см. §5 |

@@ -60,7 +60,7 @@ class VaultManager:
         m["memory_type"] = memory.memory_type.value
         m["created"] = memory.created_at.isoformat()
         m["updated"] = memory.updated_at.isoformat()
-        # GCW contract
+        # Mnemos contract
         if memory.project:
             m["project"] = memory.project
         if memory.agent:

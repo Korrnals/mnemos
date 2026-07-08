@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>Сервер памяти и знаний для AI-агентов</strong><br>
-  <em>назван в честь титаниды памяти, создан для семейства агентов GCW</em>
+  <em>назван в честь титаниды памяти, создан для AI-агентов, которым нужна память</em>
 </p>
 
 <p align="center">
@@ -81,11 +81,11 @@ mnemos integration setup
 ```
 
 Развёртывает инструкции использования памяти, скилы и режим промпта в ваш
-агентский харнес (GCW `~/.copilot/`, обычный Copilot, Cursor). Агенты теперь
+агентский харнес (Copilot `~/.copilot/`, обычный Copilot, Cursor). Агенты теперь
 *знают когда и как* использовать память Mnemos — а не просто имеют инструменты.
 
 Добавьте `--wire-agents --all`, чтобы в том же проходе выдать инструменты
-`mnemos/*` во фронтматтер GCW-агентов. См. [руководство по интеграции](docs/ru/user/integration-guide.md#подключение-mcp-инструментов-к-агентам)
+`mnemos/*` во фронтматтер Copilot-агентов. См. [руководство по интеграции](docs/ru/user/integration-guide.md#подключение-mcp-инструментов-к-агентам)
 по флагам wiring и [руководство по контекстному фильтру](docs/ru/user/context-filter.md)
 — пятиступенчатый очиститель шума, который запускается автоматически при каждом `mnemos_add`.
 
@@ -255,10 +255,10 @@ flowchart TB
 |---------|--------------|-----------|
 | **CLI** — `mnemos …` | Вы работаете в шелле, нужен быстрый ad-hoc add / search или скрипты cron | [cli-reference.md](docs/ru/user/cli-reference.md) |
 | **HTTP** — `mnemos serve` | У вас не-MCP клиент — веб-дашборд, мобильное приложение, CI runner | [http-api.md](docs/ru/user/http-api.md) |
-| **MCP** — `mnemos mcp-server` | Вы VS Code Copilot или любой MCP-aware агент — путь семейства GCW | [mcp-tools.md](docs/ru/user/mcp-tools.md) |
+| **MCP** — `mnemos mcp-server` | Вы VS Code Copilot или любой MCP-aware агент — путь Copilot-агентов | [mcp-tools.md](docs/ru/user/mcp-tools.md) |
 
 MCP-поверхность также предоставляет **A2A Sessions API** (M16) — постоянный бэкенд для многошаговых
-разговоров агентов. Пять endpoints (`POST /v1/sessions`, append-turn, range-load, …) позволяют GCW
+разговоров агентов. Пять endpoints (`POST /v1/sessions`, append-turn, range-load, …) позволяют агентам
 переживать рестарты без потери контекста. См. [a2a-sessions.md](docs/ru/architecture/a2a-sessions.md).
 
 ---
@@ -298,13 +298,18 @@ MCP-поверхность также предоставляет **A2A Sessions 
 
 ---
 
-## 🤝 Связь с семейством агентов GCW
+## 🤝 Интеграции
 
-Mnemos — автономное хранилище для senior-agent команды **GCW (GitHub Copilot Workflow)**. Репозиторий GCW
-содержит тонкий stub-плагин (`plugins/mnemos-integration`), который работает в деградированном файловом
-режиме, пока Mnemos недоступен; как только MCP-сервер поднят, stub прозрачно переключается на `mnemos_*`
-инструменты без изменения кода. Общий контракт — [схема тегов](docs/ru/user/tag-contract.md) —
-`project:<slug>`, `agent:<slug>` и хотя бы один `mnemos:<subtype>` — которую должна нести каждая запись.
+Mnemos интегрируется с несколькими платформами AI-агентов:
+
+- **[Hermes Agent](https://hermes-agent.nousresearch.com/)** от Nous Research — нативный `MemoryProvider` плагин
+  в `integrations/hermes/`. предоставляет все 15 `mnemos_*` инструментов как нативные Hermes-инструменты.
+  См. [руководство по интеграции](docs/ru/user/integration-guide.md#hermes-agent).
+- **GitHub Copilot / VS Code** — MCP-сервер через `mnemos mcp-server`. См. [документацию MCP](docs/ru/user/mcp-tools.md).
+- **Cursor** — инструкции/правила развертываются через `mnemos util-setup --target cursor`.
+
+Общий контракт — [схема тегов](docs/ru/user/tag-contract.md) — `project:<slug>`, `agent:<slug>`
+и хотя бы один `mnemos:<subtype>` — которую должна нести каждая запись.
 
 ---
 

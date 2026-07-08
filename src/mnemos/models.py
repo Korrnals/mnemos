@@ -1,6 +1,6 @@
 """Data models for the Mnemos memory system.
 
-Core models: TagContract (GCW tag validation, M2), Memory (pipeline + Context
+Core models: TagContract (Mnemos tag validation, M2), Memory (pipeline + Context
 Filter fields, M4/M10), Trace (explainability layer, M6), AgentRecallQuery
 (per-agent recall, M3).
 """

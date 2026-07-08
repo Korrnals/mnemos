@@ -16,8 +16,8 @@
 #   --no-mcp            Skip VS Code MCP integration (no prompt)
 #   --instructions      Deploy agent integration pack (instructions+skills+prompts) automatically (no prompt)
 #   --no-instructions   Skip agent integration pack deployment (no prompt)
-#   --wire-agents       Wire mnemos/* into GCW agent tools: frontmatter automatically (no prompt)
-#   --no-wire-agents    Skip GCW agent MCP wiring (no prompt)
+#   --wire-agents       Wire mnemos/* into Copilot agent tools: frontmatter automatically (no prompt)
+#   --no-wire-agents    Skip Copilot agent MCP wiring (no prompt)
 #   --container         Pull and run the container image instead of a Python install
 #   --port PORT         Container host port (default: 8787, only with --container)
 #   --help              Show this help
@@ -263,9 +263,9 @@ case "$INSTRUCTIONS_SETUP" in
     ;;
 esac
 
-# ── Optional: wire Mnemos MCP into GCW agent tools: frontmatter ────
+# ── Optional: wire Mnemos MCP into Copilot agent tools: frontmatter ────
 setup_wire_agents() {
-  info "Wiring Mnemos MCP into GCW agent tools: frontmatter…"
+  info "Wiring Mnemos MCP into Copilot agent tools: frontmatter…"
   if "$MNEMOS_BIN" integration setup --wire-agents --all --no-mcp; then
     ok "Agent MCP wiring complete — reload your VS Code window."
   else
@@ -279,7 +279,7 @@ case "$WIRE_AGENTS" in
   no)  : ;;
   ask)
     if [[ -r /dev/tty ]]; then
-      prompt_ask "Wire Mnemos MCP to all GCW agents? [Y/n]"
+      prompt_ask "Wire Mnemos MCP to all Copilot agents? [Y/n]"
       read -r reply < /dev/tty || reply=""
       case "$reply" in
         [Nn]*) info "Skipped agent wiring. Run it anytime: mnemos integration setup --wire-agents --all" ;;

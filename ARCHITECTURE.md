@@ -178,7 +178,7 @@ classDiagram
 
 ## 3. Interfaces
 
-### MCP tools (stable names — the GCW stub plugin already references these)
+### MCP tools (stable names — integration plugins reference these)
 
 | tool | purpose |
 |---|---|
@@ -668,5 +668,5 @@ flowchart TD
 
 - ai-brain repo: `/var/home/abyss/LABs/AI/ai-brain/`
 - ai-brain knowledge-pipeline concept: `ai-brain/docs/knowledge-pipeline-concept.md` (v0.4 roadmap)
-- GCW stub plugin: `GithubCopilotWorkflow/plugins/mnemos-integration/`
-- Mnemos tag contract skill: `GithubCopilotWorkflow/skills/mnemos-tag-contract/SKILL.md`
+- Hermes Agent plugin: `integrations/hermes/` in this repo
+- Mnemos tag contract skill: `integrations/skills/mnemos-tag-contract.md` in this repo

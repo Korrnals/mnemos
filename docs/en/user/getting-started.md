@@ -119,7 +119,7 @@ Mnemos automatically:
 
 The tag contract is documented in [tag-contract.md](tag-contract.md). The short version: every memory needs **exactly one** `project:<slug>`, **exactly one** `agent:<slug>`, and **at least one** `mnemos:<subtype>` (e.g. `mnemos:learning`, `mnemos:bug-pattern`, `mnemos:decision`).
 
-> **Note.** Newly added memories start in the `raw` state. The vector search index only includes `published` memories. To move a memory to `published`, run the pipeline (see [install runbook](../admin/runbooks/install.md)) or use the HTTP API `POST /process` (see [http-api.md](http-api.md#knowledge-pipeline-m4)).
+> **Note.** Newly added memories start in the `raw` state. The background processor (running in both MCP and HTTP API modes since v2.7.8) automatically clusters, synthesises, quality-gates, and publishes them. The vector search index only includes `published` memories. If you need to rebuild the vector index for all published memories, run `mnemos reindex` (CLI) or `POST /reindex` (HTTP API).
 
 ---
 
@@ -180,7 +180,7 @@ This is the same data the MCP tool [`mnemos_agent_recall`](mcp-tools.md#mnemos_a
 
 ## Run the MCP server
 
-The MCP server speaks stdio JSON-RPC — VS Code Copilot talks to it directly. **It is the primary integration surface for GCW agents.**
+The MCP server speaks stdio JSON-RPC — VS Code Copilot talks to it directly. **It is the primary integration surface for AI agents.**
 
 > The `mcp` package is an optional extra — install it first with `pip install -e ".[mcp]"` (or `uv pip install -e ".[mcp]"`).
 

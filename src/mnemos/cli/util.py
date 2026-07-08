@@ -234,7 +234,7 @@ def _prompt_wire_agents_default(agents: list[AgentInfo]) -> list[AgentInfo]:
         )
         return []
 
-    answer = console.input("Wire Mnemos MCP to all GCW agents? [Y/n] ").strip().lower()
+    answer = console.input("Wire Mnemos MCP to all Copilot agents? [Y/n] ").strip().lower()
     if answer in ("", "y", "yes"):
         return unwired
     return []
@@ -354,7 +354,7 @@ def setup_cmd(
         bool,
         typer.Option(
             "--wire-agents",
-            help="Wire mnemos/* into GCW agent tools: frontmatter (prompts if interactive).",
+            help="Wire mnemos/* into Copilot agent tools: frontmatter (prompts if interactive).",
         ),
     ] = False,
     no_wire_agents: Annotated[

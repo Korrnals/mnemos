@@ -1,6 +1,6 @@
 """MCP server for Mnemos — exposes mnemos_* memory tools to Copilot/LLM agents.
 
-Tools: mnemos_add (enforces GCW TagContract), mnemos_search, mnemos_recall,
+Tools: mnemos_add (enforces Mnemos TagContract), mnemos_search, mnemos_recall,
 mnemos_agent_recall (M3), mnemos_auto_collect_status (per-signal compaction
 vector, M7), and others. Auto-collect driven by MNEMOS_AUTO_COLLECT env var.
 """

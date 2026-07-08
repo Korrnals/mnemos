@@ -182,7 +182,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Mnemos",
-    description="Standalone memory & knowledge server for GCW agents.",
+    description="Standalone memory & knowledge server for AI agents.",
     version=__version__,
     lifespan=lifespan,
     # Bind only to loopback by default; controlled by uvicorn host arg

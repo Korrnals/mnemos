@@ -143,7 +143,7 @@ Common messages:
 |-----------------|-------|
 | `exactly one project:` | 0 or ≥2 `project:` tags |
 | `exactly one agent:` | 0 or ≥2 `agent:` tags |
-| `at least one gcw:` | No `mnemos:` tag present |
+| `at least one mnemos:` | No `mnemos:` tag present |
 | `invalid mnemos: subtype` | Subtype not in allowed set |
 | `invalid slug for project:` | Slug contains uppercase or special chars |
 | `invalid slug for agent:` | Slug contains uppercase or special chars |

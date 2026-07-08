@@ -2,13 +2,13 @@
 
 **🌐 Language / Язык:** English · [Русский](../ru/index.md)
 
-> Mnemos is a standalone memory & knowledge MCP server for LLM/GCW agents. It gives every agent real long-term memory — structured, searchable, governed by a strict tag contract — that persists across sessions, restarts, and context compression.
+> Mnemos is a standalone memory & knowledge MCP server for AI agents. It gives every agent real long-term memory — structured, searchable, governed by a strict tag contract — that persists across sessions, restarts, and context compression.
 
 ---
 
 ## Connect mnemos as an MCP server
 
-**MCP is the primary integration surface.** This is how VS Code Copilot and GCW agents talk to Mnemos.
+**MCP is the primary integration surface.** This is how VS Code Copilot, Hermes Agent, and other MCP-aware tools talk to Mnemos.
 
 ### What is implemented
 

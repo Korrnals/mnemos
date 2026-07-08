@@ -136,7 +136,7 @@ class TestMigrationWrite:
         all_mem = mgr.list_recent(limit=10)
         assert len(all_mem) == 2
 
-        # Check tags have GCW contract
+        # Check tags have Mnemos contract
         for mem in all_mem:
             assert any(t.startswith("project:") for t in mem.tags)
             assert any(t.startswith("agent:") for t in mem.tags)

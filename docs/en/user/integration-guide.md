@@ -134,7 +134,7 @@ prompted.
 
 Deploying instructions and skills tells agents *when* to call memory tools.
 **Agent MCP wiring** goes one step further: it adds `mnemos/*` to the
-`tools:` frontmatter of GCW agent files (`~/.copilot/agents/*.agent.md`) so
+`tools:` frontmatter of Copilot agent files (`~/.copilot/agents/*.agent.md`) so
 the tools are actually granted to the agent at request time.
 
 Without wiring, an agent may have the behavioural instructions but no
@@ -155,7 +155,7 @@ model. Wiring closes that gap.
 | Condition | Why |
 |-----------|-----|
 | Agent already has `mnemos/*` or `mnemos/mnemos_*` in `tools:` | Already wired — no change needed. |
-| Agent uses `tool_profile:` instead of `tools:` | Resolved by the GCW installer (`make install-all`); mutating it would be overwritten on the next install. |
+| Agent uses `tool_profile:` instead of `tools:` | Resolved by the Copilot installer (`make install-all`); mutating it would be overwritten on the next install. |
 | Agent has no parseable frontmatter | Cannot safely edit — reported as skipped. |
 
 ### Usage
@@ -216,7 +216,7 @@ The agents section of the verify report shows:
 
 - **Wired** — agents with `mnemos/*` or `mnemos/mnemos_*` in `tools:`.
 - **Unwired** — agents without mnemos tools (candidates for wiring).
-- **Skipped** — agents with `tool_profile:` (managed by the GCW installer).
+- **Skipped** — agents with `tool_profile:` (managed by the Copilot installer).
 
 `mnemos doctor` also includes an agent wiring check (9th check) that
 reports the same summary and warns if unwired agents are detected.
@@ -260,7 +260,7 @@ their `tools:` frontmatter.
 mnemos integration setup
 # → Deploys instructions + skills + prompts
 # → Registers the MCP server
-# → Prompts: "Wire mnemos/* into GCW agents? [Y/n]"
+# → Prompts: "Wire mnemos/* into Copilot agents? [Y/n]"
 ```
 
 | Flag | Behaviour |

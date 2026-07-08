@@ -8,9 +8,9 @@
 
 ---
 
-Mnemos is a standalone memory & knowledge MCP server — it gives LLM/GCW agents real long-term memory that persists across sessions, restarts, and context compression.
+Mnemos is a standalone memory & knowledge MCP server — it gives AI agents real long-term memory that persists across sessions, restarts, and context compression.
 
-Mnemos — автономный MCP-сервер памяти и знаний: даёт LLM/GCW-агентам настоящую долгосрочную память, которая сохраняется между сессиями, перезапусками и сжатием контекста.
+Mnemos — автономный MCP-сервер памяти и знаний: даёт AI-агентам настоящую долгосрочную память, которая сохраняется между сессиями, перезапусками и сжатием контекста.
 
 ---
 

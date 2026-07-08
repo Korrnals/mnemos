@@ -2,7 +2,7 @@
 
 **🌐 Language / Язык:** English · [Русский](../../ru/admin/security.md)
 
-> **Owner**: GCW Senior Security Engineer
+> **Owner**: Mnemos Security Engineer
 > **Status**: Active — last reviewed 2026-06-15
 > **Scope**: Mnemos memory & knowledge server (forked from ai-brain)
 > **Out of scope**: M16 A2A Sessions API (new module, separate threat model)
@@ -31,7 +31,7 @@ deployed as either a CLI tool, a stdio MCP server, or a loopback HTTP API
 |----------|------------|----------------|-------------|
 | `ingest_url` (HTTP fetch) | Mnemos process | Public Internet (any URL the user passes) | SSRF blocklist — see §2 |
 | HF Hub download (`ONNXHubProvider`) | Mnemos process | HuggingFace Hub | Pinned `revision=` (CWE-494) — see §3 |
-| MCP stdio | Mnemos process | Local GCW agent | Unix permission boundary, no auth needed (loopback) |
+| MCP stdio | Mnemos process | Local AI agent | Unix permission boundary, no auth needed (loopback) |
 | FastAPI HTTP API | Mnemos process | Local processes (loopback) | Loopback bind by default; no remote surface in v1 |
 | FTS5 search (`fts_search`) | Mnemos process | End-user query string | FTS5 escape — see §4 |
 | `update_fields` dynamic SQL | Mnemos process | `**kwargs` from callers | Whitelisted column dispatch — see §5 |
@@ -250,6 +250,17 @@ master key is rejected at startup with a `ValueError` when
 time-step (30-second window index) of the last accepted TOTP code. A new code
 is rejected unless its time-step strictly exceeds the recorded value — a
 captured code cannot be replayed even within its validity window.
+
+**`totp_required` flag (v2.7.6+)**: each token has a `totp_required` boolean:
+- `totp_required=true` (default) — operator token for human access. Requires
+  full login → TOTP verify → session flow.
+- `totp_required=false` — API token for machine-to-machine (M2M) access. The
+  bearer token is accepted directly by the middleware, skipping session
+  validation. Created via `mnemos auth token create --no-totp`.
+
+This enables clean separation of human and machine auth without TOTP code
+reuse issues. The middleware checks: `mnk_`-prefixed tokens with
+`totp_required=0` → direct access; all others → session validation required.
 
 ### 9.3 Session lifecycle
 
