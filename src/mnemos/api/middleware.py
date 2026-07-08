@@ -156,15 +156,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
             from mnemos.api.auth_store import hash_token as _hash_token
 
             token_row = auth_store.get_token_by_hash(_hash_token(bearer))
-            if token_row is not None and auth_store.is_token_active(token_row):
-                if not int(str(token_row.get("totp_required", 1) or 0)):
-                    # TOTP not required — admit directly.
-                    request.state.auth_token = token_row
-                    request.state.auth_bearer = True
-                    direct_bearer_admitted = True
-                    logger.debug(
-                        "auth: direct-bearer admit for token_id=[REDACTED] (totp_required=0)"
-                    )
+            if (
+                token_row is not None
+                and auth_store.is_token_active(token_row)
+                and not int(str(token_row.get("totp_required", 1) or 0))
+            ):
+                # TOTP not required — admit directly.
+                request.state.auth_token = token_row
+                request.state.auth_bearer = True
+                direct_bearer_admitted = True
+                logger.debug(
+                    "auth: direct-bearer admit for token_id=[REDACTED] (totp_required=0)"
+                )
 
         if direct_bearer_admitted:
             return await _call_next(request)
