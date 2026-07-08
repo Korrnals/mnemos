@@ -678,8 +678,11 @@ def token_create(
                 normalized_expires = dt.isoformat()
             except ValueError:
                 console.print(f"[red]Invalid expiry format: {expires}[/red]")
-                console.print("[dim]Expected ISO-8601, e.g. 2027-01-01 or 2027-01-01T00:00:00[/dim]")
-                raise typer.Exit(1)
+                console.print(
+                    "[dim]Expected ISO-8601, e.g. 2027-01-01"
+                    " or 2027-01-01T00:00:00[/dim]"
+                )
+                raise typer.Exit(1) from None
         token_id, plaintext = store.create_token(name=name, expires_at=normalized_expires)
     finally:
         store.close()
