@@ -9,42 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-## [2.7.6] - 2026-07-08
-
-### Fixed
-- **README sync workflow** — poll for CI completion (up to 10 min), then admin merge. Handles `CLEAN`, `UNSTABLE`, `BEHIND` states. 15-min job timeout.
-
-## [2.7.5] - 2026-07-08
-
-### Fixed
-- **README sync workflow** — retry loop for admin merge (GitHub needs a moment to register PR as mergeable), removed self-approve (GitHub doesn't allow self-approval)
-
-## [2.7.4] - 2026-07-08
-
-### Fixed
-- **README sync workflow** — self-approve PR + admin merge instead of auto-merge (branch protection requires 1 approving review)
-
-## [2.7.3] - 2026-07-08
-
-### Fixed
-- **README sync workflow** — release workflow now creates a PR + auto-merge instead of direct push to protected `main` branch (was failing on branch protection)
-- Added `pull-requests: write` permission to sync-readme job
-
-## [2.7.2] - 2026-07-08
+## [2.7.6] - 2026-07-09
 
 ### Added
 - **CLI `reindex` command** — `mnemos reindex` rebuilds vector index for all published memories
 - **API `POST /reindex`** endpoint — trigger vector rebuild via HTTP (with `batch_size` query param)
-
-### Fixed
-- **Embeddings pre-download for PVC mounts** — model now pre-downloaded to `/opt/model-cache` (inside image layer) and copied to `/data/.cache` on first boot via `entrypoint.sh` (fixes: `/data` volume mount hid pre-downloaded model)
-- **External `entrypoint.sh`** instead of heredoc in Containerfile (GitHub Actions imagebuilder compatibility)
-
+- **`scripts/release.sh`** — one-command release: bumps version in pyproject.toml, plugin.yaml, README files, commits, tags, pushes. Replaces the broken CI-based README sync approach.
 - **`totp_required` per-token flag**: tokens with `totp_required=False` can use bearer directly (no login/verify/session needed). Enables proper M2M authentication without TOTP code reuse issues.
 - **`--no-totp` CLI flag** for `mnemos auth token create`: creates API tokens without TOTP requirement.
 - **Direct bearer middleware path**: middleware accepts `mnk_`-prefixed bearer tokens with `totp_required=0` directly, skipping session validation.
 - **`skip_quality_check` query param** on `POST /publish/{memory_id}`: allows publishing memories from `raw` status without LLM pipeline.
-- **Pre-downloaded embedding model**: `all-MiniLM-L6-v2` ONNX model (~90MB) pre-downloaded in Docker image, enabling vector search out of the box without internet access.
+- **Pre-downloaded embedding model**: `all-MiniLM-L6-v2` ONNX model (~90MB) pre-downloaded in Docker image (to `/opt/model-cache`), copied to PVC on first boot via `entrypoint.sh`. Enables vector search out of the box without internet access.
 - **`HOME=/data` env in Containerfile**: fixes ChromaDB `/.cache` permission denied error.
 - **`include_raw` parameter** in plugin search: defaults to `true` so memories in `raw` status are searchable.
 - **Auto-publish on add**: plugin publishes memories after creation so they're immediately searchable.
@@ -54,13 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plugin auth refactor**: when `totp_secret` is not configured, plugin uses API token directly instead of TOTP login/verify flow.
 - **`/auth/me` response** now includes `totp_required` field for token introspection.
 - **Token list** displays `totp_required` column (yes/no).
+- **Removed `sync-readme` CI job** from release workflow. README version sync is now done locally via `scripts/release.sh` before tagging. CI only builds artifacts — it does not commit to `main`.
 
 ### Fixed
 
 - **Search returns 0 results**: memories stayed in `raw` status without LLM pipeline; `include_raw=true` default in plugin + auto-publish resolves this.
-- **Embeddings `/.cache` permission denied**: `HOME=/data` env var + pre-download in Containerfile.
+- **Embeddings pre-download for PVC mounts**: model pre-downloaded to `/opt/model-cache` (inside image layer) and copied to `/data/.cache` on first boot via `entrypoint.sh` (fixes: `/data` volume mount hid pre-downloaded model).
+- **External `entrypoint.sh`** instead of heredoc in Containerfile (GitHub Actions imagebuilder compatibility).
 - **TOTP code reuse for M2M**: API tokens with `totp_required=False` bypass TOTP entirely.
 - **`/publish/{id}` only accepted `processed` memories**: now accepts `raw` with `skip_quality_check=true`.
+- **Embeddings `/.cache` permission denied**: `HOME=/data` env var + pre-download in Containerfile.
+- **All 36 failing tests**: pytest-asyncio missing from dev deps + `load_config()` mock needed for `test_default_base_url`. 971/971 green.
 
 ## [2.6.1] — 2026-07-07
 
