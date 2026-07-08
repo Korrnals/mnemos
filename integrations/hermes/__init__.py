@@ -26,7 +26,8 @@ Config (in $HERMES_HOME/config.yaml under ``memory.mnemos``):
       provider: mnemos
       mnemos:
         base_url: "http://127.0.0.1:8787"     # Mnemos HTTP API
-        api_key: ""                            # Bearer token if auth enabled
+        api_key: ""                            # Bearer token (mnk_...) if auth enabled
+        totp_secret: ""                        # Base32 TOTP secret (if TOTP enrolled)
         project: "hermes"                      # default project tag
         agent: "hermes-default"                # default agent tag
         auto_sync: true                        # mirror built-in memory writes
@@ -36,7 +37,8 @@ Config (in $HERMES_HOME/config.yaml under ``memory.mnemos``):
 Or via env vars::
 
     MNEMOS_BASE_URL       — HTTP API base (default: http://127.0.0.1:8787)
-    MNEMOS_API_KEY        — Bearer token (default: empty)
+    MNEMOS_API_KEY        — Bearer token mnk_... (default: empty; empty = auth disabled)
+    MNEMOS_TOTP_SECRET    — Base32 TOTP secret for generating codes (default: empty)
     MNEMOS_PROJECT        — default project slug (default: hermes)
     MNEMOS_AGENT          — default agent slug (default: hermes-default)
     MNEMOS_AUTO_SYNC      — mirror builtin writes (default: true)
@@ -46,6 +48,8 @@ Or via env vars::
 HTTP endpoints used (confirmed from Mnemos source):
 
     GET  /health              → {status: ok}
+    POST /auth/login          → start auth flow (body: {token}) → challenge_id or session
+    POST /auth/verify         → complete TOTP challenge (body: {challenge_id, code}) → session
     POST /memories            → create memory (201, returns full Memory object)
     GET  /memories            → list recent (query: status, project, limit)
     GET  /memories/{id}       → read one
@@ -64,6 +68,35 @@ HTTP endpoints used (confirmed from Mnemos source):
     POST /watch/start         → start file watcher (NEW)
     POST /watch/stop          → stop file watcher (NEW)
     GET  /watch/status        → watcher status (NEW)
+
+Authentication flow:
+
+    When ``api_key`` is set (non-empty), the plugin authenticates with Mnemos
+    to obtain a **session token**, which is used as the ``Authorization: Bearer``
+    header for all subsequent API calls. The raw ``api_key`` (``mnk_...``) is
+    never sent directly to protected endpoints — only to ``/auth/login``.
+
+    The flow depends on server configuration:
+
+    1. **auth_enabled=false** (api_key empty):
+       No authentication. Requests are sent without an Authorization header.
+       This is the backward-compatible default.
+
+    2. **auth_enabled=true, totp_enabled=false** (api_key set, totp_secret empty):
+       POST /auth/login {"token": "mnk_..."} → {"session": "RQ7...", "expires_at": "..."}
+       The returned session token is cached and used for all API calls.
+
+    3. **auth_enabled=true, totp_enabled=true** (api_key + totp_secret both set):
+       a. POST /auth/login {"token": "mnk_..."} → {"challenge_id": "chg_...", "ttl_sec": 120}
+       b. Generate TOTP code from totp_secret (stdlib hmac/hashlib/base64/struct)
+       c. POST /auth/verify {"challenge_id": "chg_...", "code": "123456"}
+          → {"session": "RQ7...", "expires_at": "..."}
+       d. Cache session token + expiry; use for all API calls.
+
+    Session tokens are cached and refreshed automatically when they expire or
+    when a 401 response is received (single retry with re-login). The session
+    cache is protected by a lock for thread safety (background prefetch/sync
+    threads call the API concurrently).
 
 Tools exposed (all HTTP-backed, no more simulations):
     mnemos_search             — POST /search
@@ -85,9 +118,13 @@ Tools exposed (all HTTP-backed, no more simulations):
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
+import struct
 import threading
 import time
 from typing import Any
@@ -112,6 +149,36 @@ _BREAKER_COOLDOWN_SECS = 120
 # philosophy and avoids flooding memory with trivial exchanges.
 _SYNC_MIN_USER_CHARS = 50
 
+# ── Default session lifetime fallback (seconds) ───────────────────────────────
+# Used when the server does not return an expires_at or it is unparseable.
+_DEFAULT_SESSION_TTL = 3600
+
+# ── Session refresh safety margin (seconds) ───────────────────────────────────
+# Refresh the session this many seconds before it actually expires, to avoid
+# edge cases where the token expires between check and use.
+_SESSION_REFRESH_MARGIN = 10
+
+
+# ── TOTP code generation (stdlib, no pyotp) ───────────────────────────────────
+
+def _generate_totp(secret_b32: str, period: int = 30, digits: int = 6) -> str:
+    """Generate a TOTP code from a base32-encoded secret.
+
+    Equivalent to ``pyotp.TOTP(secret).now()`` using only stdlib
+    (hmac, hashlib, base64, struct, time).
+    """
+    # Pad/normalize base32 secret (pyotp tolerates missing padding)
+    s = secret_b32.strip().replace(" ", "").upper()
+    pad = (-len(s)) % 8
+    s = s + "=" * pad
+    key = base64.b32decode(s)
+    counter = int(time.time()) // period
+    msg = struct.pack(">Q", counter)
+    h = hmac.new(key, msg, hashlib.sha1).digest()
+    offset = h[-1] & 0x0F
+    code = struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF
+    return str(code % (10 ** digits)).zfill(digits)
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -126,6 +193,7 @@ def _load_config() -> dict:
     config: dict[str, Any] = {
         "base_url": os.environ.get("MNEMOS_BASE_URL", "http://127.0.0.1:8787"),
         "api_key": os.environ.get("MNEMOS_API_KEY", ""),
+        "totp_secret": os.environ.get("MNEMOS_TOTP_SECRET", ""),
         "project": os.environ.get("MNEMOS_PROJECT", "hermes"),
         "agent": os.environ.get("MNEMOS_AGENT", "hermes-default"),
         "auto_sync": os.environ.get("MNEMOS_AUTO_SYNC", "true").lower()
@@ -173,8 +241,17 @@ def _load_config() -> dict:
 
 # ── HTTP client helpers ───────────────────────────────────────────────────────
 
-def _post_json(url: str, body: dict, api_key: str = "", timeout: float = 10.0) -> Any:
+def _post_json(
+    url: str,
+    body: dict,
+    session: str = "",
+    timeout: float = 10.0,
+) -> Any:
     """POST JSON to the Mnemos API and return the parsed response.
+
+    ``session`` is a Mnemos **session token** (obtained via the /auth/login →
+    /auth/verify TOTP flow) used as ``Authorization: Bearer <session>``. When
+    empty, no Authorization header is sent (auth_enabled=false case).
 
     Raises ``HTTPError``/``URLError`` on network failures so callers can
     record circuit-breaker failures uniformly.
@@ -182,18 +259,27 @@ def _post_json(url: str, body: dict, api_key: str = "", timeout: float = 10.0) -
     data = json.dumps(body).encode("utf-8")
     req = Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
-    if api_key:
-        req.add_header("Authorization", f"Bearer {api_key}")
+    if session:
+        req.add_header("Authorization", f"Bearer {session}")
     with urlopen(req, timeout=timeout) as resp:
         payload = resp.read().decode("utf-8")
         return json.loads(payload) if payload else {}
 
 
-def _get_json(url: str, api_key: str = "", timeout: float = 10.0) -> Any:
-    """GET from the Mnemos API and return the parsed response."""
+def _get_json(
+    url: str,
+    session: str = "",
+    timeout: float = 10.0,
+) -> Any:
+    """GET from the Mnemos API and return the parsed response.
+
+    ``session`` is a Mnemos **session token** (obtained via the /auth/login →
+    /auth/verify TOTP flow) used as ``Authorization: Bearer <session>``. When
+    empty, no Authorization header is sent (auth_enabled=false case).
+    """
     req = Request(url, method="GET")
-    if api_key:
-        req.add_header("Authorization", f"Bearer {api_key}")
+    if session:
+        req.add_header("Authorization", f"Bearer {session}")
     with urlopen(req, timeout=timeout) as resp:
         payload = resp.read().decode("utf-8")
         return json.loads(payload) if payload else {}
@@ -658,6 +744,7 @@ class MnemosMemoryProvider(MemoryProvider):
         self._config = config or _load_config()
         self._base_url = self._config["base_url"].rstrip("/")
         self._api_key = self._config.get("api_key", "")
+        self._totp_secret = self._config.get("totp_secret", "")
         self._project = self._config.get("project", "hermes")
         self._agent = self._config.get("agent", "hermes-default")
         self._auto_sync = self._config.get("auto_sync", True)
@@ -688,9 +775,181 @@ class MnemosMemoryProvider(MemoryProvider):
         self._breaker_until = 0.0
         self._breaker_lock = threading.Lock()
 
+        # Auth session cache (Mnemos session token, distinct from session_id)
+        # When api_key is empty, auth is disabled and _session_token stays "".
+        self._session_token = ""
+        self._session_expires_at = 0.0  # unix epoch seconds, 0 = never logged in
+        self._auth_lock = threading.Lock()
+
     @property
     def name(self) -> str:
         return "mnemos"
+
+    # -- Auth / session management ─────────────────────────────────────────
+
+    def _auth_enabled(self) -> bool:
+        """Return True when authentication is required (api_key is set)."""
+        return bool(self._api_key)
+
+    def _ensure_session(self) -> str:
+        """Return a valid Mnemos session token, logging in if necessary.
+
+        - If auth is disabled (no api_key), returns "" (no Authorization header).
+        - If a cached session token is still valid, returns it immediately.
+        - Otherwise performs the /auth/login → /auth/verify TOTP flow (or just
+          /auth/login if no TOTP secret is configured) and caches the result.
+
+        Thread-safe: serializes login attempts via ``_auth_lock``. The fast
+        path (cached valid token) takes the lock only briefly to read the
+        cached values.
+        """
+        if not self._auth_enabled():
+            return ""
+
+        # Fast path: check cached token under lock, release before network I/O
+        with self._auth_lock:
+            if self._session_token and self._session_expires_at - _SESSION_REFRESH_MARGIN > time.time():
+                return self._session_token
+
+        # Slow path: (re)login. Hold the lock for the full flow so concurrent
+        # threads don't all login simultaneously.
+        with self._auth_lock:
+            # Re-check after acquiring the lock — another thread may have just
+            # refreshed the session while we were waiting.
+            if self._session_token and self._session_expires_at - _SESSION_REFRESH_MARGIN > time.time():
+                return self._session_token
+
+            try:
+                token, expires_at = self._do_login()
+            except Exception as e:
+                # Auth failure counts as a circuit-breaker failure so the
+                # plugin backs off when the credentials are bad or the server
+                # auth endpoints are flaky.
+                self._record_failure()
+                logger.warning("Mnemos auth login failed: %s", e)
+                raise
+
+            self._session_token = token
+            self._session_expires_at = expires_at
+            logger.debug(
+                "Mnemos session established, expires_at=%s",
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(expires_at)),
+            )
+            return token
+
+    def _do_login(self) -> tuple[str, float]:
+        """Perform the full login flow and return (session_token, expires_at).
+
+        - If ``totp_secret`` is set: POST /auth/login → challenge_id,
+          then POST /auth/verify with a generated TOTP code.
+        - If ``totp_secret`` is empty: POST /auth/login may return the
+          session directly (totp_enabled=false on the server).
+
+        Returns (session_token, expires_at_unix_seconds).
+        """
+        login_resp = _post_json(
+            f"{self._base_url}/auth/login",
+            {"token": self._api_key},
+            session="",  # login endpoint takes the raw bearer, no session yet
+            timeout=10.0,
+        )
+
+        # Case A: TOTP not enrolled → server returns session directly
+        if "session" in login_resp and login_resp["session"]:
+            session = login_resp["session"]
+            expires_at = self._parse_expires_at(login_resp.get("expires_at"))
+            return session, expires_at
+
+        # Case B: TOTP challenge → server returns challenge_id
+        challenge_id = login_resp.get("challenge_id")
+        if not challenge_id:
+            raise RuntimeError(
+                f"Mnemos /auth/login returned neither session nor challenge_id: {login_resp!r}"
+            )
+
+        if not self._totp_secret:
+            raise RuntimeError(
+                "Mnemos /auth/login returned a TOTP challenge_id but no "
+                "totp_secret is configured. Set MNEMOS_TOTP_SECRET."
+            )
+
+        code = _generate_totp(self._totp_secret)
+        verify_resp = _post_json(
+            f"{self._base_url}/auth/verify",
+            {"challenge_id": challenge_id, "code": code},
+            session="",
+            timeout=10.0,
+        )
+
+        session = verify_resp.get("session")
+        if not session:
+            raise RuntimeError(
+                f"Mnemos /auth/verify did not return a session token: {verify_resp!r}"
+            )
+        expires_at = self._parse_expires_at(verify_resp.get("expires_at"))
+        return session, expires_at
+
+    @staticmethod
+    def _parse_expires_at(expires_at: Any) -> float:
+        """Parse an expires_at value (ISO-8601 string or epoch) to unix seconds.
+
+        Falls back to ``_DEFAULT_SESSION_TTL`` seconds from now when the value
+        is missing or unparseable, so we always have a conservative expiry.
+        """
+        if not expires_at:
+            return time.time() + _DEFAULT_SESSION_TTL
+        if isinstance(expires_at, (int, float)):
+            return float(expires_at)
+        s = str(expires_at).strip()
+        # Try ISO-8601 (with optional trailing Z)
+        try:
+            iso = s.replace("Z", "+00:00")
+            import datetime
+            dt = datetime.datetime.fromisoformat(iso)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return dt.timestamp()
+        except (ValueError, TypeError):
+            pass
+        # Try bare epoch seconds
+        try:
+            return float(s)
+        except ValueError:
+            return time.time() + _DEFAULT_SESSION_TTL
+
+    def _invalidate_session(self) -> None:
+        """Clear the cached session token (e.g. after a 401 response)."""
+        with self._auth_lock:
+            self._session_token = ""
+            self._session_expires_at = 0.0
+
+    # -- Authenticated HTTP wrappers (with 401 retry) ──────────────────────
+
+    def _api_post_json(self, url: str, body: dict, timeout: float = 10.0) -> Any:
+        """POST with session auth; on 401, re-login and retry once."""
+        session = self._ensure_session()
+        try:
+            return _post_json(url, body, session=session, timeout=timeout)
+        except HTTPError as e:
+            if e.code == 401 and self._auth_enabled():
+                logger.debug("Mnemos 401 on POST %s — re-login + retry", url)
+                self._invalidate_session()
+                session = self._ensure_session()
+                return _post_json(url, body, session=session, timeout=timeout)
+            raise
+
+    def _api_get_json(self, url: str, timeout: float = 10.0) -> Any:
+        """GET with session auth; on 401, re-login and retry once."""
+        session = self._ensure_session()
+        try:
+            return _get_json(url, session=session, timeout=timeout)
+        except HTTPError as e:
+            if e.code == 401 and self._auth_enabled():
+                logger.debug("Mnemos 401 on GET %s — re-login + retry", url)
+                self._invalidate_session()
+                session = self._ensure_session()
+                return _get_json(url, session=session, timeout=timeout)
+            raise
 
     # -- Circuit breaker ───────────────────────────────────────────────────
 
@@ -732,7 +991,7 @@ class MnemosMemoryProvider(MemoryProvider):
         """
         try:
             health_url = f"{self._base_url}/health"
-            _get_json(health_url, api_key=self._api_key, timeout=3.0)
+            self._api_get_json(health_url, timeout=3.0)
             return True
         except Exception:
             return False
@@ -811,10 +1070,9 @@ class MnemosMemoryProvider(MemoryProvider):
                     "project": self._project,
                     "limit": self._prefetch_limit,
                 }
-                results = _post_json(
+                results = self._api_post_json(
                     f"{self._base_url}/search",
                     body,
-                    api_key=self._api_key,
                     timeout=5.0,
                 )
                 # /search may return a list or {"results": [...]}
@@ -900,10 +1158,9 @@ class MnemosMemoryProvider(MemoryProvider):
                         "turn": self._turn_counter,
                     },
                 }
-                _post_json(
+                self._api_post_json(
                     f"{self._base_url}/memories",
                     body,
-                    api_key=self._api_key,
                     timeout=10.0,
                 )
                 self._record_success()
@@ -1021,10 +1278,9 @@ class MnemosMemoryProvider(MemoryProvider):
         if tags:
             body["tags"] = tags
 
-        results = _post_json(
+        results = self._api_post_json(
             f"{self._base_url}/search",
             body,
-            api_key=self._api_key,
         )
         self._record_success()
 
@@ -1072,10 +1328,9 @@ class MnemosMemoryProvider(MemoryProvider):
         if memory_type:
             body["memory_type"] = memory_type
 
-        result = _post_json(
+        result = self._api_post_json(
             f"{self._base_url}/memories",
             body,
-            api_key=self._api_key,
         )
         self._record_success()
 
@@ -1111,10 +1366,9 @@ class MnemosMemoryProvider(MemoryProvider):
         if query:
             body["query"] = query
 
-        resp = _post_json(
+        resp = self._api_post_json(
             f"{self._base_url}/context/recall",
             body,
-            api_key=self._api_key,
         )
         self._record_success()
 
@@ -1170,10 +1424,9 @@ class MnemosMemoryProvider(MemoryProvider):
         if args.get("context"):
             body["context"] = args["context"]
 
-        result = _post_json(
+        result = self._api_post_json(
             f"{self._base_url}/context/save",
             body,
-            api_key=self._api_key,
         )
         self._record_success()
 
@@ -1203,7 +1456,7 @@ class MnemosMemoryProvider(MemoryProvider):
         if query:
             url += f"&q={quote_plus(query)}"
 
-        results = _get_json(url, api_key=self._api_key)
+        results = self._api_get_json(url)
         self._record_success()
 
         if isinstance(results, dict):
@@ -1243,7 +1496,7 @@ class MnemosMemoryProvider(MemoryProvider):
         if status and status != "all":
             url += f"&status={quote_plus(status)}"
 
-        results = _get_json(url, api_key=self._api_key)
+        results = self._api_get_json(url)
         self._record_success()
 
         if isinstance(results, dict):
@@ -1266,9 +1519,8 @@ class MnemosMemoryProvider(MemoryProvider):
 
     def _handle_list_tags(self, args: dict) -> str:
         """GET /tags — list all tags with counts."""
-        results = _get_json(
+        results = self._api_get_json(
             f"{self._base_url}/tags",
-            api_key=self._api_key,
         )
         self._record_success()
 
@@ -1291,9 +1543,8 @@ class MnemosMemoryProvider(MemoryProvider):
 
     def _handle_stats(self, args: dict) -> str:
         """GET /metrics — store statistics."""
-        results = _get_json(
+        results = self._api_get_json(
             f"{self._base_url}/metrics",
-            api_key=self._api_key,
         )
         self._record_success()
         return json.dumps({"results": results})
@@ -1307,9 +1558,8 @@ class MnemosMemoryProvider(MemoryProvider):
         topic drift, and a recommendation on whether a checkpoint is
         warranted.
         """
-        result = _get_json(
+        result = self._api_get_json(
             f"{self._base_url}/auto-collect",
-            api_key=self._api_key,
         )
         self._record_success()
         return json.dumps(result)
@@ -1330,10 +1580,9 @@ class MnemosMemoryProvider(MemoryProvider):
         if project:
             body["project"] = project
 
-        result = _post_json(
+        result = self._api_post_json(
             f"{self._base_url}/compress",
             body,
-            api_key=self._api_key,
         )
         self._record_success()
         return json.dumps(result)
@@ -1352,10 +1601,9 @@ class MnemosMemoryProvider(MemoryProvider):
         if snippet_count is not None:
             body["snippet_count"] = int(snippet_count)
 
-        result = _post_json(
+        result = self._api_post_json(
             f"{self._base_url}/retrieve",
             body,
-            api_key=self._api_key,
         )
         self._record_success()
         return json.dumps(result)
@@ -1374,10 +1622,9 @@ class MnemosMemoryProvider(MemoryProvider):
 
         body: dict[str, Any] = {"url": url, "tags": tags}
 
-        result = _post_json(
+        result = self._api_post_json(
             f"{self._base_url}/ingest-url",
             body,
-            api_key=self._api_key,
         )
         self._record_success()
         return json.dumps(result)
@@ -1395,29 +1642,26 @@ class MnemosMemoryProvider(MemoryProvider):
         if include_rules is not None:
             body["include_rules"] = include_rules
 
-        result = _post_json(
+        result = self._api_post_json(
             f"{self._base_url}/watch/start",
             body,
-            api_key=self._api_key,
         )
         self._record_success()
         return json.dumps(result)
 
     def _handle_watch_stop(self, args: dict) -> str:
         """POST /watch/stop — stop the background file watcher."""
-        result = _post_json(
+        result = self._api_post_json(
             f"{self._base_url}/watch/stop",
             {},
-            api_key=self._api_key,
         )
         self._record_success()
         return json.dumps(result)
 
     def _handle_watch_status(self, args: dict) -> str:
         """GET /watch/status — report current watcher state."""
-        result = _get_json(
+        result = self._api_get_json(
             f"{self._base_url}/watch/status",
-            api_key=self._api_key,
         )
         self._record_success()
         return json.dumps(result)
@@ -1463,10 +1707,9 @@ class MnemosMemoryProvider(MemoryProvider):
                     **(metadata or {}),
                 },
             }
-            _post_json(
+            self._api_post_json(
                 f"{self._base_url}/memories",
                 body,
-                api_key=self._api_key,
                 timeout=5.0,
             )
             self._record_success()
@@ -1573,10 +1816,9 @@ class MnemosMemoryProvider(MemoryProvider):
                         "assistant_msg_count": len(assistant_msgs),
                     },
                 }
-                _post_json(
+                self._api_post_json(
                     f"{self._base_url}/memories",
                     body,
-                    api_key=self._api_key,
                     timeout=10.0,
                 )
                 self._record_success()
@@ -1647,9 +1889,18 @@ class MnemosMemoryProvider(MemoryProvider):
             },
             {
                 "key": "api_key",
-                "description": "Bearer token (if Mnemos auth enabled)",
+                "description": "Bearer token mnk_... (if Mnemos auth enabled; empty = auth disabled)",
                 "secret": True,
                 "env_var": "MNEMOS_API_KEY",
+            },
+            {
+                "key": "totp_secret",
+                "description": (
+                    "Base32 TOTP secret for generating 2FA codes during login. "
+                    "Required only when Mnemos has totp_enabled=true for this token."
+                ),
+                "secret": True,
+                "env_var": "MNEMOS_TOTP_SECRET",
             },
             {
                 "key": "project",
