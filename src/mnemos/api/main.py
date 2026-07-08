@@ -162,9 +162,18 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     auth_store = AuthStore(settings.db_path)
     application.state.auth_store = auth_store
 
+    # Start the background processor so raw memories added via the HTTP
+    # API are automatically clustered → synthesized → quality-gated →
+    # published + vector-indexed. Without this, POST /memories leaves
+    # memories in `raw` status forever (queue grows, last_processed_at
+    # stays None) — the same bug previously fixed for the MCP server
+    # (see CHANGELOG [2.3.0] "Background processor not running").
+    mgr.start_background_processor()
+
     try:
         yield
     finally:
+        mgr.stop_background_processor()
         store.close()
         auth_store.close()
         if _manager is not None:
