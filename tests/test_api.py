@@ -524,7 +524,11 @@ class TestTags:
 
     def test_structure_stable_order(self, client):
         """Verify list (not dict) - order is deterministic (count desc)."""
-        for content, tag in [("A", "mnemos:learning"), ("B", "mnemos:learning"), ("C", "mnemos:decision")]:
+        for content, tag in [
+            ("A", "mnemos:learning"),
+            ("B", "mnemos:learning"),
+            ("C", "mnemos:decision"),
+        ]:
             client.post(
                 "/memories",
                 json={

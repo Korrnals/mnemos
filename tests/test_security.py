@@ -36,7 +36,10 @@ def manager():
 
 @pytest.fixture
 def sample_memory(manager):
-    data = MemoryCreate(content="sample content", tags=["project:test", "agent:test", "mnemos:test"])
+    data = MemoryCreate(
+        content="sample content",
+        tags=["project:test", "agent:test", "mnemos:test"],
+    )
     return manager.add(data, project="test", agent="test")
 
 
