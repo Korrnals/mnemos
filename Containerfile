@@ -31,15 +31,31 @@ COPY scripts/ ./scripts/
 RUN pip install --no-cache-dir ".[mcp]"
 
 # Pre-download ChromaDB's default embedding model (all-MiniLM-L6-v2 ONNX, ~90MB)
-# so vector search works offline out of the box. Set HOME so ChromaDB's
-# Path.home() / .cache / chroma resolves to a writable location.
+# so vector search works offline out of the box.
+# NOTE: /data is a volume mount at runtime — anything written there during build
+# is hidden. We pre-download to /opt/model-cache and copy to /data on startup.
 ENV HOME=/data
-RUN mkdir -p /data/.cache/chroma/onnx_models/all-MiniLM-L6-v2 && \
-    python3 -c "\
+RUN mkdir -p /opt/model-cache/.cache/chroma/onnx_models/all-MiniLM-L6-v2 && \
+    HOME=/opt/model-cache python3 -c "\
 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; \
 DefaultEmbeddingFunction() \
 " && \
-    echo 'Embedding model pre-downloaded successfully'
+    echo 'Embedding model pre-downloaded to /opt/model-cache'
+
+# Entrypoint script: copies pre-downloaded model into the mounted PVC on first boot
+RUN cat > /app/entrypoint.sh <<'SCRIPT'
+#!/bin/bash
+set -e
+# Copy embedding model cache to PVC if not already present
+if [ ! -d /data/.cache/chroma/onnx_models/all-MiniLM-L6-v2 ]; then
+    echo "[entrypoint] Copying pre-downloaded embedding model to /data ..."
+    mkdir -p /data/.cache/chroma
+    cp -r /opt/model-cache/.cache/chroma/* /data/.cache/chroma/ 2>/dev/null || true
+    echo "[entrypoint] Embedding model ready."
+fi
+exec "$@"
+SCRIPT
+RUN chmod +x /app/entrypoint.sh
 
 # Default directories
 RUN mkdir -p /data /vault
@@ -53,4 +69,5 @@ ENV MNEMOS_CONFIG=/app/config.yaml
 EXPOSE 8787
 
 # Default: HTTP API server (mnemos serve wraps fastapi + uvicorn)
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["mnemos", "serve"]
