@@ -376,6 +376,54 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}},
         ),
         Tool(
+            name="mnemos_tags_rename",
+            description=(
+                "Bulk rename tags matching from_prefix:<subtype> → "
+                "to_prefix:<subtype> across existing memories. Safe: uses "
+                "UPDATE (FTS5 stays consistent), dry_run=true by default, "
+                "idempotent. Use to migrate gcw: → mnemos: tags."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "from_prefix": {
+                        "type": "string",
+                        "description": "Source prefix, e.g. 'gcw:'",
+                    },
+                    "to_prefix": {
+                        "type": "string",
+                        "description": "Target prefix, e.g. 'mnemos:'",
+                    },
+                    "subtypes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional whitelist of subtypes to rename",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Preview without writing (default true)",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Scope to a project slug (optional)",
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Scope to an agent slug (optional)",
+                    },
+                    "invalid_subtypes_to_legacy": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Rename invalid subtypes to <to_prefix>legacy instead of skipping them"
+                        ),
+                    },
+                },
+                "required": ["from_prefix", "to_prefix"],
+            },
+        ),
+        Tool(
             name="mnemos_ingest_url",
             description="Fetch a web page, extract its content, and save to memory.",
             inputSchema={
@@ -683,6 +731,18 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     # ── mnemos_list_tags ────────────────────────────────────────────────────
     if name == "mnemos_list_tags":
         return mgr.list_tags()
+
+    # ── mnemos_tags_rename ──────────────────────────────────────────────────
+    if name == "mnemos_tags_rename":
+        return mgr.tags_rename(
+            from_prefix=args["from_prefix"],
+            to_prefix=args["to_prefix"],
+            subtypes=args.get("subtypes"),
+            dry_run=args.get("dry_run", True),
+            project=args.get("project"),
+            agent=args.get("agent"),
+            invalid_subtypes_to_legacy=args.get("invalid_subtypes_to_legacy", False),
+        )
 
     # ── mnemos_stats ────────────────────────────────────────────────────────
     if name == "mnemos_stats":

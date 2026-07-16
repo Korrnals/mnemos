@@ -115,6 +115,65 @@ mnemos_add(
 
 ---
 
+## Bulk tag rename (`gcw:` → `mnemos:` and other prefix changes)
+
+The `mnemos tags rename` command (and the equivalent `mnemos_tags_rename`
+MCP tool / `POST /tags/rename` HTTP endpoint) bulk-renames tags matching a
+source prefix to a target prefix across existing memories. It is the safe
+replacement for the deprecated `mnemos migrate tags` subcommand.
+
+```bash
+# Dry-run first — preview only, nothing written (default)
+mnemos tags rename --from gcw: --to mnemos: --dry-run
+
+# Apply the rename
+mnemos tags rename --from gcw: --to mnemos: --no-dry-run
+
+# Restrict to specific subtypes
+mnemos tags rename --from gcw: --to mnemos: --subtypes decision --subtypes learning --no-dry-run
+
+# Scope to a single project / agent
+mnemos tags rename --from gcw: --to mnemos: --project mnemos --no-dry-run
+
+# Send invalid subtypes to <to_prefix>legacy instead of skipping them
+mnemos tags rename --from gcw: --to mnemos: --invalid-to-legacy --no-dry-run
+```
+
+**Why this is safe:** the rename goes through `SQLiteStore.update_fields`
+(a plain `UPDATE`), so the FTS5 `AFTER UPDATE` trigger fires and the
+external-content index stays consistent — unlike the old `migrate tags`
+path which used raw `sqlite3` writes and bypassed the trigger. The
+operation is **idempotent**: a second run with the same arguments reports
+`renamed=0` because the `from_prefix:` tags no longer exist.
+
+**Re-embedding:** vectors are keyed by `memory_id` and the embedded text
+is derived from `title + content + tags`. Tags are part of the embedded
+text, so a rename *technically* changes the embedding input, but the
+contribution is small relative to content. The rename deliberately does
+**not** re-embed — semantic search continues to work because the stored
+vectors still point to the same memory ids and the FTS5 leg (which reflects
+the new tags via the trigger) carries tag-filtered queries. If exact
+tag-vector alignment is required, run `mnemos reindex` afterwards.
+
+**Audit trail:** each call writes a single row to the trace table with
+`step="tags_rename"` recording the prefixes, dry-run flag, and counts.
+
+The report returned (and printed by the CLI) has the shape:
+
+```json
+{
+  "scanned": 42,
+  "renamed": 18,
+  "skipped_invalid": 0,
+  "errors": [],
+  "dry_run": false,
+  "from_prefix": "gcw:",
+  "to_prefix": "mnemos:"
+}
+```
+
+---
+
 ## Migration guide (from ai-brain)
 
 ai-brain had no required tag schema. Migrating:

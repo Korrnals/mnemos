@@ -400,6 +400,103 @@ def tags_normalize(
             console.print(f"  {entry}")
 
 
+@_tags_app.command(name="rename")
+def tags_rename(
+    from_prefix: Annotated[
+        str,
+        typer.Option(
+            "--from",
+            help="Source prefix (e.g. 'gcw:'). Must end with ':'",
+        ),
+    ],
+    to_prefix: Annotated[
+        str,
+        typer.Option(
+            "--to",
+            help="Target prefix (e.g. 'mnemos:'). Must end with ':'",
+        ),
+    ],
+    subtypes: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--subtypes",
+            help="Restrict rename to these subtypes (repeatable). Default: all.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview changes without writing to the database (default: True).",
+        ),
+    ] = True,
+    no_dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--no-dry-run",
+            help="Actually write the rename (overrides --dry-run).",
+        ),
+    ] = False,
+    project: Annotated[
+        str | None,
+        typer.Option("--project", help="Scope the scan to a project slug."),
+    ] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option("--agent", help="Scope the scan to an agent slug."),
+    ] = None,
+    invalid_to_legacy: Annotated[
+        bool,
+        typer.Option(
+            "--invalid-to-legacy",
+            help="Rename invalid subtypes to <to_prefix>legacy instead of skipping.",
+        ),
+    ] = False,
+    config: str = ConfigOption,
+) -> None:
+    """Bulk rename tags matching ``--from <prefix>`` → ``--to <prefix>``.
+
+    Safe replacement for ``mnemos migrate tags``. Uses ``update_fields``
+    (plain UPDATE) so the FTS5 external-content index stays consistent.
+    Idempotent — a second run with the same args reports ``renamed=0``.
+
+    Default is ``--dry-run`` (preview only). Pass ``--no-dry-run`` to apply.
+    """
+
+    mgr = get_manager(config)
+    report = mgr.tags_rename(
+        from_prefix=from_prefix,
+        to_prefix=to_prefix,
+        subtypes=subtypes,
+        dry_run=dry_run and not no_dry_run,
+        project=project,
+        agent=agent,
+        invalid_subtypes_to_legacy=invalid_to_legacy,
+    )
+
+    table = Table(title="Tags rename report", show_header=True, header_style="bold")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_row("From prefix", str(report["from_prefix"]))
+    table.add_row("To prefix", str(report["to_prefix"]))
+    table.add_row("Scanned", str(report["scanned"]))
+    table.add_row("Renamed", str(report["renamed"]))
+    table.add_row("Skipped (invalid)", str(report["skipped_invalid"]))
+    table.add_row("Errors", str(len(report["errors"])))
+    if report["dry_run"]:
+        table.add_row("Mode", "[yellow]dry-run (no writes)[/yellow]")
+    else:
+        table.add_row("Mode", "[green]applied[/green]")
+    console.print(table)
+
+    if report["errors"]:
+        console.print("\n[bold red]Errors:[/bold red]")
+        for err in report["errors"][:20]:
+            console.print(f"  - {err}")
+        if len(report["errors"]) > 20:
+            console.print(f"  ... ({len(report['errors']) - 20} more)")
+
+
 # ── stats ──────────────────────────────────────────────────────────────────────
 
 
@@ -652,12 +749,20 @@ def migrate_tags(
 ) -> None:
     """Migrate legacy gcw: tags to mnemos: tags in the database.
 
-    Converts all ``gcw:<subtype>`` tags in existing memories to
-    ``mnemos:<subtype>``. Idempotent — safe to run multiple times.
+    .. deprecated::
+        Use ``mnemos tags rename --from gcw: --to mnemos: --no-dry-run``
+        instead. This command now delegates to the safe ``tags_rename``
+        path (plain UPDATE via ``update_fields``) so the FTS5 index stays
+        consistent. The old raw-``sqlite3`` implementation in
+        ``cli.migrate.migrate_gcw_to_mnemos_tags`` is no longer called.
     """
-    from mnemos.cli.migrate import migrate_gcw_to_mnemos_tags
+    console.print(
+        "[yellow]⚠ migrate tags is deprecated — use "
+        "`mnemos tags rename --from gcw: --to mnemos: --no-dry-run` instead.[/yellow]"
+    )
 
-    settings = load_settings(config)
+    mgr = get_manager(config)
+    settings = mgr.settings
     settings.resolve_paths()
     settings.apply_runtime_env()
     db_path = settings.db_path
@@ -666,12 +771,19 @@ def migrate_tags(
         console.print(f"[red]✗[/red] Database not found: {db_path}")
         raise typer.Exit(1)
 
-    with console.status("[bold green]Migrating gcw: → mnemos: tags..."):
-        summary = migrate_gcw_to_mnemos_tags(db_path)
+    with console.status("[bold green]Migrating gcw: → mnemos: tags (safe path)..."):
+        report = mgr.tags_rename(
+            from_prefix="gcw:",
+            to_prefix="mnemos:",
+            dry_run=False,
+            invalid_subtypes_to_legacy=True,
+        )
 
-    console.print(f"[green]✓[/green] Memories updated: {summary['memories_updated']}")
-    console.print(f"[green]✓[/green] Tags converted: {summary['tags_converted']}")
-    if summary["memories_updated"] == 0:
+    console.print(f"[green]✓[/green] Memories renamed: {report['renamed']}")
+    console.print(f"[green]✓[/green] Skipped (invalid): {report['skipped_invalid']}")
+    if report["errors"]:
+        console.print(f"[yellow]⚠[/yellow] Errors: {len(report['errors'])}")
+    if report["renamed"] == 0 and not report["errors"]:
         console.print("[cyan]No gcw: tags found — nothing to migrate.[/cyan]")
 
 

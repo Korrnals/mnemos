@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml"><img src="https://github.com/Korrnals/mnemos/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776ab" alt="Python"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-3776ab" alt="Python"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
   <a href="https://github.com/Korrnals/mnemos/releases"><img src="https://img.shields.io/github/v/release/Korrnals/mnemos?label=version&color=blueviolet" alt="Version"></a>
 </p>
