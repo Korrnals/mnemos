@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-07-16
+
 ### Added
 - **`mnemos_tags_rename` MCP tool** — bulk rename tags matching `from_prefix:<subtype>` → `to_prefix:<subtype>` across existing memories. Safe: uses `update_fields` (plain UPDATE) so the FTS5 external-content index stays consistent. `dry_run=true` by default, idempotent. Use to migrate `gcw:` → `mnemos:` tags (#79).
 - **`POST /tags/rename` HTTP endpoint** — mirrors the MCP tool with Pydantic request model (`TagsRenameRequest`), `dry_run=true` default.
