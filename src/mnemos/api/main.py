@@ -566,6 +566,18 @@ class TagCount(BaseModel):
     count: int
 
 
+class TagsRenameRequest(BaseModel):
+    """Request body for POST /tags/rename — mirrors ``mnemos_tags_rename``."""
+
+    from_prefix: str
+    to_prefix: str
+    subtypes: list[str] | None = None
+    dry_run: bool = True
+    project: str | None = None
+    agent: str | None = None
+    invalid_subtypes_to_legacy: bool = False
+
+
 @app.get("/tags", response_model=list[TagCount])
 async def list_tags() -> list[TagCount]:
     """Return all tags with their memory counts, sorted by count descending."""
@@ -576,6 +588,28 @@ async def list_tags() -> list[TagCount]:
     # ascending as a stable, deterministic tie-breaker.
     ordered = sorted(raw.items(), key=lambda kv: (-kv[1], kv[0]))
     return [TagCount(tag=t, count=c) for t, c in ordered]
+
+
+@app.post("/tags/rename")
+async def rename_tags(req: TagsRenameRequest) -> dict[str, Any]:
+    """Bulk rename tags matching ``from_prefix:<subtype>`` → ``to_prefix:<subtype>``.
+
+    Mirrors the ``mnemos_tags_rename`` MCP tool and the ``mnemos tags rename``
+    CLI command. Safe: uses ``update_fields`` (plain UPDATE) so the FTS5
+    external-content index stays consistent. ``dry_run=true`` by default —
+    nothing is written unless the caller explicitly sets ``dry_run=false``.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    return mgr.tags_rename(
+        from_prefix=req.from_prefix,
+        to_prefix=req.to_prefix,
+        subtypes=req.subtypes,
+        dry_run=req.dry_run,
+        project=req.project,
+        agent=req.agent,
+        invalid_subtypes_to_legacy=req.invalid_subtypes_to_legacy,
+    )
 
 
 # ── Traces (M6) ────────────────────────────────────────────────────────────────

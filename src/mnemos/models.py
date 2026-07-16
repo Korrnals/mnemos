@@ -60,6 +60,12 @@ MNEMOS_TAG_SUBTYPES: frozenset[str] = frozenset(
         "open-question",
         "checkpoint",
         "legacy",
+        # Pipeline-synthesised entries (output of the synthesis worker, not
+        # agent-authored). Mirrors MemorySource.SYNTHESIZED — the concept
+        # already exists, the tag subtype now catches up so synthesised
+        # memories can carry a valid mnemos: category instead of falling
+        # back to mnemos:legacy.
+        "synthesized",
     }
 )
 

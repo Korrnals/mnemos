@@ -54,6 +54,31 @@ After migration, review and retag important entries:
 mnemos search "project:legacy" --limit 50
 ```
 
+## Migrating `gcw:` tags → `mnemos:` tags
+
+If your store contains memories with the legacy `gcw:<subtype>` tag prefix
+(from the pre-2.7.8 GCW agent family), rename them in bulk to the canonical
+`mnemos:<subtype>` prefix using the safe `tags rename` command:
+
+```bash
+# Dry-run first — preview the change, nothing written (default)
+mnemos tags rename --from gcw: --to mnemos: --dry-run
+
+# Apply the rename
+mnemos tags rename --from gcw: --to mnemos: --no-dry-run
+```
+
+Notes:
+- `validate_tag_contract()` already auto-migrates valid `gcw:<subtype>` →
+  `mnemos:<subtype>` on read, so `gcw:` tags are accepted as an alias. The
+  bulk rename is a one-time housekeeping step to canonicalise the stored tags.
+- Invalid `gcw:` subtypes (not in the whitelist) are skipped by default and
+  counted in `skipped_invalid`. Pass `--invalid-to-legacy` to rename them to
+  `mnemos:legacy` instead of skipping.
+- The operation is **idempotent** — a second run reports `renamed=0`.
+- The deprecated `mnemos migrate tags` command now delegates to this safe path
+  and emits a deprecation warning. Prefer `mnemos tags rename` directly.
+
 ## Post-migration checklist
 
 - [ ] `mnemos stats` shows expected memory count
