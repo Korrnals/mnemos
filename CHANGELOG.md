@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`mnemos_tags_rename` MCP tool** — bulk rename tags matching `from_prefix:<subtype>` → `to_prefix:<subtype>` across existing memories. Safe: uses `update_fields` (plain UPDATE) so the FTS5 external-content index stays consistent. `dry_run=true` by default, idempotent. Use to migrate `gcw:` → `mnemos:` tags (#79).
+- **`POST /tags/rename` HTTP endpoint** — mirrors the MCP tool with Pydantic request model (`TagsRenameRequest`), `dry_run=true` default.
+- **`mnemos tags rename` CLI subcommand** — `mnemos tags rename --from gcw: --to mnemos: --no-dry-run`. Parity with `mnemos tags normalize` / `mnemos tags validate`.
+- **`mnemos:synthesized` whitelist subtype** — pipeline-synthesised entries now carry a valid `mnemos:` category instead of falling back to `mnemos:legacy`. `gcw:synthesized` auto-migrates to `mnemos:synthesized` via `validate_tag_contract`.
+
+### Fixed
+- **CLI/MCP startup crash (typer Option double-name)** — `mnemos tags rename` declared `typer.Option("--from", "from_prefix", ...)` where the second positional string was parsed as an additional option name, clashing with the auto-registered parameter name → `TypeError: Name 'from_prefix' defined twice`. This broke **every** CLI invocation and MCP server startup. Removed the redundant second positional string from `from_prefix` and `to_prefix` options (#80).
+
+### Deprecated
+- **`mnemos migrate tags`** — deprecated; emits a warning and delegates to the safe `tags_rename` path. Use `mnemos tags rename --from gcw: --to mnemos: --no-dry-run` instead. The old raw-`sqlite3` implementation is no longer called.
 
 ## [2.7.8] - 2026-07-09
 

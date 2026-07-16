@@ -452,6 +452,175 @@ class MemoryManager:
     def list_tags(self) -> dict[str, int]:
         return self.sqlite.get_all_tags()
 
+    def tags_rename(
+        self,
+        from_prefix: str,
+        to_prefix: str,
+        *,
+        subtypes: list[str] | None = None,
+        dry_run: bool = True,
+        project: str | None = None,
+        agent: str | None = None,
+        invalid_subtypes_to_legacy: bool = False,
+    ) -> dict[str, Any]:
+        """Bulk rename tags matching ``from_prefix:<subtype>`` → ``to_prefix:<subtype>``.
+
+        Replaces the unsafe ``mnemos migrate tags`` path (which used raw
+        ``sqlite3`` writes and bypassed the FTS5 ``AFTER UPDATE`` trigger).
+        This method goes through ``SQLiteStore.update_fields`` (a plain
+        ``UPDATE``), so the FTS5 external-content index stays consistent —
+        the ``memories_au`` trigger fires on UPDATE, exactly like
+        ``tags_normalize``.
+
+        Args:
+            from_prefix: Source prefix without the subtype (e.g. ``"gcw:"``).
+            to_prefix: Target prefix without the subtype (e.g. ``"mnemos:"``).
+            subtypes: Optional whitelist — only rename these subtypes.
+                ``None`` means "all subtypes present on matching tags".
+            dry_run: When ``True`` (default) nothing is written; the report
+                describes what *would* happen. When ``False`` the rename is
+                applied via ``update_fields``.
+            project: Scope the scan to a single project slug (pre-filters
+                via ``list_all(project=...)`` to reduce rows inspected).
+            agent: Scope the scan to a single agent slug.
+            invalid_subtypes_to_legacy: When ``False`` (default) a tag whose
+                subtype is not in ``MNEMOS_TAG_SUBTYPES`` is skipped and
+                counted in ``skipped_invalid``. When ``True`` it is renamed
+                to ``<to_prefix>legacy`` instead.
+
+        Returns:
+            ``{"scanned": N, "renamed": N, "skipped_invalid": N,
+            "errors": [...]}``. In dry-run mode ``renamed`` reflects what
+            *would* be renamed; nothing is written.
+
+        Idempotency:
+            A second run with the same arguments returns ``renamed=0``
+            because the ``from_prefix:`` tags no longer exist.
+
+        Vector store:
+            The vector index is keyed by ``memory_id`` (see
+            ``VectorStore.upsert``) and the embedded text is derived from
+            ``title + content + tags`` (see ``_embedding_text``). Tags ARE
+            part of the embedded text, so renaming tags *technically*
+            changes the embedding input. However, re-embedding on every
+            tag rename is expensive and the tag contribution to semantic
+            similarity is small relative to content. We deliberately do
+            NOT re-embed here — semantic search continues to work because
+            the stored vectors still point to the same memory ids and the
+            FTS5 leg (which DOES reflect the new tags via the AFTER UPDATE
+            trigger) carries tag-filtered queries. If exact tag-vector
+            alignment is required, run ``mnemos reindex`` afterwards.
+        """
+        from mnemos.models import MNEMOS_TAG_SUBTYPES, validate_tag_contract
+        from mnemos.traces import TraceRecorder
+
+        report: dict[str, Any] = {
+            "scanned": 0,
+            "renamed": 0,
+            "skipped_invalid": 0,
+            "errors": [],
+            "dry_run": dry_run,
+            "from_prefix": from_prefix,
+            "to_prefix": to_prefix,
+        }
+
+        # Validate prefix shapes early — must end with ":" so we don't
+        # accidentally match `project:` when the caller means `gcw:`.
+        if not from_prefix.endswith(":") or not to_prefix.endswith(":"):
+            report["errors"].append("prefixes must end with ':' (e.g. 'gcw:', 'mnemos:')")
+            return report
+
+        subtype_filter = set(subtypes) if subtypes else None
+        page_size = 500
+        offset = 0
+        # Trace the rename as a single audit row (one per call, not per row).
+        recorder = TraceRecorder(store=self.sqlite)
+
+        while True:
+            batch = self.sqlite.list_all(
+                limit=page_size, offset=offset, project=project, agent=agent
+            )
+            if not batch:
+                break
+            offset += len(batch)
+
+            for mem in batch:
+                report["scanned"] += 1
+                new_tags: list[str] = []
+                modified = False
+                for tag in mem.tags:
+                    if tag.startswith(from_prefix):
+                        subtype = tag[len(from_prefix) :]
+                        # Apply optional subtype whitelist.
+                        if subtype_filter is not None and subtype not in subtype_filter:
+                            new_tags.append(tag)
+                            continue
+                        # Decide target subtype.
+                        if subtype in MNEMOS_TAG_SUBTYPES:
+                            target = to_prefix + subtype
+                        elif invalid_subtypes_to_legacy:
+                            target = to_prefix + "legacy"
+                        else:
+                            report["skipped_invalid"] += 1
+                            new_tags.append(tag)
+                            continue
+                        new_tags.append(target)
+                        if target != tag:
+                            modified = True
+                    else:
+                        new_tags.append(tag)
+
+                if not modified:
+                    continue
+
+                # Re-validate the resulting tag set — must pass the contract.
+                try:
+                    validate_tag_contract(new_tags, strict=False)
+                except Exception as exc:  # report, don't crash the batch
+                    report["errors"].append(f"{mem.id}: {exc}")
+                    continue
+
+                report["renamed"] += 1
+                if dry_run:
+                    continue
+
+                # Re-derive denormalised project/agent from the new tag set.
+                # For gcw:→mnemos: these are unchanged (project:/agent: are
+                # not prefixed by gcw:), but the method is generic — a
+                # prefix change that touched project:/agent: must update the
+                # denormalised columns too, otherwise per-project / per-agent
+                # queries drift from the tags.
+                new_project = next(
+                    (t[len("project:") :] for t in new_tags if t.startswith("project:")),
+                    mem.project,
+                )
+                new_agent = next(
+                    (t[len("agent:") :] for t in new_tags if t.startswith("agent:")),
+                    mem.agent,
+                )
+                try:
+                    self.sqlite.update_fields(
+                        mem.id,
+                        tags=new_tags,
+                        project=new_project,
+                        agent=new_agent,
+                    )
+                except Exception as exc:  # record, continue batch
+                    report["errors"].append(f"{mem.id}: {exc}")
+
+        # Audit trail — one trace row per rename call.
+        with recorder.record(
+            task_label="tags_rename",
+            project=project or "*",
+            step="tags_rename",
+        ) as trace:
+            trace.rationale_summary = (
+                f"{from_prefix}→{to_prefix} dry_run={dry_run} "
+                f"renamed={report['renamed']} skipped={report['skipped_invalid']}"
+            )[:200]
+
+        return report
+
     def search_stats(self) -> dict[str, Any]:
         """Return in-memory search instrumentation (resets on restart)."""
         with self._search_stats_lock:
