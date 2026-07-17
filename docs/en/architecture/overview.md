@@ -141,24 +141,109 @@ FTS5 is kept in sync via `AFTER INSERT/DELETE/UPDATE` triggers — no applicatio
 
 | Mechanism | Default | When it runs |
 |-----------|---------|--------------|
-| TTL expiry | 7 days | Explicit `ccr_cleanup()` (CLI / scheduler) |
+| TTL expiry | 7 days | `ccr_cleanup()` — runs automatically from the background processor on its own interval (T3), or via the CLI |
 | LRU eviction | 10000 entries | Opportunistic, on every `compress` call |
 
-TTL cleanup is not run on every compress call (avoids the scan cost); invoke it via the CLI or a scheduler.
+Since T3 (v2.9.0), `ccr_cleanup()` is invoked from `_processor_loop` on its own interval (`ccr_cleanup_interval_sec`, default 1200s = 20 min) — not on every processor cycle, to avoid scanning the cache table every `interval_sec`. It is guarded by `ccr.enabled` and wrapped in a try/except so a cleanup failure never crashes the processor loop.
 
 #### Configuration
 
 ```yaml
 ccr:
-  enabled: true            # master switch
-  ttl_days: 7             # cache entry lifetime
-  max_entries: 10000      # LRU eviction threshold
-  min_size_chars: 500     # below this, content is returned as-is
-  snippet_count: 5        # snippets returned by retrieve(query=...)
-  filter_budget: 4096     # token budget passed to apply_filter
+  enabled: true                    # master switch
+  ttl_days: 7                      # cache entry lifetime
+  max_entries: 10000               # LRU eviction threshold
+  min_size_chars: 500              # below this, content is returned as-is
+  snippet_count: 5                 # snippets returned by retrieve(query=...)
+  filter_budget: 4096              # token budget passed to apply_filter
+  ccr_cleanup_interval_sec: 1200   # T3: background cleanup interval (60–86400s)
 ```
 
 Content below `min_size_chars` is returned as-is with `cached=false` and `reduction_pct=0` — tiny content has no token savings.
+
+### CacheAligner (P1-5)
+
+CacheAligner stabilizes the prefix of system-prompt-like text so provider KV caches (Anthropic `cache_control`, OpenAI prefix caching) hit across requests. It extracts dynamic content — ISO timestamps, UUIDs, session ids, short-lived tokens, calendar dates — and relocates each span to a `--- Dynamic context ---` block at the end. The prefix up to the first dynamic span becomes byte-stable; the dynamic values still reach the model, just from the tail.
+
+Inspired by headroom's CacheAligner (https://github.com/headroomlabs-ai/headroom, Apache 2.0). Original implementation — no headroom code is imported.
+
+#### Extraction pipeline
+
+```mermaid
+flowchart LR
+    A[System-prompt text] --> B[Extract dynamic spans
+ordered by specificity]
+    B --> C[Remove spans from body
+collapse spaces]
+    C --> D[Append '--- Dynamic context ---'
+block with kind: value lines]
+    D --> E[Aligned text
+byte-stable prefix]
+```
+
+Pattern kinds, in order of specificity (most specific first so an ISO timestamp is matched as a timestamp, not a bare date):
+
+| Kind | Pattern | Example |
+|------|---------|---------|
+| `timestamp` | ISO 8601 with optional tz | `2026-07-17T10:30:00Z` |
+| `uuid` | canonical 8-4-4-4-12 hex | `550e8400-e29b-41d4-a716-446655440000` |
+| `session_id` | `sess-*`, `session:*`, `sid-*` | `sess-abc123def456` |
+| `date` | calendar dates | `2026-07-17`, `2026/07/17` |
+| `token` | bare 20+ char opaque tokens | `a1b2c3d4e5f6789012345` |
+
+Overlapping matches are resolved by earliest start, then longest match — a timestamp wins over a bare date overlapping its tail.
+
+#### Profile behaviour
+
+| Profile | Skips | Why |
+|---------|-------|-----|
+| `default` (or omitted) | nothing | extract all kinds |
+| `code` | `token` | bare 20+ char tokens would mangle long identifiers / hashes in code |
+| `docs` | `token` | prose rarely contains real tokens; avoids mangling long hyphenated words |
+
+The profile's skip set merges (union) with per-kind toggles from `CacheAlignerConfig` — disabling a kind in config widens what a profile already skips.
+
+#### Configuration
+
+```yaml
+cache_aligner:
+  enabled: true               # master switch
+  extract_timestamps: true   # ISO 8601 timestamps
+  extract_uuids: true        # canonical 8-4-4-4-12 UUIDs
+  extract_session_ids: true  # sess-*, session:*, sid-*
+  extract_dates: true        # calendar dates 2026-07-17 / 2026/07/17
+  extract_tokens: true       # bare 20+ char opaque tokens
+```
+
+When `cache_aligner.enabled` is `false`, `align_prefix()` returns the text unchanged with an empty `extracted` list. The MCP tool `mnemos_align_prefix` is the public surface; see [mcp-tools.md#mnemos_align_prefix](../user/mcp-tools.md#mnemos_align_prefix).
+
+### Output token reduction (P1-7)
+
+Output token reduction steers the caller's output style without changing what Mnemos stores or returns. Three tools — `mnemos_add`, `mnemos_search`, `mnemos_recall_context` — accept two optional parameters:
+
+| Parameter | Values | Effect |
+|-----------|--------|--------|
+| `verbosity` | `default`, `terse`, `minimal` | Injects an output-style guidance suffix into the tool result framing |
+| `effort` | `low`, `medium`, `high` | Injects a reasoning-effort hint into the tool result framing |
+
+These are **hints passed through to the caller**, not model config changes. Inspired by headroom's output token reduction work. Original implementation.
+
+#### Backward compatibility
+
+- Defaults (`default` / `medium`) produce an empty guidance suffix — the tool result is byte-identical to the pre-P1-7 output.
+- Invalid values are validated against frozensets, logged at `WARNING`, and fall back to the config default — graceful degradation, never raises.
+- When `output_style.enabled` is `false`, both resolvers return the no-op defaults regardless of caller input.
+
+#### Configuration
+
+```yaml
+output_style:
+  enabled: true              # master switch; when false, steering is a no-op
+  default_verbosity: default # default when caller omits verbosity
+  default_effort: medium     # default when caller omits effort
+```
+
+See [mcp-tools.md#output-token-reduction-p1-7](../user/mcp-tools.md#output-token-reduction-p1-7) for the user-facing reference.
 
 ---
 
