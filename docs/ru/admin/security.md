@@ -394,3 +394,88 @@ git check-ignore -v config.yaml .env     # должен указать .gitignor
 # Подтвердить точное совпадение тегов
 mnemos search --tags mnemos:decision         # не совпадает с mnemos:decision-review
 ```
+
+---
+
+## 11. Federation defence-in-depth
+
+Федерация (batch sync + mediated pull) вводит новую границу доверия:
+записи, покидающие локальную ноду, могут утечь секреты, которые никогда
+не предназначались для расшаривания. mnemos реализует
+**трёхслойный defence-in-depth** (ArchCom 2026-07-17 контракт федерации
+§2.2.1), так что один пропущенный слой не раскрывает секрет.
+
+```mermaid
+flowchart TB
+    L1[1. Сканер на write-path\nзапускается на каждом mnemos_add] -->|тег mnemos:no-federate| DB[(mnemos store)]
+    DB -->|настраиваемый интервал| L2[2. Background scanner job\nпересканирует корпус для false negatives\nбудущее: #89]
+    L2 -->|найдено чувствительное| DB
+    DB -->|на export / pull| L3[3. Moderation pipeline\nфинальная защита на выходе\nбудущее: Phase 0 #85]
+    L3 -->|sanitized / refuse| OUT[out]
+```
+
+| Слой | Где | Когда | Что делает | Статус |
+|------|-----|-------|-----------|--------|
+| **1. Сканер на write-path** | `mnemos_add` / `POST /memories` / `ingest_url` / `ingest_path_scoped_rules` | На каждой записи | Запускает `detect_secrets(content)`. Если секрет обнаружен и запись ещё не несёт `mnemos:no-federate`, тег добавляется автоматически. Логирует только имена паттернов + счётчики — никогда сырые значения. | ✅ Выпущено (#86) |
+| **2. Background scanner** | MCP-сервер, фоновая задача | Настраиваемый интервал (`federation.no_federate_scan_interval_hours`, default 6ч) | Пересканирует весь корпус для false negatives, пропущенных на write-path. Переиспользует `detect_secrets` без изменений (DRY — один источник паттернов). | 🔮 Будущее (#89) |
+| **3. Moderation pipeline** | Export (Phase 0) / Pull (Phase 2) | На каждом export / pull | Финальная защита — запускает moderation на выходе. Даже если тег `no-federate` отсутствует, pipeline санитизирует контент. | 🔮 Будущее (Phase 0, #85) |
+
+### 11.1 Модуль детектора секретов
+
+Детектор живёт в `src/mnemos/secrets_detector.py` и предоставляет
+**стабильный публичный API**, потребляемый всеми тремя слоями:
+
+- `detect_secrets(content: str) -> list[SecretFinding]` — сканировать контент.
+- `redact_content(content: str, findings: list[SecretFinding]) -> str` — заменить каждое совпадение на `<REDACTED:<pattern_name>>`.
+- `findings_by_pattern(findings) -> dict[str, int]` — лог-безопасные счётчики.
+
+Паттерны (компилируются один раз при загрузке модуля): AWS access keys,
+GitHub-токены (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`), Slack-токены
+(`xox[abprs]-`), OpenAI/Anthropic-ключи (`sk-`), JWT, заголовки PEM private
+key, database connection strings, и high-entropy base64-последовательности
+(энтропия Шеннона ≥ 4.8 бит/символ, длина ≥ 32).
+
+**Ограничение:** `SecretFinding.matched_value` существует только для
+программной редекции. Логирующий код ДОЛЖЕН использовать
+`findings_by_pattern()` — сырые совпадающие значения никогда не попадают
+в логи, чат или контент памяти mnemos.
+
+### 11.2 Тег `mnemos:no-federate`
+
+См. [Tag Contract — `mnemos:no-federate`](../user/tag-contract.md#mnemosno-federate--federation-exclusion-marker)
+для жизненного цикла тега (авто-добавление, идемпотентность, удаление с
+подтверждением, re-detection guard). Тег — это **маркер исключения** в
+пространстве имён подтипов `mnemos:`, НЕ когнитивная категория.
+
+### 11.3 Редакция и исключение при export
+
+`mnemos export` (JSON-формат) применяет defence-in-depth на выходе:
+
+- **Исключение:** записи с тегом `mnemos:no-federate` исключаются из export
+  полностью (контракт КП-6: "запись исключается из export И pull").
+- **Редакция:** для записей, проходящих фильтр, контент (и `raw_content`,
+  если есть) сканируется через `detect_secrets`. Любой обнаруженный секрет
+  заменяется на `<REDACTED:<pattern_name>>`, поэтому export никогда не
+  отгружает сырой учётные данные, даже если сканер на write-path (Слой 1)
+  его пропустил.
+- Payload export содержит поле `redaction_summary` со счётчиками
+  (`excluded_no_federate`, `redacted_records`, `patterns`) — никогда сырые
+  значения.
+
+### 11.4 Валидация при import
+
+`mnemos import` валидирует каждую запись перед записью:
+
+- **Контент** — max 1 МиБ символов (default), без управляющих символов кроме
+  `\n` / `\t`, валидный UTF-8.
+- **Теги** — переиспользует `validate_tag_contract` (strict); max 32 тега,
+  max 128 символов на тег.
+- **Заголовок** — max 256 символов, без управляющих символов.
+- **Schema drift** — поля, не входящие в текущую схему `Memory`,
+  отклоняются с field-level ошибкой.
+- **Prompt-injection паттерны** — `[INST]`, `<|im_start|>`, `system:`,
+  `</s>`, `ignore previous instructions` — логируются как WARNING, НЕ
+  блокируются (контент может легитимно обсуждать injection).
+- `--dry-run` возвращает отчёт валидации без записи.
+- При schema-drift / нарушении контракта **весь batch отклоняется**
+  (без частичных записей).
