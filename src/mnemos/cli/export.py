@@ -153,7 +153,26 @@ def build_json_payload(
     mgr: MemoryManager,
     filt: ExportFilter,
 ) -> dict[str, Any]:
-    """Build the JSON export payload dict (not yet serialised)."""
+    """Build the JSON export payload dict (not yet serialised).
+
+    Federation defence-in-depth (Layer 3, partial — ArchCom 2026-07-17
+    §2.2.1 / §3.1):
+
+    * **Exclusion:** records tagged ``mnemos:no-federate`` are excluded
+      from the export entirely (contract КП-6: "запись исключается из
+      export И pull"). They never appear in the JSON payload.
+    * **Redaction:** for records that DO pass the filter, the content
+      (and ``raw_content`` when present) is scanned with the secrets
+      detector. Any detected secret is replaced with
+      ``<REDACTED:<pattern_name>>`` so the export never ships a raw
+      credential, even if the write-path scanner (Layer 1) missed it.
+
+    The redaction summary is recorded in the payload ``redaction_summary``
+    field for operator visibility (counts only — never raw values).
+    """
+    from mnemos.models import NO_FEDERATE_TAG
+    from mnemos.secrets_detector import detect_secrets, findings_by_pattern, redact_content
+
     memories = mgr.sqlite.list_for_export(
         project=filt.project,
         agent=filt.agent,
@@ -162,13 +181,62 @@ def build_json_payload(
         since=filt.since,
         until=filt.until,
     )
+
+    excluded_no_federate = 0
+    redacted_records = 0
+    redaction_counts: dict[str, int] = {}
+    export_memories: list[dict[str, Any]] = []
+
+    for mem in memories:
+        # ── Exclude no-federate records entirely ─────────────────────────
+        if NO_FEDERATE_TAG in mem.tags:
+            excluded_no_federate += 1
+            continue
+
+        # ── Redact secrets in content + raw_content ───────────────────────
+        findings = detect_secrets(mem.content) if mem.content else []
+        if mem.raw_content:
+            findings.extend(detect_secrets(mem.raw_content))
+        # De-overlap: re-sort + drop contained (detect_secrets already
+        # returns de-overlapped findings per call; merging two calls may
+        # re-introduce overlaps across content/raw_content boundaries,
+        # so we re-sort + de-overlap the combined list).
+        findings.sort(key=lambda f: f.start)
+        deoverlapped: list = []
+        last_end = -1
+        for f in findings:
+            if f.start >= last_end:
+                deoverlapped.append(f)
+                last_end = f.end
+        if deoverlapped:
+            redacted_content = redact_content(mem.content, deoverlapped)
+            mem = mem.model_copy(update={"content": redacted_content})
+            if mem.raw_content:
+                # Redact raw_content with its own findings (those that
+                # fell within the raw_content span). For simplicity we
+                # re-detect on raw_content alone — it's a separate string
+                # and offsets differ from the combined list.
+                raw_findings = detect_secrets(mem.raw_content)
+                if raw_findings:
+                    mem = mem.model_copy(
+                        update={"raw_content": redact_content(mem.raw_content, raw_findings)}
+                    )
+                    # Merge raw_findings counts into the summary too.
+                    for name, c in findings_by_pattern(raw_findings).items():
+                        redaction_counts[name] = redaction_counts.get(name, 0) + c
+            redacted_records += 1
+            for name, c in findings_by_pattern(deoverlapped).items():
+                redaction_counts[name] = redaction_counts.get(name, 0) + c
+
+        export_memories.append(_memory_to_export_dict(mem))
+
     projects = mgr.sqlite.list_projects()
-    return {
+    payload: dict[str, Any] = {
         "format_version": FORMAT_VERSION,
         "mnemos_version": __version__,
         "exported_at": datetime.now(UTC).isoformat(),
         "filter": filt.to_dict(),
-        "memories": [_memory_to_export_dict(m) for m in memories],
+        "memories": export_memories,
         "projects": [
             {
                 "id": p.id,
@@ -180,7 +248,21 @@ def build_json_payload(
             }
             for p in projects
         ],
+        "redaction_summary": {
+            "excluded_no_federate": excluded_no_federate,
+            "redacted_records": redacted_records,
+            "patterns": redaction_counts,
+        },
     }
+    if excluded_no_federate or redacted_records:
+        logger.info(
+            "export redaction: excluded %d no-federate records, redacted %d records "
+            "(patterns: %s) — raw values not logged",
+            excluded_no_federate,
+            redacted_records,
+            redaction_counts,
+        )
+    return payload
 
 
 # ── SQLite export ─────────────────────────────────────────────────────────────
