@@ -75,8 +75,8 @@ MNEMOS_TAG_SUBTYPES: frozenset[str] = frozenset(
         # detected. Owners can remove it with explicit confirmation.
         # Decision: option (a) — add to whitelist with a comment, rather than
         # a special-case bypass in ``validate_tag_contract``. Simpler, and
-        # the contract explicitly says "Совместим с tag contract (не новый
-        # prefix, mnemos: subtype namespace)".
+        # the contract explicitly says it is compatible with the tag contract
+        # (mnemos: subtype namespace, not a new prefix).
         "no-federate",
     }
 )

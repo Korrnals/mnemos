@@ -549,9 +549,7 @@ class MemoryManager:
         new_tags = [t for t in memory.tags if t != NO_FEDERATE_TAG]
 
         # Re-scan content: if a secret is still present, re-add the tag.
-        re_detected_findings = (
-            detect_secrets(memory.content) if memory.content else []
-        )
+        re_detected_findings = detect_secrets(memory.content) if memory.content else []
         if re_detected_findings:
             new_tags.append(NO_FEDERATE_TAG)
             report["re_detected"] = True

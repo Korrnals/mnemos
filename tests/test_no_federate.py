@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.cli.export import ExportFilter, ExportFormat, run_export, build_json_payload
+from mnemos.cli.export import ExportFilter, ExportFormat, build_json_payload, run_export
 from mnemos.cli.import_ import (
     DEFAULT_MAX_CONTENT_CHARS,
     ImportMode,
@@ -27,7 +27,6 @@ from mnemos.cli.import_ import (
 from mnemos.config import Settings
 from mnemos.manager import MemoryManager
 from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
-
 
 # ---------------------------------------------------------------------------
 # Fixtures — mirror tests/test_export_import.py conventions
@@ -63,7 +62,9 @@ def _add(mgr: MemoryManager, content: str, *, tags: list[str] | None = None) -> 
     """Add a memory via the manager write-path (Layer 1 scanner runs)."""
     tags = tags or ["project:mnemos", "agent:tech-lead", "mnemos:learning"]
     mem = mgr.add(
-        MemoryCreate(content=content, tags=tags, source=MemorySource.CLI, status=MemoryStatus.PUBLISHED),
+        MemoryCreate(
+            content=content, tags=tags, source=MemorySource.CLI, status=MemoryStatus.PUBLISHED
+        ),
         project="mnemos",
         agent="tech-lead",
     )
@@ -105,7 +106,9 @@ class TestWritePathAutoTag:
         content = f"key=AKIA{'T' * 16}"
         tags = ["project:mnemos", "agent:tech-lead", "mnemos:learning", "mnemos:no-federate"]
         mem = mgr.add(
-            MemoryCreate(content=content, tags=tags, source=MemorySource.CLI, status=MemoryStatus.PUBLISHED),
+            MemoryCreate(
+                content=content, tags=tags, source=MemorySource.CLI, status=MemoryStatus.PUBLISHED
+            ),
             project="mnemos",
             agent="tech-lead",
         )
@@ -143,7 +146,12 @@ class TestRemoveNoFederate:
         # remove with confirm — should succeed because content is clean.
         tags = ["project:mnemos", "agent:tech-lead", "mnemos:learning", "mnemos:no-federate"]
         mem = mgr.add(
-            MemoryCreate(content="clean content", tags=tags, source=MemorySource.CLI, status=MemoryStatus.PUBLISHED),
+            MemoryCreate(
+                content="clean content",
+                tags=tags,
+                source=MemorySource.CLI,
+                status=MemoryStatus.PUBLISHED,
+            ),
             project="mnemos",
             agent="tech-lead",
         )
@@ -320,7 +328,9 @@ class TestImportValidation:
     def test_prompt_injection_warns_not_blocks(self) -> None:
         entry = {
             "id": "test-1",
-            "content": "Research note: the 'ignore previous instructions' attack is documented here.",
+            "content": (
+                "Research note: the 'ignore previous instructions' attack is documented here."
+            ),
             "tags": ["project:mnemos", "agent:tech-lead", "mnemos:learning"],
         }
         errors, warnings = validate_import_record(entry)

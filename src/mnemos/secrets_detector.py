@@ -126,10 +126,10 @@ _PATTERNS: Final[list[_PatternDef]] = [
 # and flag it when the entropy exceeds ``_HIGH_ENTROPY_THRESHOLD``.
 #
 # Threshold choice (documented):
-#   - English prose has Shannon entropy ~3.5–4.5 bits/char when measured
+#   - English prose has Shannon entropy ~3.5-4.5 bits/char when measured
 #     over the full ASCII alphabet, but base64 spans are constrained to
 #     64 symbols; within those spans normal text rarely exceeds ~4.2.
-#   - Random base64 (keys, tokens) sits at ~5.5–6.0 bits/char.
+#   - Random base64 (keys, tokens) sits at ~5.5-6.0 bits/char.
 #   - We set the threshold to **4.8 bits/char** with a minimum span length
 #     of **32 chars** to suppress short matches (common identifiers like
 #     ``someVariableName`` have high per-char entropy but short length).
@@ -246,9 +246,7 @@ def detect_secrets(content: str) -> list[SecretFinding]:
     # Pattern declaration order is encoded by the index in the combined
     # list. We attach the declaration index to each finding so the sort
     # is deterministic and the caller can rely on stable precedence.
-    pattern_order: dict[str, int] = {
-        name: i for i, (name, _rx, _d) in enumerate(_PATTERNS)
-    }
+    pattern_order: dict[str, int] = {name: i for i, (name, _rx, _d) in enumerate(_PATTERNS)}
     pattern_order["high-entropy"] = len(_PATTERNS)  # entropy is last
 
     raw_findings.sort(key=lambda f: (f.start, pattern_order.get(f.pattern_name, 999)))

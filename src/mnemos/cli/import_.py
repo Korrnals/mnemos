@@ -59,8 +59,8 @@ __all__ = [
     "ImportMode",
     "ImportResult",
     "run_import",
-    "validate_import_record",
     "validate_import_payload",
+    "validate_import_record",
 ]
 
 
@@ -130,7 +130,7 @@ def _has_disallowed_control_chars(text: str) -> bool:
     """Return True if ``text`` contains a C0/C1 control char not in the allow-list."""
     for ch in text:
         o = ord(ch)
-        # C0: 0x00–0x1F, C1: 0x7F–0x9F. Allow \n (0x0A) and \t (0x09).
+        # C0: 0x00-0x1F, C1: 0x7F-0x9F. Allow \n (0x0A) and \t (0x09).
         if (o < 0x20 or 0x7F <= o <= 0x9F) and o not in _ALLOWED_CONTROL_CHARS:
             return True
     return False
@@ -179,8 +179,7 @@ def validate_import_record(
     else:
         if len(content) > max_content_chars:
             errors.append(
-                f"{rid}:content: exceeds max length "
-                f"({len(content)} > {max_content_chars} chars)"
+                f"{rid}:content: exceeds max length ({len(content)} > {max_content_chars} chars)"
             )
         # UTF-8 validity: a Python str is always valid Unicode, but the
         # caller may have decoded with errors='replace' — we re-encode to
@@ -228,7 +227,9 @@ def validate_import_record(
                 errors.append(f"{rid}:tags: every tag must be a string, got {type(t).__name__}")
                 break
             if len(t) > MAX_TAG_LEN:
-                errors.append(f"{rid}:tags: tag exceeds max length ({len(t)} > {MAX_TAG_LEN}): {t[:32]!r}…")
+                errors.append(
+                    f"{rid}:tags: tag exceeds max length ({len(t)} > {MAX_TAG_LEN}): {t[:32]!r}…"
+                )
                 break
         # Reuse the tag contract validator (lax mode → patchable errors
         # become warnings; strict mode raises which we surface as error).
@@ -278,9 +279,7 @@ def validate_import_payload(
             report.valid = False
             continue
         report.records_validated += 1
-        errs, warns = validate_import_record(
-            entry, max_content_chars=max_content_chars
-        )
+        errs, warns = validate_import_record(entry, max_content_chars=max_content_chars)
         if errs:
             report.errors.extend(errs)
             report.valid = False

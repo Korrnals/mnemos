@@ -42,6 +42,7 @@ from mnemos.models import MemoryStatus
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
+    from mnemos.secrets_detector import SecretFinding
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,7 @@ def build_json_payload(
         # re-introduce overlaps across content/raw_content boundaries,
         # so we re-sort + de-overlap the combined list).
         findings.sort(key=lambda f: f.start)
-        deoverlapped: list = []
+        deoverlapped: list[SecretFinding] = []
         last_end = -1
         for f in findings:
             if f.start >= last_end:
