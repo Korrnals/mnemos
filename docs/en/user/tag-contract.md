@@ -39,6 +39,7 @@ The tag contract:
 | `open-question` | Unresolved questions requiring future investigation |
 | `checkpoint` | Mid-session snapshots for compaction survival |
 | `legacy` | Migrated entries from ai-brain or pre-contract stores |
+| `no-federate` | **Exclusion marker** — record is excluded from all external exchange (batch export + mediated pull). See `mnemos:no-federate` below. |
 
 ---
 
@@ -55,7 +56,53 @@ rejected in strict mode.
 | `domain:<slug>` | any string | Domain sub-classifier within a project |
 
 ---
+## `mnemos:no-federate` — federation exclusion marker
 
+`mnemos:no-federate` is an **exclusion marker**, not a cognitive category.
+It lives in the `mnemos:` subtype namespace (so it passes tag-contract
+validation without a new prefix) but its semantics are operational, not
+cognitive: a record carrying this tag is **excluded from all external
+exchange** — both batch export and mediated pull (federation).
+
+### How it gets added
+
+The tag is added automatically by the **write-path secrets scanner**
+(Layer 1 of the federation defence-in-depth, see
+[Security — Federation defence-in-depth](../admin/security.md#federation-defence-in-depth)).
+When `mnemos_add` (or the HTTP `POST /memories`, or `ingest_url`, or
+`ingest_path_scoped_rules`) receives content that matches a known secret
+pattern (AWS keys, GitHub tokens, Slack tokens, OpenAI/Anthropic keys,
+JWTs, PEM private keys, database connection strings, high-entropy
+base64 spans), the scanner:
+
+1. Detects the pattern via `mnemos.secrets_detector.detect_secrets`.
+2. Appends `mnemos:no-federate` to the tag list (idempotent — if the tag
+   is already present, it is not duplicated).
+3. Logs the pattern names and counts only — **never** the raw matched
+   values.
+
+### How to remove it
+
+Removing the tag re-enables external exchange for the record. Because the
+tag is typically auto-added when a secret was detected, removing it
+blindly could expose a real secret to federation. The removal path
+(`MemoryManager.remove_no_federate`) therefore:
+
+- Requires explicit confirmation (`confirm=True`). Without confirmation
+  the record is **not** mutated and a warning is returned.
+- Re-scans the content after removal. If a secret is still present, the
+  tag is **re-added automatically** and the report records
+  `re_detected=True`. The owner must redact the content first (see
+  `mnemos.secrets_detector.redact_content`) to permanently remove the tag.
+
+### Difference from the (non-existent) `mnemos:no-export`
+
+There is **no** `mnemos:no-export` tag. The earlier design idea was
+renamed to `mnemos:no-federate` because the same exclusion must cover
+**both** batch export and mediated pull — a single tag for both paths.
+`mnemos:no-federate` supersedes the `no-export` idea entirely.
+
+---
 ## Validation modes
 
 ### Strict mode (`strict_tag_contract=True`, default for new installs)

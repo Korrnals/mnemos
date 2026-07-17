@@ -112,6 +112,48 @@ class MemoryManager:
             parts.append(" ".join(memory.tags))
         return "\n".join(parts)[:4096]
 
+    @staticmethod
+    def _scan_and_tag(tags: list[str], content: str) -> list[str]:
+        """Run the secrets scanner on ``content`` and auto-add no-federate.
+
+        Federation defence-in-depth (Layer 1, ArchCom 2026-07-17 §2.2.1):
+        if :func:`detect_secrets` finds a secret pattern AND the tag
+        ``mnemos:no-federate`` is not already in ``tags``, it is appended so
+        the record is excluded from all external exchange (batch sync +
+        pull). Idempotent — a re-scan with the same secret does not
+        duplicate the tag. Only pattern names and counts are logged;
+        raw matched values never enter the log.
+
+        Non-fatal: a scanner error returns the tags unchanged so the
+        caller's write is never blocked by the scanner (Layer 2
+        background scanner will catch it later).
+
+        Args:
+            tags: current tags list (not mutated; a new list is returned).
+            content: text to scan; empty/None → tags returned unchanged.
+
+        Returns:
+            The (possibly augmented) tags list.
+        """
+        if not content:
+            return list(tags)
+        result = list(tags)
+        try:
+            from mnemos.models import NO_FEDERATE_TAG
+            from mnemos.secrets_detector import detect_secrets, findings_by_pattern
+
+            findings = detect_secrets(content)
+            if findings and NO_FEDERATE_TAG not in result:
+                result.append(NO_FEDERATE_TAG)
+                logger.info(
+                    "auto-tagged record with mnemos:no-federate "
+                    "(patterns: %s) — raw values not logged",
+                    findings_by_pattern(findings),
+                )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("Secrets scanner failed (non-fatal): %s", exc)
+        return result
+
     # ── CRUD ────────────────────────────────────────────────────────────────
 
     def add(
@@ -125,11 +167,28 @@ class MemoryManager:
 
         The M2 tag contract is enforced by the MCP layer (mcp_server.py).
         MemoryManager trusts validated project/agent passed in kwargs.
+
+        Federation defence-in-depth (Layer 1, ArchCom 2026-07-17 §2.2.1):
+        the write-path secrets scanner runs on ``data.content`` before
+        persistence. If a secret is detected AND the record does not
+        already carry ``mnemos:no-federate``, the tag is auto-added so the
+        record is excluded from all external exchange (batch sync + pull).
+        Idempotent: a re-add with the same secret does not duplicate the
+        tag (the check is "already present → skip"). Only pattern names
+        and counts are logged; raw matched values never enter the log.
         """
+        # ── Layer 1: write-path secrets scanner ───────────────────────────
+        # Run before Memory construction so the tag is part of the persisted
+        # record from the first write (no second UPDATE needed). Non-fatal:
+        # a scanner error must NOT block the write — the memory is still
+        # saved, just without the no-federate marker (Layer 2 background
+        # scanner will catch it later).
+        tags = self._scan_and_tag(list(data.tags), data.content)
+
         memory = Memory(
             content=data.content,
             title=data.title,
-            tags=data.tags,
+            tags=tags,
             source=data.source,
             source_url=data.source_url,
             memory_type=data.memory_type,
@@ -202,6 +261,14 @@ class MemoryManager:
             if val is not None:
                 setattr(memory, field, val)
                 update_kwargs[field] = val
+
+        # ── Layer 1: write-path secrets scanner (update path) ──────────────
+        # Re-run the scanner when the update payload includes new content so
+        # the path-scoped re-ingest path (.instructions.md edited → update
+        # with new content) does not bypass the scanner. Idempotent: if the
+        # tag is already present, _scan_and_tag does not duplicate it.
+        if "content" in update_kwargs:
+            memory.tags = self._scan_and_tag(memory.tags, memory.content)
 
         memory.updated_at = datetime.now(UTC)
         self.sqlite.save(memory)
@@ -456,6 +523,84 @@ class MemoryManager:
 
     def list_tags(self) -> dict[str, int]:
         return self.sqlite.get_all_tags()
+
+    def remove_no_federate(
+        self,
+        memory_id: str,
+        *,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Remove the ``mnemos:no-federate`` tag from a record.
+
+        Per ArchCom 2026-07-17 federation contract §4 КП-6, removing the
+        tag re-enables external exchange for the record. Because the tag
+        is typically auto-added by the Layer 1 secrets scanner when a
+        secret was detected in the content, removing it blindly could
+        expose a real secret to federation. This method therefore
+        requires explicit confirmation (``confirm=True``).
+
+        If ``confirm`` is False, the method returns a ``"requires_confirmation"``
+        report WITHOUT mutating the record. The caller (CLI / HTTP / MCP)
+        is responsible for surfacing the warning and re-calling with
+        ``confirm=True`` after the user has acknowledged the risk.
+
+        Re-scans the content after removal: if a secret is still present,
+        the tag is re-added automatically and the report records
+        ``"re_detected"=True``. The owner must redact the content first
+        (see ``secrets_detector.redact_content``) before the tag can be
+        permanently removed.
+        """
+        from mnemos.models import NO_FEDERATE_TAG
+        from mnemos.secrets_detector import detect_secrets, findings_by_pattern
+
+        report: dict[str, Any] = {
+            "memory_id": memory_id,
+            "removed": False,
+            "re_detected": False,
+            "requires_confirmation": not confirm,
+            "patterns_present": {},
+        }
+
+        memory = self.sqlite.get(memory_id)
+        if memory is None:
+            report["error"] = f"Memory {memory_id} not found"
+            return report
+
+        if NO_FEDERATE_TAG not in memory.tags:
+            report["note"] = "Record does not carry mnemos:no-federate"
+            return report
+
+        if not confirm:
+            # Surface the risk without mutating.
+            findings = detect_secrets(memory.content) if memory.content else []
+            report["patterns_present"] = findings_by_pattern(findings) if findings else {}
+            report["warning"] = (
+                "Removing mnemos:no-federate re-enables external exchange. "
+                "If a secret is still in the content, it will be exported. "
+                "Re-call with confirm=True to proceed."
+            )
+            return report
+
+        new_tags = [t for t in memory.tags if t != NO_FEDERATE_TAG]
+
+        # Re-scan content: if a secret is still present, re-add the tag.
+        re_detected_findings = detect_secrets(memory.content) if memory.content else []
+        if re_detected_findings:
+            new_tags.append(NO_FEDERATE_TAG)
+            report["re_detected"] = True
+            report["patterns_present"] = findings_by_pattern(re_detected_findings)
+            report["warning"] = (
+                "Secret still present in content — mnemos:no-federate re-added. "
+                "Redact the content first (see secrets_detector.redact_content) "
+                "to permanently remove the tag."
+            )
+        else:
+            report["removed"] = True
+
+        # Persist the new tag list (update_fields avoids INSERT OR REPLACE
+        # FTS5 drift — see sqlite_store.update_fields).
+        self.sqlite.update_fields(memory_id, tags=new_tags)
+        return report
 
     def tags_rename(
         self,

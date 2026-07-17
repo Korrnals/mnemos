@@ -401,3 +401,88 @@ git check-ignore -v config.yaml .env     # should list .gitignore:line
 # Confirm tag exact match
 mnemos search --tags mnemos:decision         # does not match mnemos:decision-review
 ```
+
+---
+
+## 11. Federation defence-in-depth
+
+Federation (batch sync + mediated pull) introduces a new trust boundary:
+records that leave the local node can leak secrets that were never meant
+to be shared. mnemos implements a **three-layer defence-in-depth**
+(ArchCom 2026-07-17 federation contract §2.2.1) so that a single missed
+layer does not expose a secret.
+
+```mermaid
+flowchart TB
+    L1[1. Write-path scanner\nruns on every mnemos_add] -->|tag mnemos:no-federate| DB[(mnemos store)]
+    DB -->|configurable interval| L2[2. Background scanner job\nre-scans corpus for false negatives\nfuture: #89]
+    L2 -->|found sensitive| DB
+    DB -->|on export / pull| L3[3. Moderation pipeline\nfinal defense on output\nfuture: Phase 0 #85]
+    L3 -->|sanitized / refuse| OUT[out]
+```
+
+| Layer | Where | When | What it does | Status |
+|-------|-------|------|-------------|--------|
+| **1. Write-path scanner** | `mnemos_add` / `POST /memories` / `ingest_url` / `ingest_path_scoped_rules` | On every write | Runs `detect_secrets(content)`. If a secret is detected and the record does not already carry `mnemos:no-federate`, the tag is auto-added. Logs pattern names + counts only — never raw matched values. | ✅ Shipped (#86) |
+| **2. Background scanner** | MCP server, background job | Configurable interval (`federation.no_federate_scan_interval_hours`, default 6h) | Re-scans the whole corpus for false negatives missed at write time. Re-uses `detect_secrets` unchanged (DRY — one source of truth for patterns). | 🔮 Future (#89) |
+| **3. Moderation pipeline** | Export (Phase 0) / Pull (Phase 2) | On every export / pull | Final defense — runs moderation on output. Even if the `no-federate` tag is missing, the pipeline sanitizes the content. | 🔮 Future (Phase 0, #85) |
+
+### 11.1 Secrets detector module
+
+The detector lives in `src/mnemos/secrets_detector.py` and exposes a
+**stable public API** consumed by all three layers:
+
+- `detect_secrets(content: str) -> list[SecretFinding]` — scan content.
+- `redact_content(content: str, findings: list[SecretFinding]) -> str` — replace each match with `<REDACTED:<pattern_name>>`.
+- `findings_by_pattern(findings) -> dict[str, int]` — log-safe counts.
+
+Patterns (compiled once at module load): AWS access keys, GitHub tokens
+(`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`), Slack tokens (`xox[abprs]-`),
+OpenAI/Anthropic keys (`sk-`), JWTs, PEM private key headers, database
+connection strings, and high-entropy base64 spans (Shannon entropy
+≥ 4.8 bits/char, length ≥ 32).
+
+**Constraint:** `SecretFinding.matched_value` exists for programmatic
+redaction only. Logging code MUST use `findings_by_pattern()` — raw
+matched values never enter log records, chat output, or mnemos memory
+content.
+
+### 11.2 `mnemos:no-federate` tag
+
+See [Tag Contract — `mnemos:no-federate`](../user/tag-contract.md#mnemosno-federate--federation-exclusion-marker)
+for the tag's lifecycle (auto-add, idempotent, removal with confirmation,
+re-detection guard). The tag is an **exclusion marker** in the
+`mnemos:` subtype namespace — it is NOT a cognitive category.
+
+### 11.3 Export redaction + exclusion
+
+`mnemos export` (JSON format) applies the defence-in-depth at output time:
+
+- **Exclusion:** records tagged `mnemos:no-federate` are excluded from
+  the export entirely (contract КП-6: "запись исключается из export И pull").
+- **Redaction:** for records that pass the filter, the content (and
+  `raw_content` when present) is scanned with `detect_secrets`. Any
+  detected secret is replaced with `<REDACTED:<pattern_name>>` so the
+  export never ships a raw credential, even if the write-path scanner
+  (Layer 1) missed it.
+- The export payload carries a `redaction_summary` field with counts
+  (`excluded_no_federate`, `redacted_records`, `patterns`) — never raw
+  values.
+
+### 11.4 Import validation
+
+`mnemos import` validates every record before writing:
+
+- **Content** — max 1 MiB chars (default), no control characters except
+  `\n` / `\t`, valid UTF-8.
+- **Tags** — reuses `validate_tag_contract` (strict); max 32 tags, max 128
+  chars per tag.
+- **Title** — max 256 chars, no control characters.
+- **Schema drift** — fields not in the current `Memory` schema are
+  rejected with a field-level error.
+- **Prompt-injection patterns** — `[INST]`, `<|im_start|>`, `system:`,
+  `</s>`, `ignore previous instructions` — logged at WARNING, NOT
+  blocked (content may legitimately discuss injection).
+- `--dry-run` returns a validation report without writing.
+- On schema-drift / contract violation, the **whole batch is rejected**
+  (no partial writes).

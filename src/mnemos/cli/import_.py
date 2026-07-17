@@ -11,10 +11,24 @@ Two modes:
   files are replaced (after an optional backup).
 
 ``--dry-run`` validates the export without writing.
+
+Import validation (ArchCom 2026-07-17 federation contract §3.1, issue #86):
+
+* **Content** — max length (configurable, default 1 MiB), no control
+  characters except ``\\n`` and ``\\t``, valid UTF-8.
+* **Tags** — reuses ``validate_tag_contract``; max 32 tags, max 128 chars
+  per tag.
+* **Title** — max 256 chars, no control characters.
+* **Prompt-injection patterns** — ``[INST]``, ``<|im_start|>``,
+  ``"ignore previous instructions"``, ``"system:"``, ``"</s>"`` — logged
+  at WARNING (NOT blocked; legitimate content may discuss injection).
+* **Schema drift** — fields not in the current ``Memory`` schema are
+  rejected with a field-level error.
 """
 
 from __future__ import annotations
 
+import functools
 import io
 import json
 import logging
@@ -45,7 +59,235 @@ __all__ = [
     "ImportMode",
     "ImportResult",
     "run_import",
+    "validate_import_payload",
+    "validate_import_record",
 ]
+
+
+# ── Validation constants ───────────────────────────────────────────────────────
+
+#: Maximum content length accepted on import (chars). Configurable via
+#: ``Settings.import_validation.max_content_chars`` (see config.py); the
+#: CLI uses this default when the manager does not override it.
+DEFAULT_MAX_CONTENT_CHARS: int = 1_048_576  # 1 MiB
+
+#: Maximum tag count per record.
+MAX_TAGS: int = 32
+
+#: Maximum tag length (chars).
+MAX_TAG_LEN: int = 128
+
+#: Maximum title length (chars).
+MAX_TITLE_LEN: int = 256
+
+#: Allowed control characters in content (everything else in the C0/C1
+#: ranges is rejected). Stored as a frozenset for O(1) lookup.
+_ALLOWED_CONTROL_CHARS: frozenset[int] = frozenset({ord("\n"), ord("\t")})
+
+#: Prompt-injection patterns. We LOG them at WARNING but do NOT block —
+#: content may legitimately discuss prompt injection (security research,
+#: runbooks, training material). Each entry: (pattern_name, substring).
+#: Matching is case-insensitive substring (not regex) to keep it fast
+#: and avoid ReDoS on untrusted content.
+_PROMPT_INJECTION_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("chatml-im-start", "<|im_start|>"),
+    ("chatml-im-end", "<|im_end|>"),
+    ("llama-inst", "[inst]"),
+    ("llama-inst-close", "[/inst]"),
+    ("ignore-previous", "ignore previous instructions"),
+    ("system-prefix", "system:"),
+    ("eos-token", "</s>"),
+)
+
+
+# ── Validation report ─────────────────────────────────────────────────────────
+
+
+@dataclass
+class ImportValidationReport:
+    """Aggregate result of validating a payload (used by dry-run + real run)."""
+
+    valid: bool
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    records_validated: int = 0
+    records_with_warnings: int = 0
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "valid": self.valid,
+            "errors": list(self.errors),
+            "warnings": list(self.warnings),
+            "records_validated": self.records_validated,
+            "records_with_warnings": self.records_with_warnings,
+        }
+
+
+# ── Per-record validation ─────────────────────────────────────────────────────
+
+
+def _has_disallowed_control_chars(text: str) -> bool:
+    """Return True if ``text`` contains a C0/C1 control char not in the allow-list."""
+    for ch in text:
+        o = ord(ch)
+        # C0: 0x00-0x1F, C1: 0x7F-0x9F. Allow \n (0x0A) and \t (0x09).
+        if (o < 0x20 or 0x7F <= o <= 0x9F) and o not in _ALLOWED_CONTROL_CHARS:
+            return True
+    return False
+
+
+def validate_import_record(
+    entry: dict[str, Any],
+    *,
+    max_content_chars: int = DEFAULT_MAX_CONTENT_CHARS,
+    memory_id: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Validate a single memory entry from an export payload.
+
+    Args:
+        entry: The JSON dict for one memory record.
+        max_content_chars: Maximum allowed content length.
+        memory_id: Optional id hint for error messages (falls back to
+            ``entry.get("id")``).
+
+    Returns:
+        ``(errors, warnings)`` — ``errors`` are fatal (record is rejected),
+        ``warnings`` are non-fatal (prompt-injection mentions, etc.).
+        Field-level error messages of the form
+        ``"<id>:<field>: <reason>"`` so the caller can surface them
+        directly.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    rid = memory_id or entry.get("id", "?")
+
+    # ── Schema drift: reject unknown fields ──────────────────────────────
+    # Build the allowed field set from the Memory model. We use a cached
+    # frozenset computed once (lazy) to avoid re-reading the model on every
+    # record. The model fields are stable across a process.
+    allowed_fields = _memory_field_names()
+    unknown = [k for k in entry if k not in allowed_fields]
+    if unknown:
+        errors.append(f"{rid}:schema: unknown fields: {sorted(unknown)}")
+
+    # ── Content ───────────────────────────────────────────────────────────
+    content = entry.get("content")
+    if content is None:
+        errors.append(f"{rid}:content: missing required field 'content'")
+    elif not isinstance(content, str):
+        errors.append(f"{rid}:content: must be a string, got {type(content).__name__}")
+    else:
+        if len(content) > max_content_chars:
+            errors.append(
+                f"{rid}:content: exceeds max length ({len(content)} > {max_content_chars} chars)"
+            )
+        # UTF-8 validity: a Python str is always valid Unicode, but the
+        # caller may have decoded with errors='replace' — we re-encode to
+        # UTF-8 and back to catch surrogate / lone surrogate issues.
+        try:
+            content.encode("utf-8").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError) as exc:
+            errors.append(f"{rid}:content: invalid UTF-8: {exc}")
+        if _has_disallowed_control_chars(content):
+            errors.append(
+                f"{rid}:content: contains disallowed control characters "
+                "(only \\n and \\t permitted)"
+            )
+        # Prompt-injection scan — warn only.
+        lower = content.lower()
+        for pname, pat in _PROMPT_INJECTION_PATTERNS:
+            if pat.lower() in lower:
+                warnings.append(
+                    f"{rid}:content: prompt-injection pattern '{pname}' detected "
+                    "(logged, not blocked — content may legitimately discuss injection)"
+                )
+
+    # ── Title ─────────────────────────────────────────────────────────────
+    title = entry.get("title")
+    if title is not None:
+        if not isinstance(title, str):
+            errors.append(f"{rid}:title: must be a string, got {type(title).__name__}")
+        else:
+            if len(title) > MAX_TITLE_LEN:
+                errors.append(
+                    f"{rid}:title: exceeds max length ({len(title)} > {MAX_TITLE_LEN} chars)"
+                )
+            if _has_disallowed_control_chars(title):
+                errors.append(f"{rid}:title: contains disallowed control characters")
+
+    # ── Tags ──────────────────────────────────────────────────────────────
+    tags = entry.get("tags", [])
+    if not isinstance(tags, list):
+        errors.append(f"{rid}:tags: must be a list, got {type(tags).__name__}")
+    else:
+        if len(tags) > MAX_TAGS:
+            errors.append(f"{rid}:tags: exceeds max count ({len(tags)} > {MAX_TAGS})")
+        for t in tags:
+            if not isinstance(t, str):
+                errors.append(f"{rid}:tags: every tag must be a string, got {type(t).__name__}")
+                break
+            if len(t) > MAX_TAG_LEN:
+                errors.append(
+                    f"{rid}:tags: tag exceeds max length ({len(t)} > {MAX_TAG_LEN}): {t[:32]!r}…"
+                )
+                break
+        # Reuse the tag contract validator (lax mode → patchable errors
+        # become warnings; strict mode raises which we surface as error).
+        if tags and all(isinstance(t, str) for t in tags):
+            from mnemos.models import TagContractError, validate_tag_contract
+
+            try:
+                validate_tag_contract(tags, strict=True)
+            except TagContractError as exc:
+                errors.append(f"{rid}:tags: tag contract violation: {exc}")
+
+    return errors, warnings
+
+
+@functools.lru_cache(maxsize=1)
+def _memory_field_names() -> frozenset[str]:
+    """Return the set of allowed Memory model field names (cached)."""
+    return frozenset(Memory.model_fields.keys())
+
+
+# ── Payload-level validation ──────────────────────────────────────────────────
+
+
+def validate_import_payload(
+    payload: dict[str, Any],
+    *,
+    max_content_chars: int = DEFAULT_MAX_CONTENT_CHARS,
+) -> ImportValidationReport:
+    """Validate every record in a parsed JSON export payload.
+
+    Does NOT write to the store. Used by ``--dry-run`` and as the first
+    pass of a real import (so we reject the whole batch on schema drift
+    rather than writing some records and aborting).
+    """
+    report = ImportValidationReport(valid=True)
+    memories: list[dict[str, Any]] = payload.get("memories", [])
+    if not isinstance(memories, list):
+        report.errors.append("payload: 'memories' is not a list")
+        report.valid = False
+        return report
+
+    for entry in memories:
+        if not isinstance(entry, dict):
+            report.errors.append(
+                f"payload: memory entry must be an object, got {type(entry).__name__}"
+            )
+            report.valid = False
+            continue
+        report.records_validated += 1
+        errs, warns = validate_import_record(entry, max_content_chars=max_content_chars)
+        if errs:
+            report.errors.extend(errs)
+            report.valid = False
+        if warns:
+            report.warnings.extend(warns)
+            report.records_with_warnings += 1
+
+    return report
 
 
 # ── Enums / result ────────────────────────────────────────────────────────────
@@ -153,6 +395,31 @@ def _import_json(
 
     memories: list[dict[str, Any]] = payload.get("memories", [])
     projects: list[dict[str, Any]] = payload.get("projects", [])
+
+    # ── Validation pass (runs for both dry-run and real import) ──────────
+    # Reject the whole batch on schema drift / contract violations rather
+    # than writing some records and aborting. The validation report is
+    # attached to the ImportResult so callers can surface field-level
+    # errors. Prompt-injection warnings are added to result.warnings.
+    validation = validate_import_payload(payload)
+    if not validation.valid:
+        result.errors.extend(validation.errors)
+        # In dry-run we still return a report dict; in real mode we abort.
+        if not dry_run:
+            return result
+    result.warnings.extend(validation.warnings)
+
+    # ── Dry-run short-circuit ────────────────────────────────────────────
+    # Dry-run validates and reports; it does NOT write. The summary carries
+    # the validation report so the caller can decide whether to proceed.
+    if dry_run:
+        result.imported = validation.records_validated
+        result.warnings.append(
+            f"Dry-run: validated {validation.records_validated} records, "
+            f"{len(validation.errors)} errors, "
+            f"{validation.records_with_warnings} records with warnings."
+        )
+        return result
 
     # ── Restore mode: wipe first (only when not dry-run) ────────────────
     if mode == ImportMode.RESTORE and not dry_run:
