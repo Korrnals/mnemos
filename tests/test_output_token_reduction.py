@@ -406,8 +406,7 @@ class TestInvalidVerbosityEffortFallback:
         assert "_output_style_hint" not in result
         # A warning was logged naming the invalid value.
         assert any(
-            "Invalid verbosity" in r.message and "verbose" in r.message
-            for r in caplog.records
+            "Invalid verbosity" in r.message and "verbose" in r.message for r in caplog.records
         ), [r.message for r in caplog.records]
 
     async def test_invalid_effort_value_falls_back_to_medium_with_warning(
@@ -437,8 +436,7 @@ class TestInvalidVerbosityEffortFallback:
         # "default" → no verbosity hint either. So no _output_style_hint.
         assert "_output_style_hint" not in result
         assert any(
-            "Invalid effort" in r.message and "turbo" in r.message
-            for r in caplog.records
+            "Invalid effort" in r.message and "turbo" in r.message for r in caplog.records
         ), [r.message for r in caplog.records]
 
     async def test_invalid_verbosity_with_terse_default_falls_back_to_terse(
@@ -469,9 +467,7 @@ class TestInvalidVerbosityEffortFallback:
         assert "_output_style_hint" in result, (
             "invalid verbosity must fall back to config default 'terse', injecting a hint"
         )
-        assert any(
-            "Invalid verbosity" in r.message for r in caplog.records
-        )
+        assert any("Invalid verbosity" in r.message for r in caplog.records)
 
 
 # ── QA fix #6 — recall_context non-empty branch with verbosity ─────────────

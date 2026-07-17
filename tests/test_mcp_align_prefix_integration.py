@@ -106,9 +106,7 @@ class TestProfileForwarding:
             )
         assert isinstance(result, dict)
         kinds = {s["kind"] for s in result["extracted"]}
-        assert "token" not in kinds, (
-            f"profile='code' must skip token kind; got kinds={kinds}"
-        )
+        assert "token" not in kinds, f"profile='code' must skip token kind; got kinds={kinds}"
         # Timestamps are still extracted under 'code' (only tokens skipped).
         assert "timestamp" in kinds
         # The token stays in the aligned body (not relocated).

@@ -250,9 +250,7 @@ class TestConfigTogglesWired:
     """The per-kind bool toggles on CacheAlignerConfig must be honoured by
     MemoryManager.align_prefix — a disabled kind stays in-place."""
 
-    def test_config_toggles_respected_single_kind(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_config_toggles_respected_single_kind(self, manager: MemoryManager) -> None:
         # A long bare token that would be extracted by default.
         long_token = "aBcDeFgHiJkLmNoPqRsTuVwXy"
         text = f"Stable prefix. Token {long_token} end."
@@ -265,9 +263,7 @@ class TestConfigTogglesWired:
         # The token stays in the aligned body (not relocated).
         assert long_token in result["aligned_text"].split("--- Dynamic context ---")[0]
 
-    def test_config_toggles_all_disabled(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_config_toggles_all_disabled(self, manager: MemoryManager) -> None:
         text = "At 2026-07-17T10:00:00Z sess-abc123def456 token aBcDeFgHiJkLmNoPqRsTuVwXy."
         cfg = manager.settings.cache_aligner
         cfg.extract_timestamps = False
@@ -283,9 +279,7 @@ class TestConfigTogglesWired:
         assert result["prefix_stabilized"] is False
         assert result["moved_chars"] == 0
 
-    def test_config_toggles_merge_with_profile(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_config_toggles_merge_with_profile(self, manager: MemoryManager) -> None:
         # profile="code" already skips tokens; disabling extract_tokens
         # in config must produce a union (still no tokens), while other
         # kinds that "code" does NOT skip remain extractable.
@@ -302,17 +296,13 @@ class TestConfigTogglesWired:
         # that would skip ALL kinds when one toggle is off.
         assert "timestamp" in kinds
 
-    def test_config_toggle_timestamps_respected(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_config_toggle_timestamps_respected(self, manager: MemoryManager) -> None:
         text = "Stable prefix. Logged 2026-07-17T10:00:00Z done."
         manager.settings.cache_aligner.extract_timestamps = False
         result = manager.align_prefix(text)
         kinds = {s["kind"] for s in result["extracted"]}
         assert "timestamp" not in kinds
-        assert "2026-07-17T10:00:00Z" in result["aligned_text"].split(
-            "--- Dynamic context ---"
-        )[0]
+        assert "2026-07-17T10:00:00Z" in result["aligned_text"].split("--- Dynamic context ---")[0]
 
     def test_config_toggle_dates_respected(self, manager: MemoryManager) -> None:
         text = "Stable prefix. Date 2026-07-17 noted."
@@ -322,9 +312,7 @@ class TestConfigTogglesWired:
         kinds = {s["kind"] for s in result["extracted"]}
         assert "date" not in kinds
 
-    def test_config_toggle_session_ids_respected(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_config_toggle_session_ids_respected(self, manager: MemoryManager) -> None:
         text = "Stable prefix. Session sess-abc123def456 active."
         manager.settings.cache_aligner.extract_session_ids = False
         result = manager.align_prefix(text)

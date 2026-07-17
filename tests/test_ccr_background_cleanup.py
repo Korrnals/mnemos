@@ -252,9 +252,9 @@ class TestCleanupLogsWhenNonzero:
                 caplog.at_level("INFO", logger="mnemos.manager"),
             ):
                 mgr._maybe_run_ccr_cleanup()
-            assert not any(
-                "ttl_deleted=" in r.message for r in caplog.records
-            ), [r.message for r in caplog.records]
+            assert not any("ttl_deleted=" in r.message for r in caplog.records), [
+                r.message for r in caplog.records
+            ]
         finally:
             mgr.close()
 
@@ -286,9 +286,7 @@ class TestCleanupLogsWhenNonzero:
 
 
 class TestIntervalRuntimeMutation:
-    def test_ccr_cleanup_interval_change_takes_effect_at_runtime(
-        self, tmp_path: Path
-    ) -> None:
+    def test_ccr_cleanup_interval_change_takes_effect_at_runtime(self, tmp_path: Path) -> None:
         """Mutating settings.ccr.ccr_cleanup_interval_sec between calls must
         take effect without a restart — the interval is read fresh on each
         _maybe_run_ccr_cleanup call."""
@@ -331,9 +329,7 @@ class TestIntervalRuntimeMutation:
 
 
 class TestCcrEnabledFlipMidRun:
-    def test_ccr_enabled_flip_takes_effect_without_restart(
-        self, tmp_path: Path
-    ) -> None:
+    def test_ccr_enabled_flip_takes_effect_without_restart(self, tmp_path: Path) -> None:
         """Flipping settings.ccr.enabled at runtime (without restarting
         the manager) must take effect on the next _maybe_run_ccr_cleanup."""
         settings = _make_settings(tmp_path)
