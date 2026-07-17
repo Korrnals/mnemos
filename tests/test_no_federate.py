@@ -26,7 +26,7 @@ from mnemos.cli.import_ import (
 )
 from mnemos.config import Settings
 from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
+from mnemos.models import MemoryCreate, MemorySource, MemoryStatus, MemoryUpdate
 
 # ---------------------------------------------------------------------------
 # Fixtures — mirror tests/test_export_import.py conventions
@@ -113,6 +113,40 @@ class TestWritePathAutoTag:
             agent="tech-lead",
         )
         assert mem.tags.count("mnemos:no-federate") == 1
+
+
+# ── Layer 1: update-path auto-tagging (S-2) ─────────────────────────────────────
+
+
+class TestUpdatePathAutoTag:
+    def test_secret_in_updated_content_auto_adds_no_federate(self, mgr: MemoryManager) -> None:
+        # S-2: updating content with a secret must auto-add no-federate.
+        mem_id = _add(mgr, "clean content no secrets here")
+        mem = mgr.get(mem_id)
+        assert mem is not None
+        assert "mnemos:no-federate" not in mem.tags
+        # Update with content containing a fake AWS key.
+        mgr.update(mem_id, MemoryUpdate(content=f"now has key=AKIA{'T' * 16}"))
+        updated = mgr.get(mem_id)
+        assert updated is not None
+        assert "mnemos:no-federate" in updated.tags
+
+    def test_update_without_content_does_not_scan(self, mgr: MemoryManager) -> None:
+        # S-2: updating only tags/metadata must NOT run the scanner.
+        mem_id = _add(mgr, "clean content no secrets here")
+        mgr.update(mem_id, MemoryUpdate(tags=["project:mnemos", "agent:tech-lead", "mnemos:rule"]))
+        updated = mgr.get(mem_id)
+        assert updated is not None
+        assert "mnemos:no-federate" not in updated.tags
+
+    def test_update_idempotent_no_duplicate_tag(self, mgr: MemoryManager) -> None:
+        # S-2: re-updating with different secret content must not duplicate.
+        mem_id = _add(mgr, "clean content no secrets here")
+        mgr.update(mem_id, MemoryUpdate(content=f"key=AKIA{'T' * 16}"))
+        mgr.update(mem_id, MemoryUpdate(content=f"different key=AKIA{'Z' * 16}"))
+        updated = mgr.get(mem_id)
+        assert updated is not None
+        assert updated.tags.count("mnemos:no-federate") == 1
 
 
 # ── Tag removal with confirmation ──────────────────────────────────────────────
@@ -239,6 +273,36 @@ class TestExportRedaction:
         payload = build_json_payload(mgr, ExportFilter())
         assert "redaction_summary" in payload
         assert payload["redaction_summary"]["excluded_no_federate"] == 1
+
+    def test_secret_in_title_redacted_in_export(self, mgr: MemoryManager, tmp_path: Path) -> None:
+        # S-1: a secret in the title must be redacted in the export JSON.
+        # We bypass the write-path scanner by writing directly to sqlite so
+        # the record passes the no-federate filter, then verify redaction.
+        secret_title = f"AKIA{'T' * 16} leaked in title"
+        mem = mgr.add(
+            MemoryCreate(
+                content="clean content here",
+                title=secret_title,
+                tags=["project:mnemos", "agent:tech-lead", "mnemos:learning"],
+                source=MemorySource.CLI,
+                status=MemoryStatus.PUBLISHED,
+            ),
+            project="mnemos",
+            agent="tech-lead",
+        )
+        # Strip the no-federate tag the scanner added so the record passes
+        # the export filter and we can assert title-level redaction.
+        new_tags = [t for t in mem.tags if t != "mnemos:no-federate"]
+        mgr.sqlite.update_fields(mem.id, tags=new_tags)
+
+        out = tmp_path / "backup.json"
+        run_export(mgr, fmt=ExportFormat.JSON, output=out)
+        payload = json.loads(out.read_text())
+        assert len(payload["memories"]) == 1
+        title = payload["memories"][0]["title"]
+        assert "<REDACTED:aws-key>" in title
+        assert "AKIA" + "T" * 16 not in title
+        assert payload["redaction_summary"]["redacted_records"] >= 1
 
 
 # ── Import validation ──────────────────────────────────────────────────────────
