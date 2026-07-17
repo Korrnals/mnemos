@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **P1-5 CacheAligner — prefix stabilization for KV cache hits** (`src/mnemos/cache_aligner.py`). Extracts dynamic content (ISO timestamps, UUIDs, session ids, short-lived tokens, calendar dates) from system-prompt-like text and relocates it to a `--- Dynamic context ---` block at the end, so the prefix stays byte-identical across requests and provider KV caches (Anthropic `cache_control`, OpenAI prefix caching) hit. Inspired by headroom's CacheAligner (https://github.com/headroomlabs-ai/headroom, Apache 2.0). Original implementation — no headroom code imported. New `CacheAlignerConfig` in `config.py` (per-kind toggles), `MemoryManager.align_prefix()` method, and `mnemos_align_prefix` MCP tool.
+- **P1-7 Output token reduction — verbosity steering + effort routing**. New optional `verbosity` (`default`/`terse`/`minimal`) and `effort` (`low`/`medium`/`high`) parameters on `mnemos_add`, `mnemos_search`, `mnemos_recall_context`. When set to `terse`/`minimal` or `low`/`high`, a short guidance suffix is injected into the tool result framing. Defaults preserve the exact pre-P1-7 behaviour (backward compatible). Inspired by headroom's output token reduction work. Original implementation. New `OutputStyleConfig` in `config.py`.
+- **T3 — CCR cleanup wired to background processor**. `ccr_cleanup()` (TTL expiry + LRU eviction) now runs automatically from `_processor_loop` on its own interval (`ccr_cleanup_interval_sec`, default 1200s = 20 min), not every processor cycle. Guarded by `ccr.enabled`; exceptions are caught and logged so the processor loop never crashes. New `ccr_cleanup_interval_sec` field on `CCRConfig` (60–86400s).
+
 ## [2.8.0] - 2026-07-16
 
 ### Added

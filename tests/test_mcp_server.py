@@ -46,6 +46,7 @@ _TOOL_ARGS: dict[str, dict] = {
     "mnemos_watch_start": {},
     "mnemos_watch_status": {},
     "mnemos_watch_stop": {},
+    "mnemos_align_prefix": {"text": "Session sess-abc123 at 2026-07-17T10:00:00Z"},
 }
 
 # ---------------------------------------------------------------------------
@@ -67,6 +68,7 @@ _ROUTING_MAP: dict[str, tuple[str, list[str]]] = {
     "mnemos_watch_start": ("watch_start", ["watch_stop", "watch_status", "search"]),
     "mnemos_watch_stop": ("watch_stop", ["watch_start", "watch_status", "search"]),
     "mnemos_watch_status": ("watch_status", ["watch_start", "watch_stop", "search"]),
+    "mnemos_align_prefix": ("align_prefix", ["search", "add", "recall_context"]),
 }
 
 
@@ -90,6 +92,12 @@ def _make_mock_manager() -> MagicMock:
     mgr.watch_start.return_value = None
     mgr.watch_stop.return_value = None
     mgr.watch_status.return_value = "watching: 0 paths"
+    mgr.align_prefix.return_value = {
+        "aligned_text": "aligned",
+        "extracted": [],
+        "prefix_stabilized": False,
+        "moved_chars": 0,
+    }
     return mgr
 
 
