@@ -66,8 +66,26 @@ MNEMOS_TAG_SUBTYPES: frozenset[str] = frozenset(
         # memories can carry a valid mnemos: category instead of falling
         # back to mnemos:legacy.
         "synthesized",
+        # Exclusion marker (ArchCom 2026-07-17 federation contract §4 КП-6):
+        # ``mnemos:no-federate`` excludes a record from ALL external exchange
+        # (batch sync + mediated pull). It is NOT a cognitive category — it
+        # is an opt-out marker living in the ``mnemos:`` namespace so it
+        # passes tag-contract validation without a new prefix. The auto-tagger
+        # in ``secrets_detector`` (Layer 1) adds it on write when a secret is
+        # detected. Owners can remove it with explicit confirmation.
+        # Decision: option (a) — add to whitelist with a comment, rather than
+        # a special-case bypass in ``validate_tag_contract``. Simpler, and
+        # the contract explicitly says "Совместим с tag contract (не новый
+        # prefix, mnemos: subtype namespace)".
+        "no-federate",
     }
 )
+
+
+#: Tag that marks a record as excluded from all federation (batch export +
+#: mediated pull). Auto-added by the write-path secrets scanner (Layer 1).
+#: See ArchCom 2026-07-17 federation contract §4 КП-6 and §2.2.1.
+NO_FEDERATE_TAG: str = "mnemos:no-federate"
 
 # Allowed optional tag prefixes beyond the required ones
 ALLOWED_OPTIONAL_PREFIXES: frozenset[str] = frozenset(
