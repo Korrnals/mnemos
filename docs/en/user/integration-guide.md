@@ -427,7 +427,7 @@ Mnemos provides a native `MemoryProvider` plugin for [Hermes Agent](https://herm
 
 ### Tools
 
-The plugin exposes all 15 `mnemos_*` tools as native Hermes tools:
+The plugin exposes the `mnemos_*` tools as native Hermes tools. All tools with an HTTP endpoint are mirrored below; `mnemos_align_prefix` (P1-5 CacheAligner) is **MCP-only** — no HTTP endpoint yet — so it is available to MCP clients (VS Code Copilot, Hermes plugin over MCP) but not via the HTTP table.
 
 | Tool | HTTP endpoint |
 |------|--------------|
@@ -446,6 +446,8 @@ The plugin exposes all 15 `mnemos_*` tools as native Hermes tools:
 | `mnemos_watch_start` | POST /watch/start |
 | `mnemos_watch_stop` | POST /watch/stop |
 | `mnemos_watch_status` | GET /watch/status |
+
+> **P1-7 note:** `mnemos_add`, `mnemos_search`, and `mnemos_recall_context` accept optional `verbosity` and `effort` parameters that steer the caller's output style. They are passed through transparently by the Hermes plugin — no plugin changes required. See [mcp-tools.md#output-token-reduction-p1-7](mcp-tools.md#output-token-reduction-p1-7).
 
 ### Configuration
 

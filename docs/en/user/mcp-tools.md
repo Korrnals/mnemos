@@ -44,6 +44,7 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_auto_collect_status`](#mnemos_auto_collect_status) | Compaction signal vector (M7) | no |
 | [`mnemos_compress`](#mnemos_compress) | Reversible compression (CCR) — cache original, embed marker | no |
 | [`mnemos_retrieve`](#mnemos_retrieve) | Retrieve a CCR-cached original or FTS5 snippets | no |
+| [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — relocate dynamic content for prefix cache stability | no |
 | [`mnemos_stats`](#mnemos_stats) | Health counters and key paths | no |
 
 ---
@@ -61,6 +62,8 @@ Create a new memory entry. The MCP layer enforces the Mnemos tag contract ([M2](
 | `tags` | string[] | **yes** | — | Must include `project:<slug>`, `agent:<slug>`, and at least one `mnemos:<subtype>`. |
 | `memory_type` | string | no | `note` | One of `note`, `fact`, `snippet`, `bookmark`, `conversation`. |
 | `filter_profile` | string | no | auto | One of `log`, `terminal`, `code`, `docs`, `web`, `default`. Drives M10 context filter. |
+| `verbosity` | string | no | config default | One of `default`, `terse`, `minimal`. Injects output-style guidance into the tool result framing. See [Output token reduction](#output-token-reduction-p1-7). |
+| `effort` | string | no | config default | One of `low`, `medium`, `high`. Injects reasoning-effort hint into the tool result framing. See [Output token reduction](#output-token-reduction-p1-7). |
 
 ### Output
 
@@ -117,6 +120,8 @@ Hybrid search: FTS5 (full-text) + vector + Reciprocal Rank Fusion. Only `publish
 | `project` | string | no | — | Restrict to a project slug. |
 | `limit` | integer | no | `10` | Max results. |
 | `include_raw` | boolean | no | `false` | If true, returns `raw_content` instead of cleaned `content`. |
+| `verbosity` | string | no | config default | One of `default`, `terse`, `minimal`. Injects output-style guidance into the tool result framing. See [Output token reduction](#output-token-reduction-p1-7). |
+| `effort` | string | no | config default | One of `low`, `medium`, `high`. Injects reasoning-effort hint into the tool result framing. See [Output token reduction](#output-token-reduction-p1-7). |
 
 ### Output
 
@@ -233,6 +238,8 @@ Restore the latest session checkpoint for a project. The **first** thing an agen
 |-------|------|----------|---------|-------------|
 | `project` | string | no | auto (cwd) | Project name. Auto-detected from the current working directory if omitted. |
 | `query` | string | no | — | Optional focus aspect. |
+| `verbosity` | string | no | config default | One of `default`, `terse`, `minimal`. Injects output-style guidance into the tool result framing. See [Output token reduction](#output-token-reduction-p1-7). |
+| `effort` | string | no | config default | One of `low`, `medium`, `high`. Injects reasoning-effort hint into the tool result framing. See [Output token reduction](#output-token-reduction-p1-7). |
 
 ### Output
 
@@ -771,6 +778,87 @@ If the hash is absent from the cache (e.g. evicted by TTL or LRU), `found` is `f
 
 ---
 
+## `mnemos_align_prefix`
+
+**CacheAligner (P1-5)** — relocate dynamic content (ISO timestamps, UUIDs, session ids, short-lived tokens, calendar dates) from system-prompt-like text to a `--- Dynamic context ---` block at the end, so the prefix stays byte-identical across requests and provider KV caches (Anthropic `cache_control`, OpenAI prefix caching) hit. Inspired by headroom's CacheAligner (https://github.com/headroomlabs-ai/headroom, Apache 2.0). Original implementation — no headroom code imported.
+
+When CacheAligner is disabled in config, the text is returned unchanged with an empty `extracted` list.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `text` | string | **yes** | — | System-prompt-like text to stabilize. |
+| `profile` | string | no | `default` | One of `code`, `docs`, `default`. Toggles which dynamic kinds are extracted. `code` and `docs` skip bare tokens (avoid mangling long identifiers or hyphenated words); `default` extracts all kinds. |
+
+### Output
+
+```json
+{
+  "aligned_text": "You are a senior engineer.\n\n--- Dynamic context ---\n- timestamp: 2026-07-17T10:30:00Z\n- session_id: sess-abc123def456\n",
+  "extracted": [
+    {"kind": "timestamp", "value": "2026-07-17T10:30:00Z", "start": 24, "end": 44},
+    {"kind": "session_id", "value": "sess-abc123def456", "start": 60, "end": 78}
+  ],
+  "prefix_stabilized": true,
+  "moved_chars": 38
+}
+```
+
+- `aligned_text` — the input with dynamic spans removed and a `--- Dynamic context ---` block appended at the end, listing each extracted value with its kind.
+- `extracted` — the list of extracted spans (`kind`, `value`, `start`, `end` in the *original* text).
+- `prefix_stabilized` — `true` when at least one span was extracted from the prefix region (i.e. the aligned prefix is longer than the original prefix up to the first dynamic span).
+- `moved_chars` — total characters relocated (sum of span lengths).
+
+### Example
+
+Input:
+```text
+You are a senior engineer. Today is 2026-07-17T10:30:00Z. Session: sess-abc123def456.
+[stable rules follow...]
+```
+
+Aligned output (prefix up to the first dynamic span is now byte-stable across requests):
+```text
+You are a senior engineer. Today is . Session: .
+[stable rules follow...]
+
+--- Dynamic context ---
+- timestamp: 2026-07-17T10:30:00Z
+- session_id: sess-abc123def456
+```
+
+### Profile behaviour
+
+| Profile | Skips | Why |
+|---------|-------|-----|
+| `default` (or omitted) | nothing | extract all kinds |
+| `code` | `token` | bare 20+ char tokens would mangle long identifiers / hashes in code |
+| `docs` | `token` | prose rarely contains real tokens; avoids mangling long hyphenated words |
+
+The profile's skip set merges (union) with any per-kind toggles from `CacheAlignerConfig` — disabling a kind in config widens what a profile already skips.
+
+### Config
+
+```yaml
+cache_aligner:
+  enabled: true               # master switch
+  extract_timestamps: true   # ISO 8601 timestamps
+  extract_uuids: true        # canonical 8-4-4-4-12 UUIDs
+  extract_session_ids: true  # sess-*, session:*, sid-*
+  extract_dates: true        # calendar dates 2026-07-17 / 2026/07/17
+  extract_tokens: true       # bare 20+ char opaque tokens
+```
+
+A kind whose toggle is `false` is added to the skip set and stays in-place (not relocated).
+
+### Related
+
+- Architecture: [overview.md#cachealigner-p1-5](../architecture/overview.md#cachealigner-p1-5)
+- Config reference: [config.example.yaml](../../../config.example.yaml)
+
+---
+
 ## Checkpoint reminder (auto-injected)
 
 Every non-save tool call returns its normal payload **plus** an optional reminder string when one of the auto-collect thresholds is hit:
@@ -798,6 +886,64 @@ The `mnemos_add` and `mnemos_ingest_url` tools reject calls that violate the M2 
 Valid `mnemos:` subtypes: `session`, `bug-pattern`, `learning`, `decision`, `rule`, `open-question`, `checkpoint`, `legacy`.
 
 Full reference: [tag-contract.md](tag-contract.md).
+
+---
+
+## Output token reduction (P1-7)
+
+`mnemos_add`, `mnemos_search`, and `mnemos_recall_context` accept two optional parameters that steer the caller's output style without changing what Mnemos stores or returns:
+
+| Parameter | Values | What it does |
+|-----------|--------|--------------|
+| `verbosity` | `default`, `terse`, `minimal` | Injects an output-style guidance suffix into the tool result framing. `terse` asks for brief, no-preamble output; `minimal` asks for facts only. |
+| `effort` | `low`, `medium`, `high` | Injects a reasoning-effort hint. `low` flags a routine step (minimal reasoning); `high` asks for deliberate reasoning and verification. |
+
+These are **hints passed through to the caller**, not model config changes. They are inspired by headroom's output token reduction work. Original implementation.
+
+### Backward compatibility
+
+- Both parameters are optional. Omitting them uses the config defaults (`default_verbosity=default`, `default_effort=medium`).
+- The defaults (`default` / `medium`) produce an empty guidance suffix — the tool result is byte-identical to the pre-P1-7 output.
+- Invalid values (e.g. `"verbose"`, `"turbo"`) are validated against the allowed frozensets, logged at `WARNING`, and fall back to the config default — graceful degradation, never raises.
+
+### Config
+
+```yaml
+output_style:
+  enabled: true              # master switch; when false, steering is a no-op
+  default_verbosity: default # default when caller omits verbosity
+  default_effort: medium     # default when caller omits effort
+```
+
+When `output_style.enabled` is `false`, both resolvers return the no-op defaults regardless of caller input.
+
+### Example
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_search",
+    "arguments": {
+      "query": "cache aligner prefix stability",
+      "verbosity": "terse",
+      "effort": "low"
+    }
+  }
+}
+```
+
+The tool result carries the normal payload **plus** a short guidance suffix:
+
+```text
+... normal search results ...
+
+---
+*Output style: terse. Be brief. No preambles, no restated context, no ceremony. Lead with the result. Omit explanations the caller already has.*
+*Effort: low — routine step, minimal reasoning.*
+```
 
 ---
 

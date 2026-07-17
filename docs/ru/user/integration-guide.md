@@ -456,6 +456,8 @@ Mnemos предоставляет нативный плагин `MemoryProvider`
 | `mnemos_watch_stop` | POST /watch/stop |
 | `mnemos_watch_status` | GET /watch/status |
 
+> **Примечание P1-7:** `mnemos_add`, `mnemos_search` и `mnemos_recall_context` принимают опциональные параметры `verbosity` и `effort`, управляющие стилем вывода вызывающей стороны. Hermes-плагин передаёт их прозрачно — изменений плагина не требуется. См. [mcp-tools.md#сокращение-токенов-вывода-p1-7](mcp-tools.md#сокращение-токенов-вывода-p1-7).
+
 ### Конфигурация
 
 Конфиг хранится в `~/.hermes/config.yaml` в секции `memory.mnemos`:

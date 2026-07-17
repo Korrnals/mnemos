@@ -191,6 +191,53 @@ class CCRConfig(BaseModel):
     snippet_count: int = Field(default=5, ge=1, le=50)
     # Token budget passed to apply_filter for the compress stage.
     filter_budget: int = Field(default=4096, ge=256, le=1_000_000)
+    # P1-5/T3: background CCR cleanup interval (seconds). Default 1200s = 20 min.
+    # The processor loop runs every `interval_sec` (default 120s); CCR cleanup runs
+    # every `ccr_cleanup_interval_sec` to avoid scanning the cache table every cycle.
+    ccr_cleanup_interval_sec: int = Field(default=1200, ge=60, le=86400)
+
+
+class CacheAlignerConfig(BaseModel):
+    """P1-5 — CacheAligner prefix stabilization.
+
+    Inspired by headroom's CacheAligner
+    (https://github.com/headroomlabs-ai/headroom, Apache 2.0). Original
+    implementation — no headroom code is imported.
+
+    When enabled, dynamic content (timestamps, UUIDs, session ids, tokens)
+    is relocated to the end of system-prompt-like text so the prefix stays
+    byte-identical across requests and provider KV caches
+    (Anthropic ``cache_control``, OpenAI prefix caching) hit.
+    """
+
+    enabled: bool = True
+    # Toggle individual extractor kinds. Disabling a kind means those
+    # spans stay in-place (not relocated). Useful for workloads where a
+    # kind is known to be stable (e.g. a fixed session id per session).
+    extract_timestamps: bool = True
+    extract_uuids: bool = True
+    extract_session_ids: bool = True
+    extract_dates: bool = True
+    extract_tokens: bool = True
+
+
+class OutputStyleConfig(BaseModel):
+    """P1-7 — Output token reduction via verbosity steering + effort routing.
+
+    Inspired by headroom's output token reduction work. Original
+    implementation. These are *hints* injected into tool result framing
+    and passed through to the caller — they are not model config changes.
+    """
+
+    enabled: bool = True
+    # Default verbosity when the caller does not specify one.
+    #   "default" — preserve current behaviour (no steering injected).
+    #   "terse"   — inject "be terse, no preambles, no restated context".
+    #   "minimal" — inject "absolute minimum, facts only".
+    default_verbosity: str = "default"
+    # Default reasoning effort hint when the caller does not specify one.
+    #   "low" / "medium" / "high" — dial thinking depth for routine steps.
+    default_effort: str = "medium"
 
 
 class Settings(BaseSettings):
@@ -204,6 +251,8 @@ class Settings(BaseSettings):
     automation: AutomationConfig = AutomationConfig()
     runtime: RuntimeConfig = RuntimeConfig()
     ccr: CCRConfig = CCRConfig()
+    cache_aligner: CacheAlignerConfig = CacheAlignerConfig()
+    output_style: OutputStyleConfig = OutputStyleConfig()
     logging: LoggingConfig = LoggingConfig()
     # M5: declarative policy rules (loaded from YAML or set programmatically)
     policies: dict[str, Any] = Field(default_factory=dict)

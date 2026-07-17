@@ -111,6 +111,95 @@ def _auto_collect_instructions(project: str) -> str:
     )
 
 
+# ── P1-7 Output token reduction: verbosity steering + effort routing ────────
+# Inspired by headroom's output token reduction work. Original implementation.
+# These are *hints* injected into tool result framing and passed through to
+# the caller — they are not model config changes. New params are optional with
+# defaults that preserve the exact pre-P1-7 behaviour (backward compatible).
+
+_VERBOSITY_GUIDANCE: dict[str, str] = {
+    "default": "",
+    "terse": (
+        "\n\n---\n*Output style: terse. Be brief. No preambles, no restated "
+        "context, no ceremony. Lead with the result. Omit explanations the "
+        "caller already has.*"
+    ),
+    "minimal": (
+        "\n\n---\n*Output style: minimal. Facts only. No prose, no "
+        "preambles, no framing. Return the data.*"
+    ),
+}
+
+_EFFORT_GUIDANCE: dict[str, str] = {
+    "low": "\n*Effort: low — routine step, minimal reasoning.*",
+    "medium": "",
+    "high": "\n*Effort: high — deliberate reasoning, verify before answering.*",
+}
+
+# Allowed value sets for validation. Kept in sync with the guidance dicts
+# above. Used by _resolve_verbosity / _resolve_effort to detect caller typos
+# (e.g. "verbose", "turbo") and fall back gracefully instead of silently
+# coercing to an empty hint via a missing dict key.
+_VALID_VERBOSITY: frozenset[str] = frozenset(_VERBOSITY_GUIDANCE.keys())
+_VALID_EFFORT: frozenset[str] = frozenset(_EFFORT_GUIDANCE.keys())
+
+
+def _resolve_verbosity(args: dict[str, Any], settings: Any) -> str:
+    """Resolve the effective verbosity from args or config default.
+
+    Invalid values (not in ``_VALID_VERBOSITY``) are logged at WARNING and
+    fall back to the config default — graceful degradation, never raises.
+    This prevents a caller typo (e.g. ``"verbose"``) from silently disabling
+    steering via a missing dict key.
+    """
+    if not settings.output_style.enabled:
+        return "default"
+    raw = args.get("verbosity")
+    if isinstance(raw, str):
+        if raw in _VALID_VERBOSITY:
+            return raw
+        logger.warning(
+            "Invalid verbosity %r (valid: %s); falling back to default.",
+            raw,
+            sorted(_VALID_VERBOSITY),
+        )
+        return str(settings.output_style.default_verbosity)
+    return str(settings.output_style.default_verbosity)
+
+
+def _resolve_effort(args: dict[str, Any], settings: Any) -> str:
+    """Resolve the effective effort hint from args or config default.
+
+    Invalid values (not in ``_VALID_EFFORT``) are logged at WARNING and
+    fall back to the config default — graceful degradation, never raises.
+    """
+    if not settings.output_style.enabled:
+        return "medium"
+    raw = args.get("effort")
+    if isinstance(raw, str):
+        if raw in _VALID_EFFORT:
+            return raw
+        logger.warning(
+            "Invalid effort %r (valid: %s); falling back to medium.",
+            raw,
+            sorted(_VALID_EFFORT),
+        )
+        return str(settings.output_style.default_effort)
+    return str(settings.output_style.default_effort)
+
+
+def _steering_suffix(args: dict[str, Any], settings: Any) -> str:
+    """Build the verbosity + effort guidance suffix appended to tool output.
+
+    Returns "" when verbosity is "default" and effort is "medium" (the
+    no-op case), preserving the exact pre-P1-7 output for callers that do
+    not pass the new params.
+    """
+    verbosity = _resolve_verbosity(args, settings)
+    effort = _resolve_effort(args, settings)
+    return _VERBOSITY_GUIDANCE.get(verbosity, "") + _EFFORT_GUIDANCE.get(effort, "")
+
+
 # ── Tool listing ───────────────────────────────────────────────────────────────
 
 
@@ -558,6 +647,35 @@ async def list_tools() -> list[Tool]:
                 "required": ["hash"],
             },
         ),
+        Tool(
+            name="mnemos_align_prefix",
+            description=(
+                "P1-5 CacheAligner — relocate dynamic content (timestamps, UUIDs, "
+                "session ids, tokens) to the end of text so the prefix stays "
+                "byte-identical across requests and provider KV caches "
+                "(Anthropic cache_control, OpenAI prefix caching) hit. Inspired "
+                "by headroom's CacheAligner (Apache 2.0). Original implementation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "System-prompt-like text to stabilize",
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["code", "docs", "default"],
+                        "description": (
+                            "Filter profile toggling which dynamic kinds are "
+                            "extracted. 'code' skips bare tokens (avoids mangling "
+                            "long identifiers). Default extracts all kinds."
+                        ),
+                    },
+                },
+                "required": ["text"],
+            },
+        ),
     ]
 
 
@@ -617,13 +735,17 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         filtered = bool(
             settings.mnemos.auto_filter and memory.content and memory.filter_profile is not None
         )
-        return {
+        result = {
             "id": memory.id,
             "title": memory.auto_title(),
             "status": memory.status,
             "filtered": filtered,
             "filter_profile": memory.filter_profile,
         }
+        _suffix = _steering_suffix(args, settings)
+        if _suffix:
+            result["_output_style_hint"] = _suffix
+        return result
 
     # ── mnemos_search ───────────────────────────────────────────────────────
     if name == "mnemos_search":
@@ -643,7 +765,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             include_raw=args.get("include_raw", False),
             status=status,
         )
-        return [
+        _search_results = [
             {
                 "id": r.memory.id,
                 "title": r.memory.auto_title(),
@@ -655,6 +777,10 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             }
             for r in results
         ]
+        _suffix = _steering_suffix(args, settings)
+        if _suffix:
+            return {"results": _search_results, "_output_style_hint": _suffix}
+        return _search_results
 
     # ── mnemos_agent_recall (M3) ────────────────────────────────────────────
     if name == "mnemos_agent_recall":
@@ -703,12 +829,13 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             return (
                 f"No context found for project '{project}'. "
                 f"Start by saving context with mnemos_save_context.{instructions}"
+                + _steering_suffix(args, settings)
             )
         out = [f"# Context for project '{project}'\n"]
         for m in memories:
             out.append(f"---\n{m.effective_content()}\n")
         instructions = _auto_collect_instructions(project) if _auto_collect_state["enabled"] else ""
-        return "\n".join(out) + instructions
+        return "\n".join(out) + instructions + _steering_suffix(args, settings)
 
     # ── mnemos_list_recent ──────────────────────────────────────────────────
     if name == "mnemos_list_recent":
@@ -851,6 +978,10 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             ),
             "next_reminder_in_calls": max(0, _remind_calls() - calls),
         }
+
+    # ── mnemos_align_prefix (P1-5 CacheAligner) ──────────────────────────────
+    if name == "mnemos_align_prefix":
+        return mgr.align_prefix(args["text"], profile=args.get("profile"))
 
     return f"Unknown tool: {name}"
 
