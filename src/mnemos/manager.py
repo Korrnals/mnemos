@@ -112,6 +112,48 @@ class MemoryManager:
             parts.append(" ".join(memory.tags))
         return "\n".join(parts)[:4096]
 
+    @staticmethod
+    def _scan_and_tag(tags: list[str], content: str) -> list[str]:
+        """Run the secrets scanner on ``content`` and auto-add no-federate.
+
+        Federation defence-in-depth (Layer 1, ArchCom 2026-07-17 §2.2.1):
+        if :func:`detect_secrets` finds a secret pattern AND the tag
+        ``mnemos:no-federate`` is not already in ``tags``, it is appended so
+        the record is excluded from all external exchange (batch sync +
+        pull). Idempotent — a re-scan with the same secret does not
+        duplicate the tag. Only pattern names and counts are logged;
+        raw matched values never enter the log.
+
+        Non-fatal: a scanner error returns the tags unchanged so the
+        caller's write is never blocked by the scanner (Layer 2
+        background scanner will catch it later).
+
+        Args:
+            tags: current tags list (not mutated; a new list is returned).
+            content: text to scan; empty/None → tags returned unchanged.
+
+        Returns:
+            The (possibly augmented) tags list.
+        """
+        if not content:
+            return list(tags)
+        result = list(tags)
+        try:
+            from mnemos.models import NO_FEDERATE_TAG
+            from mnemos.secrets_detector import detect_secrets, findings_by_pattern
+
+            findings = detect_secrets(content)
+            if findings and NO_FEDERATE_TAG not in result:
+                result.append(NO_FEDERATE_TAG)
+                logger.info(
+                    "auto-tagged record with mnemos:no-federate "
+                    "(patterns: %s) — raw values not logged",
+                    findings_by_pattern(findings),
+                )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("Secrets scanner failed (non-fatal): %s", exc)
+        return result
+
     # ── CRUD ────────────────────────────────────────────────────────────────
 
     def add(
@@ -141,22 +183,7 @@ class MemoryManager:
         # a scanner error must NOT block the write — the memory is still
         # saved, just without the no-federate marker (Layer 2 background
         # scanner will catch it later).
-        tags = list(data.tags)
-        try:
-            from mnemos.models import NO_FEDERATE_TAG
-            from mnemos.secrets_detector import detect_secrets, findings_by_pattern
-
-            if data.content and NO_FEDERATE_TAG not in tags:
-                findings = detect_secrets(data.content)
-                if findings:
-                    tags.append(NO_FEDERATE_TAG)
-                    logger.info(
-                        "auto-tagged record with mnemos:no-federate "
-                        "(patterns: %s) — raw values not logged",
-                        findings_by_pattern(findings),
-                    )
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.warning("Secrets scanner failed (non-fatal): %s", exc)
+        tags = self._scan_and_tag(list(data.tags), data.content)
 
         memory = Memory(
             content=data.content,
@@ -234,6 +261,14 @@ class MemoryManager:
             if val is not None:
                 setattr(memory, field, val)
                 update_kwargs[field] = val
+
+        # ── Layer 1: write-path secrets scanner (update path) ──────────────
+        # Re-run the scanner when the update payload includes new content so
+        # the path-scoped re-ingest path (.instructions.md edited → update
+        # with new content) does not bypass the scanner. Idempotent: if the
+        # tag is already present, _scan_and_tag does not duplicate it.
+        if "content" in update_kwargs:
+            memory.tags = self._scan_and_tag(memory.tags, memory.content)
 
         memory.updated_at = datetime.now(UTC)
         self.sqlite.save(memory)
