@@ -42,6 +42,7 @@ from mnemos.models import MemoryStatus
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
+    from mnemos.secrets_detector import SecretFinding
 
 logger = logging.getLogger(__name__)
 
@@ -149,11 +150,74 @@ def _memory_to_export_dict(memory: Any) -> dict[str, Any]:
     return data
 
 
+def _redact_string_field(
+    value: str,
+    counts: dict[str, int],
+) -> str:
+    """Scan ``value`` for secrets and return the redacted replacement.
+
+    Updates ``counts`` in place with per-pattern tallies (aggregated across
+    all fields by the caller). Returns ``value`` unchanged when no secret
+    is found. Uses :func:`detect_secrets` (which already de-overlaps) and
+    :func:`redact_content` for the replacement.
+    """
+    from mnemos.secrets_detector import detect_secrets, findings_by_pattern, redact_content
+
+    if not value:
+        return value
+    findings = detect_secrets(value)
+    if not findings:
+        return value
+    for name, c in findings_by_pattern(findings).items():
+        counts[name] = counts.get(name, 0) + c
+    return redact_content(value, findings)
+
+
+def _redact_metadata(
+    obj: Any,
+    counts: dict[str, int],
+) -> Any:
+    """Recursively redact secrets in string values within ``metadata``.
+
+    Walks dicts and lists; any string leaf that contains a secret pattern
+    is replaced with its ``<REDACTED:<pattern_name>>`` form. Non-string
+    leaves (int, float, bool, None) are passed through unchanged. Returns
+    a new structure (the original is not mutated).
+    """
+    if isinstance(obj, str):
+        return _redact_string_field(obj, counts)
+    if isinstance(obj, dict):
+        return {k: _redact_metadata(v, counts) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_metadata(v, counts) for v in obj]
+    return obj
+
+
 def build_json_payload(
     mgr: MemoryManager,
     filt: ExportFilter,
 ) -> dict[str, Any]:
-    """Build the JSON export payload dict (not yet serialised)."""
+    """Build the JSON export payload dict (not yet serialised).
+
+    Federation defence-in-depth (Layer 3, partial — ArchCom 2026-07-17
+    §2.2.1 / §3.1):
+
+    * **Exclusion:** records tagged ``mnemos:no-federate`` are excluded
+      from the export entirely (contract КП-6: "запись исключается из
+      export И pull"). They never appear in the JSON payload.
+    * **Redaction:** for records that DO pass the filter, the content,
+      ``raw_content``, ``title``, ``source_url``, and string values in
+      ``metadata`` are scanned with the secrets detector. Any detected
+      secret is replaced with ``<REDACTED:<pattern_name>>`` so the export
+      never ships a raw credential, even if the write-path scanner
+      (Layer 1) missed it.
+
+    The redaction summary is recorded in the payload ``redaction_summary``
+    field for operator visibility (counts only — never raw values).
+    """
+    from mnemos.models import NO_FEDERATE_TAG
+    from mnemos.secrets_detector import detect_secrets, findings_by_pattern, redact_content
+
     memories = mgr.sqlite.list_for_export(
         project=filt.project,
         agent=filt.agent,
@@ -162,13 +226,86 @@ def build_json_payload(
         since=filt.since,
         until=filt.until,
     )
+
+    excluded_no_federate = 0
+    redacted_records = 0
+    redaction_counts: dict[str, int] = {}
+    export_memories: list[dict[str, Any]] = []
+
+    for mem in memories:
+        # ── Exclude no-federate records entirely ─────────────────────────
+        if NO_FEDERATE_TAG in mem.tags:
+            excluded_no_federate += 1
+            continue
+
+        # ── Redact secrets in content + raw_content ───────────────────────
+        findings = detect_secrets(mem.content) if mem.content else []
+        if mem.raw_content:
+            findings.extend(detect_secrets(mem.raw_content))
+        # De-overlap: re-sort + drop contained (detect_secrets already
+        # returns de-overlapped findings per call; merging two calls may
+        # re-introduce overlaps across content/raw_content boundaries,
+        # so we re-sort + de-overlap the combined list).
+        findings.sort(key=lambda f: f.start)
+        deoverlapped: list[SecretFinding] = []
+        last_end = -1
+        for f in findings:
+            if f.start >= last_end:
+                deoverlapped.append(f)
+                last_end = f.end
+        field_redacted = False
+        if deoverlapped:
+            redacted_content = redact_content(mem.content, deoverlapped)
+            mem = mem.model_copy(update={"content": redacted_content})
+            if mem.raw_content:
+                # Redact raw_content with its own findings (those that
+                # fell within the raw_content span). For simplicity we
+                # re-detect on raw_content alone — it's a separate string
+                # and offsets differ from the combined list.
+                raw_findings = detect_secrets(mem.raw_content)
+                if raw_findings:
+                    mem = mem.model_copy(
+                        update={"raw_content": redact_content(mem.raw_content, raw_findings)}
+                    )
+                    # Merge raw_findings counts into the summary too.
+                    for name, c in findings_by_pattern(raw_findings).items():
+                        redaction_counts[name] = redaction_counts.get(name, 0) + c
+            field_redacted = True
+            for name, c in findings_by_pattern(deoverlapped).items():
+                redaction_counts[name] = redaction_counts.get(name, 0) + c
+
+        # ── Redact secrets in title / source_url / metadata ───────────────
+        # S-1: these fields were previously unscanned, so a secret in the
+        # title, source_url, or a metadata string value would ship
+        # unredacted to the export JSON. Each is scanned independently.
+        if mem.title:
+            redacted_title = _redact_string_field(mem.title, redaction_counts)
+            if redacted_title != mem.title:
+                mem = mem.model_copy(update={"title": redacted_title})
+                field_redacted = True
+        if mem.source_url:
+            redacted_url = _redact_string_field(mem.source_url, redaction_counts)
+            if redacted_url != mem.source_url:
+                mem = mem.model_copy(update={"source_url": redacted_url})
+                field_redacted = True
+        if mem.metadata:
+            redacted_metadata = _redact_metadata(mem.metadata, redaction_counts)
+            if redacted_metadata != mem.metadata:
+                mem = mem.model_copy(update={"metadata": redacted_metadata})
+                field_redacted = True
+
+        if field_redacted:
+            redacted_records += 1
+
+        export_memories.append(_memory_to_export_dict(mem))
+
     projects = mgr.sqlite.list_projects()
-    return {
+    payload: dict[str, Any] = {
         "format_version": FORMAT_VERSION,
         "mnemos_version": __version__,
         "exported_at": datetime.now(UTC).isoformat(),
         "filter": filt.to_dict(),
-        "memories": [_memory_to_export_dict(m) for m in memories],
+        "memories": export_memories,
         "projects": [
             {
                 "id": p.id,
@@ -180,7 +317,21 @@ def build_json_payload(
             }
             for p in projects
         ],
+        "redaction_summary": {
+            "excluded_no_federate": excluded_no_federate,
+            "redacted_records": redacted_records,
+            "patterns": redaction_counts,
+        },
     }
+    if excluded_no_federate or redacted_records:
+        logger.info(
+            "export redaction: excluded %d no-federate records, redacted %d records "
+            "(patterns: %s) — raw values not logged",
+            excluded_no_federate,
+            redacted_records,
+            redaction_counts,
+        )
+    return payload
 
 
 # ── SQLite export ─────────────────────────────────────────────────────────────

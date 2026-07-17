@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No released changes yet. See `## [2.9.0]` below for the most recent cut._
+_No released changes yet. See `## [2.10.0]` below for the most recent cut._
+
+## [2.10.0] - 2026-07-18
+
+### Added
+- **Security — `mnemos:no-federate` auto-tagging + export redaction + import validation** (#86). First layer of the federation defence-in-depth (ArchCom 2026-07-17 federation contract §2.2.1). New `src/mnemos/secrets_detector.py` module — reusable secret-pattern scanner (AWS keys, GitHub tokens, Slack tokens, OpenAI/Anthropic keys, JWTs, PEM private keys, connection strings, high-entropy base64 spans). Stable public API (`detect_secrets`, `redact_content`, `findings_by_pattern`) consumed by Layer 1 (this issue), Layer 2 background scanner (#89, future), and Layer 3 moderation pipeline (Phase 0 #85, future). Write-path scanner auto-adds `mnemos:no-federate` tag on `mnemos_add` / `POST /memories` / `ingest_url` / `ingest_path_scoped_rules` when a secret is detected (idempotent, logs pattern counts only — never raw values). `MemoryManager.remove_no_federate()` removes the tag with explicit confirmation and re-detects if the secret is still present. Export (`mnemos export` JSON) excludes `mnemos:no-federate` records entirely and redacts secrets in passing records (`<REDACTED:<pattern_name>>`); payload gains `redaction_summary` with counts. Import validates content (max 1 MiB, no control chars except `\n`/`\t`, UTF-8), tags (reuses `validate_tag_contract`, max 32, max 128 chars), title (max 256 chars), schema drift (rejects unknown `Memory` fields), and logs prompt-injection patterns at WARNING without blocking. `--dry-run` returns a validation report without writing. `no-federate` added to `MNEMOS_TAG_SUBTYPES` whitelist as an exclusion marker (decision: option (a) — add to whitelist with a comment, not a special-case bypass).
 
 ## [2.9.0] - 2026-07-17
 
