@@ -107,7 +107,7 @@ uv pip install -e ".[dev]"
 
 <!-- version:pip -->
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v2.8.0/mnemos-2.8.0-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v2.9.0/mnemos-2.9.0-py3-none-any.whl
 ```
 <!-- /version:pip -->
 
@@ -139,14 +139,14 @@ podman run -d --name mnemos \
   -v mnemos-vault:/vault \
   -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
 <!-- version:image -->
-  ghcr.io/korrnals/mnemos:2.8.0
+  ghcr.io/korrnals/mnemos:2.9.0
 <!-- /version:image -->
 
 curl -s http://localhost:8787/health | jq
 ```
 
 <!-- version:tags -->
-Теги: `:2.8.0` (фиксированная) · `:latest` (rolling). Работает и с `docker` — замените `podman` на `docker`.
+Теги: `:2.9.0` (фиксированная) · `:latest` (rolling). Работает и с `docker` — замените `podman` на `docker`.
 <!-- /version:tags -->
 
 </details>
@@ -168,8 +168,10 @@ curl -s http://localhost:8787/health | jq
 | 🧠 | **Recall на агента** | Сфокусированная поверхность recall в контексте проекта каждого агента |
 | ⚙️ | **Движок политик** | Планирование и триггеры автоматизации над хранилищем памяти |
 | 🧹 | **Контекстный фильтр** | Пятиступенчатая очистка логов / stdout перед отправкой модели |
-| �️ | **Обратимое сжатие (CCR)** | Сжатие большого контента без потери данных — оригиналы кэшируются в SQLite, извлекаются по хеш-маркеру |
-| �📂 | **Path-scoped rules** | Ингест правил проекта и применение их по пути файла |
+| 🗜️ | **Обратимое сжатие (CCR)** | Сжатие большого контента без потери данных — оригиналы кэшируются в SQLite, извлекаются по хеш-маркеру |
+| 🧷 | **CacheAligner (P1-5)** | Перенос динамического контента (таймстампы, UUID, session id, токены) в хвост, чтобы KV-кэши провайдеров (Anthropic `cache_control`, OpenAI prefix caching) попадали между запросами |
+| 🪶 | **Сокращение токенов вывода (P1-7)** | Опциональные параметры `verbosity` / `effort` на `mnemos_add` / `mnemos_search` / `mnemos_recall_context` управляют стилем вывода вызывающей стороны — обратная совместимость, значения по умолчанию — no-op |
+| 📂 | **Path-scoped rules** | Ингест правил проекта и применение их по пути файла |
 | 🗂️ | **Obsidian vault** | Markdown-зеркало, которое люди могут смотреть, править и grep'ать |
 
 SQLite для метаданных, локальный векторный индекс на numpy + SQLite для recall и Obsidian-совместимый

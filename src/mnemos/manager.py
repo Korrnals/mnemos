@@ -82,6 +82,11 @@ class MemoryManager:
         self._search_stats_lock = threading.Lock()
         self._processor_thread: threading.Thread | None = None
         self._processor_stop: threading.Event | None = None
+        # P1-5/T3: CCR cleanup cycle counter — cleanup runs every
+        # `ccr_cleanup_interval_sec` (tracked in wall-clock time), not
+        # every processor cycle, to avoid scanning the cache table
+        # every `interval_sec` (default 120s).
+        self._ccr_cleanup_last_ts: float = 0.0
 
     @property
     def embedder(self) -> EmbeddingProvider:
@@ -1331,12 +1336,19 @@ class MemoryManager:
         logger.info("Background processor stopped")
 
     def _processor_loop(self, interval_sec: int) -> None:
-        """Background loop: run pipeline periodically.
+        """Background loop: run pipeline + CCR cleanup periodically.
 
         Processes in batches of up to 200 memories per cycle to drain
         large backlogs faster (P0-1 fix). The previous default limit=100
         per cycle was insufficient when ingest rate exceeded processing
         rate.
+
+        CCR cleanup (T3): TTL expiry + LRU eviction runs on its own
+        interval (``ccr_cleanup_interval_sec``, default 1200s = 20 min)
+        — not every cycle — to avoid scanning the cache table every
+        ``interval_sec``. Cleanup is guarded by ``ccr.enabled`` and
+        wrapped in a try/except so a cleanup failure never crashes the
+        processor loop.
         """
         if self._processor_stop is None:
             return
@@ -1356,14 +1368,87 @@ class MemoryManager:
                         result.get("single_promoted", 0),
                         result.get("stuck_rescued", 0),
                     )
+                # CCR cleanup tick — runs on its own interval, not every cycle.
+                self._maybe_run_ccr_cleanup()
             except Exception:
                 logger.exception("Background processor error")
             self._processor_stop.wait(timeout=interval_sec)
+
+    def _maybe_run_ccr_cleanup(self) -> None:
+        """Run CCR TTL/LRU cleanup if enough wall-clock time has elapsed.
+
+        Guarded by ``settings.ccr.enabled``. Exceptions are caught and
+        logged so the processor loop never crashes on a cleanup failure.
+        """
+        if not self.settings.ccr.enabled:
+            return
+        interval = self.settings.ccr.ccr_cleanup_interval_sec
+        now = time.monotonic()
+        if self._ccr_cleanup_last_ts and (now - self._ccr_cleanup_last_ts) < interval:
+            return
+        self._ccr_cleanup_last_ts = now
+        try:
+            result = self.ccr_cleanup()
+            if result["ttl_deleted"] or result["lru_evicted"]:
+                logger.info(
+                    "CCR cleanup: ttl_deleted=%d lru_evicted=%d",
+                    result["ttl_deleted"],
+                    result["lru_evicted"],
+                )
+        except Exception:
+            logger.exception("CCR cleanup failed (non-fatal)")
 
     @property
     def processor_running(self) -> bool:
         """Whether the background processor thread is active."""
         return self._processor_thread is not None and self._processor_thread.is_alive()
+
+    # ── CacheAligner (P1-5) ────────────────────────────────────────────────
+
+    def align_prefix(self, text: str, *, profile: str | None = None) -> dict[str, Any]:
+        """Relocate dynamic content to the end of ``text`` for prefix stability.
+
+        Wraps :func:`mnemos.cache_aligner.align`. When CacheAligner is
+        disabled in config, the text is returned unchanged with an empty
+        extracted list.
+
+        Per-kind toggles on ``CacheAlignerConfig`` (``extract_timestamps``,
+        ``extract_uuids``, ``extract_session_ids``, ``extract_dates``,
+        ``extract_tokens``) are honoured: a kind whose toggle is ``False``
+        is added to the skip set and stays in-place. These toggles merge
+        (union) with the profile's own skip set — disabling a kind in
+        config widens what a profile already skips.
+
+        Args:
+            text: System-prompt-like text to stabilize.
+            profile: Optional filter profile (``"code"``, ``"docs"``)
+                that toggles which dynamic kinds are extracted.
+
+        Returns:
+            ``{"aligned_text","extracted","prefix_stabilized","moved_chars"}``.
+        """
+        from mnemos.cache_aligner import align
+
+        if not self.settings.cache_aligner.enabled:
+            return {
+                "aligned_text": text,
+                "extracted": [],
+                "prefix_stabilized": False,
+                "moved_chars": 0,
+            }
+        cfg = self.settings.cache_aligner
+        skip_kinds: set[str] = set()
+        if not cfg.extract_timestamps:
+            skip_kinds.add("timestamp")
+        if not cfg.extract_uuids:
+            skip_kinds.add("uuid")
+        if not cfg.extract_session_ids:
+            skip_kinds.add("session_id")
+        if not cfg.extract_dates:
+            skip_kinds.add("date")
+        if not cfg.extract_tokens:
+            skip_kinds.add("token")
+        return align(text, profile=profile, skip_kinds=skip_kinds or None)
 
     # ── CCR (P1-4) ─────────────────────────────────────────────────────────
 

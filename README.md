@@ -109,7 +109,7 @@ uv pip install -e ".[dev]"
 
 <!-- version:pip -->
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v2.8.0/mnemos-2.8.0-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v2.9.0/mnemos-2.9.0-py3-none-any.whl
 ```
 <!-- /version:pip -->
 
@@ -141,14 +141,14 @@ podman run -d --name mnemos \
   -v mnemos-vault:/vault \
   -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
 <!-- version:image -->
-  ghcr.io/korrnals/mnemos:2.8.0
+  ghcr.io/korrnals/mnemos:2.9.0
 <!-- /version:image -->
 
 curl -s http://localhost:8787/health | jq
 ```
 
 <!-- version:tags -->
-Tags: `:2.8.0` (pinned) · `:latest` (rolling). Works with `docker` too — swap `podman` for `docker`.
+Tags: `:2.9.0` (pinned) · `:latest` (rolling). Works with `docker` too — swap `podman` for `docker`.
 <!-- /version:tags -->
 
 </details>
@@ -170,8 +170,10 @@ control surfaces, and a storage layer you can read with your own eyes.
 | 🧠 | **Per-agent recall** | A focused recall surface scoped to each agent's project context |
 | ⚙️ | **Policy engine** | Schedule and trigger automation over the memory store |
 | 🧹 | **Context filter** | Five-stage noise stripper for logs / stdout before anything hits a model |
-| �️ | **Reversible compression (CCR)** | Compress large content with zero data loss — originals cached in SQLite, retrievable via hash marker |
-| �📂 | **Path-scoped rules** | Ingest project rules and apply them by file path |
+| 🗜️ | **Reversible compression (CCR)** | Compress large content with zero data loss — originals cached in SQLite, retrievable via hash marker |
+| 🧷 | **CacheAligner (P1-5)** | Relocate dynamic content (timestamps, UUIDs, session ids, tokens) to the tail so provider KV caches (Anthropic `cache_control`, OpenAI prefix caching) hit across requests |
+| 🪶 | **Output token reduction (P1-7)** | Optional `verbosity` / `effort` params on `mnemos_add` / `mnemos_search` / `mnemos_recall_context` steer the caller's output style — backward compatible, defaults are a no-op |
+| 📂 | **Path-scoped rules** | Ingest project rules and apply them by file path |
 | 🗂️ | **Obsidian vault** | A markdown mirror humans can browse, edit, and grep |
 
 SQLite for metadata, a local numpy + SQLite vector index for recall, and an Obsidian-compatible vault
