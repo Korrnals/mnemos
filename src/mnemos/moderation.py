@@ -424,13 +424,14 @@ def anonymize_pii(
 #    double-check, even though the export filter already excludes such
 #    records). This is the explicit-owner-opt-out case.
 # 2. The content is *entirely* secret/PII with no useful remainder —
-#    i.e. after redaction + anonymizatioriginal chars replaced by
-# redaction or anonymization) / (original content length). We track the
-# original span lengths of each secret finding and PII finding, sum them,
-# and divide by the original content length. This is accurate regardless
-# of whether the replacement marker is shorter or longer than the
-# original (e.g. ``<REDACTED:aws-key>`` is 18 chars but the original AWS
-# key is 20 chars; the *original* 20 chars were redacted, not 18).
+#    i.e. the redacted fraction (sum of original chars replaced by
+#    redaction or anonymization) / (original content length) exceeds
+#    the configured threshold. We track the original span lengths of
+#    each secret finding and PII finding, sum them, and divide by the
+#    original content length. This is accurate regardless of whether
+#    the replacement marker is shorter or longer than the original
+#    (e.g. ``<REDACTED:aws-key>`` is 18 chars but the original AWS key
+#    is 20 chars; the *original* 20 chars were redacted, not 18).
 
 
 def _redacted_fraction(
@@ -546,7 +547,7 @@ def moderate(
     redacted = redact_content(content, secret_findings) if secret_findings else content
     secrets_count = len(secret_findings)
     secret_chars_replaced = sum(f.end - f.start for f in secret_findings)
-    _secret_counts_by_pattern = findings_by_pattern(secret_findings)  # for future logging
+    secret_counts_by_pattern = findings_by_pattern(secret_findings)
 
     # ── Stage 2: PII scrubber + neutral-value replacement ─────────────
     anonymized, pii_count, _pii_counts_by_type, pii_chars_replaced = anonymize_pii(
@@ -580,10 +581,11 @@ def moderate(
         verdict = ModerationVerdict.ALLOW
 
     logger.info(
-        "moderation: redacted %d secrets, anonymized %d entities, verdict=%s",
+        "moderation: redacted %d secrets, anonymized %d entities, verdict=%s, secret_patterns=%s",
         secrets_count,
         pii_count,
         verdict.value,
+        secret_counts_by_pattern,
     )
 
     return ModerationResult(
