@@ -240,6 +240,36 @@ class OutputStyleConfig(BaseModel):
     default_effort: str = "medium"
 
 
+class FederationConfig(BaseModel):
+    """Federation (Phase 0 batch sync) configuration.
+
+    ArchCom 2026-07-17 federation contract §3.1. This section governs
+    operator-curated, offline, cron-triggered batch sync between two
+    mnemos instances. It is NOT networked — transfer is out-of-band
+    (rsync / scp / shared volume by the operator).
+
+    Fields:
+        shared_projects: Whitelist of project slugs eligible for sync.
+            Only records whose ``project:`` tag matches a slug in this
+            list are included in ``mnemos sync export``. Empty list =
+            no projects are eligible (sync exports nothing). The
+            receiving side re-applies the same filter on import.
+        moderation_mapping_ttl_hours: TTL for the per-run moderation
+            mapping table (contract §2.2). The mapping is in-memory only
+            and NEVER replicated (it is a leak surface). Default 24h.
+            After expiry, a fresh mapping is issued on the next
+            moderation run.
+        moderation_refuse_threshold: Fraction of content that must be
+            redacted/anonymized to trigger a ``refuse`` verdict (contract
+            §2.2). Default 0.8 = 80%. If >80% of content is redacted or
+            anonymized, the record is refused (no useful remainder).
+    """
+
+    shared_projects: list[str] = Field(default_factory=list)
+    moderation_mapping_ttl_hours: int = Field(default=24, ge=1, le=168)
+    moderation_refuse_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
 class Settings(BaseSettings):
     mnemos: MnemosConfig = MnemosConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
@@ -253,6 +283,7 @@ class Settings(BaseSettings):
     ccr: CCRConfig = CCRConfig()
     cache_aligner: CacheAlignerConfig = CacheAlignerConfig()
     output_style: OutputStyleConfig = OutputStyleConfig()
+    federation: FederationConfig = FederationConfig()
     logging: LoggingConfig = LoggingConfig()
     # M5: declarative policy rules (loaded from YAML or set programmatically)
     policies: dict[str, Any] = Field(default_factory=dict)
