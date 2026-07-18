@@ -339,21 +339,27 @@ class TestMappingTable:
         assert r1 == r2 == "192.0.2.1"
 
     def test_expired_entry_evicted(self) -> None:
+        """Expired entries are evicted by evict_expired(); live ones survive.
+
+        P1-2 fix: the previous test created two separate MappingTable
+        instances and asserted evicted == 0 both times — it never
+        advanced time on the same table, so TTL eviction was never
+        tested. This rewrite uses ONE table, advances time past TTL,
+        and asserts the expired entry is actually evicted.
+        """
         start = datetime(2026, 7, 18, 12, 0, tzinfo=UTC)
-        mapping = MappingTable(ttl_hours=1, now=start)
+        mapping = MappingTable(ttl_hours=24, now=start)
         mapping.get_or_create("email", "alice@corp.example.com")
         assert len(mapping) == 1
-        # Advance past TTL.
+        # Within TTL → entry survives, no eviction.
+        mapping._now = start + timedelta(hours=12)
+        assert mapping.evict_expired() == 0
+        assert len(mapping) == 1
+        # Advance past TTL (24h) → entry is expired and evicted.
+        mapping._now = start + timedelta(hours=25)
         evicted = mapping.evict_expired()
-        # No eviction yet (now unchanged).
-        assert evicted == 0
-        # Advance time: construct a new table with later now to simulate expiry.
-        later = start + timedelta(hours=2)
-        mapping2 = MappingTable(ttl_hours=1, now=later)
-        mapping2.get_or_create("email", "bob@corp.example.com")
-        assert len(mapping2) == 1
-        evicted2 = mapping2.evict_expired()
-        assert evicted2 == 0  # fresh entry not expired
+        assert evicted == 1
+        assert len(mapping) == 0
 
     def test_unknown_type_raises(self) -> None:
         mapping = MappingTable()
