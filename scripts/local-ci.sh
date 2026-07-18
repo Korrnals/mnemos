@@ -249,8 +249,10 @@ if [[ $step_rc -ne 0 ]]; then print_summary_and_exit; fi
 
 # Doctor — version consistency check. May not be on PATH in a bare venv.
 if command -v mnemos >/dev/null 2>&1; then
-  # Don't let a non-zero doctor exit fail the whole script — it's a
-  # consistency sanity check, not a hard CI gate. Report SKIP on failure.
+  # Doctor is a HARD CI gate, not a non-fatal sanity check. A non-zero exit
+  # means real warnings (stale integration files, missing files, unwired
+  # agents) that must be FIXED before merge/release — never suppressed.
+  # See lint-and-validate.instructions.md: a warning is a real signal.
   echo ""
   echo "=== [8/$TOTAL_STEPS] Doctor (mnemos doctor) ==="
   set +e
@@ -261,11 +263,14 @@ if command -v mnemos >/dev/null 2>&1; then
     record "Doctor (mnemos doctor)" "PASS"
     echo "→ Doctor (mnemos doctor): PASS"
   else
-    record "Doctor (mnemos doctor)" "SKIP"
-    echo "→ Doctor (mnemos doctor): SKIP (exit $doc_rc — non-fatal consistency check)"
+    record "Doctor (mnemos doctor)" "FAIL"
+    echo "→ Doctor (mnemos doctor): FAIL (exit $doc_rc — warnings detected)" >&2
+    echo "  Doctor reported warnings — fix them before merge/release." >&2
+    echo "  Run \`mnemos doctor\` to see details, then" >&2
+    echo "  \`mnemos integration update\` / \`mnemos integration setup --wire-agents --all\` to remediate." >&2
   fi
 else
-  skip_step 8 $TOTAL_STEPS "Doctor (mnemos doctor)" "mnemos CLI not on PATH in venv"
+  skip_step 8 $TOTAL_STEPS "Doctor (mnemos doctor)" "mnemos CLI not installed in venv — run \`pip install -e .\`"
 fi
 
 # ── step 9: build (optional, release.yml replica) ──────────────────────
