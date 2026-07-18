@@ -605,13 +605,77 @@ class IntegrationManager:
     # ── Update ────────────────────────────────────────────────────────────────
 
     def update(self, target_name: str, *, dry_run: bool = False) -> DeployResult:
-        """Bring stale deployed files to the current version.
+        """Bring stale deployed files to the current version and remove orphans.
 
-        Equivalent to ``deploy`` but only touches files that carry an
-        outdated stamp. Missing files are also deployed.
+        Equivalent to ``deploy`` but, after deploying pack files, ALSO scans
+        each target's deploy directories for stamped files that are no longer
+        in the pack (orphans from a previous release) and removes them. This
+        makes ``update`` symmetric with ``verify``: whatever ``verify`` flags
+        as STALE, ``update`` clears — whether the staleness is an outdated
+        stamp on an in-pack file (handled by ``deploy``) or a stamped file
+        removed from the pack (handled here).
+
+        User files (no mnemos stamp) are never touched.
         """
-        # deploy() already updates stale files in place, so we delegate.
-        return self.deploy(target_name, dry_run=dry_run)
+        # deploy() already updates stale in-pack files in place.
+        result = self.deploy(target_name, dry_run=dry_run)
+        # Now remove orphaned stamped files not in the current pack.
+        self._remove_orphans(target_name, result, dry_run=dry_run)
+        return result
+
+    def _remove_orphans(
+        self,
+        target_name: str,
+        result: DeployResult,
+        *,
+        dry_run: bool,
+    ) -> None:
+        """Remove stamped files in deploy dirs that are not in the current pack.
+
+        Reuses the orphan-detection logic from :meth:`verify` (scan deploy dir
+        for stamped files not in pack) and the safe-removal logic from
+        :meth:`uninstall` (unlink + clean empty parents). Appends one
+        ``FileResult`` per removed orphan to ``result.files`` so callers see
+        what was cleaned up.
+        """
+        target = self.targets.get(target_name)
+        if target is None:
+            raise ValueError(f"Unknown target: {target_name!r}")
+
+        for kind, files in self._all_pack_files().items():
+            dest_dir = target.deploy_map.get(kind.value)
+            if dest_dir is None or not dest_dir.exists():
+                continue
+
+            # Build the set of dest paths the pack expects (same mapping as deploy).
+            expected_dests: set[Path] = set()
+            for src in files:
+                rel = src.relative_to(self.pack_root / kind.value)
+                expected_dests.add(dest_dir / rel)
+
+            for path in sorted(dest_dir.rglob("*")):
+                if not path.is_file() or path in expected_dests:
+                    continue
+                if path.name == ".gitkeep":
+                    continue
+                content = path.read_text(encoding="utf-8", errors="replace")
+                deployed_version = read_stamp(content)
+                if deployed_version is None:
+                    # User file — not ours, leave it alone.
+                    continue
+                # Stamped but not in pack — orphan. Remove it.
+                if not dry_run:
+                    path.unlink()
+                    self._cleanup_empty_parents(path, dest_dir)
+                result.files.append(
+                    FileResult(
+                        source=Path("<not-in-pack>"),
+                        destination=path,
+                        status=DeployStatus.UPDATED,
+                        deployed_version=deployed_version,
+                        note="orphaned stamped file removed (no longer in pack)",
+                    )
+                )
 
     # ── Uninstall ──────────────────────────────────────────────────────────────
 
