@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No released changes yet. See `## [2.10.0]` below for the most recent cut._
+### Added
+- **MCP — `mnemos_export` and `mnemos_import` MCP tools** (#84). Federation Part 1 — the MCP surface for export/import that #85 (batch sync Phase 0) builds on (ArchCom 2026-07-17 federation contract §3.1). Two new tools registered in `src/mnemos/mcp_server.py` (17 → 19 tools). `mnemos_export` writes a JSON or SQLite-tar.gz export to an absolute `output_path` and returns metadata only (`{path, memory_count, format, compress, encrypted, bytes, warnings}`) — content is never returned inline (stdio transport cannot carry binary or large JSON). Supports all filters (`project` / `agent` / `status` / `tags` / `since` / `until`) and `compress=gzip`. When `encrypt=true` the passphrase is read from the `MNEMOS_EXPORT_PASSPHRASE` environment variable — never from tool arguments (per `sensitive-data.instructions.md` args appear in MCP logs). `mnemos_import` reads an export file at an absolute `source_path`, supports `merge` / `restore` modes (`restore` requires `confirm=true` as a hard gate), `overwrite`, and `dry_run`. For encrypted inputs the passphrase is read from the environment variable **named** by `passphrase_env` (the name, not the value). Returns `{mode, dry_run, imported, skipped, updated, errors, warnings, format_version, mnemos_version}`. Both tools are thin wrappers over the existing clean `run_export` / `run_import` functions (`cli/export.py`, `cli/import_.py`) — no new export/import logic, no refactoring required (those functions already take plain kwargs, no Typer `ctx`). Inherits #86 federation defence-in-depth: export excludes `mnemos:no-federate` records and redacts detected secrets in passing records; import validates content/tags/title/schema/prompt-injection. Verified by `tests/test_mcp_export.py` and `tests/test_mcp_import.py` (happy path, restore-confirm gate, passphrase-via-env, dry-run, #86 redaction/exclusion, import validation, argument validation).
+
+_No further released changes yet. See `## [2.10.0]` below for the most recent cut._
 
 ## [2.10.0] - 2026-07-18
 
