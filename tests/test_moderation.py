@@ -132,6 +132,32 @@ class TestModerationRedactPII:
         assert "/example/path/to/file" in result.sanitized_content
         assert "/home/user/secret.txt" not in result.sanitized_content
 
+    def test_redact_pii_windows_path(self) -> None:
+        """Windows drive-letter path C:\\Users\\admin\\secret.txt → neutral.
+
+        Enterprise content with Windows paths must be redacted — without
+        this pattern they leak unredacted (P1-1 fix).
+        """
+        content = r"Open C:\Users\admin\secret.txt to read the credentials."
+        result = moderate(content)
+        assert result.verdict == ModerationVerdict.REDACT
+        assert r"C:\example\path\to\file" in result.sanitized_content
+        assert r"C:\Users\admin\secret.txt" not in result.sanitized_content
+        assert result.stats["pii_anonymized"] >= 1
+
+    def test_redact_pii_unc_path(self) -> None:
+        """UNC path \\\\server\\share\\file → neutral UNC.
+
+        UNC/SMB share paths common in enterprise Windows environments
+        must be redacted (P1-1 fix).
+        """
+        content = r"Mount \\server\share\file to access the dataset."
+        result = moderate(content)
+        assert result.verdict == ModerationVerdict.REDACT
+        assert r"\\example.invalid\share\file" in result.sanitized_content
+        assert r"\\server\share\file" not in result.sanitized_content
+        assert result.stats["pii_anonymized"] >= 1
+
 
 # ── refuse ─────────────────────────────────────────────────────────────────────
 
@@ -245,10 +271,12 @@ class TestModerationCombined:
 
 class TestModerationIdempotency:
     def test_rfc_reserved_not_redacted(self) -> None:
-        """192.0.2.1, user@example.com, example.invalid in content → NOT re-redacted."""
+        """Neutral values (incl. Windows/UNC paths) → NOT re-redacted."""
         content = (
             "Use 192.0.2.1 as the doc IP, email user@example.com for help, "
-            "and hostname example.invalid for tests."
+            "hostname example.invalid for tests, unix path /example/path/to/file, "
+            r"windows path C:\example\path\to\file, "
+            r"unc path \\example.invalid\share\file."
         )
         result = moderate(content)
         # These are already neutral — should pass through unchanged.
@@ -256,6 +284,9 @@ class TestModerationIdempotency:
         assert "192.0.2.1" in result.sanitized_content
         assert "user@example.com" in result.sanitized_content
         assert "example.invalid" in result.sanitized_content
+        assert "/example/path/to/file" in result.sanitized_content
+        assert r"C:\example\path\to\file" in result.sanitized_content
+        assert r"\\example.invalid\share\file" in result.sanitized_content
         assert result.stats["pii_anonymized"] == 0
 
     def test_already_sanitized_idempotent(self) -> None:
@@ -340,6 +371,8 @@ class TestNeutralValueFor:
         assert neutral_value_for("ipv6") == "2001:db8::1"
         assert neutral_value_for("hostname") == "example.invalid"
         assert neutral_value_for("unix-path") == "/example/path/to/file"
+        assert neutral_value_for("win-path") == r"C:\example\path\to\file"
+        assert neutral_value_for("unc-path") == r"\\example.invalid\share\file"
 
     def test_unknown_type_raises(self) -> None:
         with pytest.raises(KeyError):
@@ -351,7 +384,15 @@ class TestNeutralValueFor:
 
 class TestPIITypes:
     def test_pii_types_complete(self) -> None:
-        assert set(PII_TYPES) == {"email", "ipv4", "ipv6", "hostname", "unix-path"}
+        assert set(PII_TYPES) == {
+            "email",
+            "ipv4",
+            "ipv6",
+            "hostname",
+            "unix-path",
+            "win-path",
+            "unc-path",
+        }
 
     def test_doc_ipv4_block_constant(self) -> None:
         assert DOC_IPV4_BLOCK == "192.0.2.0/24"

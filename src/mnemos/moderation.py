@@ -137,6 +137,25 @@ _PII_PATTERNS: Final[list[_PIIType]] = [
         re.compile(r"\b/(?:[A-Za-z0-9._\-]+/)+[A-Za-z0-9._\-]+\b"),
         "Unix absolute file path",
     ),
+    # Windows drive-letter path — e.g. ``C:\Users\admin\secret.txt``.
+    # Drive letter (A-Z), colon, backslash, then ≥1 directory segments
+    # and a final name component. Does NOT catch relative Windows
+    # paths (``foo\bar``) — too ambiguous in prose and risks matching
+    # escaped chars in JSON/regex literals.
+    (
+        "win-path",
+        re.compile(r"[A-Z]:\\(?:[A-Za-z0-9._\-]+\\)+[A-Za-z0-9._\-]+"),
+        "Windows drive-letter file path",
+    ),
+    # UNC path — e.g. ``\\server\share\file``. Two leading backslashes,
+    # server name, then ≥1 share/path segments. Catches DFS/SMB shares
+    # common in enterprise Windows environments. The final segment
+    # excludes ``.`` to avoid capturing trailing sentence punctuation.
+    (
+        "unc-path",
+        re.compile(r"\\\\[A-Za-z0-9._\-]+\\(?:[A-Za-z0-9_\-]+\\)*[A-Za-z0-9_\-]+"),
+        "UNC (server share) file path",
+    ),
 ]
 
 #: List of PII type names (for introspection / docs).
@@ -165,6 +184,8 @@ _NEUTRAL_VALUES: Final[dict[str, str]] = {
     "ipv6": "2001:db8::1",
     "hostname": "example.invalid",
     "unix-path": "/example/path/to/file",
+    "win-path": r"C:\example\path\to\file",
+    "unc-path": r"\\example.invalid\share\file",
 }
 
 #: RFC 5737 documentation IPv4 block (used in tests + docs).
@@ -314,11 +335,28 @@ def _detect_pii(content: str) -> list[tuple[str, str, int, int]]:
     if not content:
         return []
     neutral_set = set(_NEUTRAL_VALUES.values())
+    # Pre-locate all neutral value occurrences in the content so we can
+    # skip PII matches that are substrings of a neutral value (e.g. the
+    # unix-path regex matching ``/path/to/file`` inside the neutral
+    # ``/example/path/to/file``). Without this, already-sanitized content
+    # is not idempotent.
+    neutral_spans: list[tuple[int, int]] = []
+    for nv in neutral_set:
+        start = 0
+        while True:
+            idx = content.find(nv, start)
+            if idx < 0:
+                break
+            neutral_spans.append((idx, idx + len(nv)))
+            start = idx + 1
     raw: list[tuple[str, str, int, int]] = []
     for pii_type, regex, _desc in _PII_PATTERNS:
         for m in regex.finditer(content):
             matched = m.group(0)
             if matched in neutral_set:
+                continue
+            # Skip matches contained within a neutral value span.
+            if any(ns <= m.start() and m.end() <= ne for ns, ne in neutral_spans):
                 continue
             raw.append((pii_type, matched, m.start(), m.end()))
     if not raw:
