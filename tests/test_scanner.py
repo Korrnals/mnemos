@@ -102,9 +102,28 @@ def _isolated_scanner_audit_log(monkeypatch, tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def _reset_scanner_singleton() -> None:
-    """Clear the scanner_runtime singleton between tests."""
-    reset_scanner()
+    """Stop the scanner thread and clear the singleton between tests.
+
+    ``reset_scanner()`` only nulls the module-level singleton — it does NOT
+    join the daemon thread spawned by ``start()``. If a previous test
+    started the scanner (via ``get_scanner(mgr).start()`` or through the
+    API lifespan), the orphaned thread keeps a closure reference to the
+    old ``tmp_path`` DB. When the next test deletes that tmp_path and
+    builds a new scanner, the orphan can race on the deleted DB file
+    (``sqlite3.OperationalError: unable to open database file``) — the
+    root cause of the flaky ``test_dashboard_metrics`` failure.
+
+    Fix: ``stop()`` the singleton (joins the thread, timeout=10) BEFORE
+    nulling it. Idempotent — ``stop()`` is a no-op when no thread is
+    running. The leading ``reset_scanner()`` clears any leftover
+    singleton from a crashed previous test (defence-in-depth).
+    """
+    reset_scanner()  # clear at start (idempotent, handles crash leftovers)
     yield
+    from mnemos.scanner_runtime import _scanner as _current
+
+    if _current is not None:
+        _current.stop()  # join the daemon thread (timeout=10) BEFORE nulling
     reset_scanner()
 
 
