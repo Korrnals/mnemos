@@ -270,6 +270,39 @@ class FederationConfig(BaseModel):
     moderation_refuse_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
 
 
+class ScannerConfig(BaseModel):
+    """Background secrets scanner configuration (Layer 2 defence-in-depth).
+
+    ArchCom 2026-07-17 federation contract §2.2.1 — the background
+    scanner periodically re-scans the whole corpus for secrets missed
+    by the write-path scanner (Layer 1) and auto-tags
+    ``mnemos:no-federate`` so the record is excluded from all external
+    exchange. It re-uses :func:`mnemos.secrets_detector.detect_secrets`
+    unchanged (DRY — one source of truth for patterns).
+
+    Fields:
+        enabled: When ``False``, ``BackgroundScanner.start()`` is a
+            no-op and the scanner does not run on the configured
+            interval. Defaults to ``True`` (defence-in-depth is on by
+            default — operators who want to disable it must do so
+            explicitly).
+        interval_hours: Wall-clock interval between automatic scan
+            passes. Default 6h per contract §2.2.1. Clamped to
+            ``[1, 168]`` — anything below 1h is wasteful, anything
+            above a week defeats the purpose of catching false
+            negatives in a timely manner.
+        incremental: When ``True`` (default), ``run_scan`` only scans
+            records whose ``created_at`` OR ``updated_at`` is newer than
+            the last successful scan timestamp. When ``False``, every
+            scan is a full corpus scan. The CLI ``--full`` flag forces
+            ``incremental=False`` for one run.
+    """
+
+    enabled: bool = True
+    interval_hours: int = Field(default=6, ge=1, le=168)
+    incremental: bool = True
+
+
 class Settings(BaseSettings):
     mnemos: MnemosConfig = MnemosConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
@@ -284,6 +317,7 @@ class Settings(BaseSettings):
     cache_aligner: CacheAlignerConfig = CacheAlignerConfig()
     output_style: OutputStyleConfig = OutputStyleConfig()
     federation: FederationConfig = FederationConfig()
+    scanner: ScannerConfig = ScannerConfig()
     logging: LoggingConfig = LoggingConfig()
     # M5: declarative policy rules (loaded from YAML or set programmatically)
     policies: dict[str, Any] = Field(default_factory=dict)
