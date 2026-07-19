@@ -32,6 +32,10 @@ def tmp_settings():
                 "auto_filter": False,
             },
             embedding={"provider": "onnx"},
+            # Scanner is exercised in test_scanner.py — disable it here so
+            # the API lifespan does not spawn a daemon thread per test
+            # (defence-in-depth against the singleton thread leak).
+            scanner={"enabled": False},
         )
         settings.resolve_paths()
         yield settings

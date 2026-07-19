@@ -45,6 +45,10 @@ def _settings(tmp: Path, **api_kwargs: object) -> Settings:
         },
         embedding={"provider": "onnx"},
         api=api_kwargs,
+        # Scanner is exercised in test_scanner.py — disable it here so
+        # the API lifespan does not spawn a daemon thread per test
+        # (defence-in-depth against the singleton thread leak).
+        scanner={"enabled": False},
     )
     s.resolve_paths()
     return s
