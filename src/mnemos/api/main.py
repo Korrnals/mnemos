@@ -170,9 +170,18 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # (see CHANGELOG [2.3.0] "Background processor not running").
     mgr.start_background_processor()
 
+    # Start the background secrets scanner (Layer 2 defence-in-depth,
+    # #89). No-op when ``scanner.enabled`` is False. Runs on its own
+    # daemon thread so it never blocks the HTTP request loop.
+    from mnemos.scanner_runtime import get_scanner
+
+    scanner = get_scanner(mgr)
+    scanner.start()
+
     try:
         yield
     finally:
+        scanner.stop()
         mgr.stop_background_processor()
         store.close()
         auth_store.close()

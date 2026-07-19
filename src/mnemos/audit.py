@@ -28,13 +28,22 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "SCANNER_AUDIT_FILENAME",
     "SYNC_AUDIT_FILENAME",
+    "log_scanner_audit",
     "log_sync_audit",
+    "scanner_audit_path",
     "sync_audit_path",
 ]
 
 #: Relative path of the audit log under the user's home directory.
 SYNC_AUDIT_FILENAME: str = ".mnemos/logs/sync-audit.jsonl"
+
+#: Relative path of the background scanner audit log under the user's home
+#: directory. One JSON object per scan pass — counters only (records scanned
+#: / tagged / skipped, pattern-name counts, duration, incremental flag). No
+#: raw content, no secrets, no PII values ever enter this log.
+SCANNER_AUDIT_FILENAME: str = ".mnemos/logs/scanner-audit.jsonl"
 
 
 def sync_audit_path() -> Path:
@@ -45,6 +54,16 @@ def sync_audit_path() -> Path:
     :func:`log_sync_audit`.
     """
     return Path.home() / SYNC_AUDIT_FILENAME
+
+
+def scanner_audit_path() -> Path:
+    """Return the absolute path of the background scanner audit log.
+
+    Resolved against the user's home directory (``~/.mnemos/logs/
+    scanner-audit.jsonl``). The directory is created on first write by
+    :func:`log_scanner_audit`.
+    """
+    return Path.home() / SCANNER_AUDIT_FILENAME
 
 
 def log_sync_audit(entry: dict[str, Any]) -> None:
@@ -62,9 +81,25 @@ def log_sync_audit(entry: dict[str, Any]) -> None:
             ``"timestamp"`` and ``"action"`` fields are conventional;
             see the module docstring for the canonical entry shapes.
     """
-    log_path = sync_audit_path()
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    _append_jsonl(sync_audit_path(), entry)
+
+
+def log_scanner_audit(entry: dict[str, Any]) -> None:
+    """Append a background scanner audit entry to ``scanner-audit.jsonl``.
+
+    Contract: counters only — ``records_scanned``, ``records_tagged``,
+    ``records_skipped``, ``patterns_matched`` (``{pattern_name: count}``),
+    ``duration_sec``, ``incremental``. The caller MUST NOT pass raw
+    content, secrets, or PII values. The ``timestamp`` field is added
+    if missing (ISO 8601 UTC with a ``Z`` suffix).
+    """
+    _append_jsonl(scanner_audit_path(), entry)
+
+
+def _append_jsonl(path: Path, entry: dict[str, Any]) -> None:
+    """Append one JSON object as a line to ``path`` (creating parents)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     record = dict(entry)
     record.setdefault("timestamp", datetime.now(UTC).isoformat().replace("+00:00", "Z"))
-    with log_path.open("a", encoding="utf-8") as f:
+    with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, default=str, ensure_ascii=False) + "\n")

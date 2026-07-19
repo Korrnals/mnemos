@@ -1329,6 +1329,13 @@ async def main() -> None:
     # clustered → synthesized → quality-gated → published.
     mgr = get_manager()
     mgr.start_background_processor()
+    # Start the background secrets scanner (Layer 2 defence-in-depth,
+    # #89). No-op when ``scanner.enabled`` is False. Runs on its own
+    # daemon thread so it never blocks the MCP stdio loop.
+    from mnemos.scanner_runtime import get_scanner
+
+    scanner = get_scanner(mgr)
+    scanner.start()
     try:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(
@@ -1337,6 +1344,7 @@ async def main() -> None:
                 server.create_initialization_options(),
             )
     finally:
+        scanner.stop()
         mgr.stop_background_processor()
 
 
