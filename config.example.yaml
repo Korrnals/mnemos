@@ -161,6 +161,26 @@ scanner:
   # for one run.
   incremental: true
 
+# ── mnemos-mesh gRPC client (Phase 3, issue #105 M3) ─────────────────────────
+# Python gRPC client (mnemos.mesh_client.MeshClient) that talks to the
+# `mnemos-mesh` Go binary over a Unix socket. The mesh is a dumb transport
+# (criterion 1) — moderation and storage stay in Python (criterion 2/11).
+# OFF by default; enable after deploying the mesh binary. See ArchCom
+# 2026-07-17 federation contract §3.1.
+mesh:
+  # Master switch. When false, MeshClient is not constructed and the
+  # MCP/HTTP paths do not attempt to talk to the mesh. Enable after the
+  # mesh binary is deployed and the socket is reachable.
+  enabled: false
+  # Filesystem path to the mnemos-mesh Unix socket. The mesh binary
+  # creates the socket; mnemos connects to it. Default follows the
+  # systemd-tmpfiles convention for runtime sockets owned by the
+  # mnemos user.
+  socket_path: /run/mnemos/core.sock
+  # Per-RPC deadline in seconds. Short enough that a dead mesh is noticed
+  # quickly, long enough for a local Unix-socket round trip.
+  timeout_s: 2.0
+
 # ── Logging (v2.1) ───────────────────────────────────────────────────────────
 # File logging with rotation. Set log_file to empty ("") for stderr-only output.
 logging:
