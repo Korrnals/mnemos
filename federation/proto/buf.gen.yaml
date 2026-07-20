@@ -1,0 +1,60 @@
+# buf.gen.yaml — codegen configuration for the mnemos-mesh Phase 3 contract.
+#
+# Single source of truth, two codegen targets. Both plugins consume the
+# SAME .proto files in this directory (federation.proto + mnemos_core_api.proto)
+# so the Go binary (future) and the Python gRPC client in mnemos (future)
+# never drift from the contract.
+#
+# Run: `buf generate` (from this directory, or with `--template` pointing
+# at this file). Outputs land under gen/.
+#
+# Contract-first note (mnemos memory 7fdb7f13): the codegen targets are
+# FUTURE consumers — the contract is the source of truth now, the Go
+# binary and Python gRPC client are implemented later in parallel. Do
+# NOT add language-specific shapes to the .proto files to make codegen
+# prettier; the .proto is the contract, codegen adapts to it.
+
+version: v2
+
+# Codegen plugins. Each plugin has its own `out` so outputs are isolated.
+plugins:
+  # ── Go codegen ───────────────────────────────────────────────────────
+  # Generates Go message structs from the .proto files. Output: gen/go/.
+  # Used by the future mnemos-mesh Go binary (Phase 3 implementation).
+  - plugin: buf.build/protocolbuffers/go
+    out: gen/go
+    opt:
+      # Use the module path as the import prefix so the generated Go
+      # package imports match the future `github.com/Korrnals/mnemos-mesh`
+      # module layout (forward name — see buf.yaml).
+      - module=github.com/Korrnals/mnemos-mesh
+      # Import paths relative to the module root, not the proto file.
+      - paths=source_relative
+
+  # ── Go gRPC stubs ────────────────────────────────────────────────────
+  # Generates Go gRPC service stubs (client + server interfaces) from the
+  # .proto files. Output: gen/go/ (same tree as the message structs).
+  # Used by the future mnemos-mesh Go binary to implement both the
+  # FederationPeer server and the MnemosCore client.
+  - plugin: buf.build/grpc/go
+    out: gen/go
+    opt:
+      - module=github.com/Korrnals/mnemos-mesh
+      - paths=source_relative
+      # Require explicit _grpc.go suffix for service files (clearer than
+      # bundling into the same file as message structs).
+      - require_unimplemented_servers=true
+
+  # ── Python codegen ───────────────────────────────────────────────────
+  # Generates Python message + service stubs from the .proto files.
+  # Output: gen/python/. Used by the future Python gRPC client in mnemos
+  # (the mesh-side of MnemosCore, or a test harness for FederationPeer).
+  # NOT used by the existing Pydantic CompactRecord — that is hand-written
+  # in mnemos/src/mnemos/compact.py and is the source of truth the .proto
+  # mirrors. This codegen is for the transport layer only.
+  - plugin: buf.build/protocolbuffers/python
+    out: gen/python
+    opt:
+      # Mirror the Python package layout mnemos already uses so the
+      # generated modules import cleanly as `mnemos.federation.gen.*`.
+      - pyi_out=gen/python
