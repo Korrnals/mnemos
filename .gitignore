@@ -66,3 +66,8 @@ bandit-report.json
 
 # Code review reports (local)
 .cr/
+
+# gRPC codegen output — regenerated from federation/proto/*.proto via
+# `python -m grpc_tools.protoc` (see federation/proto/buf.gen.yaml for the
+# buf equivalent). Never commit; the .proto files are the source of truth.
+federation/gen/
