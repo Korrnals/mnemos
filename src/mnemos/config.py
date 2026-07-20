@@ -240,6 +240,69 @@ class OutputStyleConfig(BaseModel):
     default_effort: str = "medium"
 
 
+class FederationConfig(BaseModel):
+    """Federation (Phase 0 batch sync) configuration.
+
+    ArchCom 2026-07-17 federation contract §3.1. This section governs
+    operator-curated, offline, cron-triggered batch sync between two
+    mnemos instances. It is NOT networked — transfer is out-of-band
+    (rsync / scp / shared volume by the operator).
+
+    Fields:
+        shared_projects: Whitelist of project slugs eligible for sync.
+            Only records whose ``project:`` tag matches a slug in this
+            list are included in ``mnemos sync export``. Empty list =
+            no projects are eligible (sync exports nothing). The
+            receiving side re-applies the same filter on import.
+        moderation_mapping_ttl_hours: TTL for the per-run moderation
+            mapping table (contract §2.2). The mapping is in-memory only
+            and NEVER replicated (it is a leak surface). Default 24h.
+            After expiry, a fresh mapping is issued on the next
+            moderation run.
+        moderation_refuse_threshold: Fraction of content that must be
+            redacted/anonymized to trigger a ``refuse`` verdict (contract
+            §2.2). Default 0.8 = 80%. If >80% of content is redacted or
+            anonymized, the record is refused (no useful remainder).
+    """
+
+    shared_projects: list[str] = Field(default_factory=list)
+    moderation_mapping_ttl_hours: int = Field(default=24, ge=1, le=168)
+    moderation_refuse_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class ScannerConfig(BaseModel):
+    """Background secrets scanner configuration (Layer 2 defence-in-depth).
+
+    ArchCom 2026-07-17 federation contract §2.2.1 — the background
+    scanner periodically re-scans the whole corpus for secrets missed
+    by the write-path scanner (Layer 1) and auto-tags
+    ``mnemos:no-federate`` so the record is excluded from all external
+    exchange. It re-uses :func:`mnemos.secrets_detector.detect_secrets`
+    unchanged (DRY — one source of truth for patterns).
+
+    Fields:
+        enabled: When ``False``, ``BackgroundScanner.start()`` is a
+            no-op and the scanner does not run on the configured
+            interval. Defaults to ``True`` (defence-in-depth is on by
+            default — operators who want to disable it must do so
+            explicitly).
+        interval_hours: Wall-clock interval between automatic scan
+            passes. Default 6h per contract §2.2.1. Clamped to
+            ``[1, 168]`` — anything below 1h is wasteful, anything
+            above a week defeats the purpose of catching false
+            negatives in a timely manner.
+        incremental: When ``True`` (default), ``run_scan`` only scans
+            records whose ``created_at`` OR ``updated_at`` is newer than
+            the last successful scan timestamp. When ``False``, every
+            scan is a full corpus scan. The CLI ``--full`` flag forces
+            ``incremental=False`` for one run.
+    """
+
+    enabled: bool = True
+    interval_hours: int = Field(default=6, ge=1, le=168)
+    incremental: bool = True
+
+
 class Settings(BaseSettings):
     mnemos: MnemosConfig = MnemosConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
@@ -253,6 +316,8 @@ class Settings(BaseSettings):
     ccr: CCRConfig = CCRConfig()
     cache_aligner: CacheAlignerConfig = CacheAlignerConfig()
     output_style: OutputStyleConfig = OutputStyleConfig()
+    federation: FederationConfig = FederationConfig()
+    scanner: ScannerConfig = ScannerConfig()
     logging: LoggingConfig = LoggingConfig()
     # M5: declarative policy rules (loaded from YAML or set programmatically)
     policies: dict[str, Any] = Field(default_factory=dict)

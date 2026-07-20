@@ -50,6 +50,10 @@ def tmp_settings(tmp_dir):
             "db_name": "test.db",
         },
         embedding={"provider": "onnx"},
+        # Scanner is exercised in test_scanner.py — disable it here so
+        # the API lifespan does not spawn a daemon thread per test
+        # (defence-in-depth against the singleton thread leak).
+        scanner={"enabled": False},
     )
     settings.resolve_paths()
     settings.mnemos.data_dir.mkdir(parents=True, exist_ok=True)

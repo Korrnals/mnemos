@@ -33,6 +33,8 @@ _TOOL_ARGS: dict[str, dict] = {
     },
     "mnemos_agent_recall": {"agent": "qa-agent"},
     "mnemos_auto_collect_status": {},
+    "mnemos_export": {"output_path": "/tmp/smoke-export.json"},
+    "mnemos_import": {"source_path": "/tmp/smoke-import.json"},
     "mnemos_ingest_url": {
         "url": "https://example.com",
         "tags": ["project:smoke", "agent:qa", "mnemos:decision"],
@@ -48,6 +50,12 @@ _TOOL_ARGS: dict[str, dict] = {
     "mnemos_watch_stop": {},
     "mnemos_align_prefix": {"text": "Session sess-abc123 at 2026-07-17T10:00:00Z"},
 }
+
+# Tools whose dispatch calls a module-level function (run_export / run_import)
+# rather than a manager method. The routing-coverage test patches these so the
+# mock manager never drives the real export/import logic (which needs a live
+# SQLite store and would crash a MagicMock).
+_MODULE_DISPATCH_TOOLS: frozenset[str] = frozenset({"mnemos_export", "mnemos_import"})
 
 # ---------------------------------------------------------------------------
 # Routing assertions map (mcp-3 finding)
@@ -117,7 +125,35 @@ async def test_routing_all_tools_recognized(tool_name: str) -> None:
             side_effect=lambda tags, **_kw: tags,
         ),
     ):
-        result = await _dispatch(tool_name, _TOOL_ARGS[tool_name])
+        if tool_name in _MODULE_DISPATCH_TOOLS:
+            # mnemos_export / mnemos_import dispatch to module-level
+            # run_export / run_import functions (imported locally inside
+            # _handle_export / _handle_import). Patch them at their source
+            # module so the local import picks up the fake.
+            if tool_name == "mnemos_export":
+                from pathlib import Path
+
+                from mnemos.cli.export import CompressMode, ExportFormat, ExportResult
+
+                fake = ExportResult(
+                    path=Path("/tmp/smoke-export.json"),
+                    format=ExportFormat.JSON,
+                    compress=CompressMode.NONE,
+                    encrypted=False,
+                    memory_count=0,
+                    project_count=0,
+                    bytes_written=0,
+                )
+                with patch("mnemos.cli.export.run_export", return_value=fake):
+                    result = await _dispatch(tool_name, _TOOL_ARGS[tool_name])
+            else:  # mnemos_import
+                from mnemos.cli.import_ import ImportResult
+
+                fake = ImportResult(mode="merge", dry_run=False)
+                with patch("mnemos.cli.import_.run_import", return_value=fake):
+                    result = await _dispatch(tool_name, _TOOL_ARGS[tool_name])
+        else:
+            result = await _dispatch(tool_name, _TOOL_ARGS[tool_name])
 
     assert not (isinstance(result, str) and result.startswith("Unknown tool:")), (
         f"Tool {tool_name!r} was not recognized by _dispatch - routing is broken"

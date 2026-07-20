@@ -417,7 +417,7 @@ flowchart TB
     L1[1. Write-path scanner\nruns on every mnemos_add] -->|tag mnemos:no-federate| DB[(mnemos store)]
     DB -->|configurable interval| L2[2. Background scanner job\nre-scans corpus for false negatives\nfuture: #89]
     L2 -->|found sensitive| DB
-    DB -->|on export / pull| L3[3. Moderation pipeline\nfinal defense on output\nfuture: Phase 0 #85]
+    DB -->|on sync export / pull| L3[3. Moderation pipeline\nfinal defense on output\nshipped: #85 parts 1+2a+2b]
     L3 -->|sanitized / refuse| OUT[out]
 ```
 
@@ -425,7 +425,7 @@ flowchart TB
 |-------|-------|------|-------------|--------|
 | **1. Write-path scanner** | `mnemos_add` / `POST /memories` / `ingest_url` / `ingest_path_scoped_rules` | On every write | Runs `detect_secrets(content)`. If a secret is detected and the record does not already carry `mnemos:no-federate`, the tag is auto-added. Logs pattern names + counts only — never raw matched values. | ✅ Shipped (#86) |
 | **2. Background scanner** | MCP server, background job | Configurable interval (`federation.no_federate_scan_interval_hours`, default 6h) | Re-scans the whole corpus for false negatives missed at write time. Re-uses `detect_secrets` unchanged (DRY — one source of truth for patterns). | 🔮 Future (#89) |
-| **3. Moderation pipeline** | Export (Phase 0) / Pull (Phase 2) | On every export / pull | Final defense — runs moderation on output. Even if the `no-federate` tag is missing, the pipeline sanitizes the content. | 🔮 Future (Phase 0, #85) |
+| **3. Moderation pipeline** | Sync export (Phase 0) / Pull (Phase 2) | On every sync export / pull | Final defense — runs `moderate()` on output via `build_compact_payload()`. Even if the `no-federate` tag is missing, the pipeline sanitizes the content (redact) or refuses the record. | ✅ Shipped (#85 parts 1, 2a, 2b) |
 
 ### 11.1 Secrets detector module
 
@@ -486,3 +486,38 @@ re-detection guard). The tag is an **exclusion marker** in the
 - `--dry-run` returns a validation report without writing.
 - On schema-drift / contract violation, the **whole batch is rejected**
   (no partial writes).
+
+### 11.5 Batch sync (`mnemos sync`) — Phase 0
+
+`mnemos sync export` / `mnemos sync import` (#85 part 2b) wire Layer 3
+into the federation batch-sync path. See
+[Federation — Batch Sync](../user/sync.md) for the operator guide.
+
+- **Export** — `mnemos sync export` queries memories in the configured
+  `shared_projects` (excludes `mnemos:no-federate` and `archived`), then
+  calls `build_compact_payload()` which runs `moderate()` on every
+  record: `allow` → original content in the compact summary, `redact` →
+  sanitized content, `refuse` → record excluded and counted in
+  `records_refused`. The compact payload (`mnemos.federation.v1`) is
+  written to a file, optionally AES-256-GCM encrypted with a passphrase
+  from `MNEMOS_EXPORT_PASSPHRASE` (never a CLI argument).
+- **Import** — `mnemos sync import` reads the compact payload
+  (decrypting if needed via a passphrase from the env var **named** by
+  `--passphrase-env`), validates each record (reuses #86
+  `validate_import_record` adapted for the `CompactRecord` shape —
+  `content=summary`, `title`, `tags`), and merges idempotently by
+  record `id` (`fed:<source_agent>:<uuid>` prefix — existing records
+  skipped, never overwritten). Schema drift / oversized / contract
+  violations reject the **whole batch** (no partial writes).
+- **Audit log** — every export and import appends one JSONL entry to
+  `~/.mnemos/logs/sync-audit.jsonl` with **counters only** — records
+  exported / imported / refused / skipped, secrets redacted, PII
+  anonymized, errors, warnings. **No raw content, no secrets, no PII
+  values** ever enter the audit log.
+- **Transfer** — offline. `scripts/sync-peers.sh` is a cron-ready
+  template that wraps export → rsync/scp/cp → import. mnemos itself
+  makes no network call; the operator owns the transport.
+
+The compact format (#85 part 2a) carries only summaries (≤500 chars),
+key points, tags, and provenance — not raw content — so the blast
+radius of a sync file leak is bounded to already-moderated summaries.

@@ -79,6 +79,50 @@ watcher:
   max_file_size_kb: 512
   auto_scan: true
 
+# ── Federation (Phase 0 batch sync, issue #85) ───────────────────────────────
+# Operator-curated, OFFLINE, cron-triggered batch sync between two mnemos
+# instances. NOT networked — transfer is out-of-band (rsync / scp / shared
+# volume by the operator). See ArchCom 2026-07-17 federation contract §3.1.
+federation:
+  # Whitelist of project slugs eligible for sync. Only records whose
+  # project: tag matches a slug in this list are included in
+  # `mnemos sync export`. Empty list = no projects are eligible.
+  # The receiving side re-applies the same filter on import.
+  shared_projects: []
+  # shared_projects:
+  #   - mnemos
+  #   - project-umbra
+  # TTL (hours) for the per-run moderation mapping table. The mapping is
+  # in-memory only and NEVER replicated (it is a leak surface). After
+  # expiry, a fresh mapping is issued on the next moderation run.
+  # Range: 1–168 (1 hour to 7 days). Default: 24.
+  moderation_mapping_ttl_hours: 24
+  # Fraction of content that must be redacted/anonymized to trigger a
+  # `refuse` verdict (contract §2.2). If >threshold of content is
+  # redacted or anonymized, the record is refused (no useful remainder).
+  # Range: 0.0–1.0. Default: 0.8 (80%).
+  moderation_refuse_threshold: 0.8
+
+# ── Background secrets scanner (Layer 2 defence-in-depth, issue #89) ──────────
+# Periodically re-scans the whole corpus for secrets missed by the
+# write-path scanner (Layer 1, #86) and auto-tags `mnemos:no-federate`.
+# Re-uses `secrets_detector.detect_secrets` unchanged (DRY — one source
+# of truth for patterns). See ArchCom 2026-07-17 federation contract
+# §2.2.1. The scanner runs on its own daemon thread alongside the
+# background processor; it never blocks the MCP server or HTTP API.
+scanner:
+  # Master switch. When false, `start()` is a no-op and the scanner does
+  # not run. Defence-in-depth is on by default — opt out explicitly.
+  enabled: true
+  # Wall-clock interval between automatic scan passes. Range: 1–168
+  # (1 hour to 7 days). Default: 6h per contract §2.2.1.
+  interval_hours: 6
+  # When true, `run_scan` only scans records whose created_at OR
+  # updated_at is newer than the last successful scan. When false, every
+  # scan is a full corpus scan. The CLI `--full` flag forces a full scan
+  # for one run.
+  incremental: true
+
 # ── Logging (v2.1) ───────────────────────────────────────────────────────────
 # File logging with rotation. Set log_file to empty ("") for stderr-only output.
 logging:

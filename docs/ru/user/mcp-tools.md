@@ -45,6 +45,8 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | [`mnemos_compress`](#mnemos_compress) | Обратимое сжатие (CCR) — кэш оригинала, маркер в вывод | нет |
 | [`mnemos_retrieve`](#mnemos_retrieve) | Извлечение оригинала из кэша CCR или FTS5-сниппеты | нет |
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — перенос динамического контента для стабильности prefix cache | нет |
+| [`mnemos_export`](#mnemos_export) | Экспорт записей в файл (JSON или SQLite-снимок) | нет |
+| [`mnemos_import`](#mnemos_import) | Импорт записей из файла экспорта (merge или restore) | нет |
 | [`mnemos_stats`](#mnemos_stats) | Счётчики состояния и ключевые пути | нет |
 
 ---
@@ -943,6 +945,168 @@ output_style:
 ---
 *Output style: terse. Be brief. No preambles, no restated context, no ceremony. Lead with the result. Omit explanations the caller already has.*
 *Effort: low — routine step, minimal reasoning.*
+```
+
+---
+
+## `mnemos_export`
+
+Экспорт записей в файл на диске. Тонкая обёртка над логикой CLI `mnemos export`. Возвращает только метаданные — содержимое экспорта **никогда** не возвращается в теле ответа (stdio-транспорт не может передать бинарный SQLite-tarball или большой JSON-блок через канал JSON-RPC поверх stdout).
+
+Защита federation defense-in-depth (#86) наследуется автоматически, так как инструмент вызывает ту же функцию `run_export`, что и CLI/HTTP: записи с тегом `mnemos:no-federate` исключаются из экспорта, а обнаруженные секреты в проходящих записях заменяются на `<REDACTED:<pattern_name>>`.
+
+### Входные параметры
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|----------|
+| `output_path` | string | **да** | — | Абсолютный путь, куда записывается файл экспорта. |
+| `format` | enum `json` \| `sqlite` | нет | `json` | `json` = экспорт только метаданных (фильтры применяются); `sqlite` = полный `tar.gz`-снимок (фильтры игнорируются). |
+| `compress` | enum `none` \| `gzip` | нет | `none` | Режим сжатия. (`zstd` — только для CLI.) |
+| `project` | string | нет | — | Фильтр по slug проекта (только json). |
+| `agent` | string | нет | — | Фильтр по slug агента (только json). |
+| `status` | enum `raw` \| `processing` \| `processed` \| `published` \| `archived` | нет | — | Фильтр по статусу записи (только json). |
+| `tags` | array of string | нет | — | Фильтр по тегам (только json). |
+| `since` | string (ISO-8601) | нет | — | Только записи, созданные не ранее этой даты (только json). |
+| `until` | string (ISO-8601) | нет | — | Только записи, созданные до этой даты (только json). |
+| `encrypt` | boolean | нет | `false` | Если `true`, шифрует результат. Парольная фраза читается из переменной окружения `MNEMOS_EXPORT_PASSPHRASE`. |
+
+### Возвращаемое значение
+
+```json
+{
+  "path": "/abs/path/to/backup.json",
+  "memory_count": 42,
+  "format": "json",
+  "compress": "none",
+  "encrypted": false,
+  "bytes": 18234,
+  "warnings": []
+}
+```
+
+### Замечание по безопасности
+
+- **Парольная фраза через окружение, никогда в аргументах.** При `encrypt=true` сервер читает парольную фразу из переменной окружения `MNEMOS_EXPORT_PASSPHRASE`. Передача значения в `output_path` или любой другой аргумент приведёт к утечке в логи MCP — никогда так не делайте.
+- **Без встроенного контента.** Инструмент пишет в `output_path` и возвращает только метаданные. Прочитайте файл с диска, чтобы осмотреть экспорт.
+- **Наследование #86.** Записи `mnemos:no-federate` исключаются; секреты в проходящих записях редактируются. Дополнительная настройка не нужна.
+
+### Пример
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_export",
+    "arguments": {
+      "output_path": "/tmp/mnemos-backup.json",
+      "format": "json",
+      "project": "mnemos",
+      "compress": "gzip"
+    }
+  }
+}
+```
+
+Зашифрованный полный снимок:
+
+```json
+{
+  "name": "mnemos_export",
+  "arguments": {
+    "output_path": "/tmp/mnemos-snapshot.tar.gz",
+    "format": "sqlite",
+    "encrypt": true
+  }
+}
+```
+
+(При установленной в окружении сервера `MNEMOS_EXPORT_PASSPHRASE`.)
+
+---
+
+## `mnemos_import`
+
+Импорт записей из файла экспорта. Тонкая обёртка над логикой CLI `mnemos import`. Два режима: **merge** (вставка новых, пропуск или перезапись существующих) и **restore** (полная очистка и импорт — деструктивный, требует `confirm=true`).
+
+Валидация импорта (#86) наследуется автоматически: дрейф схемы, слишком большой контент, невалидные теги и prompt-injection-паттерны обрабатываются той же функцией `run_import`, что и в CLI/HTTP.
+
+### Входные параметры
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|----------|
+| `source_path` | string | **да** | — | Абсолютный путь к файлу экспорта для импорта. |
+| `mode` | enum `merge` \| `restore` | нет | `merge` | `merge` = вставка новых / пропуск-или-перезапись существующих; `restore` = полная очистка и импорт (требует `confirm=true`). |
+| `overwrite` | boolean | нет | `false` | Перезапись существующих записей (только режим merge). |
+| `confirm` | boolean | нет | `false` | **Обязательно `true` для режима `restore`** (жёсткий гейт — restore стирает все данные). |
+| `dry_run` | boolean | нет | `false` | Валидация без записи; возвращает отчёт валидации. |
+| `passphrase_env` | string | нет | — | Имя переменной окружения с парольной фразой для расшифровки (НЕ само значение). |
+
+### Возвращаемое значение
+
+```json
+{
+  "mode": "merge",
+  "dry_run": false,
+  "imported": 12,
+  "skipped": 3,
+  "updated": 0,
+  "errors": [],
+  "warnings": [],
+  "format_version": "1.0",
+  "mnemos_version": "2.11.0"
+}
+```
+
+### Замечание по безопасности
+
+- **Парольная фраза через имя переменной окружения, не значение.** `passphrase_env` принимает *имя* переменной окружения (например, `"MY_IMPORT_PASS"`), и сервер читает `os.environ["MY_IMPORT_PASS"]`. Передача значения в аргументе приведёт к утечке в логи MCP.
+- **Restore требует `confirm=true`.** Без него инструмент возвращает ошибку и не трогает живые данные. Restore стирает все записи, векторы и проекты.
+- **Наследование #86.** Дрейф схемы отклоняется; слишком большой контент (>1 МиБ) отклоняется; невалидные теги вызывают ошибку контракта тегов; prompt-injection-паттерны логируются на WARNING (не блокируются — контент может правомерно обсуждать инъекцию).
+
+### Пример
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_import",
+    "arguments": {
+      "source_path": "/tmp/mnemos-backup.json",
+      "mode": "merge",
+      "overwrite": false
+    }
+  }
+}
+```
+
+Restore (деструктивный) с подтверждением:
+
+```json
+{
+  "name": "mnemos_import",
+  "arguments": {
+    "source_path": "/tmp/mnemos-snapshot.tar.gz",
+    "mode": "restore",
+    "confirm": true
+  }
+}
+```
+
+Зашифрованный импорт (при установленной в окружении сервера `MNEMOS_IMPORT_PASS`):
+
+```json
+{
+  "name": "mnemos_import",
+  "arguments": {
+    "source_path": "/tmp/encrypted.bin",
+    "mode": "merge",
+    "passphrase_env": "MNEMOS_IMPORT_PASS"
+  }
+}
 ```
 
 ---

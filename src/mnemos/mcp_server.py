@@ -676,6 +676,140 @@ async def list_tools() -> list[Tool]:
                 "required": ["text"],
             },
         ),
+        Tool(
+            name="mnemos_export",
+            description=(
+                "Export memories to a file (JSON or SQLite snapshot). Writes the "
+                "result to disk and returns metadata only (path, memory_count, "
+                "format, bytes) — the content is NOT returned inline (stdio "
+                "transport limitation). Thin wrapper over the CLI export logic. "
+                "Inherits #86 federation defence: excludes mnemos:no-federate "
+                "records and redacts detected secrets in passing records. "
+                "When encrypt=true the passphrase is read from the "
+                "MNEMOS_EXPORT_PASSPHRASE environment variable — never pass the "
+                "passphrase value in the tool arguments (it would appear in logs)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": ["json", "sqlite"],
+                        "default": "json",
+                        "description": (
+                            "json = metadata-only export with filters; "
+                            "sqlite = full tar.gz snapshot (filters ignored)."
+                        ),
+                    },
+                    "compress": {
+                        "type": "string",
+                        "enum": ["none", "gzip"],
+                        "default": "none",
+                        "description": "Compression mode (zstd is CLI-only).",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Filter by project slug (json only).",
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Filter by agent slug (json only).",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["raw", "processing", "processed", "published", "archived"],
+                        "description": "Filter by memory status (json only).",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by tags (json only).",
+                    },
+                    "since": {
+                        "type": "string",
+                        "description": (
+                            "ISO-8601 timestamp — only memories created on or "
+                            "after this date (json only)."
+                        ),
+                    },
+                    "until": {
+                        "type": "string",
+                        "description": (
+                            "ISO-8601 timestamp — only memories created before "
+                            "this date (json only)."
+                        ),
+                    },
+                    "encrypt": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "When true, encrypt the output with the passphrase "
+                            "from the MNEMOS_EXPORT_PASSPHRASE env var."
+                        ),
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "Absolute path where the export file is written.",
+                    },
+                },
+                "required": ["output_path"],
+            },
+        ),
+        Tool(
+            name="mnemos_import",
+            description=(
+                "Import memories from an export file (merge or restore mode). "
+                "Thin wrapper over the CLI import logic. Inherits #86 import "
+                "validation: rejects schema drift, oversized content, invalid "
+                "tags; logs prompt-injection patterns at WARNING without blocking. "
+                "Restore mode is destructive (wipes all existing data) and "
+                "requires confirm=true. For encrypted inputs the passphrase is "
+                "read from the environment variable NAMED by passphrase_env "
+                "(never the value itself — passing the value in arguments would "
+                "leak it into logs)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_path": {
+                        "type": "string",
+                        "description": "Absolute path to the export file to import.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["merge", "restore"],
+                        "default": "merge",
+                        "description": (
+                            "merge = insert new / skip-or-overwrite existing; "
+                            "restore = wipe all then import (requires confirm=true)."
+                        ),
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Overwrite existing memories (merge mode only).",
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Required true for restore mode (hard gate).",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Validate without writing; returns a validation report.",
+                    },
+                    "passphrase_env": {
+                        "type": "string",
+                        "description": (
+                            "Name of the environment variable holding the "
+                            "decryption passphrase (NOT the value)."
+                        ),
+                    },
+                },
+                "required": ["source_path"],
+            },
+        ),
     ]
 
 
@@ -701,6 +835,194 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     if reminder:
         text += reminder
     return [TextContent(type="text", text=text)]
+
+
+# ── #84 federation export/import handlers ────────────────────────────────────
+#
+# Thin wrappers over cli/export.py::run_export and cli/import_.py::run_import.
+# Both underlying functions are already clean callables (no Typer ctx), so no
+# refactoring was required. The wrappers:
+#   * validate the MCP arguments,
+#   * read passphrases from the environment (never from args — per
+#     sensitive-data.instructions.md args appear in MCP logs),
+#   * write the export to disk and return metadata only (no inline content —
+#     stdio transport cannot carry binary or large JSON inline),
+#   * enforce the restore-mode confirm gate.
+
+
+def _handle_export(mgr: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch helper for the ``mnemos_export`` tool."""
+    from mnemos.cli.export import CompressMode, ExportFilter, ExportFormat, run_export
+
+    output_path_str = args.get("output_path")
+    if not output_path_str or not isinstance(output_path_str, str):
+        return {"error": "output_path is required and must be a string"}
+    output_path = Path(output_path_str)
+    if not output_path.is_absolute():
+        return {"error": f"output_path must be absolute, got: {output_path}"}
+
+    fmt_str = args.get("format", "json")
+    try:
+        fmt = ExportFormat(fmt_str)
+    except ValueError as exc:
+        return {"error": f"Invalid format '{fmt_str}': {exc}"}
+
+    compress_str = args.get("compress", "none")
+    try:
+        compress = CompressMode(compress_str)
+    except ValueError as exc:
+        return {"error": f"Invalid compress '{compress_str}': {exc}"}
+
+    # ── Filters (json only; sqlite ignores them) ──────────────────────────
+    status_str = args.get("status")
+    status: MemoryStatus | None = None
+    if status_str:
+        try:
+            status = MemoryStatus(status_str)
+        except ValueError as exc:
+            return {"error": f"Invalid status '{status_str}': {exc}"}
+
+    since_raw = args.get("since")
+    until_raw = args.get("until")
+    since_dt = _parse_iso_arg(since_raw) if since_raw else None
+    until_dt = _parse_iso_arg(until_raw) if until_raw else None
+    if since_raw and since_dt is None:
+        return {"error": f"Invalid since timestamp: {since_raw}"}
+    if until_raw and until_dt is None:
+        return {"error": f"Invalid until timestamp: {until_raw}"}
+
+    filt = ExportFilter(
+        project=args.get("project"),
+        agent=args.get("agent"),
+        status=status,
+        tags=args.get("tags"),
+        since=since_dt,
+        until=until_dt,
+    )
+
+    # ── Encryption: passphrase from env, never from args ───────────────────
+    encrypt = bool(args.get("encrypt", False))
+    passphrase: str | None = None
+    if encrypt:
+        passphrase = os.environ.get("MNEMOS_EXPORT_PASSPHRASE")
+        if not passphrase:
+            return {
+                "error": (
+                    "encrypt=true but MNEMOS_EXPORT_PASSPHRASE environment "
+                    "variable is not set or empty. Set it before calling "
+                    "mnemos_export — the passphrase value must never appear "
+                    "in tool arguments."
+                )
+            }
+
+    try:
+        result = run_export(
+            mgr,
+            fmt=fmt,
+            output=output_path,
+            compress=compress,
+            encrypt=encrypt,
+            passphrase=passphrase,
+            filt=filt,
+        )
+    except Exception as exc:  # surface a clean error to the caller
+        return {"error": f"Export failed: {exc}"}
+
+    return {
+        "path": str(result.path),
+        "memory_count": result.memory_count,
+        "format": result.format.value,
+        "compress": result.compress.value,
+        "encrypted": result.encrypted,
+        "bytes": result.bytes_written,
+        "warnings": list(result.warnings),
+    }
+
+
+def _handle_import(mgr: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch helper for the ``mnemos_import`` tool."""
+    from mnemos.cli.import_ import ImportMode, run_import
+
+    source_path_str = args.get("source_path")
+    if not source_path_str or not isinstance(source_path_str, str):
+        return {"error": "source_path is required and must be a string"}
+    source_path = Path(source_path_str)
+    if not source_path.is_absolute():
+        return {"error": f"source_path must be absolute, got: {source_path}"}
+
+    mode = args.get("mode", "merge")
+    if mode not in (ImportMode.MERGE, ImportMode.RESTORE):
+        return {"error": f"Invalid mode '{mode}': must be 'merge' or 'restore'"}
+
+    confirm = bool(args.get("confirm", False))
+    # Hard gate: restore is destructive — refuse without explicit confirmation.
+    if mode == ImportMode.RESTORE and not confirm:
+        return {
+            "error": (
+                "Restore mode wipes all existing memories, vectors, and projects. "
+                "Set confirm=true to acknowledge this and proceed."
+            )
+        }
+
+    passphrase_env = args.get("passphrase_env")
+    passphrase: str | None = None
+    if passphrase_env:
+        if not isinstance(passphrase_env, str) or not passphrase_env.isidentifier():
+            return {
+                "error": (
+                    f"passphrase_env must be a valid environment variable name, "
+                    f"got: {passphrase_env!r}"
+                )
+            }
+        passphrase = os.environ.get(passphrase_env)
+        if passphrase is None:
+            return {
+                "error": (
+                    f"Environment variable {passphrase_env!r} (named by "
+                    f"passphrase_env) is not set. The decryption passphrase "
+                    f"must live in the environment, never in the tool arguments."
+                )
+            }
+
+    try:
+        result = run_import(
+            mgr,
+            source_path,
+            mode=mode,
+            overwrite=bool(args.get("overwrite", False)),
+            confirm=confirm,
+            dry_run=bool(args.get("dry_run", False)),
+            passphrase=passphrase,
+        )
+    except Exception as exc:  # surface a clean error to the caller
+        return {"error": f"Import failed: {exc}"}
+
+    return {
+        "mode": result.mode,
+        "dry_run": result.dry_run,
+        "imported": result.imported,
+        "skipped": result.skipped,
+        "updated": result.updated,
+        "errors": list(result.errors),
+        "warnings": list(result.warnings),
+        "format_version": result.format_version,
+        "mnemos_version": result.mnemos_version,
+    }
+
+
+def _parse_iso_arg(value: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp argument into an aware datetime.
+
+    Returns ``None`` on a parse failure so the caller can emit a clean
+    error instead of raising inside the dispatch path.
+    """
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 
 
 async def _dispatch(name: str, args: dict[str, Any]) -> Any:
@@ -983,6 +1305,14 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     if name == "mnemos_align_prefix":
         return mgr.align_prefix(args["text"], profile=args.get("profile"))
 
+    # ── mnemos_export (#84 federation export) ──────────────────────────────
+    if name == "mnemos_export":
+        return _handle_export(mgr, args)
+
+    # ── mnemos_import (#84 federation import) ──────────────────────────────
+    if name == "mnemos_import":
+        return _handle_import(mgr, args)
+
     return f"Unknown tool: {name}"
 
 
@@ -999,6 +1329,13 @@ async def main() -> None:
     # clustered → synthesized → quality-gated → published.
     mgr = get_manager()
     mgr.start_background_processor()
+    # Start the background secrets scanner (Layer 2 defence-in-depth,
+    # #89). No-op when ``scanner.enabled`` is False. Runs on its own
+    # daemon thread so it never blocks the MCP stdio loop.
+    from mnemos.scanner_runtime import get_scanner
+
+    scanner = get_scanner(mgr)
+    scanner.start()
     try:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(
@@ -1007,6 +1344,7 @@ async def main() -> None:
                 server.create_initialization_options(),
             )
     finally:
+        scanner.stop()
         mgr.stop_background_processor()
 
 

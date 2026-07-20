@@ -332,6 +332,118 @@ class TestUpdate:
         result = manager.verify(detected_target)
         assert result.stale_count == 3
 
+    def test_update_removes_orphan_stamped_file(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """Orphaned stamped file (not in pack) is removed by update()."""
+        # Deploy the current pack so deploy dirs exist.
+        manager.deploy(detected_target)
+
+        # Simulate an orphan: a stamped file from an old release that is no
+        # longer in the pack (e.g. mnemos-operations.instructions.md from
+        # v2.8.0, later split and removed from the pack).
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        dest_dir = cfg.targets[0].deploy_map["instructions"]
+        orphan = dest_dir / "mnemos-operations.instructions.md"
+        orphan.write_text(
+            stamp_content("# Old instructions file\nremoved from pack later.\n", "2.8.0"),
+            encoding="utf-8",
+        )
+        assert orphan.exists()
+
+        # verify() must flag the orphan as STALE before update.
+        pre = manager.verify(detected_target)
+        assert pre.stale_count == 1
+
+        # update() must remove the orphan.
+        result = manager.update(detected_target)
+        orphan_results = [f for f in result.files if f.destination == orphan]
+        assert len(orphan_results) == 1
+        assert orphan_results[0].note == "orphaned stamped file removed (no longer in pack)"
+        assert not orphan.exists()
+
+    def test_update_keeps_pack_files(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """After update with an orphan present, all pack files remain at current version."""
+        manager.deploy(detected_target)
+
+        # Add an orphan alongside the pack files.
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        dest_dir = cfg.targets[0].deploy_map["instructions"]
+        orphan = dest_dir / "mnemos-operations.instructions.md"
+        orphan.write_text(stamp_content("# Old file\n", "2.8.0"), encoding="utf-8")
+
+        manager.update(detected_target)
+
+        # All pack files must still exist and carry the current stamp.
+        verify = manager.verify(detected_target)
+        assert verify.all_current
+        assert verify.stale_count == 0
+        assert verify.missing_count == 0
+
+    def test_doctor_no_stale_after_update(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """After update with an orphan present, verify reports no stale entries.
+
+        This is the contract the doctor gate relies on: ``update`` clears
+        whatever ``verify`` flags, so the doctor's remediation hint
+        ("run mnemos integration update") becomes correct for both
+        stale-in-pack AND orphan cases.
+        """
+        manager.deploy(detected_target)
+
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        dest_dir = cfg.targets[0].deploy_map["instructions"]
+        orphan = dest_dir / "mnemos-operations.instructions.md"
+        orphan.write_text(stamp_content("# Old file\n", "2.8.0"), encoding="utf-8")
+
+        # Before update: verify reports the orphan as stale.
+        before = manager.verify(detected_target)
+        assert before.stale_count == 1
+
+        manager.update(detected_target)
+
+        # After update: no stale entries remain.
+        after = manager.verify(detected_target)
+        assert after.stale_count == 0
+        assert after.all_current
+
+    def test_update_orphan_dry_run_does_not_delete(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """dry-run update must report the orphan but leave it on disk."""
+        manager.deploy(detected_target)
+
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        dest_dir = cfg.targets[0].deploy_map["instructions"]
+        orphan = dest_dir / "mnemos-operations.instructions.md"
+        orphan.write_text(stamp_content("# Old file\n", "2.8.0"), encoding="utf-8")
+
+        result = manager.update(detected_target, dry_run=True)
+        orphan_results = [f for f in result.files if f.destination == orphan]
+        assert len(orphan_results) == 1
+        # Orphan must still exist (dry-run does not write).
+        assert orphan.exists()
+
+    def test_update_preserves_user_files(
+        self, manager: IntegrationManager, detected_target: str
+    ) -> None:
+        """update() must never touch unstamped user files in deploy dirs."""
+        manager.deploy(detected_target)
+
+        cfg = load_targets(manager.pack_root / "targets.yaml")
+        dest_dir = cfg.targets[0].deploy_map["instructions"]
+        user_file = dest_dir / "user-custom.md"
+        user_file.write_text("# My custom instruction\n", encoding="utf-8")
+
+        manager.update(detected_target)
+
+        # User file must still exist and be untouched.
+        assert user_file.exists()
+        assert user_file.read_text(encoding="utf-8") == "# My custom instruction\n"
+
 
 class TestUninstall:
     def test_uninstall_removes_only_stamped_files(

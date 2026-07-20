@@ -45,6 +45,8 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_compress`](#mnemos_compress) | Reversible compression (CCR) — cache original, embed marker | no |
 | [`mnemos_retrieve`](#mnemos_retrieve) | Retrieve a CCR-cached original or FTS5 snippets | no |
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — relocate dynamic content for prefix cache stability | no |
+| [`mnemos_export`](#mnemos_export) | Export memories to a file (JSON or SQLite snapshot) | no |
+| [`mnemos_import`](#mnemos_import) | Import memories from an export file (merge or restore) | no |
 | [`mnemos_stats`](#mnemos_stats) | Health counters and key paths | no |
 
 ---
@@ -943,6 +945,168 @@ The tool result carries the normal payload **plus** a short guidance suffix:
 ---
 *Output style: terse. Be brief. No preambles, no restated context, no ceremony. Lead with the result. Omit explanations the caller already has.*
 *Effort: low — routine step, minimal reasoning.*
+```
+
+---
+
+## `mnemos_export`
+
+Export memories to a file on disk. Thin wrapper over the CLI `mnemos export` logic. Returns metadata only — the export content is **never** returned inline (the stdio transport cannot carry a binary SQLite tarball or a large JSON blob over the JSON-RPC stdout channel).
+
+Federation defence-in-depth (#86) is inherited automatically because the tool wraps the same `run_export` function as the CLI and HTTP surfaces: records tagged `mnemos:no-federate` are excluded from the export, and detected secrets in passing records are replaced with `<REDACTED:<pattern_name>>`.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `output_path` | string | **yes** | — | Absolute path where the export file is written. |
+| `format` | enum `json` \| `sqlite` | no | `json` | `json` = metadata-only export (filters apply); `sqlite` = full `tar.gz` snapshot (filters ignored). |
+| `compress` | enum `none` \| `gzip` | no | `none` | Compression mode. (`zstd` is CLI-only.) |
+| `project` | string | no | — | Filter by project slug (json only). |
+| `agent` | string | no | — | Filter by agent slug (json only). |
+| `status` | enum `raw` \| `processing` \| `processed` \| `published` \| `archived` | no | — | Filter by memory status (json only). |
+| `tags` | array of string | no | — | Filter by tags (json only). |
+| `since` | string (ISO-8601) | no | — | Only memories created on or after this date (json only). |
+| `until` | string (ISO-8601) | no | — | Only memories created before this date (json only). |
+| `encrypt` | boolean | no | `false` | When `true`, encrypt the output. The passphrase is read from the `MNEMOS_EXPORT_PASSPHRASE` environment variable. |
+
+### Returns
+
+```json
+{
+  "path": "/abs/path/to/backup.json",
+  "memory_count": 42,
+  "format": "json",
+  "compress": "none",
+  "encrypted": false,
+  "bytes": 18234,
+  "warnings": []
+}
+```
+
+### Security note
+
+- **Passphrase via environment, never in arguments.** When `encrypt=true`, the server reads the passphrase from the `MNEMOS_EXPORT_PASSPHRASE` environment variable. Passing the passphrase value in `output_path` or any other argument would leak it into MCP logs — never do this.
+- **No inline content.** The tool writes to `output_path` and returns metadata only. Read the file from disk to inspect the export.
+- **`#86` inheritance.** `mnemos:no-federate` records are excluded; secrets in passing records are redacted. No extra configuration needed.
+
+### Example
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_export",
+    "arguments": {
+      "output_path": "/tmp/mnemos-backup.json",
+      "format": "json",
+      "project": "mnemos",
+      "compress": "gzip"
+    }
+  }
+}
+```
+
+For an encrypted full snapshot:
+
+```json
+{
+  "name": "mnemos_export",
+  "arguments": {
+    "output_path": "/tmp/mnemos-snapshot.tar.gz",
+    "format": "sqlite",
+    "encrypt": true
+  }
+}
+```
+
+(With `MNEMOS_EXPORT_PASSPHRASE` set in the server's environment.)
+
+---
+
+## `mnemos_import`
+
+Import memories from an export file. Thin wrapper over the CLI `mnemos import` logic. Two modes: **merge** (insert new, skip or overwrite existing) and **restore** (wipe all then import — destructive, requires `confirm=true`).
+
+Import validation (#86) is inherited automatically: schema drift, oversized content, invalid tags, and prompt-injection patterns are handled by the same `run_import` function the CLI and HTTP surfaces use.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `source_path` | string | **yes** | — | Absolute path to the export file to import. |
+| `mode` | enum `merge` \| `restore` | no | `merge` | `merge` = insert new / skip-or-overwrite existing; `restore` = wipe all then import (requires `confirm=true`). |
+| `overwrite` | boolean | no | `false` | Overwrite existing memories (merge mode only). |
+| `confirm` | boolean | no | `false` | **Required `true` for `restore` mode** (hard gate — restore wipes all existing data). |
+| `dry_run` | boolean | no | `false` | Validate without writing; returns a validation report. |
+| `passphrase_env` | string | no | — | Name of the environment variable holding the decryption passphrase (NOT the value). |
+
+### Returns
+
+```json
+{
+  "mode": "merge",
+  "dry_run": false,
+  "imported": 12,
+  "skipped": 3,
+  "updated": 0,
+  "errors": [],
+  "warnings": [],
+  "format_version": "1.0",
+  "mnemos_version": "2.11.0"
+}
+```
+
+### Security note
+
+- **Passphrase via environment variable name, never the value.** `passphrase_env` takes the *name* of the environment variable (e.g. `"MY_IMPORT_PASS"`), and the server reads `os.environ["MY_IMPORT_PASS"]`. Passing the passphrase value as the argument would leak it into MCP logs.
+- **Restore requires `confirm=true`.** Without it the tool returns an error and does not touch the live data. Restore wipes all memories, vectors, and projects.
+- **`#86` inheritance.** Schema drift is rejected; oversized content (>1 MiB) is rejected; invalid tags raise a tag-contract error; prompt-injection patterns are logged at WARNING (not blocked — content may legitimately discuss injection).
+
+### Example
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_import",
+    "arguments": {
+      "source_path": "/tmp/mnemos-backup.json",
+      "mode": "merge",
+      "overwrite": false
+    }
+  }
+}
+```
+
+Restore (destructive) with confirmation:
+
+```json
+{
+  "name": "mnemos_import",
+  "arguments": {
+    "source_path": "/tmp/mnemos-snapshot.tar.gz",
+    "mode": "restore",
+    "confirm": true
+  }
+}
+```
+
+Encrypted import (with `MNEMOS_IMPORT_PASS` set in the server's environment):
+
+```json
+{
+  "name": "mnemos_import",
+  "arguments": {
+    "source_path": "/tmp/encrypted.bin",
+    "mode": "merge",
+    "passphrase_env": "MNEMOS_IMPORT_PASS"
+  }
+}
 ```
 
 ---
