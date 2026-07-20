@@ -1055,7 +1055,7 @@ output_style:
   "errors": [],
   "warnings": [],
   "format_version": "1.0",
-  "mnemos_version": "2.10.0"
+  "mnemos_version": "2.11.0"
 }
 ```
 

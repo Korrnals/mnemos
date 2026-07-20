@@ -1,6 +1,6 @@
 name: mnemos
 description: "Mnemos — standalone memory & knowledge server for AI agents. Hybrid vector+FTS5 search, tag contract, Obsidian vault mirror, reversible compression (CCR), URL ingest, file watcher. Connects to Mnemos HTTP API (mnemos serve). Exposes 15 tools: mnemos_search, mnemos_add, mnemos_recall_context, mnemos_save_context, mnemos_agent_recall, mnemos_list_recent, mnemos_list_tags, mnemos_ingest_url, mnemos_compress, mnemos_retrieve, mnemos_auto_collect_status, mnemos_stats, mnemos_watch_start, mnemos_watch_stop, mnemos_watch_status."
-version: "2.10.0"
+version: "2.11.0"
 author: Korrnals
 license: MIT
 homepage: https://github.com/Korrnals/mnemos
