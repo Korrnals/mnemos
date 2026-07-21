@@ -361,6 +361,34 @@ class ScannerConfig(BaseModel):
     incremental: bool = True
 
 
+class MeshConfig(BaseModel):
+    """mnemos-mesh gRPC client configuration (Phase 3, issue #105 M3).
+
+    ArchCom 2026-07-17 federation contract §3.1. This section governs the
+    Python gRPC client (:class:`mnemos.mesh_client.MeshClient`) that talks
+    to the ``mnemos-mesh`` Go binary over a Unix socket. The mesh is a
+    dumb transport (criterion 1); moderation and storage stay in Python
+    (criterion 2/11). This section is OFF by default — an operator opts in
+    by setting ``enabled: true`` after deploying the mesh binary.
+
+    Fields:
+        socket_path: Filesystem path to the ``mnemos-mesh`` Unix socket.
+            The mesh binary creates the socket; mnemos connects to it.
+            Default ``/run/mnemos/core.sock`` (systemd-tmpfiles convention
+            for runtime sockets owned by the mnemos user).
+        enabled: Master switch. When ``False`` (default), :class:`MeshClient`
+            is not constructed and the MCP/HTTP paths do not attempt to
+            talk to the mesh. Operators enable it after deploying the mesh.
+        timeout_s: Per-RPC deadline in seconds. Short enough that a dead
+            mesh is noticed quickly, long enough for a local Unix-socket
+            round trip. Default 2.0s.
+    """
+
+    socket_path: str = "/run/mnemos/core.sock"
+    enabled: bool = False
+    timeout_s: float = Field(default=2.0, gt=0.0, le=60.0)
+
+
 class Settings(BaseSettings):
     mnemos: MnemosConfig = MnemosConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
@@ -376,6 +404,7 @@ class Settings(BaseSettings):
     output_style: OutputStyleConfig = OutputStyleConfig()
     federation: FederationConfig = FederationConfig()
     scanner: ScannerConfig = ScannerConfig()
+    mesh: MeshConfig = MeshConfig()
     logging: LoggingConfig = LoggingConfig()
     # M5: declarative policy rules (loaded from YAML or set programmatically)
     policies: dict[str, Any] = Field(default_factory=dict)
