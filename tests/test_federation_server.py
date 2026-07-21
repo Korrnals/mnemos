@@ -25,14 +25,16 @@ All fixtures use RFC-reserved dummy values per
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from mnemos.config import FederationConfig, PeerConfig, Settings
-from mnemos.federation_access_log import FederationAccessLog, hash_topic
+from mnemos.federation_access_log import AccessLogEntry, FederationAccessLog, hash_topic
 from mnemos.federation_server import (
     PullRequest,
     PullResponse,
@@ -146,20 +148,25 @@ def _pull(
     limiter: RateLimiter | None = None,
     now: datetime | None = None,
 ) -> tuple[PullResponse, int]:
-    return handle_pull(
-        PullRequest(peer_id=peer_id, query=query, project_scope=project_scope),
-        settings=settings,
-        manager=manager,
-        access_log=access_log,
-        presented_token=token,
-        presented_mtls_fingerprint=mtls,
-        rate_limiter=limiter or RateLimiter(),
-        now=now or datetime(2026, 7, 21, 12, 0, 0, tzinfo=UTC),
+    return cast(
+        "tuple[PullResponse, int]",
+        handle_pull(
+            PullRequest(peer_id=peer_id, query=query, project_scope=project_scope),
+            settings=settings,
+            manager=manager,
+            access_log=access_log,
+            presented_token=token,
+            presented_mtls_fingerprint=mtls,
+            rate_limiter=limiter or RateLimiter(),
+            now=now or datetime(2026, 7, 21, 12, 0, 0, tzinfo=UTC),
+        ),
     )
 
 
 class TestAuth:
-    def test_no_peers_configured_returns_403(self, manager, access_log, tmp_path: Path) -> None:
+    def test_no_peers_configured_returns_403(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_path: Path
+    ) -> None:
         settings = Settings(
             mnemos={
                 "vault_path": str(tmp_path / "vault"),
@@ -175,22 +182,30 @@ class TestAuth:
         assert status == 403
         assert resp.trigger_code == TriggerCode.REFUSED
 
-    def test_unknown_peer_returns_403(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_unknown_peer_returns_403(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         resp, status = _pull(manager, access_log, tmp_settings, peer_id="mnemos-Z")
         assert status == 403
         assert resp.trigger_code == TriggerCode.REFUSED
 
-    def test_wrong_token_returns_403(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_wrong_token_returns_403(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         resp, status = _pull(manager, access_log, tmp_settings, token="wrong")
         assert status == 403
         assert resp.trigger_code == TriggerCode.REFUSED
 
-    def test_missing_token_returns_403(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_missing_token_returns_403(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         resp, status = _pull(manager, access_log, tmp_settings, token=None)
         assert status == 403
         assert resp.trigger_code == TriggerCode.REFUSED
 
-    def test_correct_token_returns_200(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_correct_token_returns_200(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         _add_memory(
             manager,
             "federation threat model: We chose bearer+TOTP 2FA for remote sessions.",
@@ -225,7 +240,11 @@ class TestMTLSFingerprint:
 
 class TestRateLimit:
     def test_over_limit_returns_429(
-        self, manager, access_log, tmp_settings: Settings, fresh_limiter: RateLimiter
+        self,
+        manager: MemoryManager,
+        access_log: FederationAccessLog,
+        tmp_settings: Settings,
+        fresh_limiter: RateLimiter,
     ) -> None:
         # peer limit is 5/min — exhaust it.
         for _ in range(5):
@@ -240,7 +259,7 @@ class TestRateLimit:
 
 class TestACL:
     def test_disallowed_project_returns_403_refused(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         _add_memory(
             manager,
@@ -251,7 +270,9 @@ class TestACL:
         assert status == 403
         assert resp.trigger_code == TriggerCode.REFUSED
 
-    def test_allowed_project_returns_200(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_allowed_project_returns_200(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         _add_memory(
             manager,
             "shared decision",
@@ -261,7 +282,9 @@ class TestACL:
         assert status == 200
         assert resp.trigger_code == TriggerCode.EXHAUSTIVE
 
-    def test_wildcard_allowed_projects(self, manager, access_log, tmp_path: Path) -> None:
+    def test_wildcard_allowed_projects(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_path: Path
+    ) -> None:
         os.environ[TOKEN_ENV] = TOKEN_VALUE
         settings = Settings(
             mnemos={
@@ -292,7 +315,9 @@ class TestACL:
         assert status == 200
         assert resp.trigger_code == TriggerCode.EXHAUSTIVE
 
-    def test_empty_allowed_projects_fail_closed(self, manager, access_log, tmp_path: Path) -> None:
+    def test_empty_allowed_projects_fail_closed(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_path: Path
+    ) -> None:
         os.environ[TOKEN_ENV] = TOKEN_VALUE
         settings = Settings(
             mnemos={
@@ -318,7 +343,9 @@ class TestACL:
         assert status == 403
         assert resp.trigger_code == TriggerCode.REFUSED
 
-    def test_disallowed_type_excluded(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_disallowed_type_excluded(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         # peer allows only decision/learning; a session record is excluded.
         _add_memory(
             manager,
@@ -337,7 +364,7 @@ class TestACL:
 
 class TestAntiCorrelation:
     def test_second_request_same_topic_returns_already_exhausted(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         _add_memory(
             manager,
@@ -359,7 +386,7 @@ class TestAntiCorrelation:
         assert resp2.records == []
 
     def test_different_topic_does_not_short_circuit(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         _add_memory(
             manager,
@@ -377,7 +404,9 @@ class TestAntiCorrelation:
 
 
 class TestModeration:
-    def test_no_federate_record_excluded(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_no_federate_record_excluded(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         _add_memory(
             manager,
             "internal-only decision",
@@ -394,7 +423,7 @@ class TestModeration:
         assert resp.records == []
 
     def test_secret_record_is_redacted_in_shipped_record(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         # The write-path secrets scanner (Layer 1) auto-tags any record
         # containing a secret with ``mnemos:no-federate``, which the server
@@ -422,7 +451,7 @@ class TestModeration:
         assert "<REDACTED:aws-key>" in resp.records[0].summary
 
     def test_all_secret_record_refused_returns_partial(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         # Moderation refuses when the redacted fraction exceeds the
         # refuse_threshold (default 0.8). The content keeps the query
@@ -457,7 +486,7 @@ class TestModeration:
 
 class TestTriggerCodeSelection:
     def test_no_records_found_returns_exhaustive_empty(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         # No memory on the topic → EXHAUSTIVE with empty records.
         resp, status = _pull(manager, access_log, tmp_settings, query="topic with nothing on B")
@@ -466,7 +495,7 @@ class TestTriggerCodeSelection:
         assert resp.records == []
 
     def test_all_clean_records_returns_exhaustive(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         _add_memory(
             manager,
@@ -489,7 +518,7 @@ class TestTriggerCodeSelection:
 
 class TestAccessLog:
     def test_one_entry_written_per_request(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         _add_memory(
             manager,
@@ -504,7 +533,7 @@ class TestAccessLog:
         assert entries[0].trigger_code == TriggerCode.EXHAUSTIVE
 
     def test_topic_hash_is_sha256_never_plaintext(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         _add_memory(
             manager,
@@ -520,7 +549,7 @@ class TestAccessLog:
         assert query not in raw
 
     def test_already_exhausted_entry_has_empty_record_ids(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         _add_memory(
             manager,
@@ -536,7 +565,7 @@ class TestAccessLog:
         assert entries[1].record_ids_accessed == []
 
     def test_refused_acl_writes_refused_entry(
-        self, manager, access_log, tmp_settings: Settings
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         _pull(manager, access_log, tmp_settings, project_scope="project-other")
         entries = list(_iter_entries(access_log))
@@ -548,7 +577,9 @@ class TestAccessLog:
 
 
 class TestResponseShape:
-    def test_ttl_class_is_ephemeral(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_ttl_class_is_ephemeral(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         _add_memory(
             manager,
             "decision",
@@ -557,7 +588,9 @@ class TestResponseShape:
         resp, _ = _pull(manager, access_log, tmp_settings)
         assert resp.ttl_class == "ephemeral"
 
-    def test_peer_id_set_on_success(self, manager, access_log, tmp_settings: Settings) -> None:
+    def test_peer_id_set_on_success(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
         _add_memory(
             manager,
             "decision",
@@ -567,12 +600,10 @@ class TestResponseShape:
         assert resp.peer_id == "mnemos-B"
 
 
-def _iter_entries(log: FederationAccessLog):
+def _iter_entries(log: FederationAccessLog) -> Iterator[AccessLogEntry]:
     """Read the raw JSONL log — bypasses the public iter (for assertions)."""
     if not log.path.exists():
         return
-    from mnemos.federation_access_log import AccessLogEntry
-
     with open(log.path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
