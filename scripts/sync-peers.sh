@@ -1,185 +1,238 @@
 #!/usr/bin/env bash
-# sync-peers.sh — cron-ready batch sync between two mnemos instances.
+# sync-peers.sh — auto-cron federation bridge (#104) for mnemos Phase 0.
 #
-# Federation Phase 0 (ArchCom 2026-07-17 contract §3.1, issue #85 part 2b).
-# Offline batch sync: export from SOURCE → transfer → import into TARGET.
-# No network call is made by mnemos itself; the TRANSFER step uses the
-# operator-chosen transport (rsync / scp / cp over a shared volume).
+# Automates the operator step that Phase 0 batch sync (#85 part 2b) left
+# manual: it runs `mnemos sync export` on A, pushes the encrypted payload
+# to B over rsync+ssh, then triggers `mnemos sync import` on B over ssh.
+# mnemos ITSELF stays offline — there is no inbound endpoint on mnemos.
+# All automation is at the host/SSH layer, per ArchCom 2026-07-20 decision
+# (mnemos memory 4dc7d96e, protocol .archcom/sessions/2026-07-20-automated-channel.md).
 #
-# Usage: set the required env vars below, then run this script. Edit the
-# TRANSFER step for your transport. The script is a TEMPLATE — it is NOT
-# executable without the env vars set (it will exit 2 with a usage message).
+# This script is the ExecStart of contrib/systemd/mnemos-sync.service. It is
+# also runnable by hand for testing. It reads its config from env vars —
+# the systemd unit loads /etc/mnemos/sync.env via EnvironmentFile=.
 #
-# Required env:
-#   SOURCE_MNEMOS_DIR        — path to source mnemos repo (with venv at .venv)
-#   TARGET_MNEMOS_DIR        — path to target mnemos repo (with venv at .venv)
-#   SHARED_PROJECTS          — space-separated list of project slugs to sync
+# Required env (refuse to run if any is missing — exit 2):
+#   MNEMOS_SYNC_PEER_HOST          — peer (TARGET) host B
+#   MNEMOS_SYNC_PEER_SSH_KEY       — ed25519 private key on A for rsync push
+#   MNEMOS_SYNC_PEER_IMPORT_SSH_KEY— ed25519 private key on A for import trigger
+#   MNEMOS_SYNC_LOCAL_EXPORT_DIR   — local dir where export writes the payload
+#   MNEMOS_SYNC_REMOTE_IMPORT_DIR  — dir on B where rsync delivers the payload
+#   MNEMOS_SYNC_SHARED_PROJECTS    — comma-separated project slugs to sync
+#   MNEMOS_SYNC_ENCRYPT            — "true"|"false"
+#   MNEMOS_SYNC_PASSPHRASE_ENV     — NAME of env var holding the passphrase
 #
 # Optional env:
-#   MNEMOS_EXPORT_PASSPHRASE — encryption passphrase (required if ENCRYPT=1)
-#   ENCRYPT                  — "1" to encrypt export (default: 0)
-#   TRANSFER_METHOD          — "rsync" | "scp" | "cp" (default: cp)
-#   TRANSFER_DEST_HOST       — target host for rsync/scp (empty → local cp)
-#   SYNC_FILE                — path to export file (default: /tmp/mnemos-sync-$(date +%s).json)
-#   DRY_RUN                  — "1" for end-to-end dry-run (no writes, no transfer)
-#   SOURCE_CONFIG            — path to source config.yaml (default: discovery)
-#   TARGET_CONFIG            — path to target config.yaml (default: discovery)
+#   MNEMOS_SYNC_PEER_USER           — ssh user on B (default: mnemos-sync)
+#   MNEMOS_SYNC_DRY_RUN             — "1" logs commands only, no writes/ssh
+#   MNEMOS_SYNC_SOURCE_CONFIG       — path to A's mnemos config.yaml
+#   MNEMOS_SYNC_REMOTE_FILE         — basename on B (default: mnemos-sync-<ts>.json)
+#   MNEMOS_SYNC_MNEMOS_BIN          — mnemos CLI on A (default: auto-discover)
 #
-# Crontab example (hourly encrypted sync to a peer host over scp):
-#   0 * * * * SOURCE_MNEMOS_DIR=/opt/mnemos-a TARGET_MNEMOS_DIR=/opt/mnemos-b \
-#             SHARED_PROJECTS="project-umbra project-mnemos" \
-#             MNEMOS_EXPORT_PASSPHRASE="$PASS" ENCRYPT=1 \
-#             TRANSFER_METHOD=scp TRANSFER_DEST_HOST=peer.example.com \
-#             /opt/mnemos-a/scripts/sync-peers.sh >> /var/log/mnemos-sync.log 2>&1
+# The path to the mnemos CLI on B (MNEMOS_SYNC_REMOTE_MNEMOS_BIN) is set on B
+# in /etc/mnemos/sync.env — A does not need it because the mnemos-import-wrapper
+# on B resolves the binary.
+#
+# Security: the passphrase is NEVER passed on the command line. On A it is read
+# by `mnemos sync export` from $MNEMOS_SYNC_PASSPHRASE_ENV (which must be set in
+# the service environment). On B it is read by `mnemos sync import` from the
+# env var NAME passed via --passphrase-env — that name is pinned on B by the
+# mnemos-import-wrapper guard (contrib/systemd/mnemos-import-wrapper.sh) and
+# the value must be provisioned on B's systemd environment independently.
 #
 # Exit codes:
-#   0 — sync completed (export + transfer + import all green)
-#   1 — a sync step failed (mnemos sync export/import returned non-zero)
+#   0 — export + transfer + import all green
+#   1 — a sync step failed (mnemos/rsync/ssh returned non-zero)
 #   2 — env-var validation failed (script not configured)
 
 set -euo pipefail
 
-# ── env-var validation ───────────────────────────────────────────────────────
-
+# ── logging ──────────────────────────────────────────────────────────────────
+# All output goes to stderr with ISO-8601 UTC timestamps. The systemd journal
+# captures it; for cron/manual runs the operator redirects 2>>/var/log/mnemos-sync.log.
+_log() {
+    printf '[%s] sync-peers: %s\n' "$(date -u +%FT%TZ)" "$*" >&2
+}
 _err() {
-    echo "ERROR: $*" >&2
+    printf '[%s] sync-peers: ERROR: %s\n' "$(date -u +%FT%TZ)" "$*" >&2
 }
 
-if [[ -z "${SOURCE_MNEMOS_DIR:-}" ]]; then
-    _err "SOURCE_MNEMOS_DIR is not set (path to source mnemos repo with venv)."
-    exit 2
-fi
-if [[ -z "${TARGET_MNEMOS_DIR:-}" ]]; then
-    _err "TARGET_MNEMOS_DIR is not set (path to target mnemos repo with venv)."
-    exit 2
-fi
-if [[ -z "${SHARED_PROJECTS:-}" ]]; then
-    _err "SHARED_PROJECTS is not set (space-separated project slugs to sync)."
+# ── env-var validation ───────────────────────────────────────────────────────
+# Refuse to run if any required var is missing. Print a clear error pointing
+# the operator at /etc/mnemos/sync.env (the EnvironmentFile the service loads).
+
+_required_vars=(
+    MNEMOS_SYNC_PEER_HOST
+    MNEMOS_SYNC_PEER_SSH_KEY
+    MNEMOS_SYNC_PEER_IMPORT_SSH_KEY
+    MNEMOS_SYNC_LOCAL_EXPORT_DIR
+    MNEMOS_SYNC_REMOTE_IMPORT_DIR
+    MNEMOS_SYNC_SHARED_PROJECTS
+    MNEMOS_SYNC_ENCRYPT
+    MNEMOS_SYNC_PASSPHRASE_ENV
+)
+
+_missing=()
+for v in "${_required_vars[@]}"; do
+    if [[ -z "${!v:-}" ]]; then
+        _missing+=("$v")
+    fi
+done
+
+if [[ ${#_missing[@]} -gt 0 ]]; then
+    _err "missing required env var(s): ${_missing[*]}"
+    _err "configure them in /etc/mnemos/sync.env (see contrib/systemd/sync.env.example)."
     exit 2
 fi
 
-ENCRYPT="${ENCRYPT:-0}"
-TRANSFER_METHOD="${TRANSFER_METHOD:-cp}"
-TRANSFER_DEST_HOST="${TRANSFER_DEST_HOST:-}"
-SYNC_FILE="${SYNC_FILE:-/tmp/mnemos-sync-$(date +%s).json}"
-DRY_RUN="${DRY_RUN:-0}"
-SOURCE_CONFIG="${SOURCE_CONFIG:-}"
-TARGET_CONFIG="${TARGET_CONFIG:-}"
+# ── optional env with defaults ───────────────────────────────────────────────
+PEER_USER="${MNEMOS_SYNC_PEER_USER:-mnemos-sync}"
+DRY_RUN="${MNEMOS_SYNC_DRY_RUN:-0}"
+SOURCE_CONFIG="${MNEMOS_SYNC_SOURCE_CONFIG:-}"
+REMOTE_FILE="${MNEMOS_SYNC_REMOTE_FILE:-mnemos-sync-$(date -u +%Y%m%dT%H%M%SZ).json}"
+MNEMOS_BIN="${MNEMOS_SYNC_MNEMOS_BIN:-}"
 
-if [[ "$ENCRYPT" == "1" && -z "${MNEMOS_EXPORT_PASSPHRASE:-}" ]]; then
-    _err "ENCRYPT=1 but MNEMOS_EXPORT_PASSPHRASE is not set."
+# Normalize MNEMOS_SYNC_ENCRYPT to a boolean string.
+case "${MNEMOS_SYNC_ENCRYPT}" in
+    true|True|TRUE|1|yes|Yes) ENCRYPT=true ;;
+    false|False|FALSE|0|no|No) ENCRYPT=false ;;
+    *)
+        _err "MNEMOS_SYNC_ENCRYPT must be 'true' or 'false' (got '${MNEMOS_SYNC_ENCRYPT}')."
+        exit 2
+        ;;
+esac
+
+if [[ "$ENCRYPT" == "true" ]]; then
+    # The passphrase must be available in the env var NAME we advertise. If the
+    # named env var is not set on A, refuse — mnemos sync export would fail.
+    if [[ -z "${!MNEMOS_SYNC_PASSPHRASE_ENV:-}" ]]; then
+        _err "ENCRYPT=true but \${${MNEMOS_SYNC_PASSPHRASE_ENV}} is not set on A."
+        _err "provision the passphrase in the service environment (systemd LoadCredential or drop-in)."
+        exit 2
+    fi
+fi
+
+# Discover the mnemos CLI on A if not set.
+if [[ -z "$MNEMOS_BIN" ]]; then
+    if command -v mnemos >/dev/null 2>&1; then
+        MNEMOS_BIN="$(command -v mnemos)"
+    elif [[ -x "$(dirname "$0")/../.venv/bin/mnemos" ]]; then
+        MNEMOS_BIN="$(cd "$(dirname "$0")/.." && pwd)/.venv/bin/mnemos"
+    else
+        _err "mnemos CLI not found on PATH and no .venv next to the script."
+        _err "set MNEMOS_SYNC_MNEMOS_BIN in /etc/mnemos/sync.env."
+        exit 2
+    fi
+fi
+
+# Sanity: the ssh keys must exist and be readable.
+if [[ ! -r "$MNEMOS_SYNC_PEER_SSH_KEY" ]]; then
+    _err "MNEMOS_SYNC_PEER_SSH_KEY not readable: $MNEMOS_SYNC_PEER_SSH_KEY"
+    exit 2
+fi
+if [[ ! -r "$MNEMOS_SYNC_PEER_IMPORT_SSH_KEY" ]]; then
+    _err "MNEMOS_SYNC_PEER_IMPORT_SSH_KEY not readable: $MNEMOS_SYNC_PEER_IMPORT_SSH_KEY"
     exit 2
 fi
 
-# Optional per-side config flags (only added when set).
-_source_config_arg=()
-if [[ -n "$SOURCE_CONFIG" ]]; then
-    _source_config_arg=(--config "$SOURCE_CONFIG")
-fi
-_target_config_arg=()
-if [[ -n "$TARGET_CONFIG" ]]; then
-    _target_config_arg=(--config "$TARGET_CONFIG")
+# Ensure the local export dir exists.
+if [[ "$DRY_RUN" != "1" ]]; then
+    mkdir -p "$MNEMOS_SYNC_LOCAL_EXPORT_DIR"
 fi
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+# Build the ssh base options for BatchMode (no password prompt — fail loudly).
+_ssh_opts=(-o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o PasswordAuthentication=no)
 
-# Activate a venv if present; otherwise assume `mnemos` is on PATH.
-_activate_venv() {
-    local dir="$1"
-    if [[ -f "$dir/.venv/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source "$dir/.venv/bin/activate"
-    fi
-}
-
-# ── 1. SOURCE: export ─────────────────────────────────────────────────────────
-
-echo "[$(date -u +%FT%TZ)] sync-peers: exporting from $SOURCE_MNEMOS_DIR"
-_activate_venv "$SOURCE_MNEMOS_DIR"
-
-_export_args=(sync export --output "$SYNC_FILE" --shared-projects "$SHARED_PROJECTS")
-_export_args+=("${_source_config_arg[@]}")
-if [[ "$ENCRYPT" == "1" ]]; then
+# Build the export args for `mnemos sync export` on A.
+_export_args=(sync export --output "${MNEMOS_SYNC_LOCAL_EXPORT_DIR}/${REMOTE_FILE}" --shared-projects "$MNEMOS_SYNC_SHARED_PROJECTS")
+if [[ -n "$SOURCE_CONFIG" ]]; then
+    _export_args+=(--config "$SOURCE_CONFIG")
+fi
+if [[ "$ENCRYPT" == "true" ]]; then
     _export_args+=(--encrypt)
 fi
 if [[ "$DRY_RUN" == "1" ]]; then
     _export_args+=(--dry-run)
 fi
 
-mnemos "${_export_args[@]}"
-
-# ── 2. TRANSFER ───────────────────────────────────────────────────────────────
-# Skip the transfer in dry-run (no file written) or when source == target
-# (e.g. testing on a single instance).
+# ── 1. SOURCE: export on A ───────────────────────────────────────────────────
+_log "step 1/3 — export on A: ${MNEMOS_BIN} ${_export_args[*]}"
+if [[ "$DRY_RUN" == "1" ]]; then
+    _log "dry-run: skipping actual export."
+else
+    # mnemos sync export reads the passphrase from $MNEMOS_SYNC_PASSPHRASE_ENV
+    # (the NAME), which must be set in this process's environment.
+    set +e
+    "$MNEMOS_BIN" "${_export_args[@]}"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+        _err "mnemos sync export failed (exit $rc)."
+        exit 1
+    fi
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
-    echo "[$(date -u +%FT%TZ)] sync-peers: dry-run — skipping transfer + import."
-    exit 0
-fi
-
-if [[ ! -f "$SYNC_FILE" ]]; then
-    _err "export produced no file at $SYNC_FILE (nothing to transfer)."
-    exit 1
-fi
-
-echo "[$(date -u +%FT%TZ)] sync-peers: transferring via $TRANSFER_METHOD → $TARGET_MNEMOS_DIR"
-case "$TRANSFER_METHOD" in
-    cp)
-        cp -- "$SYNC_FILE" "$TARGET_MNEMOS_DIR/${SYNC_FILE##*/}"
-        TARGET_SYNC_FILE="$TARGET_MNEMOS_DIR/${SYNC_FILE##*/}"
-        ;;
-    rsync)
-        if [[ -n "$TRANSFER_DEST_HOST" ]]; then
-            rsync -az -- "$SYNC_FILE" "$TRANSFER_DEST_HOST:$SYNC_FILE"
-        else
-            rsync -az -- "$SYNC_FILE" "$TARGET_MNEMOS_DIR/${SYNC_FILE##*/}"
-        fi
-        TARGET_SYNC_FILE="$SYNC_FILE"
-        ;;
-    scp)
-        if [[ -z "$TRANSFER_DEST_HOST" ]]; then
-            _err "TRANSFER_METHOD=scp requires TRANSFER_DEST_HOST."
-            exit 2
-        fi
-        scp -- "$SYNC_FILE" "$TRANSFER_DEST_HOST:$SYNC_FILE"
-        TARGET_SYNC_FILE="$SYNC_FILE"
-        ;;
-    *)
-        _err "unknown TRANSFER_METHOD: $TRANSFER_METHOD (use rsync | scp | cp)."
-        exit 2
-        ;;
-esac
-
-# ── 3. TARGET: import ─────────────────────────────────────────────────────────
-# On a remote target (rsync/scp to a peer host), the operator runs the
-# import step on the peer separately (this script cannot ssh in and run
-# the target venv). The local-cp path runs the import here.
-
-if [[ "$TRANSFER_METHOD" == "cp" ]]; then
-    echo "[$(date -u +%FT%TZ)] sync-peers: importing into $TARGET_MNEMOS_DIR"
-    _activate_venv "$TARGET_MNEMOS_DIR"
-
-    _import_args=(sync import "$TARGET_SYNC_FILE")
-    _import_args+=("${_target_config_arg[@]}")
-    if [[ "$ENCRYPT" == "1" ]]; then
-        _import_args+=(--passphrase-env MNEMOS_EXPORT_PASSPHRASE)
-    fi
-    if [[ "$DRY_RUN" == "1" ]]; then
-        _import_args+=(--dry-run)
-    fi
-
-    mnemos "${_import_args[@]}"
+    _log "dry-run: would verify ${MNEMOS_SYNC_LOCAL_EXPORT_DIR}/${REMOTE_FILE} exists."
 else
-    echo "[$(date -u +%FT%TZ)] sync-peers: remote transfer — run the import on $TRANSFER_DEST_HOST:"
-    echo "    mnemos sync import $TARGET_SYNC_FILE"
-    if [[ "$ENCRYPT" == "1" ]]; then
-        echo "      --passphrase-env MNEMOS_EXPORT_PASSPHRASE"
+    if [[ ! -f "${MNEMOS_SYNC_LOCAL_EXPORT_DIR}/${REMOTE_FILE}" ]]; then
+        _err "export produced no file at ${MNEMOS_SYNC_LOCAL_EXPORT_DIR}/${REMOTE_FILE}."
+        exit 1
     fi
 fi
 
-# ── 4. cleanup ────────────────────────────────────────────────────────────────
-# Leave the sync file in place on success — the audit log captures the
-# path, and an operator may want to re-import after a fix. The crontab
-# should rotate / clean /tmp separately.
+# ── 2. TRANSFER: rsync over ssh to B ─────────────────────────────────────────
+# The rsync runs as ${PEER_USER}@${MNEMOS_SYNC_PEER_HOST} and is restricted on
+# B by rsync-wrapper.sh (contrib/systemd/rsync-wrapper.sh) pinned in authorized_keys.
+# We use -e "ssh ..." so the wrapper receives the rsync server command via
+# SSH_ORIGINAL_COMMAND and validates the destination against INCOMING_DIR.
+_rsync_log_cmd=(rsync -az -e "ssh -i ${MNEMOS_SYNC_PEER_SSH_KEY} ${_ssh_opts[*]}" "${MNEMOS_SYNC_LOCAL_EXPORT_DIR}/${REMOTE_FILE}" "${PEER_USER}@${MNEMOS_SYNC_PEER_HOST}:${MNEMOS_SYNC_REMOTE_IMPORT_DIR}/${REMOTE_FILE}")
+_log "step 2/3 — transfer: ${_rsync_log_cmd[*]}"
+if [[ "$DRY_RUN" == "1" ]]; then
+    _log "dry-run: skipping actual rsync."
+else
+    set +e
+    rsync -az -e "ssh -i ${MNEMOS_SYNC_PEER_SSH_KEY} ${_ssh_opts[*]}" \
+        "${MNEMOS_SYNC_LOCAL_EXPORT_DIR}/${REMOTE_FILE}" \
+        "${PEER_USER}@${MNEMOS_SYNC_PEER_HOST}:${MNEMOS_SYNC_REMOTE_IMPORT_DIR}/${REMOTE_FILE}"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+        _err "rsync transfer to ${PEER_USER}@${MNEMOS_SYNC_PEER_HOST} failed (exit $rc)."
+        exit 1
+    fi
+fi
 
-echo "[$(date -u +%FT%TZ)] sync-peers: done (sync file: $SYNC_FILE)"
+# ── 3. IMPORT: trigger `mnemos sync import` on B via ssh ──────────────────────
+# The remote command is `mnemos sync import <path> --passphrase-env <NAME>` —
+# `source` is a POSITIONAL argument in the mnemos CLI (see `mnemos sync import
+# --help`). On B, mnemos-import-wrapper.sh (pinned in authorized_keys for the
+# import key) rewrites the positional path to the absolute incoming path, pins
+# --passphrase-env to the configured name, and rejects any other command. The
+# passphrase value itself lives on B's environment (provisioned independently —
+# never crosses the wire).
+_remote_import_path="${MNEMOS_SYNC_REMOTE_IMPORT_DIR%/}/${REMOTE_FILE}"
+_import_remote_cmd=(mnemos sync import "$_remote_import_path" --passphrase-env "$MNEMOS_SYNC_PASSPHRASE_ENV")
+if [[ "$DRY_RUN" == "1" ]]; then
+    _import_remote_cmd+=(--dry-run)
+fi
+
+_log "step 3/3 — import on B: ssh -i ${MNEMOS_SYNC_PEER_IMPORT_SSH_KEY} ... ${_import_remote_cmd[*]}"
+if [[ "$DRY_RUN" == "1" ]]; then
+    _log "dry-run: skipping actual ssh import trigger."
+else
+    set +e
+    ssh -i "${MNEMOS_SYNC_PEER_IMPORT_SSH_KEY}" "${_ssh_opts[@]}" \
+        "${PEER_USER}@${MNEMOS_SYNC_PEER_HOST}" \
+        "${_import_remote_cmd[*]}"
+    rc=$?
+    set -e
+    if [[ $rc -ne 0 ]]; then
+        _err "remote mnemos sync import failed (exit $rc)."
+        exit 1
+    fi
+fi
+
+_log "done — sync file: ${MNEMOS_SYNC_LOCAL_EXPORT_DIR}/${REMOTE_FILE}"
+exit 0
