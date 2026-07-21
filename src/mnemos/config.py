@@ -499,11 +499,7 @@ class Settings(BaseSettings):
         # New layout: ~/.mnemos/vault/
         old_vault = home / "mnemos-vault"
         default_new_vault = (home / ".mnemos" / "vault").resolve()
-        if (
-            new_vault == default_new_vault
-            and old_vault.is_dir()
-            and not new_vault.exists()
-        ):
+        if new_vault == default_new_vault and old_vault.is_dir() and not new_vault.exists():
             new_vault.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(old_vault), str(new_vault))
             actions.append(f"vault: {old_vault} → {new_vault}")

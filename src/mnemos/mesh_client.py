@@ -394,7 +394,7 @@ class MeshClient:
             return int(enum_obj.Value(import_mode))
         except ValueError as exc:
             raise ValueError(
-                f"invalid import_mode {import_mode!r}; " "expected 'MERGE' or 'RESTORE'"
+                f"invalid import_mode {import_mode!r}; expected 'MERGE' or 'RESTORE'"
             ) from exc
 
     @staticmethod

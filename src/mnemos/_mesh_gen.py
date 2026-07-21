@@ -37,9 +37,7 @@ from typing import Any
 #: Resolved relative to this file: ``src/mnemos/_mesh_gen.py`` ->
 #: ``../../federation/gen/python``. Kept as a resolved ``Path`` so the
 #: shim works regardless of the current working directory.
-_GEN_DIR: Path = (
-    Path(__file__).resolve().parent.parent.parent / "federation" / "gen" / "python"
-)
+_GEN_DIR: Path = Path(__file__).resolve().parent.parent.parent / "federation" / "gen" / "python"
 
 
 def _ensure_gen_dir_on_path() -> None:
