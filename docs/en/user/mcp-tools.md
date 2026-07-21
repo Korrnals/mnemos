@@ -1055,7 +1055,7 @@ Import validation (#86) is inherited automatically: schema drift, oversized cont
   "errors": [],
   "warnings": [],
   "format_version": "1.0",
-  "mnemos_version": "2.10.0"
+  "mnemos_version": "2.12.0"
 }
 ```
 
