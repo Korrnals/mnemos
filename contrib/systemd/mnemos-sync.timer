@@ -1,0 +1,11 @@
+[Unit]
+Description=Mnemos — auto-cron federation bridge timer (#104)
+Documentation=file:///usr/share/doc/mnemos/admin/ssh-sync-hardening.md
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
