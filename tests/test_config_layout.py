@@ -13,8 +13,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
-from mnemos.config import LoggingConfig, MnemosConfig, Settings, load_settings
+from mnemos.config import (
+    FederationConfig,
+    LoggingConfig,
+    MnemosConfig,
+    PeerConfig,
+    Settings,
+    load_settings,
+)
 
 # ── New default paths ─────────────────────────────────────────────────────────
 
@@ -240,3 +248,121 @@ def test_load_settings_calls_migrate_layout(
     with patch.object(Settings, "migrate_layout", return_value=[]) as mock_migrate:
         load_settings()
         mock_migrate.assert_called_once()
+
+
+# ── Federation Phase 1 prerequisites — per-peer ACL ──────────────────────────
+# Contract §3.2, §6, ADR-0016. All fixtures use RFC-reserved dummy values
+# per sensitive-data.instructions.md — never real tokens.
+
+# Dummy env var NAME (not value) per sensitive-data.instructions.md.
+_DUMMY_TOKEN_ENV = "MNEMOS_FED_PEER_A_TOKEN"
+# Dummy SHA-256 fingerprint (SHA-256 of empty string).
+_DUMMY_FINGERPRINT = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
+def test_federation_config_peers_defaults_to_empty_dict() -> None:
+    """FederationConfig.peers defaults to an empty dict — fail-closed."""
+    cfg = FederationConfig()
+    assert cfg.peers == {}
+    assert isinstance(cfg.peers, dict)
+
+
+def test_federation_config_peers_accepts_peer_config() -> None:
+    """A PeerConfig can be added under a peer A2A id key."""
+    cfg = FederationConfig(
+        peers={"mnemos-A": PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV)},
+    )
+    assert "mnemos-A" in cfg.peers
+    assert cfg.peers["mnemos-A"].bearer_token_env == _DUMMY_TOKEN_ENV
+
+
+def test_peer_config_bearer_token_env_required() -> None:
+    """PeerConfig.bearer_token_env is required (no default)."""
+    with pytest.raises(ValidationError):
+        PeerConfig()  # type: ignore[call-arg]
+
+
+def test_peer_config_bearer_token_env_is_a_name_not_value() -> None:
+    """bearer_token_env holds an env var NAME, never a token value."""
+    cfg = PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV)
+    # It is a string naming the env var, not a bearer token itself.
+    assert cfg.bearer_token_env == _DUMMY_TOKEN_ENV
+    assert not cfg.bearer_token_env.startswith("mnk_fed_")
+
+
+def test_peer_config_bearer_token_env_rejects_empty() -> None:
+    """Empty bearer_token_env is rejected — a peer needs a real env name."""
+    with pytest.raises(ValidationError):
+        PeerConfig(bearer_token_env="")
+
+
+def test_peer_config_allowed_projects_defaults_empty() -> None:
+    """allowed_projects defaults to empty — fail-closed (peer gets nothing)."""
+    cfg = PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV)
+    assert cfg.allowed_projects == []
+
+
+def test_peer_config_allowed_projects_wildcard_accepted() -> None:
+    """allowed_projects=['*'] is accepted as the explicit wildcard."""
+    cfg = PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV, allowed_projects=["*"])
+    assert cfg.allowed_projects == ["*"]
+
+
+def test_peer_config_allowed_projects_explicit_list() -> None:
+    """An explicit list of project slugs is accepted."""
+    cfg = PeerConfig(
+        bearer_token_env=_DUMMY_TOKEN_ENV,
+        allowed_projects=["mnemos", "project-umbra"],
+    )
+    assert cfg.allowed_projects == ["mnemos", "project-umbra"]
+
+
+def test_peer_config_allowed_types_defaults_empty() -> None:
+    """allowed_types defaults to empty — fail-closed."""
+    cfg = PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV)
+    assert cfg.allowed_types == []
+
+
+def test_peer_config_allowed_types_wildcard_accepted() -> None:
+    """allowed_types=['*'] is accepted as the explicit wildcard."""
+    cfg = PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV, allowed_types=["*"])
+    assert cfg.allowed_types == ["*"]
+
+
+def test_peer_config_rate_limit_default() -> None:
+    """rate_limit_per_minute defaults to 30 (contract §8)."""
+    cfg = PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV)
+    assert cfg.rate_limit_per_minute == 30
+
+
+def test_peer_config_rate_limit_clamped_low() -> None:
+    """rate_limit_per_minute below 1 is rejected."""
+    with pytest.raises(ValidationError):
+        PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV, rate_limit_per_minute=0)
+
+
+def test_peer_config_rate_limit_clamped_high() -> None:
+    """rate_limit_per_minute above 600 is rejected."""
+    with pytest.raises(ValidationError):
+        PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV, rate_limit_per_minute=601)
+
+
+def test_peer_config_mtls_fingerprint_optional() -> None:
+    """mtls_cert_fingerprint is optional — defaults to None (no pinning)."""
+    cfg = PeerConfig(bearer_token_env=_DUMMY_TOKEN_ENV)
+    assert cfg.mtls_cert_fingerprint is None
+
+
+def test_peer_config_mtls_fingerprint_accepted() -> None:
+    """A SHA-256 fingerprint hex string is accepted when provided."""
+    cfg = PeerConfig(
+        bearer_token_env=_DUMMY_TOKEN_ENV,
+        mtls_cert_fingerprint=_DUMMY_FINGERPRINT,
+    )
+    assert cfg.mtls_cert_fingerprint == _DUMMY_FINGERPRINT
+
+
+def test_settings_federation_peers_default_empty() -> None:
+    """Top-level Settings.federation.peers defaults to empty — fail-closed."""
+    settings = Settings()
+    assert settings.federation.peers == {}
