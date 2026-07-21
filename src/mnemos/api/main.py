@@ -29,6 +29,7 @@ from starlette.middleware.cors import CORSMiddleware
 from mnemos import __version__
 from mnemos.api.auth import router as auth_router
 from mnemos.api.auth_store import AuthStore
+from mnemos.api.federation import router as federation_router
 from mnemos.api.middleware import AuthMiddleware
 from mnemos.api.rate_limit import limiter
 from mnemos.config import ApiConfig, Settings, load_settings
@@ -1115,6 +1116,14 @@ app.include_router(sessions_router, prefix="/v1")
 
 # ── Auth API (T-AUTH, ADR-0014) ───────────────────────────────────────────────
 app.include_router(auth_router)
+
+# ── Federation API (Phase 2 mediated pull, contract §3.2) ────────────────────
+# The federation router registers ``POST /api/v1/federation/pull`` — the
+# B-side endpoint for the A→B mediated pull flow. It is a thin adapter over
+# :func:`mnemos.federation_server.handle_pull`; auth is per-peer bearer
+# (ADR-0016). The router reads its MemoryManager / Settings / AccessLog
+# from ``app.state`` (set by lifespan) or falls back to the module singletons.
+app.include_router(federation_router)
 
 # Apply CORS middleware based on current settings.
 # Middleware must be registered before the first request (i.e., here at module
