@@ -37,6 +37,13 @@ syntax = "proto3";
 
 package mnemos.core.v1;
 
+// Go codegen import path + package name for the mnemos-mesh Go binary.
+// Source of truth lives in the .proto (contract-first); this option makes
+// the .proto self-describing for Go codegen so consumers (mnemos-mesh) do
+// not need M-mappings in buf.gen.yaml. The `;mnemosmesh` suffix is the Go
+// package name shared by both federation and core-api generated stubs.
+option go_package = "github.com/Korrnals/mnemos-mesh/proto/gen;mnemosmesh";
+
 import "federation.proto";
 
 // ListMemoriesRequest — filter mnemos uses to export memories to the mesh.
