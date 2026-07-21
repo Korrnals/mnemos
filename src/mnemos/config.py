@@ -240,6 +240,55 @@ class OutputStyleConfig(BaseModel):
     default_effort: str = "medium"
 
 
+class PeerConfig(BaseModel):
+    """Per-peer federation ACL — Phase 1 prerequisite (contract §3.2, §6).
+
+    ADR-0016 mandates per-peer bearer ``mnk_fed_<peer_id>_`` plus mTLS
+    client cert pinned per peer, plus a per-peer ACL GATE. Each entry
+    in :attr:`FederationConfig.peers` is one peer — keyed by the peer's
+    A2A id (e.g. ``mnemos-A``).
+
+    Fail-closed defaults: every list field defaults to empty, which
+    means "none" — never implicit "allow all". ``["*"]`` is the explicit
+    wildcard. This is the contract §3.2 / §6 rule: an operator who wants
+    to open a peer must say so explicitly.
+
+    Fields:
+        bearer_token_env: NAME of the environment variable holding the
+            per-peer bearer token (e.g. ``MNEMOS_FED_PEER_A_TOKEN``).
+            Per ``sensitive-data.instructions.md`` we store the NAME,
+            never the value — the server reads the token from this env
+            var at request time. The token format is
+            ``mnk_fed_<peer_id>_<random>`` per ADR-0016.
+        allowed_projects: Which projects this peer may pull. Subset
+            filter applied on top of the global
+            :attr:`FederationConfig.shared_projects` whitelist. Empty
+            list = none (fail-closed). ``["*"]`` = all projects in
+            ``shared_projects`` (explicit wildcard, not implicit).
+        allowed_types: Which record types this peer may pull
+            (``decision`` / ``learning`` / ``bug-pattern`` / ``rule`` /
+            ``open-question`` / ``checkpoint`` / ``session``). Empty
+            list = none. ``["*"]`` = all types.
+        rate_limit_per_minute: Per-peer rate limit on pull requests
+            (contract §8 — DDoS mitigation; slowapi is already used on
+            the ``/auth/*`` surface). Default 30/min. Clamped to
+            ``[1, 600]`` — below 1 is unusable, above 600 defeats the
+            purpose.
+        mtls_cert_fingerprint: Optional SHA-256 fingerprint of the
+            peer's mTLS client cert, for pinning. If set, the server
+            rejects connections whose client cert fingerprint does not
+            match. If ``None``, mTLS pinning is not enforced for this
+            peer (operator opts in). ADR-0016 recommends pinning for
+            networked deployments.
+    """
+
+    bearer_token_env: str = Field(..., min_length=1, max_length=256)
+    allowed_projects: list[str] = Field(default_factory=list)
+    allowed_types: list[str] = Field(default_factory=list)
+    rate_limit_per_minute: int = Field(default=30, ge=1, le=600)
+    mtls_cert_fingerprint: str | None = Field(default=None, max_length=128)
+
+
 class FederationConfig(BaseModel):
     """Federation (Phase 0 batch sync) configuration.
 
@@ -263,11 +312,20 @@ class FederationConfig(BaseModel):
             redacted/anonymized to trigger a ``refuse`` verdict (contract
             §2.2). Default 0.8 = 80%. If >80% of content is redacted or
             anonymized, the record is refused (no useful remainder).
+        peers: Per-peer ACL map — Phase 1 prerequisite (contract §3.2,
+            §6, ADR-0016). Keyed by peer A2A id (e.g. ``mnemos-A``).
+            Empty dict = no peers configured = the federation server
+            refuses all pull requests (fail-closed). Each value is a
+            :class:`PeerConfig` with the per-peer bearer token env name,
+            allowed projects/types, rate limit, and optional mTLS cert
+            fingerprint. ``shared_projects`` stays as the global filter;
+            per-peer ``allowed_projects`` is a subset filter on top.
     """
 
     shared_projects: list[str] = Field(default_factory=list)
     moderation_mapping_ttl_hours: int = Field(default=24, ge=1, le=168)
     moderation_refuse_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    peers: dict[str, PeerConfig] = Field(default_factory=dict)
 
 
 class ScannerConfig(BaseModel):
