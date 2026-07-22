@@ -1,0 +1,56 @@
+# buf.yaml — buf module definition for the mnemos-mesh Phase 3 contract.
+#
+# Contract-first parallel development (mnemos memory 7fdb7f13): the .proto
+# files in this directory are the source of truth for the mesh↔mesh and
+# mesh↔mnemos APIs. Codegen targets (Go + Python) are produced from this
+# single source via buf.gen.yaml.
+#
+# Module name is the FORWARD name — `github.com/Korrnals/mnemos-mesh`. The
+# contract currently lives in the mnemos repo (mnemos/federation/proto/) so
+# both the Python and Go sides can develop against it in lockstep. When
+# the contract stabilises to v1.0.0 it will migrate to a dedicated
+# `github.com/Korrnals/mnemos-mesh` repository; the module name here is
+# already set to that target so the migration is a `git mv`, not a
+# rename + re-tag.
+#
+# Buf v2 schema. See https://buf.build/docs/configuration/v2/buf-yaml/.
+version: v2
+
+# The module root is this directory (mnemos/federation/proto/). All .proto
+# files in this tree belong to the module; buf lint + breaking checks
+# operate on the whole module.
+modules:
+  - path: .
+    name: github.com/Korrnals/mnemos-mesh
+
+# Lint rules — contract-first requires the contract be self-documenting.
+#   DEFAULT  : standard proto style (file/dir naming, enum naming, etc.).
+#   COMMENTS : enforce doc comments on every message and service. The
+#              .proto files are read by both humans and codegen; missing
+#              comments mean the contract is its own opaque spec.
+# Breaking change detection is enabled via the `breaking` block below so
+# a PR that breaks a wire-compat invariant fails CI before merge.
+lint:
+  use:
+    - DEFAULT
+    - COMMENTS
+  # The federation contract uses lowercase field names (snake_case) and
+  # standard enum conventions (first value = 0). DEFAULT covers this.
+  except: []
+
+# Breaking-change detector — compares the current module against a baseline
+# (the default branch tip). Any wire-incompatible change (renumbered field,
+# type change, removed field without `reserved`, removed RPC) fails CI.
+#
+# This is the contract-first hard gate: a breaking change MUST be a
+# conscious MAJOR SemVer bump (per the README.md SemVer policy), not an
+# accidental drift. The detector runs in CI; locally it runs via
+# `buf breaking --against .git#branch=main` (or the workspace default).
+breaking:
+  use:
+    - WIRE_JSON
+    - WIRE
+  # Ignore the generated codegen output dir — it is regenerated from the
+  # .proto files and is never the source of a wire break.
+  ignore:
+    - gen/

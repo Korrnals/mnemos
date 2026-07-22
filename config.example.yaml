@@ -102,6 +102,44 @@ federation:
   # redacted or anonymized, the record is refused (no useful remainder).
   # Range: 0.0–1.0. Default: 0.8 (80%).
   moderation_refuse_threshold: 0.8
+  # ── Per-peer ACL — Phase 1 prerequisite (contract §3.2, §6, ADR-0016) ──
+  # Keyed by peer A2A id (e.g. `mnemos-A`). Empty dict = no peers
+  # configured = the federation server refuses all pull requests
+  # (fail-closed). Each peer defines its own bearer token env name,
+  # allowed projects/types, rate limit, and optional mTLS cert
+  # fingerprint. `shared_projects` above is the global filter;
+  # `allowed_projects` per peer is a subset filter on top.
+  # All values below are RFC-reserved dummies — never real tokens.
+  peers: {}
+  # peers:
+  #   mnemos-A:
+  #     # NAME of the env var holding the per-peer bearer token
+  #     # (format: mnk_fed_<peer_id>_<random> per ADR-0016). Never the
+  #     # value — the server reads the token from this env var at
+  #     # request time.
+  #     bearer_token_env: MNEMOS_FED_PEER_A_TOKEN
+  #     # Which projects this peer may pull. Empty = none (fail-closed).
+  #     # ["*"] = all projects in `shared_projects` (explicit wildcard).
+  #     allowed_projects:
+  #       - mnemos
+  #       - project-umbra
+  #     # Which record types this peer may pull. Empty = none.
+  #     # ["*"] = all types.
+  #     # Valid: decision / learning / bug-pattern / rule / open-question
+  #     #        / checkpoint / session
+  #     allowed_types:
+  #       - decision
+  #       - learning
+  #       - bug-pattern
+  #     # Per-peer rate limit on pull requests (contract §8 — DDoS
+  #     # mitigation). Range: 1–600. Default: 30/min.
+  #     rate_limit_per_minute: 30
+  #     # Optional SHA-256 fingerprint of the peer's mTLS client cert,
+  #     # for pinning. If set, the server rejects connections whose
+  #     # client cert fingerprint does not match. If null, mTLS pinning
+  #     # is not enforced for this peer (operator opts in).
+  #     # Example dummy (SHA-256 of empty string, 64 hex chars):
+  #     mtls_cert_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 # ── Background secrets scanner (Layer 2 defence-in-depth, issue #89) ──────────
 # Periodically re-scans the whole corpus for secrets missed by the
@@ -122,6 +160,26 @@ scanner:
   # scan is a full corpus scan. The CLI `--full` flag forces a full scan
   # for one run.
   incremental: true
+
+# ── mnemos-mesh gRPC client (Phase 3, issue #105 M3) ─────────────────────────
+# Python gRPC client (mnemos.mesh_client.MeshClient) that talks to the
+# `mnemos-mesh` Go binary over a Unix socket. The mesh is a dumb transport
+# (criterion 1) — moderation and storage stay in Python (criterion 2/11).
+# OFF by default; enable after deploying the mesh binary. See ArchCom
+# 2026-07-17 federation contract §3.1.
+mesh:
+  # Master switch. When false, MeshClient is not constructed and the
+  # MCP/HTTP paths do not attempt to talk to the mesh. Enable after the
+  # mesh binary is deployed and the socket is reachable.
+  enabled: false
+  # Filesystem path to the mnemos-mesh Unix socket. The mesh binary
+  # creates the socket; mnemos connects to it. Default follows the
+  # systemd-tmpfiles convention for runtime sockets owned by the
+  # mnemos user.
+  socket_path: /run/mnemos/core.sock
+  # Per-RPC deadline in seconds. Short enough that a dead mesh is noticed
+  # quickly, long enough for a local Unix-socket round trip.
+  timeout_s: 2.0
 
 # ── Logging (v2.1) ───────────────────────────────────────────────────────────
 # File logging with rotation. Set log_file to empty ("") for stderr-only output.

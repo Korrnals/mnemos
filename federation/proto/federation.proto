@@ -1,0 +1,383 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// mnemos-mesh Federation Peer API — Phase 3 contract (GitHub issue #105).
+//
+// Peer-to-peer contract between mnemos-mesh instances (mesh A ↔ mesh B).
+// This is CONTRACT-ONLY: the .proto is the source of truth; the Go
+// binary that will eventually implement it is out of scope for this task
+// (see mnemos memory 7fdb7f13 — contract-first parallel development).
+//
+// Contract lineage:
+//   * Architectural contract: .archcom/sessions/2026-07-17-federation-contract.md
+//     §2.3 Compact exchange format, §9 Trigger codes, §10 federation_access_log.
+//   * Source of truth for CompactRecord fields:
+//       mnemos/src/mnemos/compact.py::CompactRecord (Pydantic model).
+//     This .proto mirrors the Pydantic model field-by-field (contract-first:
+//     Pydantic → proto → codegen). DO NOT drift from compact.py.
+//   * MetadataRecord: mnemos memory e88599b6 (session 2 metadata-sync decision).
+//   * TriggerCodes enum: contract §9 (5 values, exhaustive-response model).
+//
+// Transport assumptions (enforced by the future Go binary, not by this file):
+//   * mTLS peer-to-peer with private CA + pinned fingerprints (criterion 3).
+//   * Payload is opaque encrypted bytes to the mesh — keys live in
+//     mnemos/KMS, mesh does NOT decrypt (criterion 1 — dumb transport).
+//   * Per-peer ACL gates which projects/types/tags may be exchanged
+//     (criterion 5 — encoded as request fields, enforced by mnemos).
+//
+// Moderation stays in Python (criterion 2). The mesh forwards already-redacted
+// CompactRecord envelopes; it never runs moderation itself.
+
+syntax = "proto3";
+
+package mnemos.federation.v1;
+
+// Go codegen import path + package name for the mnemos-mesh Go binary.
+// Source of truth lives in the .proto (contract-first); this option makes
+// the .proto self-describing for Go codegen so consumers (mnemos-mesh) do
+// not need M-mappings in buf.gen.yaml. The `;mnemosmesh` suffix is the Go
+// package name shared by both federation and core-api generated stubs.
+option go_package = "github.com/Korrnals/mnemos-mesh/proto/gen;mnemosmesh";
+
+// CompactRecord — one compact exchange record.
+//
+// Source of truth: mnemos/src/mnemos/compact.py::CompactRecord (Pydantic
+// BaseModel). Architectural contract §2.3
+// (.archcom/sessions/2026-07-17-federation-contract.md). The fields below
+// mirror the Pydantic model 1:1 in field-name, type semantics, and field
+// order. Do NOT add or reorder fields without updating compact.py first.
+//
+// Field constants (must stay in sync with compact.py):
+//   MAX_TITLE_LEN    = 256   (compact.py: MAX_TITLE_LEN)
+//   MAX_SUMMARY_LEN  = 500   (compact.py: MAX_SUMMARY_LEN)
+//   MAX_KEY_POINTS   = 5     (compact.py: MAX_KEY_POINTS)
+//   COMPACT_SCHEMA   = "mnemos.federation.v1"  (compact.py: COMPACT_SCHEMA)
+//
+// Reserved field numbers 9, 10, 11 are held for forward compatibility
+// per the task spec — do not reuse them for new fields; append at 12+.
+message CompactRecord {
+  // Globally unique id with source-agent prefix: `fed:<source_agent>:<local_uuid>`.
+  // Idempotency key on import (receiving side keys on this id).
+  string id = 1;
+
+  // Compact format type vocabulary, derived from the memory's
+  // `mnemos:<subtype>` tag. One of: decision, learning, bug-pattern,
+  // rule, open-question, checkpoint, session (see compact.py:_TYPE_MAP).
+  string type = 2;
+
+  // Short headline, ≤ MAX_TITLE_LEN (256) chars.
+  string title = 3;
+
+  // ≤ MAX_SUMMARY_LEN (500) chars — the essence of the record, not raw
+  // content. Empty string is allowed (Pydantic default is "").
+  string summary = 4;
+
+  // Key points the reader should take away. ≤ MAX_KEY_POINTS (5) entries,
+  // may be empty (Pydantic default_factory=list).
+  repeated string key_points = 5;
+
+  // Copy of the memory's tags minus `mnemos:no-federate` (which excludes the
+  // record from exchange entirely). Preserves project:/agent:/mnemos: tags
+  // so the receiving side can mnemos_search by them.
+  repeated string tags = 6;
+
+  // Slug of the agent that authored the memory (from the `agent:<slug>` tag,
+  // prefix stripped). Empty string allowed (Pydantic default is "").
+  string source_agent = 7;
+
+  // ISO 8601 UTC timestamp string of `memory.created_at` (e.g.
+  // "2026-07-17T15:30:00Z"). Kept as string to match compact.py exactly;
+  // google.protobuf.Timestamp is NOT used to avoid type drift.
+  string timestamp = 8;
+
+  // Reserved 9, 10, 11 for forward compatibility (contract-first: new
+  // fields land here first in compact.py, then mirror to proto).
+  reserved 9, 10, 11;
+  reserved "schema_version";
+}
+
+// MetadataRecord — lighter index-only record for metadata-sync.
+//
+// Source of truth: mnemos memory e88599b6 (ArchCom session 2 metadata-sync
+// decision). This is a DIFFERENT record from CompactRecord — it carries only
+// the index fields needed to advertise and deduplicate records across peers,
+// NOT the content. It explicitly OMITS summary, key_points, and any content
+// body. A peer uses MetadataRecord to learn "what exists on the other side"
+// before deciding whether to Pull the full CompactRecord.
+//
+// Differences vs CompactRecord:
+//   * NO summary, NO key_points, NO content body (index-only).
+//   * Adds source_peer (provenance of which peer authored the record).
+//   * Adds schema_version = "mnemos.federation.metadata.v1" (distinct from
+//     CompactRecord's COMPACT_SCHEMA = "mnemos.federation.v1").
+message MetadataRecord {
+  // Globally unique id (same scheme as CompactRecord.id:
+  // `fed:<source_agent>:<local_uuid>`).
+  string id = 1;
+
+  // Compact format type vocabulary (same set as CompactRecord.type).
+  string type = 2;
+
+  // Short headline, ≤ 256 chars (same cap as CompactRecord.title).
+  string title = 3;
+
+  // Tags — already filtered for `mnemos:no-federate`. Preserves
+  // project:/agent:/mnemos: tags for cross-peer deduplication.
+  repeated string tags = 4;
+
+  // Project slug the record belongs to (for per-project ACL scoping).
+  string project = 5;
+
+  // Slug of the agent that authored the memory (same semantics as
+  // CompactRecord.source_agent).
+  string source_agent = 6;
+
+  // Peer that authored the record (NEW vs CompactRecord). Provenance for
+  // multi-hop deduplication — the mesh needs to know which peer originated
+  // a record so it can avoid re-advertising records it already has.
+  string source_peer = 7;
+
+  // ISO 8601 UTC timestamp string of `memory.created_at`.
+  string timestamp = 8;
+
+  // Schema version pin for MetadataRecord, distinct from CompactRecord.
+  // Allows the metadata-sync protocol to evolve independently from the
+  // full-record pull protocol.
+  string schema_version = 9;  // = "mnemos.federation.metadata.v1"
+}
+
+// TriggerCodes — exhaustive-response + soft-cutoff codes (contract §9).
+//
+// Replaces the earlier "query budget" model. B initially gives an
+// exhaustive answer (EXHAUSTIVE); on repeat queries B softly cuts off A
+// with ALREADY_EXHAUSTED. The codes are enum values (not prose) so agents
+// can act on them deterministically and they cost minimal tokens.
+//
+// Source of truth: contract §9
+// (.archcom/sessions/2026-07-17-federation-contract.md §9 Trigger codes).
+// Exactly 5 values — do not add new codes without a contract amendment.
+//
+// proto3 requires the first enum value to be 0 (the default). EXHAUSTIVE=0
+// is the "happy path" default — a successful pull with a full answer.
+enum TriggerCodes {
+  // B gave an exhaustive answer conveying the full essence in correct
+  // sanitized form. A uses the answer and does not repeat the query.
+  EXHAUSTIVE = 0;
+
+  // Repeat query on an already-exhausted topic. B checked
+  // federation_access_log (contract §10) and found it already returned
+  // EXHAUSTIVE for the same topic hash. A does not repeat; uses prior answer.
+  ALREADY_EXHAUSTED = 1;
+
+  // Partial answer — not all relevant records were returned (some were
+  // filtered by moderation, or B could not/ would not release everything).
+  // A may refine the query (different topic/angle), not repeat verbatim.
+  PARTIAL = 2;
+
+  // B refused — moderation could not sanitize the content even after
+  // redaction (e.g. an explicitly secret record). A does not repeat; falls
+  // back to local mnemos_search (contract §3.2 — graceful degradation).
+  REFUSED = 3;
+
+  // B answered in a lightweight/degraded mode (limited functionality —
+  // e.g. moderation pipeline partially offline). A receives a partial
+  // result and may supplement with local mnemos_search.
+  OFFLINE_LITE = 4;
+}
+
+// PullRequest — live pull: A asks B for specific records by id.
+//
+// Per-peer ACL (criterion 5) is enforced by mnemos based on peer_id +
+// project_scope; the mesh just carries the fields.
+message PullRequest {
+  // A2A id of the requesting peer (for per-peer ACL + access_log entry).
+  string peer_id = 1;
+
+  // Project scope — restricts the pull to a single project. Per-peer ACL
+  // is evaluated against this scope. Empty string means "all projects the
+  // peer is authorised for" (mnemos-side default, NOT a bypass).
+  string project_scope = 2;
+
+  // Specific record ids to pull. Empty list means "pull all records in
+  // project_scope that match the filter" (mesh may set this to drive a
+  // full re-sync).
+  repeated string record_ids = 3;
+
+  // If true, B returns full CompactRecord bodies in records. If false,
+  // B returns only MetadataRecord entries in metadata (index-only pull).
+  // Allows A to enumerate metadata cheaply before pulling specific bodies.
+  bool include_content = 4;
+
+  // Trigger code of the response this request expects/extends. Used by
+  // the receiver to detect ALREADY_EXHAUSTED repeats (contract §9/§10).
+  TriggerCodes trigger_code = 5;
+}
+
+// PullResponse — B's answer to a PullRequest.
+//
+// Exactly one of `records` or `metadata` is populated, based on the
+// request's include_content flag. exhausted_topic_hash + access_log_entry_id
+// support anti-correlation tracking (contract §10).
+message PullResponse {
+  // Trigger code describing this response (contract §9).
+  TriggerCodes trigger_code = 1;
+
+  // Full CompactRecord bodies, populated when the request had
+  // include_content=true. Empty otherwise.
+  repeated CompactRecord records = 2;
+
+  // Index-only MetadataRecord entries, populated when the request had
+  // include_content=false. Empty otherwise.
+  repeated MetadataRecord metadata = 3;
+
+  // SHA-256 of the query topic, hex-encoded. Used by A to correlate this
+  // response across requests and by B to detect repeat queries (contract
+  // §10 federation_access_log). Not the plaintext query (privacy: KП-5).
+  string exhausted_topic_hash = 4;
+
+  // B-side audit pointer: the id of the federation_access_log entry this
+  // response was recorded under (contract §10). A may surface this in its
+  // own audit trail for cross-peer forensics.
+  string access_log_entry_id = 5;
+}
+
+// MetadataSyncRequest — poll-based metadata sync (watermark-driven).
+//
+// A maintains a per-peer watermark `since_rev` (the latest revision it has
+// seen from B). On each poll, A sends since_rev and receives everything
+// newer. B returns the new watermark in latest_rev; A persists it and uses
+// it as since_rev on the next poll.
+message MetadataSyncRequest {
+  // A2A id of the requesting peer.
+  string peer_id = 1;
+
+  // Last sync revision number (watermark). 0 = "sync from the beginning".
+  int64 since_rev = 2;
+
+  // Project scope (same semantics as PullRequest.project_scope).
+  string project_scope = 3;
+
+  // Optional tag filter — only return MetadataRecord entries whose tags
+  // intersect this set. Empty list = no filter (all tags).
+  repeated string filter = 4;
+}
+
+// MetadataSyncResponse — B's answer to a MetadataSyncRequest.
+message MetadataSyncResponse {
+  // MetadataRecord entries newer than the request's since_rev.
+  repeated MetadataRecord records = 1;
+
+  // New watermark — the highest revision B has reached. A persists this
+  // and sends it as since_rev on the next poll.
+  int64 latest_rev = 2;
+
+  // True if B has more records that did not fit in this response (pagination).
+  // A should re-poll immediately with the same since_rev (B advances
+  // latest_rev only on the final page to keep the watermark monotonic).
+  bool has_more = 3;
+
+  // Trigger code describing this response (contract §9).
+  TriggerCodes trigger_code = 4;
+}
+
+// SubscribeRequest — long-lived gRPC server-streaming subscription.
+//
+// Criterion 9 (subscription management): the mesh opens a streaming
+// subscription and receives incremental updates as records are added,
+// updated, or removed on the peer. The `cursor` is an opaque resume token
+// (issued by B in CURSOR events) that A persists and replays on reconnect
+// — giving replay-on-reconnect without losing or duplicating events.
+message SubscribeRequest {
+  // A2A id of the subscribing peer.
+  string peer_id = 1;
+
+  // Project scope (same semantics as PullRequest.project_scope).
+  string project_scope = 2;
+
+  // Optional tag filter (same semantics as MetadataSyncRequest.filter).
+  repeated string filter = 3;
+
+  // Opaque resume token issued by B in a prior CURSOR event. Empty on the
+  // first subscription (B starts streaming from "now" or from a project-
+  // configured replay point). On reconnect, A replays the last cursor it
+  // persisted and B resumes from exactly there.
+  string cursor = 4;
+}
+
+// SubscribeStream — one element of the server-stream response.
+//
+// A stream element carries EITHER a record event (RECORD_ADDED /
+// RECORD_UPDATED / RECORD_REMOVED) OR a CURSOR heartbeat. The `record` oneof
+// holds the affected record (full CompactRecord for ADD/UPDATE; for REMOVE,
+// only id/title/tags may be populated by the producer — consumers must
+// handle sparse records). The CURSOR event carries no record; it only
+// advances the resume token so A can persist it.
+message SubscribeStream {
+  // Event type for this stream element.
+  enum EventType {
+    // Default 0 — must be present per proto3 convention. A well-formed
+    // stream element never uses RECORD_UNSPECIFIED on the wire.
+    RECORD_UNSPECIFIED = 0;
+
+    // A record was added on B. `record` holds the full CompactRecord.
+    RECORD_ADDED = 1;
+
+    // A record was updated on B. `record` holds the updated CompactRecord.
+    RECORD_UPDATED = 2;
+
+    // A record was removed on B. `record` may be sparse (id + title +
+    // tags); consumers must not assume summary/key_points are populated.
+    RECORD_REMOVED = 3;
+
+    // Cursor heartbeat — no record. A persists `cursor` for replay-on-
+    // reconnect. B emits these periodically (and after each batch of
+    // record events) so A's persisted cursor stays current.
+    CURSOR = 4;
+  }
+
+  // What kind of event this element represents.
+  EventType event_type = 1;
+
+  // The affected record. Populated for RECORD_ADDED / RECORD_UPDATED /
+  // RECORD_REMOVED; empty for CURSOR. Using a oneof leaves room to add a
+  // MetadataRecord variant later without breaking older consumers.
+  oneof record {
+    CompactRecord compact = 2;
+    MetadataRecord metadata = 3;
+  }
+
+  // New resume token. A persists this on every element (especially CURSOR
+  // heartbeats) so reconnects resume from the right point.
+  string cursor = 4;
+
+  // Trigger code describing this stream element (contract §9). Useful for
+  // REFUSED (B stops the stream) or OFFLINE_LITE (degraded mode).
+  TriggerCodes trigger_code = 5;
+}
+
+// FederationPeer — the peer-to-peer service (mesh A ↔ mesh B).
+//
+// Three RPCs map to the three federation exchange modes in the contract:
+//   * Pull      — unary live pull (one-shot, by record id).
+//   * SyncMetadata — unary metadata poll (watermark-driven, index-only).
+//   * Subscribe — gRPC server streaming (criterion 9 — long-lived, cursor
+//                 + replay-on-reconnect).
+//
+// All RPCs carry peer_id explicitly so the receiver can enforce per-peer
+// ACL (criterion 5) and write to federation_access_log (contract §10).
+service FederationPeer {
+  // Pull — live pull of specific records (or a full re-sync) from B.
+  // Unary: one request, one response. include_content controls whether
+  // full CompactRecord bodies or only MetadataRecord entries are returned.
+  rpc Pull(PullRequest) returns (PullResponse);
+
+  // SyncMetadata — poll-based metadata sync driven by a per-peer watermark.
+  // Unary: one request, one response (paginated via has_more).
+  rpc SyncMetadata(MetadataSyncRequest) returns (MetadataSyncResponse);
+
+  // Subscribe — long-lived streaming subscription. Server streams
+  // SubscribeStream elements (record events + CURSOR heartbeats) until the
+  // client closes the stream or B sends a terminal TriggerCodes.REFUSED.
+  // Implements criterion 9 (subscription management) with cursor-based
+  // replay-on-reconnect.
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeStream);
+}

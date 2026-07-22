@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mnemos"
-version = "2.11.0"
+version = "2.12.0"
 description = "Standalone memory & knowledge server for AI agents — forked from ai-brain"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -55,6 +55,10 @@ dependencies = [
     "slowapi~=0.1.9",
     # CVE-2026-26007, PYSEC-2026-35/36, GHSA-537c-gmf6-5ccf fixed in 48.0.1.
     "cryptography>=48.0.1",  # Fernet for TOTP-secret-at-rest; also transitive via httpx[http2]
+    # mnemos-mesh Phase 3 (M3) — gRPC client over Unix socket (MnemosCore API).
+    # Pinned <2.0 to avoid breaking API changes in a major bump.
+    "grpcio>=1.62,<2",
+    "grpcio-tools>=1.62,<2",
 ]
 
 [project.optional-dependencies]

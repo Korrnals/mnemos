@@ -1,0 +1,245 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// mnemos-mesh ↔ mnemos Core API — Phase 3 contract (GitHub issue #105).
+//
+// Transport: Unix socket + gRPC. mnemos is the source of truth for storage
+// and moderation. mesh is transport only — it does NOT decrypt payloads,
+// does NOT access the SQLite store directly, does NOT run moderation. All
+// moderation stays in Python (mnemos). Mesh forwards already-redacted
+// CompactRecord envelopes.
+//
+// Why Unix socket + gRPC (not CGo, not shared SQLite):
+//   * Criterion 6 — Versioned API boundary. mnemos = source of truth, mesh
+//     = transport + subs + peer registry, NO shared DB.
+//   * Criterion 8 — gRPC + protobuf. Peer API (federation.proto) + core
+//     API (this file), Unix socket mesh↔mnemos.
+//   * Criterion 11 — Local-first preserved. Each mnemos owns its DB; the
+//     mesh is transport, not storage. Sharing the SQLite file would break
+//     the local-first invariant and couple mesh to mnemos's storage layout.
+//   * CGo would bind the Go binary to Python's CPython ABI and pull the
+//     Python runtime into the mesh process — defeating the single-binary
+//     distribution goal (criterion 12).
+//
+// Contract lineage:
+//   * Architectural contract: .archcom/sessions/2026-07-17-federation-contract.md
+//     §3.1 Batch sync, §3.2 Mediated pull.
+//   * CompactRecord source of truth: mnemos/src/mnemos/compact.py (mirrors
+//     federation.proto::CompactRecord — DO NOT drift).
+//   * WriteMemory.import_mode mirrors mnemos_import MCP tool modes
+//     (merge / restore); RESTORE requires confirm=true (hard gate), per
+//     mnemos-operations.instructions.md (mnemos:operations §1 — the
+//     restore-mode hard gate).
+//   * CompactRecord.id uses the `fed:<source_agent>:<local_uuid>` prefix
+//     so WriteMemory is idempotent by id (merge keyed on id — see
+//     compact.py docstring and contract §2.3/§3.1).
+
+syntax = "proto3";
+
+package mnemos.core.v1;
+
+// Go codegen import path + package name for the mnemos-mesh Go binary.
+// Source of truth lives in the .proto (contract-first); this option makes
+// the .proto self-describing for Go codegen so consumers (mnemos-mesh) do
+// not need M-mappings in buf.gen.yaml. The `;mnemosmesh` suffix is the Go
+// package name shared by both federation and core-api generated stubs.
+option go_package = "github.com/Korrnals/mnemos-mesh/proto/gen;mnemosmesh";
+
+import "federation.proto";
+
+// ListMemoriesRequest — filter mnemos uses to export memories to the mesh.
+//
+// Mirrors the filter shape of the existing mnemos export / list APIs. The
+// mesh calls this on startup/refresh to materialise the local view of what
+// mnemos is willing to federate. include_no_federate=false by default so
+// the mesh never even sees records that must not leave this node
+// (contract §2.2.1 defence-in-depth layer 3 — moderation on export).
+message ListMemoriesRequest {
+  // Restrict to these project slugs. Empty = all projects mnemos is willing
+  // to federate (mnemos-side filter still applies — this is an upper bound).
+  repeated string projects = 1;
+
+  // Restrict to these mnemos subtypes (e.g. "decision", "learning").
+  // Empty = all subtypes.
+  repeated string types = 2;
+
+  // Include only records carrying at least one of these tags.
+  repeated string tags_include = 3;
+
+  // Exclude records carrying any of these tags.
+  repeated string tags_exclude = 4;
+
+  // If false (default), records tagged `mnemos:no-federate` are excluded
+  // by mnemos before returning. The mesh never sees them. Setting this to
+  // true is only valid for operator-side debugging tools, never for the
+  // federation transport path.
+  bool include_no_federate = 5;
+
+  // ISO 8601 UTC timestamp — only records created at or after this time
+  // are returned. Empty = no lower bound (used for incremental refresh).
+  string since = 6;
+
+  // Maximum number of records to return in one response. 0 = mnemos default
+  // (the server caps to a sane bound). The mesh uses has_more to paginate.
+  int32 limit = 7;
+}
+
+// ListMemoriesResponse — page of CompactRecord bodies from mnemos.
+message ListMemoriesResponse {
+  // The CompactRecord bodies for this page. Each is already moderation-
+  // processed (secrets redacted, PII anonymised) — mesh forwards as-is.
+  repeated mnemos.federation.v1.CompactRecord records = 1;
+
+  // Total number of records matching the filter (across all pages). Used
+  // by the mesh for progress reporting, not for pagination control.
+  int32 total = 2;
+
+  // True if more pages are available. The mesh should re-call
+  // ListMemories with an adjusted `since`/`limit` to fetch the next page.
+  bool has_more = 3;
+}
+
+// ImportMode — mirrors the mnemos_import MCP tool modes (merge / restore).
+//
+// Source: mnemos-operations.instructions.md §1 ("restore = wipe all then
+// import (requires confirm=true) — hard gate"). The mesh must NOT attempt
+// to invent a third mode; RESTORE is destructive and gated.
+enum ImportMode {
+  // Default 0 — must be present per proto3 convention. Well-formed
+  // requests always set MERGE or RESTORE explicitly; UNSPECIFIED is
+  // rejected by mnemos as an invalid request.
+  IMPORT_MODE_UNSPECIFIED = 0;
+
+  // MERGE — insert new records, skip-or-overwrite existing (idempotent
+  // merge keyed on CompactRecord.id). Safe to retry. The default mode
+  // for federation transport.
+  MERGE = 1;
+
+  // RESTORE — wipe all existing data, then import. DESTRUCTIVE. mnemos
+  // rejects this unless `confirm` is true (hard gate). Used for
+  // operator-driven disaster recovery, NOT for routine federation.
+  RESTORE = 2;
+}
+
+// WriteMemoryRequest — mesh imports a record into mnemos.
+//
+// Idempotent by CompactRecord.id (the `fed:<source_agent>:<local_uuid>`
+// prefix guarantees global uniqueness). Replaying the same record is safe.
+message WriteMemoryRequest {
+  // The CompactRecord to write. Already moderation-processed by the peer
+  // of origin; mnemos may apply its own import validation (#86) on top.
+  mnemos.federation.v1.CompactRecord record = 1;
+
+  // Import mode (MERGE / RESTORE). See ImportMode doc.
+  ImportMode import_mode = 2;
+
+  // RESTORE hard gate: must be true when import_mode=RESTORE, false
+  // otherwise. mnemos rejects RESTORE without confirm=true. Mirrors
+  // mnemos-operations.instructions.md §1 (the restore-mode hard gate).
+  bool confirm = 3;
+}
+
+// WriteMemoryResponse — result of a WriteMemory call.
+message WriteMemoryResponse {
+  // The id of the written record (same as WriteMemoryRequest.record.id
+  // on success). Echoed so the mesh can correlate with its pending queue.
+  string written_id = 1;
+
+  // The mode actually applied. May differ from the request if mnemos
+  // downgraded RESTORE→MERGE (e.g. confirm was missing → mnemos refuses
+  // RESTORE and falls back to MERGE, recording the downgrade in its
+  // audit log). The mesh must surface this to the operator.
+  ImportMode mode_applied = 2;
+
+  // Trigger code describing the outcome (contract §9). EXHAUSTIVE on a
+  // clean merge; REFUSED if mnemos rejected the record (import validation
+  // failure, contract violation, oversized content); PARTIAL if only some
+  // fields were accepted.
+  mnemos.federation.v1.TriggerCodes trigger_code = 3;
+}
+
+// GetSubscriptionStateRequest — ask mnemos for the persisted subscription
+// cursor for a peer+project. Used by the mesh on (re)connect to decide
+// where to resume the stream from.
+message GetSubscriptionStateRequest {
+  // A2A id of the peer whose subscription state is requested.
+  string peer_id = 1;
+
+  // Project scope the subscription is bound to.
+  string project_scope = 2;
+}
+
+// GetSubscriptionStateResponse — mnemos's persisted cursor/watermark.
+message GetSubscriptionStateResponse {
+  // Last persisted resume token for this peer+project. Empty if no prior
+  // subscription existed (mesh should start a fresh Subscribe with an
+  // empty cursor). Opaque to the mesh — pass it back to B verbatim.
+  string cursor = 1;
+
+  // Last watermark (revision number) mnemos has recorded for this peer.
+  // Mirrors MetadataSyncResponse.latest_rev. 0 means "no prior state".
+  int64 last_rev = 2;
+
+  // ISO 8601 UTC timestamp of the last sync. Used for staleness reporting
+  // in the mesh dashboard, not for protocol control.
+  string last_sync_timestamp = 3;
+}
+
+// HeartbeatRequest — liveness probe between mesh and mnemos.
+//
+// Used both ways (mesh→mnemos and mnemos→mesh) over the Unix socket. Cheap
+// unary call; failure to respond within a configured timeout marks the
+// peer component as unhealthy.
+message HeartbeatRequest {
+  // A2A id of the probing peer.
+  string peer_id = 1;
+
+  // Which component is probing — "mesh" or "mnemos". Lets the receiver
+  // record provenance in its health log without guessing from the socket.
+  string component = 2;
+}
+
+// HeartbeatResponse — liveness reply.
+message HeartbeatResponse {
+  // True if the responder is healthy and ready to serve.
+  bool healthy = 1;
+
+  // Responder's build version (e.g. "mnemos 2.11.0" or "mnemos-mesh 0.1.0").
+  string version = 2;
+
+  // Responder's uptime in seconds. Useful for detecting a silently
+  // restarted peer (version same, uptime low).
+  int64 uptime_seconds = 3;
+}
+
+// MnemosCore — the mesh↔mnemos core service over Unix socket + gRPC.
+//
+// Four RPCs:
+//   * ListMemories          — mnemos exports to mesh (mesh reads).
+//   * WriteMemory           — mesh imports to mnemos (mesh writes).
+//   * GetSubscriptionState  — cursor persistence (mesh reads on reconnect).
+//   * Heartbeat             — liveness probe (both directions).
+//
+// mnemos is the source of truth for storage AND moderation. The mesh is
+// transport only: it never decrypts payloads, never accesses the SQLite
+// store directly, never runs moderation. All moderation stays in Python.
+service MnemosCore {
+  // ListMemories — mnemos exports memories to the mesh, already
+  // moderation-processed and compact-formatted. The mesh forwards the
+  // resulting CompactRecord envelopes to peers over the FederationPeer API.
+  rpc ListMemories(ListMemoriesRequest) returns (ListMemoriesResponse);
+
+  // WriteMemory — mesh imports a CompactRecord from a peer into mnemos.
+  // Idempotent by CompactRecord.id. mnemos may apply its own import
+  // validation (#86) on top of the peer's moderation.
+  rpc WriteMemory(WriteMemoryRequest) returns (WriteMemoryResponse);
+
+  // GetSubscriptionState — read the persisted cursor/watermark for a
+  // peer+project. The mesh uses this on (re)connect to decide where to
+  // resume a Subscribe stream from.
+  rpc GetSubscriptionState(GetSubscriptionStateRequest)
+      returns (GetSubscriptionStateResponse);
+
+  // Heartbeat — liveness probe between mesh and mnemos. Cheap unary call;
+  // failure within a configured timeout marks the peer component unhealthy.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
