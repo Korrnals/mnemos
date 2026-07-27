@@ -29,6 +29,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "sync-peers.sh"
 SERVICE = REPO_ROOT / "contrib" / "systemd" / "mnemos-sync.service"
 TIMER = REPO_ROOT / "contrib" / "systemd" / "mnemos-sync.timer"
+RSYNC_WRAPPER = REPO_ROOT / "contrib" / "systemd" / "rsync-wrapper.sh"
+IMPORT_WRAPPER = REPO_ROOT / "contrib" / "systemd" / "mnemos-import-wrapper.sh"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -81,6 +83,51 @@ def _run_script(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         text=True,
         timeout=15,
     )
+
+
+def _run_wrapper(
+    wrapper: Path, ssh_original_command: str, *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run a contrib/systemd wrapper with SSH_ORIGINAL_COMMAND set.
+
+    Wrappers are pinned via ``command=""`` in authorized_keys; SSH places the
+    real command in ``$SSH_ORIGINAL_COMMAND``. These tests exercise the
+    hardening (B2 rsync option whitelist, B3 import flag whitelist) by driving
+    that variable directly — no real sshd, rsync, or mnemos CLI runs.
+    """
+    full_env: dict[str, str] = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        # Avoid leaking the host SSH_CLIENT into the wrapper under set -u;
+        # the wrapper falls back to "unknown" when unset.
+    }
+    if env:
+        full_env.update(env)
+    full_env["SSH_ORIGINAL_COMMAND"] = ssh_original_command
+    return subprocess.run(
+        ["bash", str(wrapper)],
+        env=full_env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+def _wrapper_env(tmp_path: Path) -> dict[str, str]:
+    """Common env for wrapper tests: temp INCOMING_DIR + temp audit log.
+
+    Uses ``MNEMOS_SYNC_*`` names (the wrappers' documented override prefix).
+    RSYNC_BIN/MNEMOS_BIN point at ``true`` so no real rsync/mnemos runs.
+    """
+    incoming = tmp_path / "incoming"
+    incoming.mkdir(parents=True, exist_ok=True)
+    return {
+        "MNEMOS_SYNC_INCOMING_DIR": str(incoming),
+        "MNEMOS_SYNC_AUDIT_LOG": str(tmp_path / "audit.log"),
+        "MNEMOS_SYNC_PASSPHRASE_ENV": "MNEMOS_EXPORT_PASSPHRASE",
+        "MNEMOS_EXPORT_PASSPHRASE": "dummy-passphrase-not-a-secret",
+        "RSYNC_BIN": shutil.which("true") or "/usr/bin/true",
+        "MNEMOS_SYNC_REMOTE_MNEMOS_BIN": shutil.which("true") or "/usr/bin/true",
+    }
 
 
 # ── 1. refuses without required env vars ──────────────────────────────────────
@@ -158,6 +205,102 @@ def test_dry_run_logs_expected_commands(
 
 
 # ── 4. systemd units valid ────────────────────────────────────────────────────
+# ── 5. rsync-wrapper rejects --delete (B2, CWE-78) ────────────────────────────
+
+
+def test_rsync_wrapper_rejects_delete_option(tmp_path: Path) -> None:
+    """``--delete`` in SSH_ORIGINAL_COMMAND → exit 2 + REJECT audit line.
+
+    A compromised A could inject ``--delete`` to wipe files in INCOMING_DIR
+    not in the current transfer. The wrapper must refuse the option before
+    exec'ing rsync, log a REJECT line naming the option, and exit non-zero.
+    """
+    env = _wrapper_env(tmp_path)
+    incoming = env["MNEMOS_SYNC_INCOMING_DIR"]
+    dest = f"{incoming}/export.json"
+    result = _run_wrapper(
+        RSYNC_WRAPPER,
+        f"rsync --server -v -l -r -t -p -S --delete . {dest}",
+        env=env,
+    )
+    assert result.returncode == 2, (
+        f"expected exit 2 for --delete injection, got {result.returncode};"
+        f" stderr:\n{result.stderr}"
+    )
+    assert "rejected dangerous rsync option: --delete" in result.stderr, (
+        f"stderr should name the rejected option; got:\n{result.stderr}"
+    )
+    audit = Path(env["MNEMOS_SYNC_AUDIT_LOG"]).read_text()
+    assert "REJECT" in audit and "--delete" in audit, (
+        f"audit log should record the REJECT with the option; got:\n{audit}"
+    )
+
+
+# ── 6. rsync-wrapper rejects unknown options (B2, CWE-78) ─────────────────────
+
+
+def test_rsync_wrapper_rejects_unknown_option(tmp_path: Path) -> None:
+    """An unknown rsync option → exit 2 + REJECT audit line.
+
+    Defence-in-depth: future rsync options are NOT silently forwarded. Any
+    option outside the whitelist (``-v -l -r -t -p -S --server --sender``) is
+    refused, so a new destructive flag added by a future rsync release cannot
+    reach INCOMING_DIR through this wrapper.
+    """
+    env = _wrapper_env(tmp_path)
+    incoming = env["MNEMOS_SYNC_INCOMING_DIR"]
+    dest = f"{incoming}/export.json"
+    result = _run_wrapper(
+        RSYNC_WRAPPER,
+        f"rsync --server --unknown-future-opt . {dest}",
+        env=env,
+    )
+    assert result.returncode == 2, (
+        f"expected exit 2 for unknown option, got {result.returncode};"
+        f" stderr:\n{result.stderr}"
+    )
+    assert "rejected unknown rsync option: --unknown-future-opt" in result.stderr, (
+        f"stderr should name the rejected option; got:\n{result.stderr}"
+    )
+    audit = Path(env["MNEMOS_SYNC_AUDIT_LOG"]).read_text()
+    assert "REJECT" in audit and "--unknown-future-opt" in audit, (
+        f"audit log should record the REJECT with the option; got:\n{audit}"
+    )
+
+
+# ── 7. import-wrapper rejects unknown --* flags (B3, CWE-78) ──────────────────
+
+
+def test_import_wrapper_rejects_unknown_flag(tmp_path: Path) -> None:
+    """An unknown ``--*`` flag on ``mnemos sync import`` → exit 2 + REJECT.
+
+    Only ``--dry-run`` is forwarded; ``--passphrase-env`` is pinned by the
+    wrapper itself. A compromised A could otherwise redirect the import
+    source via ``--config`` or other file-reading flags. The wrapper must
+    refuse the flag, log a REJECT line naming it, and exit non-zero.
+    """
+    env = _wrapper_env(tmp_path)
+    incoming = Path(env["MNEMOS_SYNC_INCOMING_DIR"])
+    src = incoming / "export.json"
+    src.write_text('{"x":1}')
+    result = _run_wrapper(
+        IMPORT_WRAPPER,
+        f"mnemos sync import {src} --config /etc/shadow",
+        env=env,
+    )
+    assert result.returncode == 2, (
+        f"expected exit 2 for unknown import flag, got {result.returncode};"
+        f" stderr:\n{result.stderr}"
+    )
+    assert "rejected unknown import flag: --config" in result.stderr, (
+        f"stderr should name the rejected flag; got:\n{result.stderr}"
+    )
+    audit = Path(env["MNEMOS_SYNC_AUDIT_LOG"]).read_text()
+    assert "REJECT" in audit and "--config" in audit, (
+        f"audit log should record the REJECT with the flag; got:\n{audit}"
+    )
+
+
 
 
 def test_systemd_units_valid() -> None:
