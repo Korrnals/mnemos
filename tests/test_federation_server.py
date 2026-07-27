@@ -342,7 +342,7 @@ class TestMTLSFingerprint:
             "federation threat model decision",
             tags=["project:project-mnemos", "agent:gcw-tech-lead", "mnemos:decision"],
         )
-        resp, status = _pull(manager, access_log, tmp_settings, mtls=None)
+        _resp, status = _pull(manager, access_log, tmp_settings, mtls=None)
         assert status == 200
         # The only entry is the normal successful-pull entry (EXHAUSTIVE).
         entries = access_log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC))
