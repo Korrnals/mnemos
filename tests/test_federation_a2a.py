@@ -21,6 +21,7 @@ All fixtures RFC-reserved.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -260,6 +261,31 @@ class TestASideShareFinding:
         action = handle_share_finding(resp, local_search=local_search)
         assert action["action"] == "fallback_local"
         assert action["local_results"] == []
+
+    def test_handle_share_finding_local_search_exception_logged_and_fallback_empty(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """CR#3: a local_search exception MUST be logged, not silently swallowed.
+
+        ``[]`` is still the partial result (КП-2 expects partial), but the
+        operator must see a warning so the silent-suppression anti-pattern
+        (lint-and-validate) is avoided.
+        """
+        resp = _resp(trigger_code=TriggerCode.REFUSED)
+
+        def local_search(_resp: PullResponse) -> list:
+            raise RuntimeError("boom")
+
+        with caplog.at_level(logging.WARNING, logger="mnemos.federation_a2a"):
+            action = handle_share_finding(resp, local_search=local_search)
+
+        assert action["action"] == "fallback_local"
+        assert action["local_results"] == []
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "local_search failed" in warnings[0].getMessage()
+        assert "RuntimeError" in warnings[0].getMessage()
+        assert "boom" in warnings[0].getMessage()
 
 
 # ── mediate_pull_a_side — graceful degradation ────────────────────────────────

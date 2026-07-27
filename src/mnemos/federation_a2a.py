@@ -212,8 +212,19 @@ def handle_share_finding(
         if local_search is not None:
             try:
                 action["local_results"] = list(local_search(response))
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("federation_a2a: local_search fallback raised: %s", exc)
+            except Exception as exc:
+                # КП-2 expects a partial result; [] is a valid partial.
+                # The exception is logged (not silently swallowed) so the
+                # operator can see when the local fallback is degrading.
+                # `except Exception` is kept because the search layer has
+                # no narrower public exception type — `MemoryManager.search`
+                # swallows FTS/vector errors internally and returns [].
+                logger.warning(
+                    "local_search failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                    exc_info=False,
+                )
                 action["local_results"] = []
         return action
     # Unknown code — fail safe to local fallback.
