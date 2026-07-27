@@ -233,3 +233,112 @@ class TestFederationPullMiddlewareBypass:
         finally:
             _cleanup(mgr)
 
+
+# ── AC3: access_log_path honoured ─────────────────────────────────────────────
+
+
+class TestFederationAccessLogPath:
+    """``FederationConfig.access_log_path`` overrides the default log path."""
+
+    def test_custom_access_log_path_used_by_get_access_log(self, tmp_path: Path) -> None:
+        """AC3: when ``access_log_path`` is set, ``get_access_log`` uses it.
+
+        We build a minimal FastAPI app (no lifespan DB) and attach a
+        Settings object on ``app.state.federation_settings`` — the same
+        override hook ``get_access_log`` checks. The module singleton is
+        reset so the configured path is re-read.
+        """
+        import mnemos.api.federation as fed_mod
+
+        custom_path = tmp_path / "data" / "federation-access.jsonl"
+        settings = Settings(
+            mnemos={
+                "vault_path": str(tmp_path / "vault"),
+                "data_dir": str(tmp_path / "data"),
+                "db_name": "fed-logpath.db",
+            },
+            embedding={"provider": "onnx"},
+            scanner={"enabled": False},
+            federation=FederationConfig(
+                shared_projects=[PROJECT],
+                access_log_path=str(custom_path),
+            ),
+        )
+        settings.resolve_paths()
+
+        # Reset the module singleton so get_access_log re-resolves.
+        fed_mod._access_log = None
+
+        test_app = FastAPI(title="LogPathTest", version="0.0.1")
+        test_app.state.federation_settings = settings
+
+        # Build a minimal request-like object — get_access_log only reads
+        # app.state.federation_access_log and app.state.federation_settings.
+        class _State:
+            federation_access_log = None
+            federation_settings = settings
+
+        class _App:
+            state = _State()
+
+        class _Request:
+            app = _App()
+
+        log = get_access_log(cast(Any, _Request()))
+        assert log.path == custom_path, f"expected custom path {custom_path}, got {log.path}"
+
+    def test_default_access_log_path_when_unset(self, tmp_path: Path) -> None:
+        """AC3 (default): when ``access_log_path`` is None, the default is used."""
+        import mnemos.api.federation as fed_mod
+        from mnemos.federation_access_log import DEFAULT_LOG_PATH
+
+        settings = Settings(
+            mnemos={
+                "vault_path": str(tmp_path / "vault"),
+                "data_dir": str(tmp_path / "data"),
+                "db_name": "fed-logpath-default.db",
+            },
+            embedding={"provider": "onnx"},
+            scanner={"enabled": False},
+            federation=FederationConfig(shared_projects=[PROJECT]),
+        )
+        settings.resolve_paths()
+
+        fed_mod._access_log = None
+
+        class _State:
+            federation_access_log = None
+            federation_settings = settings
+
+        class _App:
+            state = _State()
+
+        class _Request:
+            app = _App()
+
+        log = get_access_log(cast(Any, _Request()))
+        assert log.path == DEFAULT_LOG_PATH.expanduser(), (
+            f"expected default {DEFAULT_LOG_PATH.expanduser()}, got {log.path}"
+        )
+
+    def test_custom_path_writes_log_to_configured_location(self, tmp_path: Path) -> None:
+        """AC3 (write): an append through the configured-path log lands on disk."""
+        from datetime import UTC, datetime
+
+        from mnemos.federation_access_log import AccessLogEntry
+
+        custom_path = tmp_path / "data" / "federation-access.jsonl"
+        log = FederationAccessLog(custom_path)
+        entry = AccessLogEntry(
+            peer_id=PEER_A,
+            topic_hash="a" * 64,
+            timestamp=datetime(2026, 7, 27, 12, 0, 0, tzinfo=UTC),
+            project_scope=PROJECT,
+            trigger_code=TriggerCode.EXHAUSTIVE,
+            record_ids_accessed=["rec-1"],
+        )
+        log.append(entry)
+        assert custom_path.exists(), "log file was not created at the custom path"
+        text = custom_path.read_text(encoding="utf-8").strip()
+        assert "rec-1" in text
+        assert TriggerCode.EXHAUSTIVE.value in text

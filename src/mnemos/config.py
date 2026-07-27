@@ -320,12 +320,22 @@ class FederationConfig(BaseModel):
             allowed projects/types, rate limit, and optional mTLS cert
             fingerprint. ``shared_projects`` stays as the global filter;
             per-peer ``allowed_projects`` is a subset filter on top.
+        access_log_path: Optional override for the B-side federation
+            access log location (contract §10). When ``None`` (default)
+            the log falls back to ``~/.mnemos/logs/federation-access.jsonl``
+            (see :data:`mnemos.federation_access_log.DEFAULT_LOG_PATH`).
+            Set to an absolute path (e.g. ``/data/federation-access.jsonl``)
+            to place the log on a persistent volume — useful for
+            containerised deployments where ``~/.mnemos`` is ephemeral.
+            The log is never replicated, never exported, never synced
+            (leak surface, contract §10 "Где хранится").
     """
 
     shared_projects: list[str] = Field(default_factory=list)
     moderation_mapping_ttl_hours: int = Field(default=24, ge=1, le=168)
     moderation_refuse_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
     peers: dict[str, PeerConfig] = Field(default_factory=dict)
+    access_log_path: str | None = Field(default=None, max_length=4096)
 
 
 class ScannerConfig(BaseModel):

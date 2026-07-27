@@ -37,13 +37,25 @@ _access_log: FederationAccessLog | None = None
 
 
 def get_access_log(request: Request) -> FederationAccessLog:
-    """Return the access log — from app.state or the module singleton."""
+    """Return the access log — from app.state or the module singleton.
+
+    Resolution order:
+    1. ``app.state.federation_access_log`` — tests / operator override.
+    2. ``settings.federation.access_log_path`` — operator-configured
+       path (e.g. ``/data/federation-access.jsonl`` for persistent
+       volumes in containerised deployments).
+    3. :data:`DEFAULT_LOG_PATH` — ``~/.mnemos/logs/federation-access.jsonl``.
+    """
     log = getattr(request.app.state, "federation_access_log", None)
     if log is not None:
         return cast(FederationAccessLog, log)
+    settings = get_settings(request)
+    fed_cfg = getattr(settings, "federation", None)
+    configured_path = getattr(fed_cfg, "access_log_path", None) if fed_cfg else None
     global _access_log
     if _access_log is None:
-        _access_log = FederationAccessLog(DEFAULT_LOG_PATH)
+        path = configured_path if configured_path else DEFAULT_LOG_PATH
+        _access_log = FederationAccessLog(path)
     return _access_log
 
 
