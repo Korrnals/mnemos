@@ -224,8 +224,7 @@ def test_rsync_wrapper_rejects_delete_option(tmp_path: Path) -> None:
         env=env,
     )
     assert result.returncode == 2, (
-        f"expected exit 2 for --delete injection, got {result.returncode};"
-        f" stderr:\n{result.stderr}"
+        f"expected exit 2 for --delete injection, got {result.returncode}; stderr:\n{result.stderr}"
     )
     assert "rejected dangerous rsync option: --delete" in result.stderr, (
         f"stderr should name the rejected option; got:\n{result.stderr}"
@@ -256,8 +255,7 @@ def test_rsync_wrapper_rejects_unknown_option(tmp_path: Path) -> None:
         env=env,
     )
     assert result.returncode == 2, (
-        f"expected exit 2 for unknown option, got {result.returncode};"
-        f" stderr:\n{result.stderr}"
+        f"expected exit 2 for unknown option, got {result.returncode}; stderr:\n{result.stderr}"
     )
     assert "rejected unknown rsync option: --unknown-future-opt" in result.stderr, (
         f"stderr should name the rejected option; got:\n{result.stderr}"
@@ -299,8 +297,6 @@ def test_import_wrapper_rejects_unknown_flag(tmp_path: Path) -> None:
     assert "REJECT" in audit and "--config" in audit, (
         f"audit log should record the REJECT with the flag; got:\n{audit}"
     )
-
-
 
 
 def test_systemd_units_valid() -> None:

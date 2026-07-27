@@ -125,9 +125,7 @@ class TestFederationE2E:
 
             # 3. Build the compact payload and dump to a tmp file.
             payload_file = tmp_path / "compact.json"
-            payload = _write_payload(
-                payload_file, memories, source_agent="test-a"
-            )
+            payload = _write_payload(payload_file, memories, source_agent="test-a")
             assert payload["schema"] == "mnemos.federation.v1"
             assert len(payload["records"]) >= 1
 
