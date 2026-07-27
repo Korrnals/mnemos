@@ -37,10 +37,14 @@ MNEMOS_BIN="${MNEMOS_SYNC_REMOTE_MNEMOS_BIN:-}"
 
 # ── audit helper (§6) ─────────────────────────────────────────────────────────
 _audit() {
-    local src_ip="${SSH_CLIENT%% *}"
+    # `local` masks an unset SSH_CLIENT under `set -u` only with `:-`; the bare
+    # `${SSH_CLIENT%% *}` form still errors. Use the safe default-then-strip form.
+    local src_ip="${SSH_CLIENT:-}"
+    src_ip="${src_ip%% *}"
+    [[ -n "$src_ip" ]] || src_ip="unknown"
     local ts
     ts="$(date -u +%FT%TZ)"
-    printf '[%s] mnemos-import-wrapper src=%s %s %s\n' "$ts" "${src_ip:-unknown}" "$1" "${2:-}" \
+    printf '[%s] mnemos-import-wrapper src=%s %s %s\n' "$ts" "$src_ip" "$1" "${2:-}" \
         >>"$AUDIT_LOG" 2>/dev/null || true
 }
 
@@ -84,7 +88,6 @@ fi
 _source=""
 _passphrase_env_seen=0
 _dry_run_seen=0
-_extra_args=()
 # shellcheck disable=SC2206
 _tokens=($SSH_ORIGINAL_COMMAND)
 # Drop the leading "mnemos sync import" — already validated above.
@@ -99,8 +102,13 @@ for (( _i=$_shift; _i<${#_tokens[@]}; _i++ )); do
             _dry_run_seen=1
             ;;
         --*)
-            _extra_args+=("$_t")
-            ;;
+            # ── B3 hardening (CWE-78): whitelist import flags ─────────────
+            # Only --dry-run is forwarded to `mnemos sync import`. --passphrase-env
+            # is pinned by the wrapper itself (above). Any other --* flag is
+            # refused — a compromised A could otherwise redirect the import
+            # source via --config or other file-reading flags.
+            _err "rejected unknown import flag: $_t"
+            exit 2 ;;
         *)
             if [[ $_passphrase_env_seen -eq 1 ]]; then
                 # Caller's passphrase-env value — IGNORE, we pin our own.
@@ -159,11 +167,11 @@ fi
 # ── 5. build and exec the sanitised import command ────────────────────────────
 # --passphrase-env is ALWAYS pinned to PASSPHRASE_ENV_NAME (defence-in-depth:
 # even a compromised A cannot redirect the passphrase read to another var).
+# --dry-run is the only caller-controlled flag we forward (whitelisted above).
 _cmd=("$MNEMOS_BIN" sync import "$_source_real" --passphrase-env "$PASSPHRASE_ENV_NAME")
 if [[ $_dry_run_seen -eq 1 ]]; then
     _cmd+=(--dry-run)
 fi
-_cmd+=("${_extra_args[@]}")
 
 _audit "ACCEPT" "source=$_source_real passphrase-env=$PASSPHRASE_ENV_NAME dry_run=$_dry_run_seen"
 exec "${_cmd[@]}"
