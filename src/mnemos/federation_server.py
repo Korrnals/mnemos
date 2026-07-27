@@ -47,6 +47,7 @@ Reference:
 
 from __future__ import annotations
 
+import hmac
 import logging
 import threading
 import time
@@ -191,8 +192,6 @@ def verify_mtls_fingerprint(
     that the route reads and passes here. The header name is not pinned
     here so the proxy layer stays pluggable.
     """
-    import hmac
-
     if expected_fingerprint is None:
         # Operator opted out of pinning for this peer.
         return True
@@ -358,7 +357,11 @@ def handle_pull(
         return _refused_response(), 403
 
     expected_token = _resolve_peer_token(peer)
-    if not expected_token or presented_token is None or presented_token != expected_token:
+    if (
+        not expected_token
+        or presented_token is None
+        or not hmac.compare_digest(presented_token, expected_token)
+    ):
         logger.info(
             "federation_server: refused — token mismatch for peer_id=%s",
             request.peer_id,
