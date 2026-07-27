@@ -530,7 +530,7 @@ def _select_trigger_code(
     | 0          | 0       | 0       | EXHAUSTIVE (empty) |
     | >0         | 0       | >0      | EXHAUSTIVE         |
     | >0         | >0      | >0      | PARTIAL            |
-    | >0         | >0      | 0       | PARTIAL            |
+    | >0         | >0      | 0       | REFUSED            |
 
     Rationale per row:
 
@@ -539,9 +539,12 @@ def _select_trigger_code(
     * ``>0/0/>0`` — all relevant records found and shipped.
     * ``>0/>0/>0`` — some records refused by moderation; more relevant
       content exists but B cannot ship it all.
-    * ``>0/>0/0`` — all candidates refused; the answer is partial (B
-      had content but could not share any). A may refine but should
-      not repeat verbatim.
+    * ``>0/>0/0`` — all candidates refused; nothing was shipped. B had
+      content but refused to share any of it. Per contract §9,
+      ``REFUSED`` means "A should fall back to local search"; there is
+      nothing for A to refine against (0 records), so ``PARTIAL``
+      would be misleading. ``REFUSED`` is the correct signal: A does
+      not get partial content to refine, it must fall back.
 
     The ``candidate_count == 0`` → ``EXHAUSTIVE`` (empty) choice is the
     contract §9 recommendation: "B has nothing on this topic" is a
@@ -559,7 +562,12 @@ def _select_trigger_code(
     if refused_count == 0:
         # All relevant records found and shipped → EXHAUSTIVE.
         return TriggerCode.EXHAUSTIVE
-    # Some records refused → PARTIAL (contract §9).
+    if records_count == 0:
+        # All candidates refused, nothing shipped → REFUSED
+        # (contract §9: A falls back to local search; 0 records means
+        # nothing to refine, so PARTIAL would be misleading).
+        return TriggerCode.REFUSED
+    # Some records refused, some shipped → PARTIAL (contract §9).
     return TriggerCode.PARTIAL
 
 

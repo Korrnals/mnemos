@@ -450,7 +450,7 @@ class TestModeration:
         assert FAKE_AWS_KEY not in resp.records[0].summary
         assert "<REDACTED:aws-key>" in resp.records[0].summary
 
-    def test_all_secret_record_refused_returns_partial(
+    def test_all_secret_record_refused_returns_refused_not_partial(
         self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         # Moderation refuses when the redacted fraction exceeds the
@@ -458,13 +458,13 @@ class TestModeration:
         # phrase so FTS matches it as a candidate, then a long fake
         # OpenAI-style key fills the remainder so the fraction is
         # 103/127 ≈ 0.81 > 0.8 → refuse → candidate present, none shipped
-        # → PARTIAL (per ``_select_trigger_code`` decision table).
+        # → REFUSED (per ``_select_trigger_code`` decision table).
         #
         # The write-path scanner is patched out for the same reason as
         # the redact test: without the patch the record is auto-tagged
         # ``mnemos:no-federate`` and excluded by the server pre-filter
         # before moderation runs, which would yield EXHAUSTIVE-empty
-        # instead of the PARTIAL this test asserts.
+        # instead of the REFUSED this test asserts.
         with patch.object(
             MemoryManager,
             "_scan_and_tag",
@@ -477,7 +477,7 @@ class TestModeration:
             )
         resp, status = _pull(manager, access_log, tmp_settings)
         assert status == 200
-        assert resp.trigger_code == TriggerCode.PARTIAL
+        assert resp.trigger_code == TriggerCode.REFUSED
         assert resp.records == []
 
 
@@ -511,6 +511,26 @@ class TestTriggerCodeSelection:
         assert status == 200
         assert resp.trigger_code == TriggerCode.EXHAUSTIVE
         assert len(resp.records) >= 1
+
+    def test_all_refused_returns_refused_not_partial(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
+        # Direct unit test of ``_select_trigger_code``: when candidates
+        # were found, all were refused, and 0 records shipped, the code
+        # must be REFUSED — not PARTIAL. Per contract §9: REFUSED means
+        # A falls back to local search; PARTIAL means A may refine
+        # against shipped records. With 0 records there is nothing to
+        # refine, so PARTIAL would be misleading.
+        from mnemos.federation_server import _select_trigger_code
+
+        assert (
+            _select_trigger_code(
+                candidate_count=3,
+                refused_count=3,
+                records_count=0,
+            )
+            == TriggerCode.REFUSED
+        )
 
 
 # ── Access log ───────────────────────────────────────────────────────────────
