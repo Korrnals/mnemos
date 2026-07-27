@@ -253,6 +253,34 @@ class TestRateLimit:
         assert status == 429
         assert resp.trigger_code == TriggerCode.REFUSED
 
+    def test_rate_limit_refusal_writes_access_log_entry(
+        self,
+        manager: MemoryManager,
+        access_log: FederationAccessLog,
+        tmp_settings: Settings,
+        fresh_limiter: RateLimiter,
+    ) -> None:
+        """A 429 rate-limit refusal writes a REFUSED access-log entry (§10).
+
+        Post-auth refusals must be audited per contract §10 — the peer is
+        known and authenticated, so the rate-limit refusal is a forensic
+        signal (peer is hammering B past its quota).
+        """
+        # peer limit is 5/min — exhaust it with 5 successful pulls.
+        for _ in range(5):
+            _pull(manager, access_log, tmp_settings, limiter=fresh_limiter)
+        # The 6th pull hits the rate limit and must write a REFUSED entry.
+        before = len(access_log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC)))
+        _pull(manager, access_log, tmp_settings, limiter=fresh_limiter)
+        after = access_log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC))
+        # Exactly one new entry was appended.
+        assert len(after) == before + 1
+        # The new entry is REFUSED with empty record_ids.
+        new_entry = after[-1]
+        assert new_entry.peer_id == PEER_A
+        assert new_entry.trigger_code == TriggerCode.REFUSED
+        assert new_entry.record_ids_accessed == []
+
 
 # ── ACL ───────────────────────────────────────────────────────────────────────
 

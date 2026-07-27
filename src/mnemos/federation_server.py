@@ -378,6 +378,18 @@ def handle_pull(
             "federation_server: rate limit exceeded for peer_id=%s",
             request.peer_id,
         )
+        # Audit-log the post-auth refusal (contract §10): a rate-limited
+        # peer is authenticated and known, so the refusal is a forensic
+        # signal (peer is hammering B past its quota).
+        _log_access(
+            access_log,
+            peer_id=request.peer_id,
+            topic=request.query,
+            project_scope=request.project_scope,
+            trigger_code=TriggerCode.REFUSED,
+            record_ids=[],
+            now=ts,
+        )
         return _refused_response(trigger_code=TriggerCode.REFUSED), 429
 
     # ── 3. ACL ─────────────────────────────────────────────────────────
