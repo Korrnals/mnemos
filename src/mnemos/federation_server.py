@@ -369,6 +369,28 @@ def handle_pull(
         return _refused_response(), 403
 
     if not verify_mtls_fingerprint(presented_mtls_fingerprint, peer.mtls_cert_fingerprint):
+        # Audit-log the mTLS-mismatch refusal (contract §10). The peer is
+        # known and resolved (we are past the unknown-peer gate), but the
+        # presented client cert does not match the pinned fingerprint — a
+        # forensic signal (potential cert theft / MITM / mis-rotation).
+        # Only this path is logged: no-peers / unknown-peer / token-mismatch
+        # paths are NOT logged because the peer_id is untrusted there and
+        # could be attacker-controlled noise.
+        if peer.mtls_cert_fingerprint is not None:
+            logger.warning(
+                "federation_server: mTLS cert mismatch for peer_id=%s "
+                "(pinned fingerprint did not match presented)",
+                request.peer_id,
+            )
+            _log_access(
+                access_log,
+                peer_id=request.peer_id,
+                topic=request.query,
+                project_scope=request.project_scope,
+                trigger_code=TriggerCode.REFUSED,
+                record_ids=[],
+                now=ts,
+            )
         return _refused_response(), 403
 
     # ── 2. Rate limit ──────────────────────────────────────────────────
