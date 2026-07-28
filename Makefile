@@ -124,3 +124,24 @@ push-image:
 	podman tag localhost/mnemos:latest ghcr.io/korrnals/mnemos:latest
 	podman push ghcr.io/korrnals/mnemos:$(VERSION)
 	podman push ghcr.io/korrnals/mnemos:latest
+
+
+# ── local CI / release (GitHub Actions billing-locked — memory ef56d3b5) ──
+# local-ci.sh replicates .github/workflows/ci.yml verify job locally.
+# local-release.sh replicates .github/workflows/release.yml (build + push image + GitHub Release).
+# See scripts/local-ci.sh and scripts/local-release.sh for details.
+
+local-ci:
+	@bash scripts/local-ci.sh
+
+local-ci-build:
+	@bash scripts/local-ci.sh --build
+
+local-release:
+	@bash scripts/local-release.sh
+
+local-release-dry:
+	@bash scripts/local-release.sh --dry-run
+
+local-release-no-image:
+	@bash scripts/local-release.sh --no-image

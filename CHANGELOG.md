@@ -7,7 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes yet. See `## [2.12.0]` below for the most recent cut._
+_No unreleased changes yet. See `## [2.12.1]` below for the most recent cut._
+
+## [2.12.1] - 2026-07-28
+
+Hotfix + hardening release. Closes the federation audit findings (B1–B4, CR#1–#8, QA#1, QA#9, QA#10) and three infrastructure/test improvements (#9, #11, #12) on the unified `fix/federation-auth-bypass` branch (20 commits ahead of `v2.12.0`). No new user-facing API — patch bump per SemVer.
+
+### Added
+
+- **Federation — `access_log_path` in `FederationConfig`** (#11 infra). Operators of containerised deployments can now point the federation access log at a mounted volume instead of the default `~/.mnemos/logs/federation-access.jsonl`. Configurable via `federation.access_log_path` in `config.yaml` (`feat(config): add access_log_path to FederationConfig`, `28caf05`).
+- **Federation — cross-host testing guide** (`docs/en/admin/federation-testing.md`, QA#10). Step-by-step guide for running the federation roundtrip across two real hosts over SSH — covers prerequisites, peer-B config, loopback bind + SSH tunnel, and the smoke-test invocation. Companion to the local `scripts/smoke-federation.sh` (QA#9).
+- **Federation — `scripts/smoke-federation.sh`** (QA#9). Cron-ready local smoke test: seeds peer B with a clean decision memory, exports a compact `mnemos.federation.v1` payload, imports into peer A, and verifies the memory is searchable on A. One-command verification of the federation roundtrip outside CI (`chore(scripts): add federation smoke test script`, `c16b2a7`; syntax fix `2f036a9`).
+- **Compact — public `embed_for` helper** (#11). `MemoryManager.embed_for()` exposed as a public method so `cli/sync.py` no longer reaches into private internals; keeps the sync code path stable across future manager refactors (`refactor(manager): add public embed_for helper`, `2af3fbe`).
+
+### Fixed
+
+#### Security
+
+- **Bearer token timing oracle (B1, CWE-208)**. Federation bearer-token comparison used `==`, leaking token length / prefix via timing differences. Replaced with a constant-time comparison (`hmac.compare_digest`) in the federation server auth path (`fix(federation): use constant-time bearer token comparison`, `9258de5`).
+- **`rsync --delete` injection (B2, CWE-78)**. The SSH `rsync-wrapper.sh` accepted arbitrary rsync options from the remote peer, allowing `--delete` (and similar) to wipe files outside the incoming dir. Whitelisted rsync server options and reject `--delete` explicitly. Covered by new rejection tests (`fix(rsync-wrapper): whitelist rsync server options, reject --delete`, `99f7b5d`; `test(wrappers): add rejection tests for dangerous options`, `2389d90`).
+- **Import-wrapper flag whitelist (B3)**. The SSH `mnemos-import-wrapper.sh` forwarded unknown `--*` flags to `mnemos sync import`, allowing option injection from a compromised peer A. Whitelisted import flags; unknown `--*` is rejected. Covered by the same wrapper rejection tests (`fix(import-wrapper): whitelist import flags, reject unknown --*`, `ad99e3d`).
+- **mTLS pinning warning (B4)**. A peer configured without `mtls_cert_fingerprint` silently opted out of cert pinning. The server now logs a WARNING at startup naming the peer and the mitigation (set the fingerprint or accept the weakened trust boundary) (`fix(config): warn when federation peer mTLS pinning is off`, `f411748`).
+- **`AuthMiddleware` bypass on federation pull**. The federation pull endpoint (`/api/v1/federation/pull`) was reachable without auth because `AuthMiddleware` did not exempt it cleanly — pull requests hit the middleware and either failed or bypassed the federation-specific bearer check. The endpoint is now exempted from `AuthMiddleware` and authenticated by the federation bearer path only (`fix(federation): exempt /api/v1/federation/pull from AuthMiddleware`, `a7bf902`).
+
+#### Federation contract
+
+- **CR#1 — `PARTIAL` → `REFUSED` when all candidate records refused**. When every candidate record was refused by moderation, the server returned `PARTIAL` (implying a partial answer was sent). It now returns `REFUSED` so peer A falls back to local `mnemos_search` per КП-2 instead of retrying (`fix(federation): return REFUSED when all candidate records refused`, `9258de5` — same commit as B1).
+- **CR#3 — `local_search` exception logging**. Exceptions from `local_search` during federation pull were silently swallowed, hiding failures behind empty results. Now logged at ERROR with the query context (`fix(federation-a2a): log local_search exceptions instead of silent swallow`, `50e2a57`).
+- **#2 — `RateLimiter` decoupled from `handle_pull`**. The rate limiter was constructed inside `handle_pull`, coupling it to the request path and making it untestable in isolation. Lifted to a constructor parameter; `handle_pull` now receives it as a dependency (`fix(federation): decouple RateLimiter from handle_pull now parameter`, `dc9ca38`).
+- **#5 — rate-limit refusals audit-logged**. Rate-limited pull requests were rejected without an audit-log entry, leaving the access log blind to DDoS attempts. Rate-limit refusals now append a `REFUSED`-coded entry to `federation_access_log` (`fix(federation): audit-log rate-limit refusals`, `1700e5b`).
+- **#6 — mTLS cert mismatch audit-logged**. mTLS client-cert fingerprint mismatches were rejected without an audit-log entry. Now append a `REFUSED`-coded entry so the operator can see the failed pin attempt (`fix(federation): audit-log mTLS cert mismatch refusals`, `631377a`; test fix `32b24ab`).
+- **#7 — `pydantic.ValidationError` caught explicitly**. Federation-client pull errors surfaced as a generic `ValueError` (the base class), hiding the validation-failure semantics. Now caught as `pydantic.ValidationError` and surfaced with the field path (`fix(federation-client): catch pydantic.ValidationError explicitly`, `5de9e45`).
+- **#8 — A2A parameter forwarding**. `timeout_s` and `include_content` were dropped on the A2A federation path, so remote pulls silently used defaults. Now forwarded end-to-end (`fix(federation-a2a): forward timeout_s and include_content via A2A path`, `5278287`).
+
+#### Infrastructure
+
+- **#9 — `scanner` singleton thread safety**. `get_scanner()` returned a shared singleton without synchronisation, racing on first access from concurrent requests. Now guarded by a lock (`fix(scanner): make get_scanner singleton thread-safe`, `e7f42df`).
+
+#### Testing
+
+- **QA#1 — e2e federation roundtrip test**. New `tests/test_federation_e2e.py` covering the full compact → import → search path on a single process, catching the `AuthMiddleware` bypass (B-series) and the `PARTIAL` vs `REFUSED` regression (CR#1) (`test(federation): add e2e roundtrip test`, `8d31033`; ruff format `bc1723e`).
+- **CR#4 — malformed JSONL in access log**. Added test coverage for a malformed line in `federation-access.jsonl` so the access-log reader does not crash on corrupted/truncated audit files (`test(federation): cover malformed JSONL line in access log`, `ac37b26`).
+
+#### Documentation
+
+- **#10 — compact `source_agent` non-injectivity**. Documented that `source_agent` in the compact payload is sanitised and non-injective — two different upstream agents may collapse to the same `source_agent` label after moderation; consumers must not use it as a unique key (`docs(compact): document source_agent sanitisation non-injectivity`, `7ee335e`).
+- **#12 — wrapper word-splitting limitation**. Documented that the SSH wrappers use shell word-splitting on the rsync/`mnemos` argv and therefore cannot safely handle arguments containing spaces; the policy-gate closure (whitelist + reject) is the mitigation, not a full argv parser (`docs(wrappers): document word-splitting limitation and policy-gate closure`, `dc995bd`).
 
 ## [2.12.0] - 2026-07-22
 

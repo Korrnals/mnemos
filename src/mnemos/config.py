@@ -320,12 +320,22 @@ class FederationConfig(BaseModel):
             allowed projects/types, rate limit, and optional mTLS cert
             fingerprint. ``shared_projects`` stays as the global filter;
             per-peer ``allowed_projects`` is a subset filter on top.
+        access_log_path: Optional override for the B-side federation
+            access log location (contract §10). When ``None`` (default)
+            the log falls back to ``~/.mnemos/logs/federation-access.jsonl``
+            (see :data:`mnemos.federation_access_log.DEFAULT_LOG_PATH`).
+            Set to an absolute path (e.g. ``/data/federation-access.jsonl``)
+            to place the log on a persistent volume — useful for
+            containerised deployments where ``~/.mnemos`` is ephemeral.
+            The log is never replicated, never exported, never synced
+            (leak surface, contract §10 "Где хранится").
     """
 
     shared_projects: list[str] = Field(default_factory=list)
     moderation_mapping_ttl_hours: int = Field(default=24, ge=1, le=168)
     moderation_refuse_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
     peers: dict[str, PeerConfig] = Field(default_factory=dict)
+    access_log_path: str | None = Field(default=None, max_length=4096)
 
 
 class ScannerConfig(BaseModel):
@@ -538,4 +548,30 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
     settings.resolve_paths()
     settings.migrate_layout()
     settings.apply_runtime_env()
+    _warn_federation_mtls_pinning_off(settings)
     return settings
+
+
+def _warn_federation_mtls_pinning_off(settings: Settings) -> None:
+    """Warn when federation is active but a peer has mTLS pinning off.
+
+    Federation is considered active when at least one peer is configured
+    (``settings.federation.peers`` is non-empty — there is no separate
+    ``enabled`` flag; a non-empty peers map is the activation signal).
+    For each such peer whose ``mtls_cert_fingerprint`` is ``None``, emit
+    a warning so the operator knows pinning is OFF (operator opt-out).
+    This is non-breaking — a warning only, not a refusal. ADR-0016
+    recommends pinning for networked deployments; the warning makes the
+    opt-out visible at config-load time rather than silently accepted.
+    """
+    fed = settings.federation
+    if not fed.peers:
+        return
+    for peer_id, peer in fed.peers.items():
+        if peer.mtls_cert_fingerprint is None:
+            logger.warning(
+                "Peer '%s' has no mTLS cert fingerprint — pinning OFF "
+                "(operator opt-out). Set mtls_cert_fingerprint to "
+                "SHA-256 hex to enable pinning.",
+                peer_id,
+            )

@@ -47,11 +47,22 @@ logger = logging.getLogger(__name__)
 # Docs endpoints (/docs, /redoc, /openapi.json) are only bypassed on loopback
 # binds — see ``_get_bypass_paths``. On non-loopback binds they require auth
 # to avoid leaking API schema to unauthenticated callers.
+#
+# ``/api/v1/federation/pull`` is bypassed unconditionally because federation
+# peers authenticate with a per-peer bearer token (``mnk_fed_<peer_id>_*``,
+# ADR-0016) that is verified inside ``handle_pull`` — the federation server
+# is its own auth layer for server-to-server pull. The global operator
+# session (TOTP/api-key) is for the operator API surface, not for peer
+# federation. Without this bypass the middleware returns 401 before
+# ``handle_pull`` ever runs, so federation pull is broken whenever
+# ``api.auth_enabled=true``. The bypass is fail-closed: ``handle_pull``
+# still rejects requests with no/incorrect per-peer bearer (403 REFUSED).
 _ALWAYS_BYPASS = frozenset(
     {
         "/health",
         "/auth/login",
         "/auth/verify",
+        "/api/v1/federation/pull",
     }
 )
 _DOCS_BYPASS = frozenset({"/docs", "/redoc", "/openapi.json"})

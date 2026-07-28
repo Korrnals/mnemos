@@ -34,11 +34,15 @@ RSYNC_BIN="${RSYNC_BIN:-rsync}"
 # ── audit helper (§6) ─────────────────────────────────────────────────────────
 _audit() {
     # Append ISO-8601 UTC timestamp + source IP + event + detail.
-    local src_ip="${SSH_CLIENT%% *}"
+    # `local` masks an unset SSH_CLIENT under `set -u` (ssh-test environments
+    # and direct invocation have no SSH_CLIENT); fall back to "unknown".
+    local src_ip="${SSH_CLIENT:-}"
+    src_ip="${src_ip%% *}"
+    [[ -n "$src_ip" ]] || src_ip="unknown"
     local ts
     ts="$(date -u +%FT%TZ)"
     # Best-effort audit — never let a log write failure crash the sync.
-    printf '[%s] rsync-wrapper src=%s %s %s\n' "$ts" "${src_ip:-unknown}" "$1" "${2:-}" \
+    printf '[%s] rsync-wrapper src=%s %s %s\n' "$ts" "$src_ip" "$1" "${2:-}" \
         >>"$AUDIT_LOG" 2>/dev/null || true
 }
 
@@ -65,14 +69,41 @@ fi
 # realpath resolution (symlinks followed).
 _read_args=()
 _dest=""
-# shellcheck disable=SC2206  # intentional word-split on the original command
+# shellcheck disable=SC2206  # intentional word-split on the original command.
+# SC2206 limitation: this breaks on paths with spaces or shell metacharacters.
+# The attack path is closed by policy, not by the parser — the wrapper rewrites
+# the source path under INCOMING_DIR (see _source derivation below) and rejects
+# extra positionals, so a malicious SSH_ORIGINAL_COMMAND cannot inject tokens
+# that escape the whitelisted rsync options or the pinned destination. A
+# proper shell-quote-aware parser (xargs -n1 from a quoted string, or a Python
+# helper) is a future hardening option; low priority because the policy gates
+# already close the injection surface.
 _tokens=($SSH_ORIGINAL_COMMAND)
 _shift=0
 for (( _i=0; _i<${#_tokens[@]}; _i++ )); do
     _t="${_tokens[$_i]}"
     case "$_t" in
-        --server|--sender|-*) _read_args+=("$_t") ;;
+        # ── B2 hardening (CWE-78): whitelist safe rsync server options ──────
+        # A compromised A could inject --delete to wipe files in INCOMING_DIR
+        # not in the current transfer. Only read-only / metadata options are
+        # allowed; destructive options and any unknown option are rejected.
+        -v|-l|-r|-t|-p|-S|--server|--sender)
+            _read_args+=("$_t") ;;
         .)  _read_args+=("$_t") ;;          # rsync sends a literal "." module
+        # Known-destructive options — reject with a named audit message so the
+        # forensic signal distinguishes an attack from a misconfiguration.
+        --delete|--delete-before|--delete-during|--delete-after|--delete-excluded|--remove-source-files|--force)
+            _err "rejected dangerous rsync option: $_t"
+            exit 2 ;;
+        --*)
+            # Any long option outside the whitelist is refused — defence-in-
+            # depth, future rsync options are NOT silently forwarded.
+            _err "rejected unknown rsync option: $_t"
+            exit 2 ;;
+        -?*)
+            # Any short option cluster outside the whitelist is refused.
+            _err "rejected unknown rsync option: $_t"
+            exit 2 ;;
         *)
             # First non-option token after --server is the module ("."), the
             # second is the destination path. Track the last one as the dest.
@@ -102,9 +133,10 @@ fi
 
 case "$_dest_real" in
     "${_incoming_real%/}/"*)
-        : ;;  # inside incoming — allowed
+        # inside incoming — allowed
+        ;;
     "${_incoming_real%/}")
-        : ;;  # exactly the incoming dir — allowed (rsync may write a file in it)
+        # exactly the incoming dir — allowed (rsync may write a file in it)
         ;;
     *)
         _err "destination outside INCOMING_DIR: $_dest_real (expected under $_incoming_real)"

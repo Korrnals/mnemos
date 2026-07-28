@@ -112,6 +112,17 @@ class MemoryManager:
             parts.append(" ".join(memory.tags))
         return "\n".join(parts)[:4096]
 
+    def embed_for(self, memory: Memory) -> list[float]:
+        """Public helper — embed a memory into a vector.
+
+        Thin wrapper over :meth:`_embedding_text` + :attr:`embedder` so
+        callers (e.g. ``cli.sync.run_sync_import``) do not reach into
+        the private ``_embedding_text`` symbol. A future refactor of
+        the embedding-text shape only needs to update this method, not
+        every call site.
+        """
+        return self.embedder.embed(self._embedding_text(memory))
+
     @staticmethod
     def _scan_and_tag(tags: list[str], content: str) -> list[str]:
         """Run the secrets scanner on ``content`` and auto-add no-federate.

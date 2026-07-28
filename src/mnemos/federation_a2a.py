@@ -212,8 +212,19 @@ def handle_share_finding(
         if local_search is not None:
             try:
                 action["local_results"] = list(local_search(response))
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("federation_a2a: local_search fallback raised: %s", exc)
+            except Exception as exc:
+                # КП-2 expects a partial result; [] is a valid partial.
+                # The exception is logged (not silently swallowed) so the
+                # operator can see when the local fallback is degrading.
+                # `except Exception` is kept because the search layer has
+                # no narrower public exception type — `MemoryManager.search`
+                # swallows FTS/vector errors internally and returns [].
+                logger.warning(
+                    "local_search failed: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                    exc_info=False,
+                )
                 action["local_results"] = []
         return action
     # Unknown code — fail safe to local fallback.
@@ -230,6 +241,8 @@ def mediate_pull_a_side(
     *,
     settings: Settings,
     use_a2a: bool = False,
+    timeout_s: float = 2.0,
+    include_content: bool = True,
 ) -> PullResult:
     """A-side entry point — try A2A, fall back to HTTP transport.
 
@@ -240,6 +253,11 @@ def mediate_pull_a_side(
     falls back to the HTTP transport (:func:`pull_from_peer`). The
     ``use_a2a`` flag is reserved for the integration session that
     connects the handler to the live ``a2a-orchestrator`` server.
+
+    ``timeout_s`` and ``include_content`` are forwarded to
+    :func:`pull_from_peer` on both the A2A and HTTP paths, so callers
+    can override the transport timeout and the content-inclusion flag
+    regardless of which path is taken.
 
     Graceful degradation (mcp-enhancement.instructions.md): the
     HTTP fallback is always available; A2A is an optimisation.
@@ -256,4 +274,6 @@ def mediate_pull_a_side(
         query,
         project_scope,
         settings=settings,
+        timeout_s=timeout_s,
+        include_content=include_content,
     )

@@ -234,6 +234,121 @@ class TestMTLSFingerprint:
     def test_case_insensitive(self) -> None:
         assert verify_mtls_fingerprint(MTLS_FP.upper(), MTLS_FP.lower()) is True
 
+    def test_mtls_mismatch_writes_access_log_entry(
+        self,
+        manager: MemoryManager,
+        access_log: FederationAccessLog,
+        tmp_path: Path,
+    ) -> None:
+        """An mTLS cert mismatch (peer known, cert wrong) writes a REFUSED entry.
+
+        The peer is resolved (past the unknown-peer gate) but the presented
+        cert fingerprint does not match the pinned one — a forensic signal
+        per contract §10. Only this path is logged; no-peers / unknown-peer /
+        token-mismatch paths stay unlogged (untrusted peer_id).
+        """
+        os.environ[TOKEN_ENV] = TOKEN_VALUE
+        settings = Settings(
+            mnemos={
+                "vault_path": str(tmp_path / "vault"),
+                "data_dir": str(tmp_path / "data"),
+                "db_name": "test.db",
+            },
+            embedding={"provider": "onnx"},
+            scanner={"enabled": False},
+            federation={
+                "shared_projects": [PROJECT],
+                "peers": {
+                    PEER_A: PeerConfig(
+                        bearer_token_env=TOKEN_ENV,
+                        allowed_projects=[PROJECT],
+                        allowed_types=["*"],
+                        rate_limit_per_minute=60,
+                        mtls_cert_fingerprint=MTLS_FP,
+                    ),
+                },
+            },
+        )
+        settings.resolve_paths()
+        # Present a wrong fingerprint → mismatch.
+        resp, status = _pull(manager, access_log, settings, mtls="00:11:22:33:44")
+        assert status == 403
+        assert resp.trigger_code == TriggerCode.REFUSED
+        # One REFUSED entry was appended.
+        entries = access_log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC))
+        assert len(entries) == 1
+        assert entries[0].peer_id == PEER_A
+        assert entries[0].trigger_code == TriggerCode.REFUSED
+        assert entries[0].record_ids_accessed == []
+
+    def test_mtls_missing_cert_when_pinned_writes_access_log_entry(
+        self,
+        manager: MemoryManager,
+        access_log: FederationAccessLog,
+        tmp_path: Path,
+    ) -> None:
+        """A missing presented cert when pinning is on writes a REFUSED entry.
+
+        The peer is resolved and pinning is configured, but no cert was
+        presented (proxy stripped it / connection was not mTLS) → fail-closed
+        refusal, audited as a REFUSED entry.
+        """
+        os.environ[TOKEN_ENV] = TOKEN_VALUE
+        settings = Settings(
+            mnemos={
+                "vault_path": str(tmp_path / "vault"),
+                "data_dir": str(tmp_path / "data"),
+                "db_name": "test.db",
+            },
+            embedding={"provider": "onnx"},
+            scanner={"enabled": False},
+            federation={
+                "shared_projects": [PROJECT],
+                "peers": {
+                    PEER_A: PeerConfig(
+                        bearer_token_env=TOKEN_ENV,
+                        allowed_projects=[PROJECT],
+                        allowed_types=["*"],
+                        rate_limit_per_minute=60,
+                        mtls_cert_fingerprint=MTLS_FP,
+                    ),
+                },
+            },
+        )
+        settings.resolve_paths()
+        # Present no fingerprint → fail-closed refusal, audited.
+        resp, status = _pull(manager, access_log, settings, mtls=None)
+        assert status == 403
+        assert resp.trigger_code == TriggerCode.REFUSED
+        entries = access_log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC))
+        assert len(entries) == 1
+        assert entries[0].trigger_code == TriggerCode.REFUSED
+
+    def test_mtls_pinning_off_does_not_write_access_log_on_pass(
+        self,
+        manager: MemoryManager,
+        access_log: FederationAccessLog,
+        tmp_settings: Settings,
+    ) -> None:
+        """When pinning is off (fingerprint=None), mTLS check passes — no mismatch log.
+
+        The default tmp_settings peer has mtls_cert_fingerprint=None (pinning
+        off). A pull with no presented cert passes the mTLS gate and proceeds
+        to the normal flow — no REFUSED-mismatch entry is written for the
+        mTLS gate (the normal access-log entry for a successful pull is fine).
+        """
+        _add_memory(
+            manager,
+            "federation threat model decision",
+            tags=["project:project-mnemos", "agent:gcw-tech-lead", "mnemos:decision"],
+        )
+        _resp, status = _pull(manager, access_log, tmp_settings, mtls=None)
+        assert status == 200
+        # The only entry is the normal successful-pull entry (EXHAUSTIVE).
+        entries = access_log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC))
+        assert len(entries) == 1
+        assert entries[0].trigger_code == TriggerCode.EXHAUSTIVE
+
 
 # ── Rate limit ────────────────────────────────────────────────────────────────
 
@@ -252,6 +367,34 @@ class TestRateLimit:
         resp, status = _pull(manager, access_log, tmp_settings, limiter=fresh_limiter)
         assert status == 429
         assert resp.trigger_code == TriggerCode.REFUSED
+
+    def test_rate_limit_refusal_writes_access_log_entry(
+        self,
+        manager: MemoryManager,
+        access_log: FederationAccessLog,
+        tmp_settings: Settings,
+        fresh_limiter: RateLimiter,
+    ) -> None:
+        """A 429 rate-limit refusal writes a REFUSED access-log entry (§10).
+
+        Post-auth refusals must be audited per contract §10 — the peer is
+        known and authenticated, so the rate-limit refusal is a forensic
+        signal (peer is hammering B past its quota).
+        """
+        # peer limit is 5/min — exhaust it with 5 successful pulls.
+        for _ in range(5):
+            _pull(manager, access_log, tmp_settings, limiter=fresh_limiter)
+        # The 6th pull hits the rate limit and must write a REFUSED entry.
+        before = len(access_log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC)))
+        _pull(manager, access_log, tmp_settings, limiter=fresh_limiter)
+        after = access_log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC))
+        # Exactly one new entry was appended.
+        assert len(after) == before + 1
+        # The new entry is REFUSED with empty record_ids.
+        new_entry = after[-1]
+        assert new_entry.peer_id == PEER_A
+        assert new_entry.trigger_code == TriggerCode.REFUSED
+        assert new_entry.record_ids_accessed == []
 
 
 # ── ACL ───────────────────────────────────────────────────────────────────────
@@ -450,7 +593,7 @@ class TestModeration:
         assert FAKE_AWS_KEY not in resp.records[0].summary
         assert "<REDACTED:aws-key>" in resp.records[0].summary
 
-    def test_all_secret_record_refused_returns_partial(
+    def test_all_secret_record_refused_returns_refused_not_partial(
         self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
     ) -> None:
         # Moderation refuses when the redacted fraction exceeds the
@@ -458,13 +601,13 @@ class TestModeration:
         # phrase so FTS matches it as a candidate, then a long fake
         # OpenAI-style key fills the remainder so the fraction is
         # 103/127 ≈ 0.81 > 0.8 → refuse → candidate present, none shipped
-        # → PARTIAL (per ``_select_trigger_code`` decision table).
+        # → REFUSED (per ``_select_trigger_code`` decision table).
         #
         # The write-path scanner is patched out for the same reason as
         # the redact test: without the patch the record is auto-tagged
         # ``mnemos:no-federate`` and excluded by the server pre-filter
         # before moderation runs, which would yield EXHAUSTIVE-empty
-        # instead of the PARTIAL this test asserts.
+        # instead of the REFUSED this test asserts.
         with patch.object(
             MemoryManager,
             "_scan_and_tag",
@@ -477,7 +620,7 @@ class TestModeration:
             )
         resp, status = _pull(manager, access_log, tmp_settings)
         assert status == 200
-        assert resp.trigger_code == TriggerCode.PARTIAL
+        assert resp.trigger_code == TriggerCode.REFUSED
         assert resp.records == []
 
 
@@ -511,6 +654,26 @@ class TestTriggerCodeSelection:
         assert status == 200
         assert resp.trigger_code == TriggerCode.EXHAUSTIVE
         assert len(resp.records) >= 1
+
+    def test_all_refused_returns_refused_not_partial(
+        self, manager: MemoryManager, access_log: FederationAccessLog, tmp_settings: Settings
+    ) -> None:
+        # Direct unit test of ``_select_trigger_code``: when candidates
+        # were found, all were refused, and 0 records shipped, the code
+        # must be REFUSED — not PARTIAL. Per contract §9: REFUSED means
+        # A falls back to local search; PARTIAL means A may refine
+        # against shipped records. With 0 records there is nothing to
+        # refine, so PARTIAL would be misleading.
+        from mnemos.federation_server import _select_trigger_code
+
+        assert (
+            _select_trigger_code(
+                candidate_count=3,
+                refused_count=3,
+                records_count=0,
+            )
+            == TriggerCode.REFUSED
+        )
 
 
 # ── Access log ───────────────────────────────────────────────────────────────

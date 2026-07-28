@@ -47,6 +47,7 @@ Reference:
 
 from __future__ import annotations
 
+import hmac
 import logging
 import threading
 import time
@@ -191,8 +192,6 @@ def verify_mtls_fingerprint(
     that the route reads and passes here. The header name is not pinned
     here so the proxy layer stays pluggable.
     """
-    import hmac
-
     if expected_fingerprint is None:
         # Operator opted out of pinning for this peer.
         return True
@@ -264,7 +263,17 @@ class RateLimiter:
         self._lock = threading.Lock()
 
     def check(self, peer_id: str, *, limit_per_minute: int, now: float | None = None) -> bool:
-        """Return ``True`` if the peer is under its per-minute limit."""
+        """Return ``True`` if the peer is under its per-minute limit.
+
+        ``now`` is for access-log timestamps only and is **not** used for
+        the rate-window logic — :func:`handle_pull` may receive a
+        ``datetime``-derived ``now`` (a different time scale than
+        :func:`time.monotonic`), so mixing them in the same bucket would
+        skew the 60-second window. The limiter always uses
+        :func:`time.monotonic` internally for the bucket; the ``now``
+        parameter is kept only for direct unit-test injection of
+        monotonic-scale values.
+        """
         ts = now if now is not None else time.monotonic()
         with self._lock:
             return self._buckets[peer_id].check(now=ts, limit=limit_per_minute)
@@ -341,6 +350,11 @@ def handle_pull(
     7. **Trigger code selection** — see ``_select_trigger_code``.
     8. **Access log** — write an :class:`AccessLogEntry`.
     9. **Response** — :class:`PullResponse` with ``ttl_class="ephemeral"``.
+
+    Note on the ``now`` parameter: it is used **only for access-log
+    timestamps**. The :class:`RateLimiter` always uses
+    :func:`time.monotonic` internally for the rate window — do NOT
+    pass a ``datetime``-derived float to the limiter, the scales differ.
     """
     ts = now if now is not None else datetime.now(UTC)
     fed = settings.federation
@@ -358,7 +372,11 @@ def handle_pull(
         return _refused_response(), 403
 
     expected_token = _resolve_peer_token(peer)
-    if not expected_token or presented_token is None or presented_token != expected_token:
+    if (
+        not expected_token
+        or presented_token is None
+        or not hmac.compare_digest(presented_token, expected_token)
+    ):
         logger.info(
             "federation_server: refused — token mismatch for peer_id=%s",
             request.peer_id,
@@ -366,6 +384,28 @@ def handle_pull(
         return _refused_response(), 403
 
     if not verify_mtls_fingerprint(presented_mtls_fingerprint, peer.mtls_cert_fingerprint):
+        # Audit-log the mTLS-mismatch refusal (contract §10). The peer is
+        # known and resolved (we are past the unknown-peer gate), but the
+        # presented client cert does not match the pinned fingerprint — a
+        # forensic signal (potential cert theft / MITM / mis-rotation).
+        # Only this path is logged: no-peers / unknown-peer / token-mismatch
+        # paths are NOT logged because the peer_id is untrusted there and
+        # could be attacker-controlled noise.
+        if peer.mtls_cert_fingerprint is not None:
+            logger.warning(
+                "federation_server: mTLS cert mismatch for peer_id=%s "
+                "(pinned fingerprint did not match presented)",
+                request.peer_id,
+            )
+            _log_access(
+                access_log,
+                peer_id=request.peer_id,
+                topic=request.query,
+                project_scope=request.project_scope,
+                trigger_code=TriggerCode.REFUSED,
+                record_ids=[],
+                now=ts,
+            )
         return _refused_response(), 403
 
     # ── 2. Rate limit ──────────────────────────────────────────────────
@@ -374,6 +414,18 @@ def handle_pull(
         logger.warning(
             "federation_server: rate limit exceeded for peer_id=%s",
             request.peer_id,
+        )
+        # Audit-log the post-auth refusal (contract §10): a rate-limited
+        # peer is authenticated and known, so the refusal is a forensic
+        # signal (peer is hammering B past its quota).
+        _log_access(
+            access_log,
+            peer_id=request.peer_id,
+            topic=request.query,
+            project_scope=request.project_scope,
+            trigger_code=TriggerCode.REFUSED,
+            record_ids=[],
+            now=ts,
         )
         return _refused_response(trigger_code=TriggerCode.REFUSED), 429
 
@@ -527,7 +579,7 @@ def _select_trigger_code(
     | 0          | 0       | 0       | EXHAUSTIVE (empty) |
     | >0         | 0       | >0      | EXHAUSTIVE         |
     | >0         | >0      | >0      | PARTIAL            |
-    | >0         | >0      | 0       | PARTIAL            |
+    | >0         | >0      | 0       | REFUSED            |
 
     Rationale per row:
 
@@ -536,9 +588,12 @@ def _select_trigger_code(
     * ``>0/0/>0`` — all relevant records found and shipped.
     * ``>0/>0/>0`` — some records refused by moderation; more relevant
       content exists but B cannot ship it all.
-    * ``>0/>0/0`` — all candidates refused; the answer is partial (B
-      had content but could not share any). A may refine but should
-      not repeat verbatim.
+    * ``>0/>0/0`` — all candidates refused; nothing was shipped. B had
+      content but refused to share any of it. Per contract §9,
+      ``REFUSED`` means "A should fall back to local search"; there is
+      nothing for A to refine against (0 records), so ``PARTIAL``
+      would be misleading. ``REFUSED`` is the correct signal: A does
+      not get partial content to refine, it must fall back.
 
     The ``candidate_count == 0`` → ``EXHAUSTIVE`` (empty) choice is the
     contract §9 recommendation: "B has nothing on this topic" is a
@@ -556,7 +611,12 @@ def _select_trigger_code(
     if refused_count == 0:
         # All relevant records found and shipped → EXHAUSTIVE.
         return TriggerCode.EXHAUSTIVE
-    # Some records refused → PARTIAL (contract §9).
+    if records_count == 0:
+        # All candidates refused, nothing shipped → REFUSED
+        # (contract §9: A falls back to local search; 0 records means
+        # nothing to refine, so PARTIAL would be misleading).
+        return TriggerCode.REFUSED
+    # Some records refused, some shipped → PARTIAL (contract §9).
     return TriggerCode.PARTIAL
 
 

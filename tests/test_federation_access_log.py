@@ -223,6 +223,58 @@ def test_entry_is_frozen() -> None:
         entry.peer_id = PEER_B  # type: ignore[misc]
 
 
+# ── Malformed JSONL line (CR#4) ──────────────────────────────────────────────
+
+
+def test_malformed_line_raises_value_error_with_context(
+    log: FederationAccessLog, tmp_path: Path
+) -> None:
+    """A malformed JSONL line makes query() raise ValueError with line context.
+
+    A corrupted audit log is a signal, not something to silently swallow
+    (per ``lint-and-validate.instructions.md``: fix the cause, do not
+    suppress). The error message must include the line number so the
+    operator can locate the corrupt line.
+    """
+    # Write one valid entry, then a malformed line, then another valid entry.
+    log.append(_entry(record_ids=["fed:A:B:uuid1"]))
+    with open(log.path, "a", encoding="utf-8") as fh:
+        fh.write("{not valid json at all}\n")
+    log.append(_entry(record_ids=["fed:A:B:uuid3"]))
+
+    with pytest.raises(ValueError) as exc_info:
+        log.query(PEER_A, TOPIC_X_HASH)
+
+    # The error must carry line context so the operator can locate it.
+    msg = str(exc_info.value)
+    assert "malformed line" in msg
+    assert "2" in msg  # the malformed line is line 2
+
+
+def test_malformed_line_raises_for_query_recent(
+    log: FederationAccessLog,
+) -> None:
+    """query_recent() also raises on a malformed line (same _iter_entries path)."""
+    log.append(_entry())
+    with open(log.path, "a", encoding="utf-8") as fh:
+        fh.write("<<<garbage>>>\n")
+    with pytest.raises(ValueError) as exc_info:
+        log.query_recent(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert "malformed line" in str(exc_info.value)
+
+
+def test_malformed_line_raises_for_count_by_trigger_code(
+    log: FederationAccessLog,
+) -> None:
+    """count_by_trigger_code() also raises on a malformed line."""
+    log.append(_entry())
+    with open(log.path, "a", encoding="utf-8") as fh:
+        fh.write("not-json\n")
+    with pytest.raises(ValueError) as exc_info:
+        log.count_by_trigger_code(PEER_A, since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert "malformed line" in str(exc_info.value)
+
+
 # ── Concurrent appends ───────────────────────────────────────────────────────
 
 

@@ -144,7 +144,7 @@ class FederationAccessLog:
                     continue
                 try:
                     entries.append(AccessLogEntry.model_validate_json(stripped))
-                except Exception as exc:  # pragma: no cover - defensive
+                except Exception as exc:
                     msg = f"federation_access_log: malformed line {lineno}: {exc}"
                     raise ValueError(msg) from exc
         return entries

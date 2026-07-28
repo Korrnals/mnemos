@@ -322,6 +322,18 @@ def build_compact_record(
             the memory's ``agent:<slug>`` tag, but the caller passes it
             explicitly so the receiving side can verify it against the
             tag (defence against a forged tag).
+
+            .. note::
+                The ``source_agent`` slug is sanitised (lowercased,
+                non-``[a-z0-9_-]`` replaced with ``-``) and the
+                sanitisation is **not injective** — two distinct slugs
+                like ``Foo.Bar`` and ``foo-bar`` collapse to the same
+                string. The ``fed:`` prefix uniqueness therefore relies
+                on ``memory.id`` (a UUID) being globally unique, NOT
+                on ``source_agent``. Re-import idempotency skips by
+                ``record.id``, so a cross-payload collision on the
+                prefix would silently drop the second record — the
+                ``memory.id`` UUID is the load-bearing uniqueness key.
         refuse_threshold: Fraction of content that must be redacted/
             anonymized to trigger ``refuse`` (default 0.8 = 80%).
             Forwarded to :func:`moderate` when ``moderation_result`` is
