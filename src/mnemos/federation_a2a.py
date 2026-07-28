@@ -241,6 +241,8 @@ def mediate_pull_a_side(
     *,
     settings: Settings,
     use_a2a: bool = False,
+    timeout_s: float = 2.0,
+    include_content: bool = True,
 ) -> PullResult:
     """A-side entry point — try A2A, fall back to HTTP transport.
 
@@ -251,6 +253,11 @@ def mediate_pull_a_side(
     falls back to the HTTP transport (:func:`pull_from_peer`). The
     ``use_a2a`` flag is reserved for the integration session that
     connects the handler to the live ``a2a-orchestrator`` server.
+
+    ``timeout_s`` and ``include_content`` are forwarded to
+    :func:`pull_from_peer` on both the A2A and HTTP paths, so callers
+    can override the transport timeout and the content-inclusion flag
+    regardless of which path is taken.
 
     Graceful degradation (mcp-enhancement.instructions.md): the
     HTTP fallback is always available; A2A is an optimisation.
@@ -267,4 +274,6 @@ def mediate_pull_a_side(
         query,
         project_scope,
         settings=settings,
+        timeout_s=timeout_s,
+        include_content=include_content,
     )
