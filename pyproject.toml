@@ -91,7 +91,7 @@ pdf = [
     "pymupdf>=1.24",
 ]
 docx = [
-    "python-docx>=1.1",
+    "python-docx>=1.2.0",
 ]
 dev = [
     # CVE-2025-71176 fixed in 9.0.3.
