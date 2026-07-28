@@ -688,7 +688,7 @@ def run_sync_import(
             mgr.sqlite.save(memory)
             if memory.status == MemoryStatus.PUBLISHED:
                 try:
-                    embedding = mgr.embedder.embed(mgr._embedding_text(memory))
+                    embedding = mgr.embed_for(memory)
                     mgr.vectors.upsert(
                         memory.id,
                         embedding,
