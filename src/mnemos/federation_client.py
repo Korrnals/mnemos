@@ -27,6 +27,7 @@ import os
 from typing import Any
 
 import httpx
+import pydantic
 
 from mnemos.config import PeerConfig, Settings
 from mnemos.federation_server import PullResult
@@ -210,7 +211,7 @@ def _parse_ok(resp: httpx.Response, peer_id: str) -> PullResult:
                 "peer_id": data.get("peer_id", peer_id),
             }
         )
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, pydantic.ValidationError) as exc:
         logger.warning(
             "federation_client: malformed 200 body from peer_id=%s: %s — fallback",
             peer_id,
