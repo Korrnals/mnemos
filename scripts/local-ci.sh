@@ -229,11 +229,44 @@ else
   skip_step 4 $TOTAL_STEPS "Security (bandit)" "bandit not installed (run: pip install bandit)"
 fi
 
+# pip-audit: PyPIService hardcodes https://pypi.org/pypi/<pkg>/<ver>/json
+# (not configurable via --index-url in installed-audit mode). In environments
+# where pypi.org is blocked by network policy, pip-audit times out and would
+# fail the entire local CI. We detect network errors (ReadTimeout /
+# ConnectionError / "Could not connect") and warn+skip, preserving the
+# security gate for online environments while not blocking offline dev.
+# Actual vulnerability findings (exit 1 without network-error signature)
+# still fail the gate — only network failures are skipped.
+# NOTE: run_step re-enables `set -e` before returning, so a non-zero return
+# would kill the script before we can inspect the error. We inline the step
+# logic here to keep control of the exit-code flow.
+echo ""
+echo "=== [5/$TOTAL_STEPS] Security (pip-audit) ==="
+PIP_AUDIT_LOG="$(mktemp)"
 set +e
-run_step 5 $TOTAL_STEPS "Security (pip-audit)" pip-audit --ignore-vuln CVE-2026-45829
-step_rc=$?
+pip-audit --ignore-vuln CVE-2026-45829 > "$PIP_AUDIT_LOG" 2>&1
+pip_audit_rc=$?
 set -e
-if [[ $step_rc -ne 0 ]]; then print_summary_and_exit; fi
+cat "$PIP_AUDIT_LOG"
+if [[ $pip_audit_rc -eq 0 ]]; then
+  record "Security (pip-audit)" "PASS"
+  echo "→ Security (pip-audit): PASS"
+  rm -f "$PIP_AUDIT_LOG"
+elif grep -qE "ReadTimeout|ConnectionError|timed out|Could not connect to PyPI|Max retries exceeded|handshake operation timed out" "$PIP_AUDIT_LOG"; then
+  # Network failure — warn+skip, do NOT fail the whole CI.
+  echo "⚠️ SKIP — Security (pip-audit): network timeout (pypi.org unreachable)"
+  echo "   pip-audit requires online PyPI access. Run in an online environment for a full audit."
+  echo "   Network error tail:"
+  tail -3 "$PIP_AUDIT_LOG" | sed 's/^/     /'
+  record "Security (pip-audit)" "SKIP"
+  rm -f "$PIP_AUDIT_LOG"
+else
+  # Actual failure (vulnerability found or other error) — fail the gate.
+  record "Security (pip-audit)" "FAIL"
+  echo "→ Security (pip-audit): FAIL (exit $pip_audit_rc)" >&2
+  rm -f "$PIP_AUDIT_LOG"
+  print_summary_and_exit
+fi
 
 set +e
 run_step 6 $TOTAL_STEPS "Test (pytest)" pytest tests/ -q --tb=short
