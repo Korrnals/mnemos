@@ -34,10 +34,9 @@ PAYLOAD="$TMPDIR/compact.json"
 
 echo "1. Seed peer B with a clean decision memory"
 MNEMOS_HOME="$HOME_B" "$MNEMOS_BIN" add \
-  --content "Smoke test: mnemos federation v2.12.0 verified via local roundtrip." \
+  "Smoke test: mnemos federation v2.12.0 verified via local roundtrip." \
   --tags "project:$PROJECT,agent:$AGENT_B,mnemos:decision" \
-  --title "Federation smoke seed" \
-  --project "$PROJECT" --agent "$AGENT_B" >/dev/null
+  --title "Federation smoke seed" >/dev/null
 
 echo "2. Export B's memories as a compact federation payload"
 MNEMOS_HOME="$HOME_B" "$MNEMOS_BIN" sync export \
