@@ -69,7 +69,15 @@ fi
 # realpath resolution (symlinks followed).
 _read_args=()
 _dest=""
-# shellcheck disable=SC2206  # intentional word-split on the original command
+# shellcheck disable=SC2206  # intentional word-split on the original command.
+# SC2206 limitation: this breaks on paths with spaces or shell metacharacters.
+# The attack path is closed by policy, not by the parser — the wrapper rewrites
+# the source path under INCOMING_DIR (see _source derivation below) and rejects
+# extra positionals, so a malicious SSH_ORIGINAL_COMMAND cannot inject tokens
+# that escape the whitelisted rsync options or the pinned destination. A
+# proper shell-quote-aware parser (xargs -n1 from a quoted string, or a Python
+# helper) is a future hardening option; low priority because the policy gates
+# already close the injection surface.
 _tokens=($SSH_ORIGINAL_COMMAND)
 _shift=0
 for (( _i=0; _i<${#_tokens[@]}; _i++ )); do

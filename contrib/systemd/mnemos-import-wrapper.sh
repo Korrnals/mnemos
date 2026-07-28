@@ -89,6 +89,12 @@ _source=""
 _passphrase_env_seen=0
 _dry_run_seen=0
 # shellcheck disable=SC2206
+# SC2206 limitation: breaks on paths with spaces or shell metacharacters.
+# The attack path is closed by policy — the wrapper rewrites the source path
+# under INCOMING_DIR and rejects extra positionals + unknown --* flags (B3
+# hardening), so token injection cannot escape the whitelisted import flags.
+# A shell-quote-aware parser is a future hardening option; low priority
+# because the policy gates already close the injection surface.
 _tokens=($SSH_ORIGINAL_COMMAND)
 # Drop the leading "mnemos sync import" — already validated above.
 _shift=3
