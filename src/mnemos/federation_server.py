@@ -263,7 +263,17 @@ class RateLimiter:
         self._lock = threading.Lock()
 
     def check(self, peer_id: str, *, limit_per_minute: int, now: float | None = None) -> bool:
-        """Return ``True`` if the peer is under its per-minute limit."""
+        """Return ``True`` if the peer is under its per-minute limit.
+
+        ``now`` is for access-log timestamps only and is **not** used for
+        the rate-window logic — :func:`handle_pull` may receive a
+        ``datetime``-derived ``now`` (a different time scale than
+        :func:`time.monotonic`), so mixing them in the same bucket would
+        skew the 60-second window. The limiter always uses
+        :func:`time.monotonic` internally for the bucket; the ``now``
+        parameter is kept only for direct unit-test injection of
+        monotonic-scale values.
+        """
         ts = now if now is not None else time.monotonic()
         with self._lock:
             return self._buckets[peer_id].check(now=ts, limit=limit_per_minute)
@@ -340,6 +350,11 @@ def handle_pull(
     7. **Trigger code selection** — see ``_select_trigger_code``.
     8. **Access log** — write an :class:`AccessLogEntry`.
     9. **Response** — :class:`PullResponse` with ``ttl_class="ephemeral"``.
+
+    Note on the ``now`` parameter: it is used **only for access-log
+    timestamps**. The :class:`RateLimiter` always uses
+    :func:`time.monotonic` internally for the rate window — do NOT
+    pass a ``datetime``-derived float to the limiter, the scales differ.
     """
     ts = now if now is not None else datetime.now(UTC)
     fed = settings.federation
