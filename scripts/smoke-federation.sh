@@ -34,7 +34,7 @@ PAYLOAD="$TMPDIR/compact.json"
 
 echo "1. Seed peer B with a clean decision memory"
 MNEMOS_HOME="$HOME_B" "$MNEMOS_BIN" add \
-  "Smoke test: mnemos federation v2.12.0 verified via local roundtrip." \
+  "Smoke test: mnemos federation v2.12.1 verified via local roundtrip." \
   --tags "project:$PROJECT,agent:$AGENT_B,mnemos:decision" \
   --title "Federation smoke seed" >/dev/null
 

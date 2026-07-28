@@ -60,7 +60,7 @@ The five trigger codes (`EXHAUSTIVE`, `ALREADY_EXHAUSTED`, `REFUSED`,
 
 | Requirement | Detail |
 | --- | --- |
-| mnemos version | v2.12.0+ on **both** hosts (the mediated-pull endpoint and the non-loopback startup guard both landed in the v2.12 line). |
+| mnemos version | v2.12.1+ on **both** hosts (the mediated-pull endpoint and the non-loopback startup guard both landed in the v2.12 line). |
 | Peer B config | `federation.enabled: true` (or `federation.shared_projects` non-empty — the server treats an empty `shared_projects` as federation disabled). |
 | Peer B peers | Peer A is configured in `federation.peers` on peer B with `bearer_token_env`, `allowed_projects`, `allowed_types`, `rate_limit_per_minute`. See [`federation.md`](federation.md) §1. |
 | SSH access | For the cross-host test, the operator has SSH access to peer B's host (used to forward peer B's loopback port to the laptop). |
