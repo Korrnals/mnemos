@@ -1,5 +1,19 @@
 name: Release
 
+# ─────────────────────────────────────────────────────────────────────────────
+# RELEASE = tag + GitHub release + container image (ALL THREE mandatory).
+# A release is NOT complete until ghcr.io/korrnals/mnemos:$VERSION is published.
+# If this workflow's build-push-image job fails, the release is incomplete —
+# fix the image build before declaring the release done.
+#
+# Workaround when GitHub Actions billing is locked:
+#   distrobox-host-exec podman login ghcr.io -u Korrnals --password-stdin <<< "$GH_CLASSIC_TOKEN"
+#   distrobox-host-exec podman build -t ghcr.io/korrnals/mnemos:$VERSION -t ghcr.io/korrnals/mnemos:latest -f Containerfile .
+#   distrobox-host-exec podman push ghcr.io/korrnals/mnemos:$VERSION
+#   distrobox-host-exec podman push ghcr.io/korrnals/mnemos:latest
+# See mnemos memory 36894588 for full procedure.
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Tag-only trigger — does not run on regular branch pushes or pull requests.
 on:
   push:
@@ -88,3 +102,18 @@ jobs:
 
       - name: Push latest tag
         run: buildah push $IMAGE:latest
+
+  release-complete:
+    name: Release complete (tag + release + image)
+    needs: [build-dist, build-push-image]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Verify both jobs succeeded
+        run: |
+          if [ "${{ needs.build-dist.result }}" != "success" ] || [ "${{ needs.build-push-image.result }}" != "success" ]; then
+            echo "ERROR: Release incomplete — build-dist=${{ needs.build-dist.result }}, build-push-image=${{ needs.build-push-image.result }}"
+            echo "Container image NOT published → release is NOT complete."
+            exit 1
+          fi
+          echo "✅ Release complete: GitHub release + container image both published."
