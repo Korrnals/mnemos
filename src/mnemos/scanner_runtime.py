@@ -13,6 +13,7 @@ it via ``scanner.enabled = False`` does not touch the manager.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from mnemos.scanner import BackgroundScanner
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
 
 _scanner: BackgroundScanner | None = None
+_scanner_lock = threading.Lock()
 
 
 def get_scanner(manager: MemoryManager) -> BackgroundScanner:
@@ -30,14 +32,21 @@ def get_scanner(manager: MemoryManager) -> BackgroundScanner:
     Subsequent calls return the cached instance, ignoring the
     ``manager`` argument (the scanner is bound to the first manager it
     saw, which is the process-wide singleton manager).
+
+    Thread-safe: the check-and-assign is guarded by a module-level
+    :class:`threading.Lock` so two concurrent startup paths (e.g. ASGI
+    lifespan + a CLI ``scanner run`` in the same process) cannot both
+    construct a scanner and leak the first.
     """
     global _scanner
-    if _scanner is None:
-        _scanner = BackgroundScanner(manager, manager.settings.scanner)
-    return _scanner
+    with _scanner_lock:
+        if _scanner is None:
+            _scanner = BackgroundScanner(manager, manager.settings.scanner)
+        return _scanner
 
 
 def reset_scanner() -> None:
     """Clear the cached singleton. Used by tests that swap configs."""
     global _scanner
-    _scanner = None
+    with _scanner_lock:
+        _scanner = None
