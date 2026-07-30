@@ -513,6 +513,84 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="mnemos_tags",
+            description=(
+                "Bulk tag operations across memories: rename a prefix, "
+                "remove tags, or add tags. Action-based dispatch — the "
+                "grouped pilot tool (mnemos #97). action='rename' is the "
+                "same as mnemos_tags_rename; 'remove' drops exact (or, "
+                "with wildcard=true, prefix-matched) tags; 'add' appends "
+                "tags to memories matching a project/agent filter."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["rename", "remove", "add"],
+                        "description": (
+                            "rename: from_prefix->to_prefix "
+                            "(use from_prefix/to_prefix). "
+                            "remove: drop tags matching the tags list "
+                            "(exact match by default). "
+                            "add: append tags to memories matching the "
+                            "project/agent filter."
+                        ),
+                    },
+                    "from_prefix": {
+                        "type": "string",
+                        "description": "Source prefix for rename (e.g. 'gcw:')",
+                    },
+                    "to_prefix": {
+                        "type": "string",
+                        "description": "Target prefix for rename (e.g. 'mnemos:')",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Tags to remove or add (exact match). "
+                            "Required for action='remove' and 'add'."
+                        ),
+                    },
+                    "subtypes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional whitelist filter (rename only)",
+                    },
+                    "wildcard": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Prefix match (remove) vs exact. rename is prefix-based by design."
+                        ),
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Preview without writing (default true)",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Scope to a project slug (optional)",
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Scope to an agent slug (optional)",
+                    },
+                    "invalid_subtypes_to_legacy": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "rename: rename invalid subtypes to "
+                            "<to_prefix>legacy instead of skipping them"
+                        ),
+                    },
+                },
+                "required": ["action"],
+            },
+        ),
+        Tool(
             name="mnemos_ingest_url",
             description="Fetch a web page, extract its content, and save to memory.",
             inputSchema={
@@ -1181,17 +1259,50 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     if name == "mnemos_list_tags":
         return mgr.list_tags()
 
-    # ── mnemos_tags_rename ──────────────────────────────────────────────────
-    if name == "mnemos_tags_rename":
-        return mgr.tags_rename(
-            from_prefix=args["from_prefix"],
-            to_prefix=args["to_prefix"],
-            subtypes=args.get("subtypes"),
-            dry_run=args.get("dry_run", True),
-            project=args.get("project"),
-            agent=args.get("agent"),
-            invalid_subtypes_to_legacy=args.get("invalid_subtypes_to_legacy", False),
-        )
+    # ── mnemos_tags (grouped: rename/remove/add) — pilot (mnemos #97) ───────
+    # Also serves as the backing dispatch for the legacy mnemos_tags_rename
+    # tool (non-breaking alias). When the LLM calls mnemos_tags_rename we
+    # inject action="rename" and fall through to the same handler.
+    if name in ("mnemos_tags", "mnemos_tags_rename"):
+        action = args.get("action")
+        if name == "mnemos_tags_rename":
+            # Alias: legacy rename tool routes to the grouped rename path.
+            # Force action='rename' AFTER merging args so a stray ``action``
+            # key in a legacy rename call cannot leak through to the dispatcher.
+            args = dict(args)
+            args["action"] = "rename"
+            action = "rename"
+        if action == "rename":
+            if not args.get("from_prefix") or not args.get("to_prefix"):
+                return {
+                    "error": "action='rename' requires 'from_prefix' and 'to_prefix' "
+                    "(both must end with ':', e.g. 'gcw:' -> 'mnemos:')"
+                }
+            return mgr.tags_rename(
+                from_prefix=args["from_prefix"],
+                to_prefix=args["to_prefix"],
+                subtypes=args.get("subtypes"),
+                dry_run=args.get("dry_run", True),
+                project=args.get("project"),
+                agent=args.get("agent"),
+                invalid_subtypes_to_legacy=args.get("invalid_subtypes_to_legacy", False),
+            )
+        if action == "remove":
+            return mgr.tags_remove(
+                tags=args.get("tags", []),
+                wildcard=args.get("wildcard", False),
+                dry_run=args.get("dry_run", True),
+                project=args.get("project"),
+                agent=args.get("agent"),
+            )
+        if action == "add":
+            return mgr.tags_add(
+                tags=args.get("tags", []),
+                dry_run=args.get("dry_run", True),
+                project=args.get("project"),
+                agent=args.get("agent"),
+            )
+        return {"error": f"unknown action {action!r}. Valid actions: 'rename', 'remove', 'add'"}
 
     # ── mnemos_stats ────────────────────────────────────────────────────────
     if name == "mnemos_stats":

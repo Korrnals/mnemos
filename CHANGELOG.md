@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes yet. See `## [2.12.1]` below for the most recent cut._
+_No unreleased changes yet._
+
+## [2.13.0] - 2026-07-30
+
+New user-visible feature release — the `mnemos_tags` MCP tool (pilot #97), the proof-of-concept for grouped MCP tool consolidation per ArchCom 2026-07-18 session 2. New MCP tool = MINOR bump per SemVer. Branch chain: `feat/97-mnemos-tags-pilot` → `dev-mcp-tags` (squash) → `release/2.13.0` → `main` (merge-commit + tag `v2.13.0`).
+
+### Added
+
+- **`mnemos_tags` MCP tool (pilot #97)** — grouped bulk tag operations via an `action: enum [rename, remove, add]` dispatch, the proof-of-concept for MCP tool consolidation. `action: enum` + flat properties was chosen over `oneOf`/discriminated unions (which MCP clients render unreliably) and over dot-notation, per ArchCom 2026-07-18 session 2 (verified in VS Code / Claude Desktop / Continue). `action="rename"` is identical to `mnemos_tags_rename`; `action="remove"` drops exact tags (or, with `wildcard=true`, prefix-matched tags); `action="add"` appends tags to memories matching a `project`/`agent` filter. All three go through a shared `_commit_tags` path plus an FTS5-safe `UPDATE`, so the external-content index stays consistent. Contract validation is **strict** for `remove`/`add` (a contract-breaking result — removing the last `project:`/`agent:`/`mnemos:` tag, or adding an invalid `mnemos:` subtype / malformed slug — is rejected per memory with an `errors` entry and the write is skipped) and **lax** for `rename` (a prefix swap preserves required tags). `dry_run=true` by default. `mnemos_tags_rename` is kept as a **non-breaking alias** (routes to `action="rename"`); no deprecation notice yet. The `rename` report also exposes a `changed` key (alias of `renamed`) for a uniform report shape across all three actions. Docs: EN + RU `tag-contract.md` (+ catalogue rows in `mcp-tools.md`).
 
 ## [2.12.1] - 2026-07-28
 
