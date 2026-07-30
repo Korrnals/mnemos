@@ -37,6 +37,7 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | [`mnemos_save_context`](#mnemos_save_context) | Сохранить контрольную точку сессии | нет (авто) |
 | [`mnemos_list_recent`](#mnemos_list_recent) | Список последних записей | нет |
 | [`mnemos_list_tags`](#mnemos_list_tags) | Список всех тегов с количеством | нет |
+| [`mnemos_tags`](#mnemos_tags) *(пилот #97)* | Сгруппированные операции над тегами: rename / remove / add (`action: enum`) | нет |
 | [`mnemos_ingest_url`](#mnemos_ingest_url) | Загрузить и сохранить веб-страницу | да |
 | [`mnemos_watch_start`](#mnemos_watch_start) | Запустить фоновый file watcher | нет |
 | [`mnemos_watch_stop`](#mnemos_watch_stop) | Остановить file watcher | нет |

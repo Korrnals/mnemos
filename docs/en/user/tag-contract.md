@@ -211,6 +211,7 @@ The report returned (and printed by the CLI) has the shape:
 {
   "scanned": 42,
   "renamed": 18,
+  "changed": 18,
   "skipped_invalid": 0,
   "errors": [],
   "dry_run": false,
@@ -218,6 +219,64 @@ The report returned (and printed by the CLI) has the shape:
   "to_prefix": "mnemos:"
 }
 ```
+
+---
+
+## Grouped tag tool: `mnemos_tags` (rename / remove / add)
+
+`mnemos_tags` is a **pilot** for consolidating MCP tools via an `action: enum`
+dispatch (mnemos #97). It groups three bulk tag operations behind one tool
+name, selected by the `action` parameter — **not** dot-notation and **not**
+`oneOf`/discriminated unions (which MCP clients do not render reliably).
+`action: enum` + flat properties was verified to work in VS Code, Claude
+Desktop, and Continue (ArchCom 2026-07-18 session 2).
+
+| Action | What it does | Key params |
+| --- | --- | --- |
+| `rename` | Same as `mnemos_tags_rename` (prefix → prefix) | `from_prefix`, `to_prefix`, `subtypes`, `invalid_subtypes_to_legacy` |
+| `remove` | Drop exact tags (or, with `wildcard=true`, prefix-matched tags) | `tags[]`, `wildcard` |
+| `add` | Append tags to every memory matching a `project`/`agent` filter | `tags[]`, `project`, `agent` |
+
+All actions accept `dry_run` (default `true`) and `project` / `agent` scope
+filters. Every mutation goes through the same shared commit path plus an
+FTS5-safe `UPDATE` (the `memories_au` trigger fires), so the external-content
+index stays consistent. The contract gate differs by action:
+
+- `rename` validates in **lax** mode — it is a prefix swap (e.g.
+  `gcw:` → `mnemos:`) that preserves required tags, so lax is the
+  non-corrupting mode there.
+- `remove` / `add` validate the resulting tag set in **strict** mode — a
+  contract-breaking result (e.g. removing the last `project:` tag, or adding
+  an invalid `mnemos:` subtype / a malformed slug) is rejected per memory with
+  an entry in `errors` and the write is **skipped** for that memory, rather
+  than corrupting the store.
+
+```
+mnemos_tags(action="rename", from_prefix="gcw:", to_prefix="mnemos:", dry_run=False)
+mnemos_tags(action="remove", tags=["severity:high"], dry_run=False)
+mnemos_tags(action="remove", tags=["gcw:"], wildcard=True, dry_run=False)
+mnemos_tags(action="add", tags=["severity:high"], project="mnemos", dry_run=False)
+```
+
+**Reports:** `rename` returns the same shape as `mnemos_tags_rename`
+(`scanned`, `renamed`, `changed`, `skipped_invalid`, …), where `changed`
+equals `renamed` and is added for a uniform report shape across all actions.
+`remove` returns `{action, scanned, changed, removed_tags, wildcard, errors, dry_run}`;
+`add` returns `{action, scanned, changed, added_tags, errors, dry_run}`.
+All three are idempotent (a repeat run reports `changed=0`).
+
+**Alias (non-breaking):** the legacy `mnemos_tags_rename` MCP tool still
+works — internally it routes to `mnemos_tags(action="rename")`, so existing
+callers and `.agent.md` references keep working unchanged. No deprecation
+notice is added yet (that follows one release after the pilot lands).
+
+**Edge cases:** `remove` and `add` are explicit — neither ever interprets an
+empty target as "magic". Because both validate the resulting set in strict
+mode, any contract-breaking result is rejected per memory with an entry in
+`errors` and the write is skipped for that memory: removing the last
+`project:`/`agent:`/`mnemos:` tag, adding a second `project:` tag, adding an
+invalid `mnemos:` subtype, adding a malformed slug, or adding a tag without a
+`:` prefix. `rename` stays lax (prefix swaps preserve required tags).
 
 ---
 

@@ -37,6 +37,7 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_save_context`](#mnemos_save_context) | Persist a session checkpoint | no (auto) |
 | [`mnemos_list_recent`](#mnemos_list_recent) | List recent entries | no |
 | [`mnemos_list_tags`](#mnemos_list_tags) | List all tags with counts | no |
+| [`mnemos_tags`](#mnemos_tags) *(pilot #97)* | Grouped bulk tag ops: rename / remove / add (`action: enum`) | no |
 | [`mnemos_ingest_url`](#mnemos_ingest_url) | Fetch and save a web page | yes |
 | [`mnemos_watch_start`](#mnemos_watch_start) | Start a background file watcher | no |
 | [`mnemos_watch_stop`](#mnemos_watch_stop) | Stop the file watcher | no |

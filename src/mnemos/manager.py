@@ -613,6 +613,87 @@ class MemoryManager:
         self.sqlite.update_fields(memory_id, tags=new_tags)
         return report
 
+    def _commit_tags(
+        self,
+        mem: Memory,
+        new_tags: list[str],
+        *,
+        dry_run: bool,
+        strict: bool = False,
+    ) -> tuple[bool, str | None]:
+        """Validate and (unless ``dry_run``) persist a new tag set for one memory.
+
+        Shared commit path for ``tags_rename`` / ``tags_remove`` / ``tags_add``
+        (the grouped ``mnemos_tags`` MCP tool). Keeping the contract check and
+        the ``update_fields`` write in one place guarantees every tag mutation
+        goes through the same FTS5-safe ``UPDATE`` (the ``memories_au`` trigger
+        fires) and the same ``validate_tag_contract`` gate.
+
+        Args:
+            mem: The memory row currently being processed.
+            new_tags: The desired tag list for ``mem``.
+            dry_run: When ``True`` nothing is written; the caller still counts
+                the memory as "would change" so the report reflects intent.
+            strict: Contract-validation mode for the resulting tag set.
+
+                ``False`` (default, used by ``tags_rename``) — *lax*: a missing
+                ``project:`` / ``agent:`` / ``mnemos:`` tag, an invalid
+                ``mnemos:`` subtype, or a malformed slug is auto-patched in the
+                returned list rather than rejected. Rename is a prefix swap
+                (``gcw:`` → ``mnemos:``) that preserves required tags, so lax is
+                the correct, non-corrupting mode there.
+
+                ``True`` (used by ``tags_remove`` / ``tags_add``) — *strict*:
+                any contract violation (including the soft ones lax would
+                patch) raises ``TagContractError``, which this method reports as
+                a per-memory error and skips the write. ``remove`` / ``add`` are
+                explicit mutations, so a contract-breaking result (e.g. removing
+                the last ``project:``, or adding an invalid ``mnemos:`` subtype)
+                is rejected per memory instead of corrupting the store.
+
+        Returns:
+            ``(changed, error)``. ``changed`` is ``True`` when ``new_tags``
+            differs from ``mem.tags`` AND passes the contract gate (and, when
+            not ``dry_run``, the ``UPDATE`` succeeded). ``error`` is the
+            ``"<id>: <reason>"`` string to append to the report's ``errors``
+            list when validation or the write raised; ``None`` otherwise.
+
+        Note:
+            Re-derives the denormalised ``project`` / ``agent`` columns from
+            the new tag set so a prefix change that touched ``project:`` /
+            ``agent:`` keeps the denormalised columns aligned with the tags
+            (otherwise per-project / per-agent queries drift). For the common
+            ``gcw:`` → ``mnemos:`` rename these are unchanged.
+        """
+        from mnemos.models import validate_tag_contract
+
+        if new_tags == mem.tags:
+            return False, None
+        try:
+            validate_tag_contract(new_tags, strict=strict)
+        except Exception as exc:  # report, don't crash the batch
+            return False, f"{mem.id}: {exc}"
+        if dry_run:
+            return True, None
+        new_project = next(
+            (t[len("project:") :] for t in new_tags if t.startswith("project:")),
+            mem.project,
+        )
+        new_agent = next(
+            (t[len("agent:") :] for t in new_tags if t.startswith("agent:")),
+            mem.agent,
+        )
+        try:
+            self.sqlite.update_fields(
+                mem.id,
+                tags=new_tags,
+                project=new_project,
+                agent=new_agent,
+            )
+        except Exception as exc:  # record, continue batch
+            return False, f"{mem.id}: {exc}"
+        return True, None
+
     def tags_rename(
         self,
         from_prefix: str,
@@ -650,9 +731,12 @@ class MemoryManager:
                 to ``<to_prefix>legacy`` instead.
 
         Returns:
-            ``{"scanned": N, "renamed": N, "skipped_invalid": N,
-            "errors": [...]}``. In dry-run mode ``renamed`` reflects what
-            *would* be renamed; nothing is written.
+            ``{"scanned": N, "renamed": N, "changed": N, "skipped_invalid": N,
+            "errors": [...]}``. ``changed`` mirrors ``renamed`` so every
+            ``mnemos_tags`` action (rename/remove/add) exposes a ``changed``
+            key for a uniform report shape; ``renamed`` is kept for back-compat
+            with existing ``mnemos_tags_rename`` callers. In dry-run mode
+            ``renamed`` reflects what *would* be renamed; nothing is written.
 
         Idempotency:
             A second run with the same arguments returns ``renamed=0``
@@ -672,12 +756,14 @@ class MemoryManager:
             trigger) carries tag-filtered queries. If exact tag-vector
             alignment is required, run ``mnemos reindex`` afterwards.
         """
-        from mnemos.models import MNEMOS_TAG_SUBTYPES, validate_tag_contract
+        from mnemos.models import MNEMOS_TAG_SUBTYPES
         from mnemos.traces import TraceRecorder
 
         report: dict[str, Any] = {
+            "action": "rename",
             "scanned": 0,
             "renamed": 0,
+            "changed": 0,  # alias of renamed for a uniform report shape
             "skipped_invalid": 0,
             "errors": [],
             "dry_run": dry_run,
@@ -734,40 +820,19 @@ class MemoryManager:
                 if not modified:
                     continue
 
-                # Re-validate the resulting tag set — must pass the contract.
-                try:
-                    validate_tag_contract(new_tags, strict=False)
-                except Exception as exc:  # report, don't crash the batch
-                    report["errors"].append(f"{mem.id}: {exc}")
-                    continue
+                # Shared commit: contract check + FTS5-safe UPDATE. Both the
+                # grouped ``mnemos_tags`` tool (action=rename alias) and the
+                # legacy ``mnemos_tags_rename`` tool route through here, so
+                # the behaviour is byte-identical.
+                changed, err = self._commit_tags(mem, new_tags, dry_run=dry_run)
+                if err:
+                    report["errors"].append(err)
+                if changed:
+                    report["renamed"] += 1
 
-                report["renamed"] += 1
-                if dry_run:
-                    continue
-
-                # Re-derive denormalised project/agent from the new tag set.
-                # For gcw:→mnemos: these are unchanged (project:/agent: are
-                # not prefixed by gcw:), but the method is generic — a
-                # prefix change that touched project:/agent: must update the
-                # denormalised columns too, otherwise per-project / per-agent
-                # queries drift from the tags.
-                new_project = next(
-                    (t[len("project:") :] for t in new_tags if t.startswith("project:")),
-                    mem.project,
-                )
-                new_agent = next(
-                    (t[len("agent:") :] for t in new_tags if t.startswith("agent:")),
-                    mem.agent,
-                )
-                try:
-                    self.sqlite.update_fields(
-                        mem.id,
-                        tags=new_tags,
-                        project=new_project,
-                        agent=new_agent,
-                    )
-                except Exception as exc:  # record, continue batch
-                    report["errors"].append(f"{mem.id}: {exc}")
+        # ``changed`` mirrors ``renamed`` so the grouped ``mnemos_tags`` tool
+        # exposes a uniform ``changed`` key across rename/remove/add.
+        report["changed"] = report["renamed"]
 
         # Audit trail — one trace row per rename call.
         with recorder.record(
@@ -780,6 +845,200 @@ class MemoryManager:
                 f"renamed={report['renamed']} skipped={report['skipped_invalid']}"
             )[:200]
 
+        return report
+
+    def tags_remove(
+        self,
+        tags: list[str],
+        *,
+        wildcard: bool = False,
+        dry_run: bool = True,
+        project: str | None = None,
+        agent: str | None = None,
+    ) -> dict[str, Any]:
+        """Remove tags from memories. Explicit removal — never a magic empty target.
+
+        Backs the ``mnemos_tags`` MCP tool with ``action="remove"``. Each tag
+        in ``tags`` is matched against every memory's tag set; matches are
+        dropped. With ``wildcard=False`` (default) the match is exact; with
+        ``wildcard=True`` each entry is treated as a prefix and any tag
+        starting with it is removed (e.g. ``["gcw:"]`` strips every ``gcw:*``
+        tag without rewriting them).
+
+        Args:
+            tags: Tags to remove. Exact match by default; prefix match when
+                ``wildcard=True``.
+            wildcard: Prefix match (``True``) vs exact match (``False``, default).
+            dry_run: Preview only when ``True`` (default).
+            project / agent: Scope the scan to a single project / agent slug.
+
+        Returns:
+            ``{action, scanned, changed, removed_tags, wildcard, errors,
+            dry_run}``. ``changed`` counts memories whose tag set actually
+            changed and (when not ``dry_run``) was written.
+
+        Safety:
+            Goes through ``_commit_tags`` → ``SQLiteStore.update_fields``
+            (plain ``UPDATE``), so the FTS5 ``AFTER UPDATE`` trigger fires and
+            the external-content index stays consistent — same path as
+            ``tags_rename``. The resulting tag set is validated in **strict**
+            mode: removing the last ``project:`` / ``agent:`` / ``mnemos:`` tag
+            (or otherwise breaking the contract) is rejected per memory with an
+            error entry instead of corrupting the store. Idempotent: a second
+            run reports ``changed=0``.
+        """
+        from mnemos.traces import TraceRecorder
+
+        report: dict[str, Any] = {
+            "action": "remove",
+            "scanned": 0,
+            "changed": 0,
+            "removed_tags": list(tags),
+            "wildcard": wildcard,
+            "errors": [],
+            "dry_run": dry_run,
+        }
+        if not tags:
+            report["errors"].append("tags must be a non-empty list")
+            return report
+
+        matchers = list(tags)
+        page_size = 500
+        offset = 0
+        recorder = TraceRecorder(store=self.sqlite)
+
+        def _is_match(tag: str) -> bool:
+            if wildcard:
+                return any(tag.startswith(m) for m in matchers)
+            return tag in matchers
+
+        while True:
+            batch = self.sqlite.list_all(
+                limit=page_size, offset=offset, project=project, agent=agent
+            )
+            if not batch:
+                break
+            offset += len(batch)
+            for mem in batch:
+                report["scanned"] += 1
+                new_tags = [t for t in mem.tags if not _is_match(t)]
+                # Strict gate: removing the last project:/agent:/mnemos: tag
+                # (or otherwise breaking the contract) is rejected per memory
+                # with an error entry instead of corrupting the store. The
+                # write is skipped for that memory; the batch continues.
+                changed, err = self._commit_tags(mem, new_tags, dry_run=dry_run, strict=True)
+                if err:
+                    report["errors"].append(err)
+                if changed:
+                    report["changed"] += 1
+
+        with recorder.record(
+            task_label="tags_remove",
+            project=project or "*",
+            step="tags_remove",
+        ) as trace:
+            trace.rationale_summary = (
+                f"remove tags={tags} wildcard={wildcard} dry_run={dry_run} "
+                f"changed={report['changed']}"
+            )[:200]
+        return report
+
+    def tags_add(
+        self,
+        tags: list[str],
+        *,
+        dry_run: bool = True,
+        project: str | None = None,
+        agent: str | None = None,
+    ) -> dict[str, Any]:
+        """Append tags to every memory matching the project/agent filter.
+
+        Backs the ``mnemos_tags`` MCP tool with ``action="add"``. Each tag in
+        ``tags`` is appended (if not already present) to every memory returned
+        by the ``project`` / ``agent`` filter. When neither filter is set the
+        operation spans all memories — callers should scope it deliberately.
+
+        Args:
+            tags: Tags to append. Each must have a prefix shape (contain
+                ``":"``); the resulting full tag set is re-validated per
+                memory via ``_commit_tags`` so adding a duplicate ``project:``
+                (or any contract-breaking tag) errors on that memory instead
+                of corrupting the store.
+            dry_run: Preview only when ``True`` (default).
+            project / agent: Scope the scan to a single project / agent slug.
+
+        Returns:
+            ``{action, scanned, changed, added_tags, errors, dry_run}``.
+            ``changed`` counts memories whose tag set actually changed and
+            (when not ``dry_run``) was written.
+
+        Safety:
+            Same ``_commit_tags`` → ``update_fields`` path as rename/remove,
+            so FTS5 stays consistent. The full resulting set is validated in
+            **strict** mode before any write: an added tag that breaks the
+            contract (e.g. an invalid ``mnemos:`` subtype or a malformed slug)
+            is rejected per memory with an error entry instead of corrupting
+            the store.
+        """
+        from mnemos.traces import TraceRecorder
+
+        report: dict[str, Any] = {
+            "action": "add",
+            "scanned": 0,
+            "changed": 0,
+            "added_tags": list(tags),
+            "errors": [],
+            "dry_run": dry_run,
+        }
+        if not tags:
+            report["errors"].append("tags must be a non-empty list")
+            return report
+
+        to_add = [t for t in tags if t]
+        # Light structural pre-flight: each added tag must carry a prefix.
+        # The full per-memory contract check (exactly one project:/agent:,
+        # etc.) is delegated to _commit_tags on the resulting set.
+        for t in to_add:
+            if ":" not in t:
+                report["errors"].append(f"tag must have a prefix (contain ':'): {t!r}")
+                return report
+
+        page_size = 500
+        offset = 0
+        recorder = TraceRecorder(store=self.sqlite)
+
+        while True:
+            batch = self.sqlite.list_all(
+                limit=page_size, offset=offset, project=project, agent=agent
+            )
+            if not batch:
+                break
+            offset += len(batch)
+            for mem in batch:
+                report["scanned"] += 1
+                new_tags = list(mem.tags)
+                for t in to_add:
+                    if t not in new_tags:
+                        new_tags.append(t)
+                # Strict gate: a tag whose addition breaks the contract (e.g.
+                # an invalid mnemos: subtype, a malformed slug, or a tag that
+                # leaves the set without exactly one project:/agent:) is
+                # rejected per memory with an error entry; the write is skipped
+                # for that memory and the batch continues.
+                changed, err = self._commit_tags(mem, new_tags, dry_run=dry_run, strict=True)
+                if err:
+                    report["errors"].append(err)
+                if changed:
+                    report["changed"] += 1
+
+        with recorder.record(
+            task_label="tags_add",
+            project=project or "*",
+            step="tags_add",
+        ) as trace:
+            trace.rationale_summary = (
+                f"add tags={tags} dry_run={dry_run} changed={report['changed']}"
+            )[:200]
         return report
 
     def search_stats(self) -> dict[str, Any]:
