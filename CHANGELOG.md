@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14.1] - 2026-07-31
+
+Docs-only patch — records the Architectural Committee decision on transport-level replay protection (ADR-0016, mnemos #88 point #4). No code, no API, no behavior change.
+
 ### Docs
 
 - **ADR-0016 — transport-level replay protection committee decision**. Recorded the Architectural Committee decision (2026-07-31) to reject a separate transport-level replay-protection layer (nonce + timestamp + HMAC) on top of mTLS, retaining mTLS-only replay protection (TLS 1.3 AEAD + anti-replay window + pinned SPKI + per-peer ACL + audit log). Decision `82a3608b` (closes #88 point #4); F10 residual risk confirmed accepted, unchanged.
