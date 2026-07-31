@@ -497,6 +497,128 @@ def tags_rename(
             console.print(f"  ... ({len(report['errors']) - 20} more)")
 
 
+# ── workflow (#96) ────────────────────────────────────────────────────────────
+#
+# Thin CLI wrappers over MemoryManager.workflow_set / workflow_get /
+# workflow_history. The state machine + 5 guardrails are enforced server-side
+# in the manager, so these commands only translate ValueError (guardrail /
+# state-machine violation) into a red error line + exit 1 — mirroring how the
+# MCP tool and REST layer surface the same violations.
+
+_workflow_app = typer.Typer(
+    name="workflow",
+    help=(
+        "Manage the workflow lifecycle of a memory "
+        "(states: open, in-progress, blocked, resolved, done, withdrawn)."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(_workflow_app, name="workflow")
+
+
+@_workflow_app.command(name="get")
+def workflow_get(
+    memory_id: Annotated[str, typer.Argument(help="Target memory id.")],
+    config: str = ConfigOption,
+) -> None:
+    """Show the current workflow status + lock owner for a memory."""
+
+    mgr = get_manager(config)
+    result = mgr.workflow_get(memory_id)
+    if result is None:
+        console.print(f"[red]✗[/red] Memory {memory_id!r} not found")
+        raise typer.Exit(1)
+
+    table = Table(title=f"Workflow — {memory_id}", show_header=False)
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_row("workflow_status", result["workflow_status"])
+    table.add_row("locked_by", str(result["locked_by"]))
+    table.add_row("locked_at", str(result["locked_at"]))
+    console.print(table)
+
+
+@_workflow_app.command(name="set")
+def workflow_set(
+    memory_id: Annotated[str, typer.Argument(help="Target memory id.")],
+    to: Annotated[
+        str,
+        typer.Option(
+            "--to",
+            help="Target status: open|in-progress|blocked|resolved|done|withdrawn.",
+        ),
+    ],
+    actor: Annotated[
+        str,
+        typer.Option("--actor", help="Free-form actor id (Phase 1 weak identity)."),
+    ],
+    reason: Annotated[
+        str, typer.Option("--reason", help="Human-readable reason. Required with --force.")
+    ] = "",
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Override a lock held by another actor (requires --reason)."),
+    ] = False,
+    config: str = ConfigOption,
+) -> None:
+    """Transition a memory's workflow status through the server-enforced state machine."""
+
+    mgr = get_manager(config)
+    try:
+        result = mgr.workflow_set(memory_id, to, actor=actor, reason=reason, force=force)
+    except ValueError as exc:
+        console.print(f"[red]✗[/red] {exc}")
+        raise typer.Exit(1) from None
+
+    table = Table(title=f"Workflow transition — {memory_id}", show_header=False)
+    table.add_column("Field", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_row("from_status", str(result["from_status"]))
+    table.add_row("to_status", result["to_status"])
+    table.add_row("actor", result["actor"])
+    table.add_row("locked_by", str(result["locked_by"]))
+    table.add_row("force_used", str(result["force_used"]))
+    table.add_row("stale_lock_released", str(result["stale_lock_released"]))
+    table.add_row("idempotent", str(result["idempotent"]))
+    table.add_row("recorded", str(result["recorded"]))
+    if result["terminal"]:
+        table.add_row("terminal", "[yellow]yes — no further transitions[/yellow]")
+    console.print(table)
+
+
+@_workflow_app.command(name="history")
+def workflow_history(
+    memory_id: Annotated[str, typer.Argument(help="Target memory id.")],
+    limit: Annotated[int, typer.Option("--limit", help="Max rows to show (newest first).")] = 50,
+    config: str = ConfigOption,
+) -> None:
+    """Show the workflow transition audit log for a memory (newest first)."""
+
+    mgr = get_manager(config)
+    rows = mgr.workflow_history(memory_id, limit=limit)
+    if not rows:
+        console.print(f"[yellow]No workflow transitions recorded for {memory_id!r}.[/yellow]")
+        return
+
+    table = Table(title=f"Workflow history — {memory_id}")
+    table.add_column("Time (UTC)", style="cyan")
+    table.add_column("From", style="white")
+    table.add_column("To", style="green")
+    table.add_column("Actor", style="white")
+    table.add_column("Force", style="yellow")
+    table.add_column("Reason", style="white")
+    for row in rows:
+        table.add_row(
+            row.get("created_at", ""),
+            str(row.get("from_status")),
+            str(row.get("to_status")),
+            str(row.get("actor")),
+            "yes" if row.get("force_used") else "",
+            str(row.get("reason") or ""),
+        )
+    console.print(table)
+
+
 # ── stats ──────────────────────────────────────────────────────────────────────
 
 

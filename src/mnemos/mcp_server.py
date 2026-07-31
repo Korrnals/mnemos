@@ -888,6 +888,78 @@ async def list_tools() -> list[Tool]:
                 "required": ["source_path"],
             },
         ),
+        Tool(
+            name="mnemos_workflow",
+            description=(
+                "Workflow lifecycle management for a memory (mnemos #96). "
+                "Separates mutable workflow state (open/in-progress/blocked/"
+                "resolved/done/withdrawn) from append-only tag classification. "
+                "Action-based dispatch — same pattern as mnemos_tags. "
+                "'set' transitions the status through a server-enforced state "
+                "machine (blocked->done is forbidden; terminal states are final), "
+                "acquires/releases a lock, and records every transition in an "
+                "audit log. 'get' returns the current status + lock owner. "
+                "'history' returns the audit trail. Guardrails: stale-lock "
+                "auto-release (>24h), idempotent transitions (no-op on same "
+                "status), force-unlock (requires reason), per-memory rate limit."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["set", "get", "history"],
+                        "description": (
+                            "set: transition status (requires memory_id, to, actor). "
+                            "get: return current status + lock. "
+                            "history: return the audit trail."
+                        ),
+                    },
+                    "memory_id": {
+                        "type": "string",
+                        "description": "Target memory id.",
+                    },
+                    "to": {
+                        "type": "string",
+                        "enum": [
+                            "open",
+                            "in-progress",
+                            "blocked",
+                            "resolved",
+                            "done",
+                            "withdrawn",
+                        ],
+                        "description": (
+                            "Target status (action='set' only). blocked->done is "
+                            "forbidden — a blocked memory must resolve first."
+                        ),
+                    },
+                    "actor": {
+                        "type": "string",
+                        "description": (
+                            "Free-form actor id (Phase 1 weak identity — NO "
+                            "authn/authz). Required for action='set'."
+                        ),
+                    },
+                    "reason": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Human-readable reason. Required when force=true.",
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Override a lock held by another actor (requires reason).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Max history rows (action='history' only).",
+                    },
+                },
+                "required": ["action", "memory_id"],
+            },
+        ),
     ]
 
 
@@ -1303,6 +1375,47 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
                 agent=args.get("agent"),
             )
         return {"error": f"unknown action {action!r}. Valid actions: 'rename', 'remove', 'add'"}
+
+    # ── mnemos_workflow (grouped: set/get/history) — mnemos #96 ────────────
+    # Thin wrapper over MemoryManager.workflow_set / workflow_get /
+    # workflow_history. The state machine + 5 guardrails are enforced
+    # server-side in the manager, so this dispatch only translates
+    # ValueError (guardrail violation) into a clean error dict — mirroring
+    # how mnemos_tags surfaces validation problems.
+    if name == "mnemos_workflow":
+        action = args.get("action")
+        memory_id = args.get("memory_id")
+        if not memory_id:
+            return {"error": "memory_id is required (the target memory id)"}
+        if action == "set":
+            to = args.get("to")
+            actor = args.get("actor")
+            if not to:
+                return {"error": "action='set' requires 'to' (target workflow status)"}
+            if not actor:
+                return {"error": "action='set' requires 'actor' (free-form actor id)"}
+            try:
+                return mgr.workflow_set(
+                    memory_id,
+                    to,
+                    actor=actor,
+                    reason=args.get("reason", ""),
+                    force=bool(args.get("force", False)),
+                )
+            except ValueError as exc:
+                # Guardrail / state-machine violation — surface verbatim.
+                return {"error": str(exc)}
+        if action == "get":
+            result = mgr.workflow_get(memory_id)
+            if result is None:
+                return {"error": f"memory {memory_id!r} not found"}
+            return result
+        if action == "history":
+            return {
+                "memory_id": memory_id,
+                "history": mgr.workflow_history(memory_id, limit=int(args.get("limit", 50))),
+            }
+        return {"error": f"unknown action {action!r}. Valid actions: 'set', 'get', 'history'"}
 
     # ── mnemos_stats ────────────────────────────────────────────────────────
     if name == "mnemos_stats":

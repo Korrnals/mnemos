@@ -315,6 +315,16 @@ class Memory(BaseModel):
     filter_stats: dict[str, Any] | None = None  # token + dedup reduction stats
     filter_version: str | None = None  # filter pipeline version used
 
+    # ── Workflow lifecycle (mnemos #96) ────────────────────────────────────
+    # Read-only projection of the workflow state. Writes go through
+    # MemoryManager.workflow_set → SQLiteStore.set_workflow_status so the
+    # state machine cannot be bypassed by a generic update. ``None`` on
+    # legacy rows created before the migration and on freshly-created
+    # memories (defaults to ``open`` when read via workflow APIs).
+    workflow_status: str | None = None
+    locked_by: str | None = None
+    locked_at: str | None = None
+
     # ── Timestamps ──────────────────────────────────────────────────────────
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

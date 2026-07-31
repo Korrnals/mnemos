@@ -92,7 +92,15 @@ def test_all_expected_commands_are_registered() -> None:
 
 def test_all_expected_groups_are_registered() -> None:
     """Every public subcommand group must be registered on the Typer app."""
-    expected_groups = {"tags", "migrate", "auth", "integration", "completion", "doctor"}
+    expected_groups = {
+        "tags",
+        "migrate",
+        "auth",
+        "integration",
+        "completion",
+        "doctor",
+        "workflow",
+    }
     registered_groups = {getattr(g, "name", None) for g in app.registered_groups}
     assert expected_groups <= registered_groups, (
         f"missing groups: {expected_groups - registered_groups}"
@@ -712,3 +720,103 @@ class TestCliSearchFlags:
         assert "RawTitleBeta" in result.output
         assert "PubTitleGamma" not in result.output
         assert "ArchTitleDelta" not in result.output
+
+
+# ── mnemos workflow (#96) ────────────────────────────────────────────────────
+
+
+class TestWorkflowCli:
+    """`mnemos workflow get|set|history` — thin wrappers over the manager.
+
+    The state machine + 5 guardrails are enforced in the manager (covered by
+    test_workflow.py). These tests verify the CLI plumbing: the commands run,
+    surface the manager result, and translate a ValueError into exit 1 + a
+    red error line.
+    """
+
+    @staticmethod
+    def _add_memory(isolated_config: Path) -> str:
+        from mnemos.cli._manager import get_manager
+        from mnemos.models import MemoryCreate
+
+        mgr = get_manager(str(isolated_config))
+        mem = mgr.add(
+            MemoryCreate(
+                content="workflow cli smoke",
+                tags=["project:cli-smoke", "agent:cli", "mnemos:test"],
+            )
+        )
+        return mem.id
+
+    def test_get_defaults_to_open(self, isolated_config: Path) -> None:
+        """`workflow get` on a fresh memory normalises unset status to open."""
+        memory_id = self._add_memory(isolated_config)
+        result = runner.invoke(app, ["workflow", "get", memory_id])
+        assert result.exit_code == 0, result.output
+        assert "workflow_status" in result.output
+        assert "open" in result.output
+
+    def test_get_missing_memory_exits_1(self, isolated_config: Path) -> None:
+        """`workflow get` on an unknown id → red error + exit 1."""
+        result = runner.invoke(app, ["workflow", "get", "does-not-exist"])
+        assert result.exit_code == 1, result.output
+        assert "not found" in result.output
+
+    def test_set_transitions_and_records(self, isolated_config: Path) -> None:
+        """`workflow set --to in-progress` records the transition."""
+        from mnemos.cli._manager import get_manager
+
+        memory_id = self._add_memory(isolated_config)
+        result = runner.invoke(
+            app,
+            [
+                "workflow",
+                "set",
+                memory_id,
+                "--to",
+                "in-progress",
+                "--actor",
+                "cli-tester",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "in-progress" in result.output
+        assert "recorded" in result.output.lower()
+
+        # The manager reflects the transition.
+        mgr = get_manager(str(isolated_config))
+        assert mgr.workflow_get(memory_id)["workflow_status"] == "in-progress"
+
+    def test_set_forbidden_transition_exits_1(self, isolated_config: Path) -> None:
+        """A forbidden edge (blocked → done) surfaces as exit 1 + the reason."""
+        from mnemos.cli._manager import get_manager
+
+        memory_id = self._add_memory(isolated_config)
+        mgr = get_manager(str(isolated_config))
+        # Drive the memory into blocked via the manager (one valid edge at a
+        # time): open → in-progress → blocked.
+        mgr.workflow_set(memory_id, "in-progress", actor="cli-tester")
+        mgr.workflow_set(memory_id, "blocked", actor="cli-tester")
+
+        result = runner.invoke(
+            app,
+            ["workflow", "set", memory_id, "--to", "done", "--actor", "cli-tester"],
+        )
+        assert result.exit_code == 1, result.output
+        assert "blocked" in result.output  # the forbidden-edge message names it
+
+    def test_history_empty_and_after_transition(self, isolated_config: Path) -> None:
+        """`workflow history` is empty for a fresh memory, populated after a set."""
+        memory_id = self._add_memory(isolated_config)
+
+        empty = runner.invoke(app, ["workflow", "history", memory_id])
+        assert empty.exit_code == 0, empty.output
+        assert "No workflow transitions" in empty.output
+
+        runner.invoke(
+            app,
+            ["workflow", "set", memory_id, "--to", "in-progress", "--actor", "cli-tester"],
+        )
+        populated = runner.invoke(app, ["workflow", "history", memory_id])
+        assert populated.exit_code == 0, populated.output
+        assert "in-progress" in populated.output

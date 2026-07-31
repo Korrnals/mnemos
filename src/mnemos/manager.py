@@ -12,7 +12,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,23 @@ class _SSRFRejectionError(Exception):
     def __init__(self, original: ValueError) -> None:
         super().__init__(str(original))
         self.original = original
+
+
+def _lock_is_stale(locked_at_iso: str, threshold_hours: int) -> bool:
+    """Return True if a workflow lock is older than ``threshold_hours``.
+
+    Used by guardrail 2 (stale-lock auto-release). Tolerant of malformed
+    timestamps — a value that fails to parse is treated as NOT stale so a
+    corrupt ``locked_at`` cannot enable a silent takeover.
+    """
+    try:
+        locked_at = datetime.fromisoformat(locked_at_iso)
+    except ValueError:
+        return False
+    if locked_at.tzinfo is None:
+        locked_at = locked_at.replace(tzinfo=UTC)
+    age = datetime.now(UTC) - locked_at
+    return age > timedelta(hours=threshold_hours)
 
 
 class MemoryManager:
@@ -306,6 +324,320 @@ class MemoryManager:
             self.vault.delete_file(memory.file_path)
         self.vectors.delete(memory_id)
         return self.sqlite.delete(memory_id)
+
+    # ── Workflow lifecycle (mnemos #96) ────────────────────────────────────
+    #
+    # Server-side enforcement of the workflow state machine. The MCP tool
+    # (mnemos_workflow) and the REST endpoints (/memories/{id}/workflow) are
+    # thin wrappers over these three methods — the validation MUST live here
+    # so no caller can bypass the state machine or the 5 guardrails:
+    #   1. Audit log       — every transition recorded in memory_workflow_history
+    #   2. Stale-lock      — a lock older than the threshold auto-releases
+    #   3. Idempotent      — to == current is a no-op (skip, not error)
+    #   4. Force-unlock    — force=true overrides another actor's lock
+    #   5. Rate limit      — max N transitions per memory per minute
+    #
+    # Lock model: a lock (locked_by + locked_at) is acquired on transition
+    # to in-progress, persists through blocked/resolved (same actor still
+    # owns the work), and is released on transition to open/done/withdrawn.
+    # A different actor must either wait for stale-lock release or use force.
+
+    def workflow_set(
+        self,
+        memory_id: str,
+        to: str,
+        *,
+        actor: str,
+        reason: str = "",
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Transition a memory's workflow status, enforcing the state machine.
+
+        Args:
+            memory_id: Target memory.
+            to: Target ``WorkflowStatus`` value (validated against the enum).
+            actor: Free-form actor id (Phase 1 weak identity — NO authn/authz).
+            reason: Optional human-readable reason; **required when
+                ``force=True``** (guardrail 4).
+            force: When True, override a lock held by another actor
+                (guardrail 4). ``force_used=1`` is recorded in the audit log.
+
+        Returns:
+            Result dict describing the transition (see ``_workflow_result``).
+
+        Raises:
+            ValueError: On any guardrail violation (unknown status, locked by
+                another actor without force, force without reason, rate-limit
+                exceeded) or when the memory does not exist (re-checked at the
+                current-state read to close the get()/get_workflow_status()
+                TOCTOU window). The caller (MCP / REST) maps these to the
+                appropriate client error.
+
+        Audit note:
+            Rejected transitions (forbidden edge, lock conflict, rate-limit,
+            force-without-reason) write **no** audit row — the audit log
+            records state changes, not attempts. Only recorded transitions
+            (and the idempotent no-op short-circuit, which also writes
+            nothing) touch the history table.
+        """
+        from mnemos.workflow import WorkflowStatus, validate_transition
+
+        # ── Input validation ──────────────────────────────────────────────
+        if not actor or not actor.strip():
+            raise ValueError("actor is required (Phase 1 weak identity — free-form string)")
+        actor = actor.strip()
+        try:
+            to_status = WorkflowStatus(to)
+        except ValueError as exc:
+            valid = sorted(s.value for s in WorkflowStatus)
+            raise ValueError(f"invalid workflow status {to!r}. Valid: {valid}") from exc
+
+        if force and not (reason and reason.strip()):
+            raise ValueError("reason is required when force=True (guardrail 4: force-unlock)")
+
+        # ── Memory existence ──────────────────────────────────────────────
+        if self.sqlite.get(memory_id) is None:
+            raise ValueError(f"memory {memory_id!r} not found")
+
+        # ── Guardrail 5: rate limit ───────────────────────────────────────
+        rate_limit = self.settings.mnemos.workflow_rate_limit_per_minute
+        minute_ago = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+        recent = self.sqlite.count_workflow_transitions_since(memory_id, minute_ago)
+        if recent >= rate_limit:
+            raise ValueError(
+                f"rate limit exceeded: {recent} transitions on memory "
+                f"{memory_id!r} in the last minute (limit: {rate_limit}/min, "
+                f"guardrail 5). Wait or raise workflow_rate_limit_per_minute."
+            )
+
+        # ── Current state ─────────────────────────────────────────────────
+        # NOTE: re-checked here (not asserted) because a concurrent delete
+        # between the existence check above and this call would otherwise
+        # surface as AssertionError (a 500 in REST) instead of the
+        # documented ValueError (404/409). An assert would also be stripped
+        # under ``python -O``, turning the race into a TypeError.
+        current = self.sqlite.get_workflow_status(memory_id)
+        if current is None:
+            raise ValueError(f"memory {memory_id!r} not found")
+        from_str = current["workflow_status"]
+        from_status = WorkflowStatus(from_str) if from_str else None
+        locked_by = current["locked_by"]
+        locked_at_iso = current["locked_at"]
+
+        # ── Guardrail 3: idempotent transitions ───────────────────────────
+        # to == current is a no-op: we SKIP (do not write, do not record in
+        # history). The audit log stays clean of polluting no-op polls; the
+        # returned idempotent=True tells the caller nothing changed.
+        if from_status is not None and from_status == to_status:
+            return self._workflow_result(
+                memory_id=memory_id,
+                from_status=from_status,
+                to_status=to_status,
+                actor=actor,
+                locked_by=locked_by,
+                locked_at_iso=locked_at_iso,
+                reason=reason,
+                force_used=False,
+                stale_lock_released=False,
+                idempotent=True,
+                recorded=False,
+            )
+
+        # ── State machine enforcement ─────────────────────────────────────
+        # validate_transition raises WorkflowTransitionError (a ValueError
+        # subclass) on a forbidden edge — e.g. blocked → done, or any edge out
+        # of a terminal state. We let it propagate: WorkflowTransitionError IS
+        # a ValueError, so the manager's ValueError contract (caught by the
+        # MCP tool / REST layer) is honoured and the precise message survives.
+        validate_transition(from_status, to_status)
+
+        # ── Lock guardrails (2 + 4) ───────────────────────────────────────
+        stale_threshold_h = self.settings.mnemos.workflow_stale_lock_threshold_hours
+        force_used = False
+        stale_lock_released = False
+        previous_locked_by = locked_by
+        lock_held_by_other = locked_by is not None and locked_by != actor
+        if lock_held_by_other:
+            # Guardrail 2: stale-lock auto-release. A lock older than the
+            # threshold is treated as releasable — a different actor can
+            # take over WITHOUT force. We log a warning and proceed.
+            if locked_at_iso is not None and _lock_is_stale(locked_at_iso, stale_threshold_h):
+                stale_lock_released = True
+                logger.warning(
+                    "workflow stale-lock release: memory %s locked by %r at %s "
+                    "(>%dh), taken over by %r",
+                    memory_id,
+                    locked_by,
+                    locked_at_iso,
+                    stale_threshold_h,
+                    actor,
+                )
+            # Guardrail 4: force-unlock. Explicit override; reason required
+            # (validated above). force_used is recorded in the audit log.
+            elif force:
+                force_used = True
+                logger.info(
+                    "workflow force-unlock: memory %s lock held by %r overridden by %r (reason=%r)",
+                    memory_id,
+                    locked_by,
+                    actor,
+                    reason,
+                )
+            else:
+                raise ValueError(
+                    f"memory {memory_id!r} is locked by {locked_by!r}. "
+                    f"Use force=True (with a reason) to override, or wait for "
+                    f"stale-lock release (>{stale_threshold_h}h). "
+                    f"(guardrails 2 + 4)"
+                )
+
+        # ── Compute new lock projection ───────────────────────────────────
+        new_locked_by, new_locked_at = self._compute_lock_projection(
+            to_status=to_status,
+            actor=actor,
+            current_locked_by=locked_by,
+            current_locked_at_iso=locked_at_iso,
+            force_used=force_used,
+            stale_lock_released=stale_lock_released,
+        )
+
+        # ── Persist: columns + audit row ──────────────────────────────────
+        now_iso = datetime.now(UTC).isoformat()
+        self.sqlite.set_workflow_status(memory_id, to_status.value, new_locked_by, new_locked_at)
+        self.sqlite.add_workflow_history(
+            {
+                "id": str(uuid.uuid4()),
+                "memory_id": memory_id,
+                "from_status": from_status.value if from_status else None,
+                "to_status": to_status.value,
+                "actor": actor,
+                "reason": reason.strip(),
+                "force_used": 1 if force_used else 0,
+                "created_at": now_iso,
+            }
+        )
+        logger.info(
+            "workflow transition: memory=%s %s->%s actor=%s force=%s stale=%s",
+            memory_id,
+            from_status.value if from_status else "(unset)",
+            to_status.value,
+            actor,
+            force_used,
+            stale_lock_released,
+        )
+
+        return self._workflow_result(
+            memory_id=memory_id,
+            from_status=from_status,
+            to_status=to_status,
+            actor=actor,
+            locked_by=new_locked_by,
+            locked_at_iso=new_locked_at,
+            reason=reason,
+            force_used=force_used,
+            stale_lock_released=stale_lock_released,
+            previous_locked_by=previous_locked_by,
+            idempotent=False,
+            recorded=True,
+        )
+
+    def workflow_get(self, memory_id: str) -> dict[str, Any] | None:
+        """Return the current workflow projection for a memory.
+
+        Returns ``None`` when the memory does not exist. The ``workflow_status``
+        is normalised to ``open`` when the memory has never had its workflow
+        set (legacy / freshly created), so callers always see a valid state.
+        """
+        current = self.sqlite.get_workflow_status(memory_id)
+        if current is None:
+            return None
+        status = current["workflow_status"]
+        return {
+            "memory_id": memory_id,
+            "workflow_status": status if status is not None else "open",
+            "locked_by": current["locked_by"],
+            "locked_at": current["locked_at"],
+        }
+
+    def workflow_history(self, memory_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return the workflow transition audit log for a memory (newest first).
+
+        Returns an empty list if the memory has no recorded transitions
+        (including when the memory does not exist — history is a projection
+        of past events, not a memory existence check).
+        """
+        return self.sqlite.get_workflow_history(memory_id, limit=limit)
+
+    # ── Workflow helpers ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _compute_lock_projection(
+        *,
+        to_status: Any,
+        actor: str,
+        current_locked_by: str | None,
+        current_locked_at_iso: str | None,
+        force_used: bool,
+        stale_lock_released: bool,
+    ) -> tuple[str | None, str | None]:
+        """Compute the new (locked_by, locked_at) for a target status.
+
+        - in-progress acquires the lock (sets owner to ``actor``).
+        - blocked / resolved keep the lock (same actor still owns the work);
+          on a takeover (force / stale) the owner becomes ``actor`` and the
+          timestamp is refreshed so the stale-lock clock restarts.
+        - open / done / withdrawn release the lock.
+
+        Returns explicit values for ``set_workflow_status`` to write — never
+        relies on the DB to "keep" the old value, because
+        ``set_workflow_status`` overwrites both columns unconditionally.
+        """
+        from mnemos.workflow import WorkflowStatus
+
+        now_iso = datetime.now(UTC).isoformat()
+        if to_status == WorkflowStatus.IN_PROGRESS:
+            return actor, now_iso
+        if to_status in (WorkflowStatus.BLOCKED, WorkflowStatus.RESOLVED):
+            if force_used or stale_lock_released:
+                return actor, now_iso
+            return current_locked_by, current_locked_at_iso
+        # open / done / withdrawn → release
+        return None, None
+
+    @staticmethod
+    def _workflow_result(
+        *,
+        memory_id: str,
+        from_status: Any,
+        to_status: Any,
+        actor: str,
+        locked_by: str | None,
+        locked_at_iso: str | None,
+        reason: str,
+        force_used: bool,
+        stale_lock_released: bool,
+        idempotent: bool,
+        recorded: bool,
+        previous_locked_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the uniform result dict returned by workflow_set."""
+        from mnemos.workflow import is_terminal
+
+        return {
+            "memory_id": memory_id,
+            "from_status": from_status.value if from_status else None,
+            "to_status": to_status.value,
+            "actor": actor,
+            "previous_locked_by": previous_locked_by,
+            "locked_by": locked_by,
+            "locked_at": locked_at_iso,
+            "stale_lock_released": stale_lock_released,
+            "force_used": force_used,
+            "idempotent": idempotent,
+            "recorded": recorded,
+            "reason": reason.strip() if reason else "",
+            "terminal": is_terminal(to_status),
+        }
 
     # ── Search ──────────────────────────────────────────────────────────────
 
