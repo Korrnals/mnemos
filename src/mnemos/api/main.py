@@ -391,6 +391,109 @@ async def list_memories(
     )
 
 
+# ── Workflow lifecycle — nested under /memories/{id}/workflow (#96) ────────────
+#
+# Thin wrappers over MemoryManager.workflow_set / workflow_get /
+# workflow_history. The state machine + 5 guardrails are enforced
+# server-side in the manager — these endpoints MUST NOT re-validate, so
+# there is exactly one enforcement path (the manager) that neither the
+# MCP tool nor the REST layer can bypass.
+
+
+class WorkflowSetRequest(BaseModel):
+    """Body for ``POST /memories/{memory_id}/workflow``."""
+
+    to: str
+    actor: str
+    reason: str = ""
+    force: bool = False
+
+
+@app.get("/memories/{memory_id}/workflow")
+async def get_workflow(memory_id: str) -> dict[str, Any]:
+    """Return the current workflow status + lock owner for a memory.
+
+    ``workflow_status`` is normalised to ``open`` when the memory has
+    never had its workflow set. Returns 404 when the memory does not exist.
+    """
+    mgr = get_manager()
+    result = mgr.workflow_get(memory_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
+    return result
+
+
+@app.post("/memories/{memory_id}/workflow")
+async def set_workflow(memory_id: str, req: WorkflowSetRequest) -> dict[str, Any]:
+    """Transition a memory's workflow status through the state machine.
+
+    Maps to ``workflow_set``. ``ValueError`` from the manager is a
+    guardrail / state-machine violation → HTTP 409 (conflict). The manager
+    is the single source of truth; no validation is duplicated here.
+    """
+    mgr = get_manager()
+    try:
+        return mgr.workflow_set(
+            memory_id,
+            req.to,
+            actor=req.actor,
+            reason=req.reason,
+            force=req.force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/memories/{memory_id}/workflow")
+async def withdraw_workflow(
+    memory_id: str,
+    actor: str = Query(default="", description="Actor withdrawing the memory (free-form)."),
+    reason: str = Query(default="DELETE withdraw", description="Reason for the withdrawal."),
+    force: bool = Query(default=False, description="Override a lock held by another actor."),
+) -> dict[str, Any]:
+    """Cancel a memory's workflow by transitioning to the ``withdrawn`` state.
+
+    ``DELETE`` is a **cancel / withdraw**, NOT a lock-release-to-resumable.
+    It ends the workflow in ``withdrawn`` — a **terminal, irreversible**
+    state from which no further transition is possible. The lock
+    (``locked_by`` / ``locked_at``) is cleared as a side effect of reaching
+    a terminal state, but the memory is NOT returned to a resumable
+    ``open`` state. The state machine has no edge back to ``open`` from an
+    active state, so this is the only cancellation path.
+
+    Semantics:
+
+    - To **finish** work normally, use ``POST .../workflow`` with
+      ``to=done`` — that is the completion path.
+    - ``DELETE`` is the **cancel / abandon** path: the workflow ends in
+      ``withdrawn`` (terminal) and any held lock is released. Once
+      withdrawn the memory cannot transition further.
+    - ``force`` defaults to ``False``: the actor holding the lock can
+      withdraw it without force. To override a lock held by a *different*
+      actor, pass ``force=true`` (guardrail 4 — a reason is recorded).
+
+    ``actor`` is required. A 409 is returned if the transition is
+    forbidden (e.g. the memory is already terminal) or the lock is held
+    by another actor without ``force``.
+    """
+    mgr = get_manager()
+    if not actor:
+        raise HTTPException(
+            status_code=422,
+            detail="actor query param is required to withdraw a memory's workflow",
+        )
+    try:
+        return mgr.workflow_set(
+            memory_id,
+            "withdrawn",
+            actor=actor,
+            reason=reason,
+            force=force,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 # ── Search ─────────────────────────────────────────────────────────────────────
 
 

@@ -38,6 +38,7 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | [`mnemos_list_recent`](#mnemos_list_recent) | Список последних записей | нет |
 | [`mnemos_list_tags`](#mnemos_list_tags) | Список всех тегов с количеством | нет |
 | [`mnemos_tags`](#mnemos_tags) *(пилот #97)* | Сгруппированные операции над тегами: rename / remove / add (`action: enum`) | нет |
+| [`mnemos_workflow`](#mnemos_workflow) *(#96)* | Жизненный цикл workflow: set / get / history (`action: enum`) | нет |
 | [`mnemos_ingest_url`](#mnemos_ingest_url) | Загрузить и сохранить веб-страницу | да |
 | [`mnemos_watch_start`](#mnemos_watch_start) | Запустить фоновый file watcher | нет |
 | [`mnemos_watch_stop`](#mnemos_watch_stop) | Остановить file watcher | нет |
@@ -1109,6 +1110,190 @@ Restore (деструктивный) с подтверждением:
   }
 }
 ```
+
+---
+
+## `mnemos_workflow`
+
+Управление жизненным циклом workflow для памяти (mnemos #96). Отделяет изменяемое **состояние workflow** (open → in-progress → done, blocked/resolved, терминальные состояния) от добавляемого только в конец **тегового классификатора** (`project:X`, `mnemos:decision`). Теговый слой остаётся append-only; этот слой — изменяемый жизненный цикл работы.
+
+Диспетчеризация на основе `action` — тот же паттерн `action: enum`, что и у `mnemos_tags`. Конечный автомат и пять guardrail применяются **на стороне сервера** в `MemoryManager.workflow_set`; этот инструмент (и REST `POST /memories/{id}/workflow`) — тонкие обёртки, которые не могут его обойти.
+
+### Состояния и переходы
+
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> in_progress
+    open --> withdrawn
+    in_progress --> blocked
+    in_progress --> done
+    in_progress --> withdrawn
+    blocked --> resolved
+    blocked --> withdrawn
+    resolved --> in_progress
+    resolved --> done
+    resolved --> withdrawn
+    done --> [*]
+    withdrawn --> [*]
+```
+
+- **`blocked → done` запрещён** — застрявшая зависимость должна сначала пройти через `resolved` (blocked → resolved → done). Это ключевой запрещённый переход; агент не может тихо перепрыгнуть блокер, прыгнув сразу в терминальное состояние.
+- **`done` и `withdrawn` терминальны** — из них невозможны дальнейшие переходы.
+- Память, у которой workflow ни разу не устанавливался (устаревшая строка или свежесозданная), трактуется как `open` для первого перехода.
+
+### Входные данные
+
+| Поле | Тип | Обязательно | По умолчанию | Описание |
+|-------|------|----------|---------|-------------|
+| `action` | enum `set` \| `get` \| `history` | **да** | — | `set` выполняет переход статуса; `get` возвращает текущий статус + владельца блокировки; `history` возвращает аудит-след. |
+| `memory_id` | string | **да** | — | Целевой id памяти. |
+| `to` | enum `open` \| `in-progress` \| `blocked` \| `resolved` \| `done` \| `withdrawn` | `set`: **да** | — | Целевой статус. `blocked → done` запрещён. |
+| `actor` | string | `set`: **да** | — | Свободный id актора. **Фаза 1 — слабая идентичность, НЕТ authn/authz.** |
+| `reason` | string | `set` + `force=true`: **да** | `""` | Читаемая причина. Обязательна при `force=true`. |
+| `force` | boolean | нет | `false` | Переопределить блокировку другого актора (guardrail 4 — требует `reason`). |
+| `limit` | integer | нет | `50` | Максимум строк истории (только `history`). |
+
+### Guardrails (применяются на стороне сервера)
+
+| # | Guardrail | Поведение |
+|---|-----------|-----------|
+| G1 | **Аудит-лог** | Каждый записанный переход пишет строку в `memory_workflow_history` (`from`, `to`, `actor`, `reason`, `force_used`, `created_at`). **Отклонённые переходы** (запрещённое ребро, конфликт блокировок, rate-limit, force-без-причины) **не** пишут аудиторскую строку — лог фиксирует изменения состояния, а не попытки. |
+| G2 | **Авто-релиз устаревшей блокировки** | Блокировка старше `workflow_stale_lock_threshold_hours` (по умолчанию `24`) авто-освобождаема другим актором — без `force`. Логируется на уровне WARNING. |
+| G3 | **Идемпотентные переходы** | Установка `to=X`, когда память уже `X` — **no-op** (без записи, без аудиторской строки). Возвращает `idempotent: true`, `recorded: false`. |
+| G4 | **Force-unlock** | `force=true` переопределяет чужую блокировку; `force_used=1` фиксируется в аудит-логе. **`reason` обязательна** — пустая причина отклоняется. |
+| G5 | **Rate limit** | Более `workflow_rate_limit_per_minute` переходов (по умолчанию `30`) по одной памяти в минуту отклоняется. Лимит **на память, не на актора** — churn по одной памяти регулируется независимо от того, какой актор двигает переходы. |
+
+### Выходные данные
+
+**`action: set`** (результат перехода):
+
+```json
+{
+  "memory_id": "01HXYZ...",
+  "from_status": "open",
+  "to_status": "in-progress",
+  "actor": "agent-dba",
+  "previous_locked_by": null,
+  "locked_by": "agent-dba",
+  "locked_at": "2026-07-31T12:00:00+00:00",
+  "stale_lock_released": false,
+  "force_used": false,
+  "idempotent": false,
+  "recorded": true,
+  "reason": "",
+  "terminal": false
+}
+```
+
+**`action: get`** (текущая проекция — `workflow_status` нормализует незаданное → `open`):
+
+```json
+{
+  "memory_id": "01HXYZ...",
+  "workflow_status": "in-progress",
+  "locked_by": "agent-dba",
+  "locked_at": "2026-07-31T12:00:00+00:00"
+}
+```
+
+**`action: history`** (аудит-след, новые сверху):
+
+```json
+{
+  "memory_id": "01HXYZ...",
+  "history": [
+    {
+      "id": "uuid...",
+      "memory_id": "01HXYZ...",
+      "from_status": "open",
+      "to_status": "in-progress",
+      "actor": "agent-dba",
+      "reason": "",
+      "force_used": 0,
+      "created_at": "2026-07-31T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+### Ошибки
+
+- **Отсутствует `memory_id`** → `{"error": "memory_id is required ..."}`.
+- **`action: set` без `to` или `actor`** → `{"error": "action='set' requires 'to' ..."}` / `"... requires 'actor' ..."}`.
+- **Неизвестный `action`** → `{"error": "unknown action 'X'. Valid actions: 'set', 'get', 'history'"}`.
+- **Запрещённый переход / нарушение guardrail** (например `blocked → done`, блокировка другого актора без `force`, force без `reason`, rate limit) → `{"error": "<дословное сообщение manager>"}`. Через REST маппится в HTTP `409`; через MCP-инструмент возвращается в поле `error`.
+- **Память не найдена** (`get`) → `{"error": "memory 'X' not found"}`.
+
+### Семантика блокировок
+
+| Целевой статус | Эффект на блокировку |
+|---------------|-------------|
+| `in-progress` | Захватывает блокировку (владелец = `actor`, timestamp обновлён). |
+| `blocked` / `resolved` | Удерживает блокировку; при перехвате (`force` / stale-release) владельцем становится `actor` и таймер устаревания перезапускается. |
+| `open` / `done` / `withdrawn` | Освобождает блокировку (`locked_by` и `locked_at` очищаются). |
+
+### Пример
+
+Начать работу над памятью:
+
+```json
+{
+  "name": "mnemos_workflow",
+  "arguments": {
+    "action": "set",
+    "memory_id": "01HXYZ...",
+    "to": "in-progress",
+    "actor": "agent-dba"
+  }
+}
+```
+
+Попали в блокер, затем разрешили и завершили:
+
+```json
+{"name": "mnemos_workflow", "arguments": {"action": "set", "memory_id": "01HXYZ...", "to": "blocked", "actor": "agent-dba", "reason": "waiting on upstream spec tag"}}
+{"name": "mnemos_workflow", "arguments": {"action": "set", "memory_id": "01HXYZ...", "to": "resolved", "actor": "agent-dba"}}
+{"name": "mnemos_workflow", "arguments": {"action": "set", "memory_id": "01HXYZ...", "to": "done", "actor": "agent-dba"}}
+```
+
+Принудительно перехватить устаревшую блокировку другого актора:
+
+```json
+{
+  "name": "mnemos_workflow",
+  "arguments": {
+    "action": "set",
+    "memory_id": "01HXYZ...",
+    "to": "in-progress",
+    "actor": "agent-dba",
+    "force": true,
+    "reason": "previous actor unreachable for >24h"
+  }
+}
+```
+
+### Фаза 1 — слабая идентичность
+
+`actor` — **свободная строка без authn/authz** в Фазе 1. Любой вызывающий может заявить любой id актора; guardrails (stale-lock, force, rate limit) — единственная защита. Будущая фаза привяжет `actor` к аутентифицированному принципалу; до тех пор трактуйте слой workflow как рекомендательную координацию, а не границу безопасности.
+
+### REST-эквивалент
+
+Тот же жизненный цикл доступен по HTTP, вложенно под памятью (а не на верхнем уровне `/status`):
+
+| Метод | Путь | Маппится на |
+|--------|------|---------|
+| `GET` | `/api/v1/memories/{memory_id}/workflow` | `workflow_get` (404 если память отсутствует) |
+| `POST` | `/api/v1/memories/{memory_id}/workflow` | `workflow_set` (тело: `to`, `actor`, `reason`, `force`; `409` при нарушении guardrail) |
+| `DELETE` | `/api/v1/memories/{memory_id}/workflow` | `workflow_set(... to="withdrawn")` — **отмена / withdraw** (терминально, необратимо). Завершает workflow в `withdrawn`; блокировка очищается как побочный эффект достижения терминального состояния. query-параметр `actor` обязателен; `force` переопределяет чужую блокировку. |
+
+`DELETE` — это **отмена / withdraw** — завершает workflow в терминальном состоянии `withdrawn` (дальнейшие переходы невозможны). Это **не** «релиз блокировки в возобновляемое состояние»: у конечного автомата нет ребра обратно в `open`, поэтому память не возвращается в возобновляемое состояние. Чтобы **завершить** работу штатно, используйте `POST` с `to=done`.
+
+### Смотрите также
+
+- [http-api.md](http-api.md) — вложенные REST-эндпоинты `/memories/{id}/workflow`
+- [tag-contract.md](tag-contract.md) — слой append-only классификации (отличается от этого изменяемого слоя жизненного цикла)
+- ArchCom 2026-07-18 сессия 2 — решение по паттерну `action: enum` + вложенному REST-неймингу
 
 ---
 

@@ -28,6 +28,14 @@ class MnemosConfig(BaseModel):
     # When True, raw_content is preserved and clean_content is populated;
     # filter failures are non-fatal (memory is still saved with raw content).
     auto_filter: bool = True
+    # mnemos #96: workflow lifecycle guardrails. Stale-lock threshold governs
+    # how long a lock survives before a different actor can take it over
+    # without ``force`` (guardrail 2). Rate limit caps transitions per memory
+    # per minute to prevent churn (guardrail 5) — it is per-memory, NOT
+    # per-actor: churn on a single memory is throttled regardless of which
+    # actor drives the transitions.
+    workflow_stale_lock_threshold_hours: int = Field(default=24, ge=1, le=720)
+    workflow_rate_limit_per_minute: int = Field(default=30, ge=1, le=1000)
 
 
 class LoggingConfig(BaseModel):

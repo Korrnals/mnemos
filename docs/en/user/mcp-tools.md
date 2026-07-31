@@ -38,6 +38,7 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_list_recent`](#mnemos_list_recent) | List recent entries | no |
 | [`mnemos_list_tags`](#mnemos_list_tags) | List all tags with counts | no |
 | [`mnemos_tags`](#mnemos_tags) *(pilot #97)* | Grouped bulk tag ops: rename / remove / add (`action: enum`) | no |
+| [`mnemos_workflow`](#mnemos_workflow) *(#96)* | Workflow lifecycle: set / get / history (`action: enum`) | no |
 | [`mnemos_ingest_url`](#mnemos_ingest_url) | Fetch and save a web page | yes |
 | [`mnemos_watch_start`](#mnemos_watch_start) | Start a background file watcher | no |
 | [`mnemos_watch_stop`](#mnemos_watch_stop) | Stop the file watcher | no |
@@ -1109,6 +1110,190 @@ Encrypted import (with `MNEMOS_IMPORT_PASS` set in the server's environment):
   }
 }
 ```
+
+---
+
+## `mnemos_workflow`
+
+Workflow lifecycle management for a memory (mnemos #96). Separates mutable **workflow state** (open → in-progress → done, blocked/resolved, terminal states) from the append-only **tag classification** (`project:X`, `mnemos:decision`). The tag layer stays append-only; this layer is the mutable work lifecycle.
+
+Action-based dispatch — the same `action: enum` pattern as `mnemos_tags`. The state machine and the five guardrails are enforced **server-side** in `MemoryManager.workflow_set`; this tool (and the REST `POST /memories/{id}/workflow`) are thin wrappers that cannot bypass it.
+
+### States and transitions
+
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> in_progress
+    open --> withdrawn
+    in_progress --> blocked
+    in_progress --> done
+    in_progress --> withdrawn
+    blocked --> resolved
+    blocked --> withdrawn
+    resolved --> in_progress
+    resolved --> done
+    resolved --> withdrawn
+    done --> [*]
+    withdrawn --> [*]
+```
+
+- **`blocked → done` is forbidden** — a stuck dependency must go through `resolved` first (blocked → resolved → done). This is the headline forbidden edge; an agent cannot silently skip a blocker by jumping straight to a terminal state.
+- **`done` and `withdrawn` are terminal** — no further transitions are permitted from either.
+- A memory that has never had its workflow set (legacy row or freshly created) is treated as `open` for the first transition.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `action` | enum `set` \| `get` \| `history` | **yes** | — | `set` transitions the status; `get` returns the current status + lock owner; `history` returns the audit trail. |
+| `memory_id` | string | **yes** | — | Target memory id. |
+| `to` | enum `open` \| `in-progress` \| `blocked` \| `resolved` \| `done` \| `withdrawn` | `set`: **yes** | — | Target status. `blocked → done` is forbidden. |
+| `actor` | string | `set`: **yes** | — | Free-form actor id. **Phase 1 weak identity — NO authn/authz.** |
+| `reason` | string | `set` + `force=true`: **yes** | `""` | Human-readable reason. Required when `force=true`. |
+| `force` | boolean | no | `false` | Override a lock held by another actor (guardrail 4 — requires `reason`). |
+| `limit` | integer | no | `50` | Max history rows (`history` only). |
+
+### Guardrails (enforced server-side)
+
+| # | Guardrail | Behaviour |
+|---|-----------|-----------|
+| G1 | **Audit log** | Every recorded transition writes a `memory_workflow_history` row (`from`, `to`, `actor`, `reason`, `force_used`, `created_at`). **Rejected transitions** (forbidden edge, lock conflict, rate-limit, force-without-reason) write **no** audit row — the log records state changes, not attempts. |
+| G2 | **Stale-lock auto-release** | A lock older than `workflow_stale_lock_threshold_hours` (default `24`) is auto-releasable by a different actor — no `force` needed. Logged at WARNING. |
+| G3 | **Idempotent transitions** | Setting `to=X` when the memory is already `X` is a **no-op** (no write, no audit row). Returns `idempotent: true`, `recorded: false`. |
+| G4 | **Force-unlock** | `force=true` overrides a foreign lock; `force_used=1` is recorded in the audit log. **`reason` is required** — blank reason is rejected. |
+| G5 | **Rate limit** | More than `workflow_rate_limit_per_minute` transitions (default `30`) on one memory in a minute is rejected. The limit is **per-memory, not per-actor** — churn on a single memory is throttled regardless of which actor drives the transitions. |
+
+### Output
+
+**`action: set`** (a transition result):
+
+```json
+{
+  "memory_id": "01HXYZ...",
+  "from_status": "open",
+  "to_status": "in-progress",
+  "actor": "agent-dba",
+  "previous_locked_by": null,
+  "locked_by": "agent-dba",
+  "locked_at": "2026-07-31T12:00:00+00:00",
+  "stale_lock_released": false,
+  "force_used": false,
+  "idempotent": false,
+  "recorded": true,
+  "reason": "",
+  "terminal": false
+}
+```
+
+**`action: get`** (current projection — `workflow_status` normalises unset → `open`):
+
+```json
+{
+  "memory_id": "01HXYZ...",
+  "workflow_status": "in-progress",
+  "locked_by": "agent-dba",
+  "locked_at": "2026-07-31T12:00:00+00:00"
+}
+```
+
+**`action: history`** (audit trail, newest first):
+
+```json
+{
+  "memory_id": "01HXYZ...",
+  "history": [
+    {
+      "id": "uuid...",
+      "memory_id": "01HXYZ...",
+      "from_status": "open",
+      "to_status": "in-progress",
+      "actor": "agent-dba",
+      "reason": "",
+      "force_used": 0,
+      "created_at": "2026-07-31T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+### Errors
+
+- **Missing `memory_id`** → `{"error": "memory_id is required ..."}`.
+- **`action: set` missing `to` or `actor`** → `{"error": "action='set' requires 'to' ..."}` / `"... requires 'actor' ..."`.
+- **Unknown `action`** → `{"error": "unknown action 'X'. Valid actions: 'set', 'get', 'history'"}`.
+- **Forbidden transition / guardrail violation** (e.g. `blocked → done`, lock held by another actor without `force`, force without `reason`, rate limit) → `{"error": "<verbatim manager message>"}`. Over REST these map to HTTP `409`; over the MCP tool they are returned as the `error` field.
+- **Memory not found** (`get`) → `{"error": "memory 'X' not found"}`.
+
+### Lock semantics
+
+| Target status | Lock effect |
+|---------------|-------------|
+| `in-progress` | Acquires the lock (owner = `actor`, timestamp refreshed). |
+| `blocked` / `resolved` | Keeps the lock; on a takeover (`force` / stale-release) the owner becomes `actor` and the stale-clock restarts. |
+| `open` / `done` / `withdrawn` | Releases the lock (`locked_by` and `locked_at` cleared). |
+
+### Example
+
+Start work on a memory:
+
+```json
+{
+  "name": "mnemos_workflow",
+  "arguments": {
+    "action": "set",
+    "memory_id": "01HXYZ...",
+    "to": "in-progress",
+    "actor": "agent-dba"
+  }
+}
+```
+
+Hit a blocker, then resolve and finish:
+
+```json
+{"name": "mnemos_workflow", "arguments": {"action": "set", "memory_id": "01HXYZ...", "to": "blocked", "actor": "agent-dba", "reason": "waiting on upstream spec tag"}}
+{"name": "mnemos_workflow", "arguments": {"action": "set", "memory_id": "01HXYZ...", "to": "resolved", "actor": "agent-dba"}}
+{"name": "mnemos_workflow", "arguments": {"action": "set", "memory_id": "01HXYZ...", "to": "done", "actor": "agent-dba"}}
+```
+
+Force-override a stale lock held by another actor:
+
+```json
+{
+  "name": "mnemos_workflow",
+  "arguments": {
+    "action": "set",
+    "memory_id": "01HXYZ...",
+    "to": "in-progress",
+    "actor": "agent-dba",
+    "force": true,
+    "reason": "previous actor unreachable for >24h"
+  }
+}
+```
+
+### Phase 1 — weak identity
+
+`actor` is a **free-form string with no authn/authz** in Phase 1. Any caller may claim any actor id; the guardrails (stale-lock, force, rate limit) are the only protection. A future phase will bind `actor` to an authenticated principal; until then, treat the workflow layer as advisory coordination, not a security boundary.
+
+### REST equivalent
+
+The same lifecycle is exposed over HTTP, nested under the memory (not a top-level `/status`):
+
+| Method | Path | Maps to |
+|--------|------|---------|
+| `GET` | `/api/v1/memories/{memory_id}/workflow` | `workflow_get` (404 if memory missing) |
+| `POST` | `/api/v1/memories/{memory_id}/workflow` | `workflow_set` (body: `to`, `actor`, `reason`, `force`; `409` on guardrail violation) |
+| `DELETE` | `/api/v1/memories/{memory_id}/workflow` | `workflow_set(... to="withdrawn")` — **cancel / withdraw** (terminal, irreversible). Ends the workflow in `withdrawn`; the lock is cleared as a side effect of reaching a terminal state. `actor` query param required; `force` overrides a foreign lock. |
+
+`DELETE` is a **cancel / withdraw** — it ends the workflow in the terminal `withdrawn` state (no further transitions possible). It is **not** a lock-release-to-resumable: the state machine has no edge back to `open`, so the memory is not returned to a resumable state. To **finish** work normally, use `POST` with `to=done`.
+
+### Related
+
+- [http-api.md](http-api.md) — the nested `/memories/{id}/workflow` REST endpoints
+- [tag-contract.md](tag-contract.md) — the append-only classification layer (distinct from this mutable lifecycle layer)
+- ArchCom 2026-07-18 session 2 — the `action: enum` pattern + nested REST naming decision
 
 ---
 

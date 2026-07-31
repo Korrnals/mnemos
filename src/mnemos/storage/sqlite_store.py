@@ -174,7 +174,13 @@ CREATE TABLE IF NOT EXISTS memories (
     clean_content    TEXT,
     filter_profile   TEXT,
     filter_stats     TEXT,
-    filter_version   TEXT
+    filter_version   TEXT,
+    -- Workflow lifecycle (mnemos #96). Managed EXCLUSIVELY by the
+    -- set_workflow_status method — never by save()/update_fields() — so the
+    -- state machine in MemoryManager.workflow_set cannot be bypassed.
+    workflow_status  TEXT,
+    locked_by        TEXT,
+    locked_at        TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -214,6 +220,25 @@ CREATE INDEX IF NOT EXISTS idx_memories_project  ON memories(project);
 CREATE INDEX IF NOT EXISTS idx_memories_agent    ON memories(agent);
 CREATE INDEX IF NOT EXISTS idx_memories_cluster  ON memories(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
+
+-- mnemos #96: workflow lifecycle audit log. Every state transition is
+-- recorded here (actor, from->to, reason, force_used). The workflow_status /
+-- locked_by / locked_at columns on `memories` are the *current* projection;
+-- this table is the immutable history that makes the audit + rate-limit
+-- guardrails work.
+CREATE TABLE IF NOT EXISTS memory_workflow_history (
+    id          TEXT PRIMARY KEY,
+    memory_id   TEXT NOT NULL,
+    from_status TEXT,
+    to_status   TEXT NOT NULL,
+    actor       TEXT NOT NULL,
+    reason      TEXT NOT NULL DEFAULT '',
+    force_used  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_wf_history_memory ON memory_workflow_history(memory_id);
+CREATE INDEX IF NOT EXISTS idx_wf_history_created ON memory_workflow_history(created_at);
 
 CREATE TABLE IF NOT EXISTS projects (
     id          TEXT PRIMARY KEY,
@@ -448,6 +473,13 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("filter_stats", "ALTER TABLE memories ADD COLUMN filter_stats TEXT"),
     ("filter_version", "ALTER TABLE memories ADD COLUMN filter_version TEXT"),
     ("category", "ALTER TABLE memories ADD COLUMN category TEXT"),
+    # mnemos #96 — workflow lifecycle columns. Added via ALTER so existing
+    # DBs gain the columns on next connect; fresh DBs get them from
+    # _DB_SCHEMA. The history table is CREATE TABLE IF NOT EXISTS in
+    # _DB_SCHEMA so it does not need an entry here.
+    ("workflow_status", "ALTER TABLE memories ADD COLUMN workflow_status TEXT"),
+    ("locked_by", "ALTER TABLE memories ADD COLUMN locked_by TEXT"),
+    ("locked_at", "ALTER TABLE memories ADD COLUMN locked_at TEXT"),
 ]
 
 
@@ -525,6 +557,12 @@ class SQLiteStore:
             filter_profile=_get("filter_profile"),
             filter_stats=json.loads(_get("filter_stats")) if _get("filter_stats") else None,
             filter_version=_get("filter_version"),
+            # mnemos #96 — workflow projection (read-only here; writes go
+            # through set_workflow_status so the state machine cannot be
+            # bypassed). NULL on legacy rows created before the migration.
+            workflow_status=_get("workflow_status"),
+            locked_by=_get("locked_by"),
+            locked_at=_get("locked_at"),
         )
 
     def rebuild_fts_index(self) -> int:
@@ -720,6 +758,121 @@ class SQLiteStore:
         conn.commit()
         self._invalidate_caches()
         return cur.rowcount > 0
+
+    # ── Workflow lifecycle (mnemos #96) ────────────────────────────────────
+    #
+    # These methods are the ONLY writers of the workflow_status / locked_by /
+    # locked_at columns and the memory_workflow_history table. They are
+    # intentionally NOT exposed via update_fields/_FIELD_UPDATERS so the
+    # state machine in MemoryManager.workflow_set cannot be bypassed by a
+    # generic field update. The SQL is static (no user-controlled column
+    # names) and uses bound parameters throughout, so B608 is impossible by
+    # construction.
+
+    def get_workflow_status(self, memory_id: str) -> dict[str, Any] | None:
+        """Return the current workflow projection for a memory.
+
+        Returns ``None`` when the memory does not exist so callers can map
+        that to a 404. The dict always contains the three keys (values may
+        be ``None`` on legacy rows).
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT workflow_status, locked_by, locked_at FROM memories WHERE id = ?",
+            (memory_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "workflow_status": row["workflow_status"],
+            "locked_by": row["locked_by"],
+            "locked_at": row["locked_at"],
+        }
+
+    def set_workflow_status(
+        self,
+        memory_id: str,
+        workflow_status: str | None,
+        locked_by: str | None,
+        locked_at: str | None,
+    ) -> bool:
+        """Write the three workflow columns. Does NOT touch history.
+
+        Caller (MemoryManager.workflow_set) is responsible for the audit
+        row and for the state-machine / lock / rate-limit guardrails. This
+        method is the low-level writer only.
+        """
+        conn = self._get_conn()
+        cur = conn.execute(
+            "UPDATE memories SET workflow_status=?, locked_by=?, locked_at=?, "
+            "updated_at=? WHERE id=?",
+            (
+                workflow_status,
+                locked_by,
+                locked_at,
+                datetime.now(UTC).isoformat(),
+                memory_id,
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def add_workflow_history(self, entry: dict[str, Any]) -> None:
+        """Append an immutable audit row to memory_workflow_history."""
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO memory_workflow_history "
+            "(id, memory_id, from_status, to_status, actor, reason, force_used, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                entry["id"],
+                entry["memory_id"],
+                entry["from_status"],
+                entry["to_status"],
+                entry["actor"],
+                entry["reason"],
+                entry["force_used"],
+                entry["created_at"],
+            ),
+        )
+        conn.commit()
+
+    def get_workflow_history(self, memory_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return audit rows for a memory, newest first."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT id, memory_id, from_status, to_status, actor, reason, "
+            "force_used, created_at "
+            "FROM memory_workflow_history WHERE memory_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (memory_id, limit),
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "memory_id": r["memory_id"],
+                "from_status": r["from_status"],
+                "to_status": r["to_status"],
+                "actor": r["actor"],
+                "reason": r["reason"],
+                "force_used": bool(r["force_used"]),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    def count_workflow_transitions_since(self, memory_id: str, since_iso: str) -> int:
+        """Count audit rows for ``memory_id`` at/after ``since_iso``.
+
+        Backs the per-memory rate-limit guardrail (#96 guardrail 5).
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM memory_workflow_history "
+            "WHERE memory_id = ? AND created_at >= ?",
+            (memory_id, since_iso),
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
     # ── Listing ───────────────────────────────────────────────────────────
 

@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+New user-visible feature: the `mnemos_workflow` MCP tool + `workflow_status` entity + state machine (mnemos #96), the workflow lifecycle layer. Separates mutable **workflow state** from the append-only tag classification. Branch: `feat/96-workflow-status` (commits land via the mnemos git-workflow `dev-*` → `release/*` → `main` chain).
+
+### Added
+
+- **`workflow_status` entity + state machine (mnemos #96)** — a mutable lifecycle layer for a memory, distinct from the append-only tag classification. Six states (`open`, `in-progress`, `blocked`, `resolved`, `done`, `withdrawn`) with a server-enforced state machine: `blocked → done` is forbidden (a stuck dependency must go through `resolved` first — blocked → resolved → done); `done` / `withdrawn` are terminal (no outgoing edges); `open` has no edge to `blocked` (a memory must enter `in-progress` before it can be blocked). Backed by a SQLite migration (`memory_workflow_status` projection + `memory_workflow_history` audit table). Implemented in `MemoryManager.workflow_set` / `workflow_get` / `workflow_history` with **five guardrails**: G1 audit log (rejected transitions write **no** audit row — the log records state changes, not attempts), G2 stale-lock auto-release (default `24h`), G3 idempotent transitions (same-status is a no-op, no write, no audit row), G4 force-unlock (requires `reason`), G5 per-memory rate limit (default `30`/min — **per-memory, not per-actor**: churn on one memory is throttled regardless of which actor drives it). Phase 1 ships **weak identity** — `actor` is a free-form string with NO authn/authz; the guardrails are the only protection until a future phase binds `actor` to an authenticated principal.
+- **`mnemos_workflow` MCP tool (#96)** — grouped lifecycle tool via an `action: enum [set, get, history]` dispatch, reusing the `action: enum` pattern proven by `mnemos_tags` (#97, ArchCom 2026-07-18 session 2). `action="set"` transitions the status (requires `memory_id`, `to`, `actor`); `action="get"` returns the current status + lock owner; `action="history"` returns the audit trail. Thin wrapper over the manager — the state machine and guardrails CANNOT be bypassed from the MCP layer.
+- **Nested REST endpoints (#96)** — `GET` / `POST` / `DELETE /api/v1/memories/{memory_id}/workflow` (nested under the memory, not a top-level `/status` — per ArchCom 2026-07-18 session 2). `POST` returns `409` on a guardrail violation; `GET` returns `404` if the memory is missing. `DELETE` is a **cancel / withdraw** (terminal `withdrawn`, irreversible) — it is **not** a lock-release-to-resumable; the state machine has no edge back to `open`.
+- **CLI `workflow` subcommand (#96)** — `mnemos workflow get|set|history` thin wrappers over the manager; `ValueError` (guardrail / state-machine violation) surfaces as a red error line + exit 1, mirroring the MCP / REST surfacing.
+- **Docs (EN + RU)** — full `mnemos_workflow` reference in `mcp-tools.md` (states diagram, input/output tables, guardrail table, lock semantics, REST equivalent, Phase 1 weak-identity note).
 
 ## [2.13.0] - 2026-07-30
 
