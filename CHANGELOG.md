@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-New user-visible feature: the `mnemos_workflow` MCP tool + `workflow_status` entity + state machine (mnemos #96), the workflow lifecycle layer. Separates mutable **workflow state** from the append-only tag classification. Branch: `feat/96-workflow-status` (commits land via the mnemos git-workflow `dev-*` → `release/*` → `main` chain).
+_No unreleased changes yet._
+
+## [2.14.0] - 2026-07-31
+
+New user-visible feature release — the `mnemos_workflow` MCP tool + `workflow_status` entity + state machine (mnemos #96), the workflow lifecycle layer. Separates mutable **workflow state** from the append-only tag classification. New MCP tool + entity + REST + CLI = MINOR bump per SemVer. Branch chain: `feat/96-workflow-status` (10 commits) → `dev-workflow-status` (squash) → `release/2.14.0` → `main` (merge-commit + tag `v2.14.0`).
 
 ### Added
 
