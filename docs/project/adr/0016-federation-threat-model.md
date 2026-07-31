@@ -339,6 +339,97 @@ Each is recorded with the reason it was rejected.
 | **In-memory response cache on A** (КП-1) | Rejected session 3 (§0.п.4). Burdens every MCP to hold a cache → double storage → disk pressure. Replaced by reusing the existing `raw_content` / `clean_content` pipeline + the new `federation_access_log` field on B |
 | **Two-tier anonymization** (КП-4) | Deferred session 3 (§0.п.7). Basic trust is axiomatic (connecting requires setup). Extended integration tiers (`patterns` / `trusted`) are a distant prospect. Recorded as a handshake stub for future expansion, not in the current roadmap |
 
+## Decision log — transport-level replay protection (2026-07-31)
+
+Amendment recorded after ADR acceptance (2026-07-21). Origin: GitHub issue
+#88 point #4, reopened during the #88 closure review — does federation need a
+separate transport-level replay-protection layer (nonce + timestamp + HMAC)
+ON TOP of mTLS, as defense-in-depth?
+
+- **Date**: 2026-07-31
+- **Status**: Rejected — mTLS-only retained. No in-band HMAC replay layer is
+  added.
+- **Deciders**: GCW Tech Lead (chair), GCW Senior Security Engineer
+  (recommend against), GCW Senior System Engineer (recommend against).
+  Consensus 2:0 against the additional layer; chair accepted.
+- **Body**: Architectural Committee (ArchCom) — a design adjudication on an
+  existing accepted threat model, not an implementation request.
+
+### Decision
+
+The federation transport keeps its existing replay / transport protection
+and rejects a separate in-band HMAC layer:
+
+- mTLS (TLS 1.3 AEAD + anti-replay window + per-connection keys);
+- pinned SPKI fingerprints (decision 2 — mitigation of F1);
+- per-peer ACL GATE (decision 3);
+- `federation_access_log` audit (decision 5).
+
+No nonce / timestamp / HMAC layer is added on top of mTLS.
+
+### Rationale
+
+1. **Correlated failure, not independent depth.** An HMAC key held in the
+   same operator infra as the mTLS cert material is not an independent
+   layer — one host or CA compromise breaks both. Defense-in-depth requires
+   independent failure domains, which a co-located key does not provide.
+2. **CA-compromise already mitigated by pinning.** The `pinVerifier` checks
+   the leaf cert SHA-256 against a per-peer pin set (decision 2 / F1). A
+   cert minted via a compromised CA has a new SPKI not in the pin set → the
+   handshake fails. An HMAC layer would not strengthen this path.
+3. **mTLS replay protection is sufficient for the workload.** TLS 1.3 1-RTT
+   has inherent replay protection, and the application layer is already
+   replay-tolerant: `Pull` / `SyncMetadata` are idempotent keyed on record
+   id, and `Subscribe` is cursor-based with id-dedup on import. A replay
+   yields at worst duplicates, not corruption.
+4. **The layer adds its own attack surface.** A separate HMAC layer needs a
+   new stateful nonce store (in-memory per mesh criterion 6/11 → lost on
+   restart → leaky within the TTL window), an NTP / clock-skew dependency,
+   and a duplicate key-distribution problem — the HMAC key is either
+   out-of-band like certs (duplicating cert management) or derived from the
+   mTLS session (adding nothing). It pulls crypto into a mesh that is
+   deliberately crypto-free.
+
+### Residual risk accepted
+
+Session-bound, short-lived replay within the TLS session — **unchanged**.
+This is F10 in the threat table above. The decision confirms F10's residual
+risk as accepted; no new residual risk is introduced.
+
+### CA-side hardening track (optional)
+
+If the threat context changes, the cheaper and higher-leverage move is to
+strengthen the CA side rather than add a fourth crypto layer:
+
+- HSM-backed or offline root CA;
+- shorter cert TTL (e.g. 30 days vs the current 90-day default);
+- CT-style issuance logging;
+- alerting on pin-set changes.
+
+This is **recommendation (c)** from the committee — optional, not adopted
+by this decision.
+
+### Triggers to revisit
+
+Re-open this decision if any of the following becomes true:
+
+1. Transition to multi-tenant / hosted federation.
+2. Entry into a regulated industry (compliance mandates a distinct layer).
+3. Cross-domain federation with third-party (untrusted) peers.
+4. A concrete CVE in Go `crypto/x509` or gRPC TLS that pinning cannot
+   mitigate.
+
+### Cross-references
+
+- **mnemos decision `82a3608b`** — full committee rationale (mnemos
+  `mnemos:decision`, `project:mnemos`, `committee`). The open question
+  `c3fd3fbc` is superseded by this decision (`committee:queue` removed).
+- **GitHub issue #88** point #4 — the design task this decision closes.
+- **F10** (threat table above) — the residual risk this decision confirms.
+- **ADR-0017** (`mnemos-mesh/docs/adr/0017-mnemos-mesh-architecture.md`) —
+  the mesh architecture this threat model sits on; mTLS, pinning, and the
+  per-peer ACL are defined there.
+
 ## References
 
 - **ADR-0014** — `mnemos/docs/project/adr/0014-api-auth-threat-model.md` — operator API auth (bearer + TOTP 2FA), federation explicitly excluded. This ADR extends it.
