@@ -1,4 +1,4 @@
-.PHONY: help install bootstrap check-venv test lint format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version
+.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
@@ -24,6 +24,7 @@ help:
 	@echo "  make build-dist - Build wheel + sdist into dist/ (requires: pip install build)"
 	@echo "  make build-image - Build container image locally with podman"
 	@echo "  make push-image - Tag and push local image to ghcr.io/korrnals/mnemos (requires: podman login ghcr.io)"
+	@echo "  make pypi-publish - PyPI pipeline: name+version gates, build, twine check, smoke (upload needs scripts/pypi-publish.sh --publish)"
 
 install:
 	uv pip install -e ".[dev]"
@@ -124,6 +125,12 @@ push-image:
 	podman tag localhost/mnemos:latest ghcr.io/korrnals/mnemos:latest
 	podman push ghcr.io/korrnals/mnemos:$(VERSION)
 	podman push ghcr.io/korrnals/mnemos:latest
+
+pypi-publish:
+	# Check mode: name+version gates, wheel/sdist build, twine check, metadata smoke.
+	# NO upload — first publish + final name are owner decisions.
+	# Flags (--full-smoke, --publish, ...): scripts/pypi-publish.sh --help
+	@bash scripts/pypi-publish.sh
 
 
 # ── local CI / release (GitHub Actions billing-locked — memory ef56d3b5) ──
