@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ADR-0017 — memory system evolution roadmap** (provider contract `assemble_context`, memory graph + learning loop, phases 0–4).
+
 ## [2.14.1] - 2026-07-31
 
 Docs-only patch — records the Architectural Committee decision on transport-level replay protection (ADR-0016, mnemos #88 point #4). No code, no API, no behavior change.
