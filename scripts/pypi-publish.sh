@@ -126,11 +126,11 @@ if $ON_TAG && [[ "$TAGV" != "$PYV" ]]; then
   else echo "⚠ [G2 warning]: tag $TAG != pyproject $PYV"; fi
 fi
 
-# steps: G0 (always attempted; network-independent steps follow) -> build ->
-# G3 -> twine check -> G4 metadata smoke -> [full smoke] -> [upload]
-TOTAL=4
+# steps: G0 (always) -> build -> G3 -> twine check -> G4 metadata smoke
+#        -> [full smoke] -> [upload]
+TOTAL=5
 $FULL_SMOKE && TOTAL=$((TOTAL+1)) || true
-$PUBLISH && TOTAL=$((TOTAL+2)) || true
+$PUBLISH && TOTAL=$((TOTAL+1)) || true
 IDX=0
 
 # --- G0: PyPI name gate -------------------------------------------------------
@@ -208,8 +208,10 @@ echo ""
 echo "=== [$IDX/$TOTAL] G3 artifact version gate ==="
 if $DRY_RUN; then echo "→ DRY-RUN: filename version check"; record "G3 artifact version" "SKIP"
 else
-  WFV=$(basename "$WHEEL" | sed -E "s/^${PKG_FS}-(.+)-(.+)-(.+)\.whl$/\1/")
-  SFV=$(basename "$SDIST" | sed -E "s/^${PKG_FS}-(.+)\.tar\.gz$/\1/")
+  # PEP 427 wheel filename: {name}-{version}-{python}-{abi}-{platform}.whl —
+  # versions contain no hyphens, so the version is exactly the first segment.
+  WFV=$(basename "$WHEEL" | sed -E "s/^${PKG_FS}-([^-]+)-[^-]+-[^-]+-[^-]+\\.whl$/\\1/")
+  SFV=$(basename "$SDIST" | sed -E "s/^${PKG_FS}-([^-]+)\.tar\.gz$/\1/")
   if [[ "$WFV" == "$PYV" && "$SFV" == "$PYV" ]]; then
     echo "✓ wheel=$WFV sdist=$SFV == pyproject=$PYV"; record "G3 artifact version" "PASS"
   else

@@ -123,6 +123,7 @@ mnemos mcp-server
 - [Runbook: Резервное копирование и восстановление](admin/runbooks/backup-restore.md) *(Wave 2)*
 - [Runbook: Обновление зависимостей](admin/runbooks/dependency-updates.md) *(Wave 2)*
 - [Runbook: CI/CD](admin/runbooks/ci-cd.md) *(Wave 2)*
+- [Runbook: Публикация в PyPI](admin/runbooks/pypi-publish.md) — доступность имени, wheel-пайплайн, версионные гейты, процедура первой публикации.
 - [Модель безопасности](admin/security.md) — модель угроз, SSRF-защита, аутентификация *(Wave 2)*
 
 ---
