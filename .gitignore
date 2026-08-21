@@ -58,6 +58,9 @@ Thumbs.db
 # Mnemos vault is managed separately
 mnemos-vault/
 
+# Competitor / comparative research — local only, never committed
+docs/project/research/
+
 # Generated reports
 bandit-report.json
 
