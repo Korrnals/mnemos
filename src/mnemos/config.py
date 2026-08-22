@@ -604,10 +604,16 @@ class Settings(BaseSettings):
         return actions
 
 
-def load_settings(config_path: str | Path | None = None) -> Settings:
-    """Load settings from YAML config file plus environment variables.
+def find_config_file(config_path: str | Path | None = None) -> Path | None:
+    """Resolve the config file :func:`load_settings` would load, or ``None``.
 
-    Search order:
+    Zero-config support (ADR-0017 Phase 0, D6): a ``None`` return means no
+    user config exists anywhere on the search path, so ``load_settings``
+    falls back to the built-in safe defaults (loopback bind, storage under
+    ``~/.mnemos/``). Surfaces such as ``mnemos serve`` use this to tell the
+    zero-config profile apart from an explicit config.
+
+    Search order (identical to :func:`load_settings`):
       1. Explicit config_path argument
       2. MNEMOS_CONFIG env var
       3. ./config.yaml in cwd
@@ -630,12 +636,32 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
     else:
         candidates = [Path(config_path)]
 
-    config_data: dict[str, Any] = {}
     for candidate in candidates:
         if candidate and candidate.is_file():
-            with candidate.open() as fh:
-                config_data = yaml.safe_load(fh) or {}
-            break
+            return candidate
+    return None
+
+
+def load_settings(config_path: str | Path | None = None) -> Settings:
+    """Load settings from YAML config file with env var overrides.
+
+    Search order:
+      1. Explicit config_path argument
+      2. MNEMOS_CONFIG env var
+      3. ./config.yaml in cwd
+      4. ~/.mnemos/config.yaml
+
+    When no config file is found (zero-config profile), the built-in
+    defaults apply: loopback-only API bind (127.0.0.1:8787), storage
+    auto-created under ``~/.mnemos/``, FTS5 lexical recall active with or
+    without an embedding provider (vector leg degrades non-fatally).
+    See :func:`find_config_file` for programmatic detection.
+    """
+    found = find_config_file(config_path)
+    config_data: dict[str, Any] = {}
+    if found is not None:
+        with found.open() as fh:
+            config_data = yaml.safe_load(fh) or {}
 
     settings = Settings(**config_data)
     settings.resolve_paths()
