@@ -53,10 +53,14 @@ __all__ = [
 STAMP_PATTERN = re.compile(r"<!--\s*mnemos-integration:\s*v(\S+?)\s*-->")
 
 #: Artefact sub-directories inside the shipped ``integrations/`` pack.
-ARTEFACT_DIRS: tuple[str, ...] = ("instructions", "skills", "prompts")
+ARTEFACT_DIRS: tuple[str, ...] = ("instructions", "skills", "prompts", "extensions")
 
 #: File extensions considered deployable (skip ``.gitkeep`` and READMEs).
-DEPLOYABLE_SUFFIXES: tuple[str, ...] = (".md", ".yaml", ".yml", ".json", ".txt")
+DEPLOYABLE_SUFFIXES: tuple[str, ...] = (".md", ".yaml", ".yml", ".json", ".txt", ".ts")
+
+#: Suffixes whose comment syntax requires a ``//`` prefix for the stamp
+#: (TypeScript/JavaScript integration artefacts, e.g. the Pi bridge).
+LINE_COMMENT_SUFFIXES: frozenset[str] = frozenset({".ts", ".js", ".mjs", ".cjs"})
 
 
 class ArtefactKind(StrEnum):
@@ -65,6 +69,7 @@ class ArtefactKind(StrEnum):
     INSTRUCTIONS = "instructions"
     SKILLS = "skills"
     PROMPTS = "prompts"
+    EXTENSION = "extensions"
 
 
 class DeployStatus(StrEnum):
@@ -269,14 +274,19 @@ def make_stamp(version: str) -> str:
     return f"<!-- mnemos-integration: v{version} -->"
 
 
-def stamp_content(content: str, version: str) -> str:
+def stamp_content(content: str, version: str, *, line_comment: bool = False) -> str:
     """Inject or replace the version stamp in file content.
 
     The stamp is placed on the first line that is not a shebang (``#!``) or
     front-matter delimiter (``---``). If a stamp already exists it is
     replaced in-place so the file does not accumulate duplicates.
+
+    ``line_comment=True`` prefixes the stamp with ``//`` so it stays a valid
+    comment in TypeScript/JavaScript artefacts (the Pi MCP bridge) — the
+    underlying stamp text is identical, only the comment syntax adapts.
     """
     stamp = make_stamp(version)
+    prefix = "// " if line_comment else ""
     lines = content.splitlines(keepends=True)
 
     # If a stamp already exists, replace it (idempotent update).
@@ -285,7 +295,7 @@ def stamp_content(content: str, version: str) -> str:
         replaced = False
         for line in lines:
             if not replaced and STAMP_PATTERN.search(line):
-                new_lines.append(stamp + "\n")
+                new_lines.append(prefix + stamp + "\n")
                 replaced = True
             else:
                 new_lines.append(line)
@@ -312,7 +322,7 @@ def stamp_content(content: str, version: str) -> str:
             continue
         break
 
-    lines.insert(insert_at, stamp + "\n")
+    lines.insert(insert_at, prefix + stamp + "\n")
     return "".join(lines)
 
 
@@ -517,7 +527,9 @@ class IntegrationManager:
     def _deploy_file(self, src: Path, dest: Path, *, dry_run: bool) -> FileResult:
         """Deploy a single file, returning the outcome."""
         content = src.read_text(encoding="utf-8")
-        stamped = stamp_content(content, self.version)
+        stamped = stamp_content(
+            content, self.version, line_comment=src.suffix in LINE_COMMENT_SUFFIXES
+        )
 
         if dest.exists():
             existing = dest.read_text(encoding="utf-8")
@@ -818,9 +830,33 @@ class IntegrationManager:
         (VS Code ``mcp.json``), keeping the historical behaviour.
         """
         target = self.targets.get(target_name) if target_name else None
+        if target is not None and target.mcp_format == "pi":
+            return self._register_mcp_pi(target)
         if target is not None and target.mcp_config is not None:
             return self._register_mcp_json(target, mnemos_bin=mnemos_bin)
         return self._register_mcp_script(mnemos_bin=mnemos_bin)
+
+    # ── MCP: Pi extension bridge ──────────────────────────────────────────────
+
+    def _register_mcp_pi(self, target: Target) -> tuple[bool, str]:
+        """ "Register" MCP for Pi by confirming the bridge extension is deployed.
+
+        Pi has no MCP config file to merge into: TypeScript extensions ARE
+        the tool surface. Registration therefore reduces to verifying that
+        the stamped bridge (``integrations/extensions/mnemos-mcp.ts``) sits
+        in the target's extensions directory — which ``deploy()`` (always
+        run before this in ``setup()``) has just placed there.
+        """
+        ext = target.mcp_config
+        assert ext is not None  # guaranteed by targets.yaml schema
+        if not ext.exists():
+            return False, f"bridge extension missing: {ext} — run deploy first"
+        deployed_version = read_stamp(ext.read_text(encoding="utf-8", errors="replace"))
+        if deployed_version is None:
+            return False, f"{ext} carries no mnemos stamp — not our file"
+        if deployed_version != self.version:
+            return False, f"{ext} is stale (v{deployed_version} != v{self.version})"
+        return True, f"MCP bridge deployed: {ext} (restart Pi or /reload to connect)"
 
     # ── MCP: JSON-merge registration (zcode / agents) ─────────────────────────
 

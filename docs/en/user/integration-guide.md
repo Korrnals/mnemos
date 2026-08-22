@@ -91,6 +91,27 @@ standard locations (ZCode, Claude Code, Codex, Cursor, …) — one install,
 every tool. The MCP merge is additive: existing servers, plugins, and a
 user-tuned `env` on the `mnemos` entry are never overwritten.
 
+### Pi coding agent
+
+The `pi` target covers the [Pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+(npm `@earendil-works/pi-coding-agent`). Pi has no built-in MCP client —
+tools arrive via TypeScript extensions — so the MCP registration IS a file:
+the shipped bridge `integrations/extensions/mnemos-mcp.ts` is deployed
+(stamped) into `~/.pi/agent/extensions/`, where Pi auto-loads it. On session
+start the bridge spawns `mnemos mcp-server` over stdio and registers every
+`mnemos_*` tool natively; `/reload` hot-reloads, `/mnemos` reconnects.
+
+```bash
+mnemos integration setup --target pi
+```
+
+Skills deploy in the nested layout Pi reads natively
+(`~/.pi/agent/skills/<name>/SKILL.md`). Because Pi also reads
+`~/.agents/skills/`, prefer `--target pi` over deploying both to avoid
+duplicate skill listings. `mnemos integration uninstall --target pi`
+removes only the stamped bridge and skills — user extensions are never
+touched.
+
 ### Cross-environment installs (--home)
 
 Deploy into another environment's home (a container, a dotfiles checkout)
@@ -115,6 +136,7 @@ target environment launches mnemos through a wrapper or a different path.
 | `cursor` | `~/.cursor/instructions/` | `~/.cursor/skills/` | `~/.cursor/prompts/` |
 | `zcode` | — | `~/.zcode/skills/<name>/SKILL.md` | MCP in `~/.zcode/cli/config.json` |
 | `agents` | — | `~/.agents/skills/<name>/SKILL.md` | MCP in `~/.agents/mcp.json` |
+| `pi` | — | `~/.pi/agent/skills/<name>/SKILL.md` | bridge: `~/.pi/agent/extensions/mnemos-mcp.ts` |
 
 ---
 

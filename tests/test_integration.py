@@ -1810,9 +1810,7 @@ class TestUniversalTargets:
         return universal_pack.parent / "fake-home"
 
     @pytest.fixture
-    def universal_manager(
-        self, universal_pack: Path, fake_home: Path
-    ) -> IntegrationManager:
+    def universal_manager(self, universal_pack: Path, fake_home: Path) -> IntegrationManager:
         cfg = load_targets(universal_pack / "targets.yaml", home=fake_home)
         return IntegrationManager(
             version="9.9.9", pack_root=universal_pack, targets_config=cfg, home=fake_home
@@ -1842,9 +1840,7 @@ class TestUniversalTargets:
     def test_deploy_nested_creates_skill_dirs(self, universal_manager: IntegrationManager) -> None:
         result = universal_manager.deploy("zcode")
         assert result.deployed_count == 1
-        dest = universal_manager.targets.get("zcode").dest_for(
-            "skills", Path("mnemos-recall.md")
-        )
+        dest = universal_manager.targets.get("zcode").dest_for("skills", Path("mnemos-recall.md"))
         assert dest.exists()
         assert read_stamp(dest.read_text(encoding="utf-8")) == "9.9.9"
 
@@ -1919,20 +1915,160 @@ class TestUniversalTargets:
         skills_dir = universal_manager.targets.get("agents").deploy_map["skills"]
         orphan = skills_dir / "mnemos-old-thing" / "SKILL.md"
         orphan.parent.mkdir(parents=True)
-        orphan.write_text(
-            stamp_content("# Old\n", "8.8.8"), encoding="utf-8"
-        )
+        orphan.write_text(stamp_content("# Old\n", "8.8.8"), encoding="utf-8")
         result = universal_manager.update("agents")
         assert not orphan.exists()
         assert not orphan.parent.exists()  # empty dir cleaned up
         assert any("orphaned" in (f.note or "") for f in result.files)
 
-    def test_uninstall_nested_removes_dirs(
-        self, universal_manager: IntegrationManager
-    ) -> None:
+    def test_uninstall_nested_removes_dirs(self, universal_manager: IntegrationManager) -> None:
         universal_manager.deploy("zcode")
         result = universal_manager.uninstall("zcode")
         assert len(result.removed) == 1
         skills_dir = universal_manager.targets.get("zcode").deploy_map["skills"]
         # The deploy root itself survives (it may host user skills) but is empty.
         assert not any(skills_dir.iterdir())
+
+
+# ── Pi target: extension bridge ──────────────────────────────────────────────
+
+
+class TestPiTarget:
+    """Pi coding agent — skills (nested) + TypeScript MCP bridge extension."""
+
+    @pytest.fixture
+    def pi_pack(self, tmp_path: Path) -> Path:
+        """Pack with skills + a .ts bridge extension and a pi target."""
+        fake_home = tmp_path / "pi-home"
+        (fake_home / ".pi" / "agent").mkdir(parents=True)
+
+        pack = tmp_path / "integrations"
+        (pack / "skills").mkdir(parents=True)
+        (pack / "skills" / "mnemos-recall.md").write_text(
+            "---\nname: mnemos-recall\n---\n# Recall\n", encoding="utf-8"
+        )
+        (pack / "extensions").mkdir(parents=True)
+        (pack / "extensions" / "mnemos-mcp.ts").write_text(
+            "// bridge source\nexport default function () {}\n", encoding="utf-8"
+        )
+        (pack / "targets.yaml").write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "pi": {
+                            "detect": [{"path": "~/.pi/agent"}],
+                            "deploy": {
+                                "skills": "~/.pi/agent/skills/",
+                                "extensions": "~/.pi/agent/extensions/",
+                            },
+                            "layout": "nested",
+                            "mcp": {
+                                "config": "~/.pi/agent/extensions/mnemos-mcp.ts",
+                                "format": "pi",
+                            },
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        return pack
+
+    @pytest.fixture
+    def pi_home(self, pi_pack: Path) -> Path:
+        return pi_pack.parent / "pi-home"
+
+    @pytest.fixture
+    def pi_manager(self, pi_pack: Path, pi_home: Path) -> IntegrationManager:
+        cfg = load_targets(pi_pack / "targets.yaml", home=pi_home)
+        return IntegrationManager(
+            version="9.9.9", pack_root=pi_pack, targets_config=cfg, home=pi_home
+        )
+
+    def test_pi_target_parsed(self, pi_manager: IntegrationManager, pi_home: Path) -> None:
+        pi = pi_manager.targets.get("pi")
+        assert pi is not None
+        assert pi.layout == "nested"
+        assert pi.mcp_format == "pi"
+        assert pi.mcp_config == pi_home / ".pi" / "agent" / "extensions" / "mnemos-mcp.ts"
+        assert pi.deploy_map["extensions"] == pi_home / ".pi" / "agent" / "extensions"
+
+    def test_deploy_stamps_ts_with_line_comment(
+        self, pi_manager: IntegrationManager, pi_home: Path
+    ) -> None:
+        pi_manager.deploy("pi")
+        bridge = pi_home / ".pi" / "agent" / "extensions" / "mnemos-mcp.ts"
+        assert bridge.exists()
+        first_line = bridge.read_text(encoding="utf-8").splitlines()[0]
+        # Stamp must be a valid TS line comment carrying the version.
+        assert first_line == "// <!-- mnemos-integration: v9.9.9 -->"
+        assert read_stamp(bridge.read_text(encoding="utf-8")) == "9.9.9"
+
+    def test_deploy_skills_nested(self, pi_manager: IntegrationManager, pi_home: Path) -> None:
+        pi_manager.deploy("pi")
+        skill = pi_home / ".pi" / "agent" / "skills" / "mnemos-recall" / "SKILL.md"
+        assert skill.exists()
+
+    def test_register_mcp_pi_success_after_deploy(self, pi_manager: IntegrationManager) -> None:
+        pi_manager.deploy("pi")
+        ok, note = pi_manager.register_mcp("pi")
+        assert ok, note
+        assert "bridge deployed" in note
+
+    def test_register_mcp_pi_fails_when_bridge_missing(
+        self, pi_manager: IntegrationManager
+    ) -> None:
+        ok, note = pi_manager.register_mcp("pi")
+        assert not ok
+        assert "missing" in note
+
+    def test_register_mcp_pi_fails_on_user_file(
+        self, pi_manager: IntegrationManager, pi_home: Path
+    ) -> None:
+        bridge = pi_home / ".pi" / "agent" / "extensions" / "mnemos-mcp.ts"
+        bridge.parent.mkdir(parents=True, exist_ok=True)
+        bridge.write_text("// user's own bridge\n", encoding="utf-8")
+        ok, note = pi_manager.register_mcp("pi")
+        assert not ok
+        assert "no mnemos stamp" in note
+
+    def test_setup_pi_end_to_end(self, pi_manager: IntegrationManager) -> None:
+        result = pi_manager.setup("pi")
+        assert result.deployed_count >= 2  # skill + bridge
+        assert result.mcp_registered
+
+    def test_uninstall_keeps_user_extensions(
+        self, pi_manager: IntegrationManager, pi_home: Path
+    ) -> None:
+        pi_manager.deploy("pi")
+        ext_dir = pi_home / ".pi" / "agent" / "extensions"
+        user_ext = ext_dir / "my-own.ts"
+        user_ext.write_text("// user file\n", encoding="utf-8")
+        result = pi_manager.uninstall("pi")
+        removed_names = {p.name for p in result.removed}
+        assert "mnemos-mcp.ts" in removed_names  # our bridge removed
+        assert "SKILL.md" in removed_names  # our skill removed too
+        assert user_ext.exists()
+        assert user_ext in result.skipped_user_files
+
+    def test_verify_flags_stale_bridge(self, pi_manager: IntegrationManager, pi_home: Path) -> None:
+        pi_manager.deploy("pi")
+        # Redeploy an older version over the bridge.
+        old = IntegrationManager(
+            version="1.0.0",
+            pack_root=pi_manager.pack_root,
+            targets_config=pi_manager.targets,
+            home=pi_manager.home,
+        )
+        old.deploy("pi")
+        result = pi_manager.verify("pi")
+        assert result.stale_count >= 1
+
+    def test_stamp_content_line_comment_roundtrip(self) -> None:
+        src = "// code\nexport {}\n"
+        stamped = stamp_content(src, "2.0.0", line_comment=True)
+        assert stamped.splitlines()[0] == "// <!-- mnemos-integration: v2.0.0 -->"
+        # Re-stamping replaces in place, no duplicates, still valid TS.
+        restamped = stamp_content(stamped, "2.1.0", line_comment=True)
+        assert restamped.count("mnemos-integration:") == 1
+        assert read_stamp(restamped) == "2.1.0"

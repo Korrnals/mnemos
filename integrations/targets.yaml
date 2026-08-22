@@ -68,3 +68,23 @@ targets:
     mcp:
       config: "~/.agents/mcp.json"
       format: agents
+
+  # Pi coding agent (@earendil-works/pi-coding-agent). Pi has no built-in
+  # MCP client by design — tools arrive via TypeScript extensions, so the
+  # shipped bridge extension IS the MCP registration: deploying it connects
+  # Pi to the mnemos server (spawn `mnemos mcp-server`, stdio JSON-RPC).
+  # Skills use the native nested layout under ~/.pi/agent/skills/.
+  # NOTE: Pi also reads ~/.agents/skills/ — when both targets are deployed,
+  # prefer --target pi to avoid duplicate skill listings.
+  pi:
+    detect:
+      - path: "~/.pi/agent"
+      - path: "~/.pi"
+    deploy:
+      skills: "~/.pi/agent/skills/"
+      extensions: "~/.pi/agent/extensions/"
+    format: copy
+    layout: nested
+    mcp:
+      config: "~/.pi/agent/extensions/mnemos-mcp.ts"
+      format: pi
