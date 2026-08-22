@@ -51,26 +51,18 @@ integration_app = typer.Typer(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _manager(pack_root: Path | None = None, home: Path | None = None) -> IntegrationManager:
+def _manager(pack_root: Path | None = None) -> IntegrationManager:
     """Build an IntegrationManager bound to the current package version."""
-    return IntegrationManager(version=__version__, pack_root=pack_root, home=home)
+    return IntegrationManager(version=__version__, pack_root=pack_root)
 
 
-HomeOption = typer.Option(
-    "--home",
-    help="Deploy into an alternate home directory (cross-environment installs, "
-    "e.g. another container's home or a dotfiles checkout). ~ in targets.yaml "
-    "resolves against it.",
-)
-
-
-def _resolve_targets(target: str, home: Path | None = None) -> list[str]:
+def _resolve_targets(target: str) -> list[str]:
     """Resolve ``--target`` value to a concrete list of target names.
 
     ``all`` → every detected target. A specific name is validated against
     the config and must be detected (or we warn and skip).
     """
-    cfg = load_targets(home=home)
+    cfg = load_targets()
     if target == "all":
         detected = cfg.detected()
         if not detected:
@@ -306,11 +298,9 @@ def _run_agent_wiring(
 
 
 @integration_app.command(name="detect")
-def detect_cmd(
-    home: Annotated[Path | None, HomeOption] = None,
-) -> None:
+def detect_cmd() -> None:
     """Print detected agent harnesses and their deploy paths."""
-    cfg = load_targets(home=home)
+    cfg = load_targets()
     detected = cfg.detected()
 
     if not detected:
@@ -395,7 +385,6 @@ def setup_cmd(
             help="Use individual mnemos/mnemos_* tool names instead of mnemos/* wildcard.",
         ),
     ] = False,
-    home: Annotated[Path | None, HomeOption] = None,
 ) -> None:
     """Deploy instructions + skills + prompts, register MCP, and wire agents.
 
@@ -422,11 +411,11 @@ def setup_cmd(
         console.print("[red]--wire-agents and --no-wire-agents are mutually exclusive.[/red]")
         raise typer.Exit(1)
 
-    targets = _resolve_targets(target, home)
+    targets = _resolve_targets(target)
     if not targets:
         return
 
-    mgr = _manager(home=home)
+    mgr = _manager()
     any_failed = False
 
     for name in targets:
@@ -487,18 +476,17 @@ def update_cmd(
         bool,
         typer.Option("--dry-run", help="Show what would be updated without writing"),
     ] = False,
-    home: Annotated[Path | None, HomeOption] = None,
 ) -> None:
     """Update already-deployed files to the current package version.
 
     Uses the version stamp to detect stale files. Only files carrying an
     outdated mnemos-integration stamp are touched.
     """
-    targets = _resolve_targets(target, home)
+    targets = _resolve_targets(target)
     if not targets:
         return
 
-    mgr = _manager(home=home)
+    mgr = _manager()
     for name in targets:
         console.print(f"Updating target: [bold]{name}[/bold]")
         result = mgr.update(name, dry_run=dry_run)
@@ -513,18 +501,17 @@ def verify_cmd(
         str,
         typer.Option("--target", "-t", help="Target: all | <name> (default: all detected)"),
     ] = "all",
-    home: Annotated[Path | None, HomeOption] = None,
 ) -> None:
     """Compare deployed files against the shipped pack.
 
     Reports: installed (version), stale, missing. Exits 0 if all current,
     exits 1 if any stale or missing files are found.
     """
-    targets = _resolve_targets(target, home)
+    targets = _resolve_targets(target)
     if not targets:
         return
 
-    mgr = _manager(home=home)
+    mgr = _manager()
     has_issues = False
 
     for name in targets:
@@ -584,18 +571,17 @@ def uninstall_cmd(
         bool,
         typer.Option("--dry-run", help="Show what would be removed without deleting"),
     ] = False,
-    home: Annotated[Path | None, HomeOption] = None,
 ) -> None:
     """Remove ONLY files carrying the mnemos-integration version stamp.
 
     User-created files are never deleted. Lists what was removed (or would
     be removed with ``--dry-run``).
     """
-    targets = _resolve_targets(target, home)
+    targets = _resolve_targets(target)
     if not targets:
         return
 
-    mgr = _manager(home=home)
+    mgr = _manager()
     total_removed = 0
     total_skipped = 0
 

@@ -36,8 +36,10 @@ args = ["mcp-server"]
 
 Ready-made one-liners for major harnesses: [mcp-presets.md](mcp-presets.md).
 No env vars are required; optional `MNEMOS_MNEMOS__DATA_DIR` /
-`MNEMOS_MNEMOS__VAULT_PATH` tune store locations (loopback needs no API key —
-never put secrets in the entry).
+`MNEMOS_MNEMOS__VAULT_PATH` tune store locations — the shorter
+`MNEMOS_DATA_DIR` / `MNEMOS_VAULT__VAULT_PATH` forms also work again as
+compatibility aliases since the #139 fix, canonical names preferred
+(loopback needs no API key — never put secrets in the entry).
 
 ## 2 · Expose — grant the tools to the agent
 

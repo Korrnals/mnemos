@@ -146,12 +146,10 @@ def _patch_integration(monkeypatch: pytest.MonkeyPatch, fake_pack: Path) -> None
 
     import mnemos.cli.util as util_mod
 
-    monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
-    monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
+    monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
+    monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
     # doctor._fix_integration_stale imports load_targets from integration module.
-    monkeypatch.setattr(
-        "mnemos.cli.integration.load_targets", lambda config_path=None, home=None: cfg
-    )
+    monkeypatch.setattr("mnemos.cli.integration.load_targets", lambda config_path=None: cfg)
 
 
 # ── Task 1: integration setup default-flow wiring prompt ─────────────────────

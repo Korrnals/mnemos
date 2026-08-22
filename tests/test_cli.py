@@ -687,25 +687,24 @@ class TestCliSearchFlags:
         mgr.sqlite.save(mem)
 
     def test_cli_search_include_raw_flag(self, isolated_config: Path) -> None:
-        """Default search surfaces raw entries; `--published-only` hides them (#123)."""
+        """`--include-raw` surfaces raw entries; default search hides them."""
         from mnemos.cli._manager import get_manager
 
         mgr = get_manager(str(isolated_config))
         self._add_memory(mgr, "raw entry marker", "raw", "RawTitleZeta")
         self._add_memory(mgr, "published entry marker", "published", "PubTitleOmega")
 
-        # Default search: everything except archived — the interactive CLI must
-        # find a just-added (still raw) memory (ADR-0017 Phase 0, issue #123).
+        # Default search: raw entries are filtered out — only the published
+        # title appears in the results table.
         result_default = runner.invoke(app, ["search", "marker"])
         assert result_default.exit_code == 0, result_default.output
         assert "PubTitleOmega" in result_default.output
-        assert "RawTitleZeta" in result_default.output
+        assert "RawTitleZeta" not in result_default.output
 
-        # --published-only: restrict to pipeline-published knowledge.
-        result_pub = runner.invoke(app, ["search", "marker", "--published-only"])
-        assert result_pub.exit_code == 0, result_pub.output
-        assert "PubTitleOmega" in result_pub.output
-        assert "RawTitleZeta" not in result_pub.output
+        # --include-raw: raw entries surface.
+        result_raw = runner.invoke(app, ["search", "marker", "--include-raw"])
+        assert result_raw.exit_code == 0, result_raw.output
+        assert "RawTitleZeta" in result_raw.output
 
     def test_cli_search_status_flag(self, isolated_config: Path) -> None:
         """`--status raw` finds only raw entries among mixed statuses."""

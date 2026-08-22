@@ -20,14 +20,12 @@ This is invisible in rendered Markdown but trivially greppable.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-import shutil
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import yaml
 
@@ -127,30 +125,10 @@ class Target:
     detect_paths: tuple[Path, ...]
     deploy_map: dict[str, Path]
     format: str = "copy"
-    #: ``nested`` stores each skill as ``<skills-dir>/<name>/SKILL.md``
-    #: instead of the flat ``<name>.md`` pack layout (zcode, agents).
-    layout: str = "flat"
-    #: Config file to register the MCP server in (JSON merge), if the
-    #: target declares one. ``None`` → fall back to ``mcp-setup.sh``.
-    mcp_config: Path | None = None
-    mcp_format: str | None = None
 
     def is_detected(self) -> bool:
         """A target is detected if ANY of its detect paths exists."""
         return any(p.exists() for p in self.detect_paths)
-
-    def dest_for(self, kind: str, rel: Path) -> Path:
-        """Map a pack-relative artefact path to its deploy destination.
-
-        ``layout: nested`` targets rewrite a flat ``mnemos-recall.md`` skill
-        into ``mnemos-recall/SKILL.md``. Pack sources that are ALREADY
-        directory-shaped (``<name>/SKILL.md``) pass through unchanged, so
-        both pack layouts work with both target layouts.
-        """
-        base = self.deploy_map[kind]
-        if self.layout == "nested" and kind == "skills" and rel.name != "SKILL.md":
-            return base / rel.parent / rel.stem / "SKILL.md"
-        return base / rel
 
 
 @dataclass(frozen=True)
@@ -166,20 +144,11 @@ class TargetsConfig:
         return tuple(t for t in self.targets if t.is_detected())
 
 
-def _expand(path: str, home: Path | None = None) -> Path:
-    """Expand ``~`` in a path, optionally against an alternate home.
-
-    ``home`` lets ``mnemos integration setup --home <dir>`` deploy into a
-    foreign environment (another container's home, a dotfiles repo, …)
-    without rewriting targets.yaml.
-    """
-    if path.startswith("~") and home is not None:
-        rest = path[1:].lstrip("/")
-        return home / rest if rest else home
+def _expand(path: str) -> Path:
     return Path(path).expanduser()
 
 
-def load_targets(config_path: Path | None = None, home: Path | None = None) -> TargetsConfig:
+def load_targets(config_path: Path | None = None) -> TargetsConfig:
     """Load and parse ``integrations/targets.yaml``.
 
     Args:
@@ -193,7 +162,6 @@ def load_targets(config_path: Path | None = None, home: Path | None = None) -> T
                (added in v2.0.1 via ``[tool.hatch.build.targets.wheel.force-include]``).
             3. Upward search for an ``integrations/`` sibling of any parent.
             4. CWD fallback (used in tests).
-        home: Alternate home directory for ``~`` expansion (see ``_expand``).
 
     Raises:
         FileNotFoundError: if the config file does not exist.
@@ -226,24 +194,15 @@ def load_targets(config_path: Path | None = None, home: Path | None = None) -> T
         if not isinstance(detect_raw, list):
             raise ValueError(f"targets.yaml: target '{name}'.detect must be a list")
         detect_paths = tuple(
-            _expand(d["path"], home) for d in detect_raw if isinstance(d, dict) and "path" in d
+            _expand(d["path"]) for d in detect_raw if isinstance(d, dict) and "path" in d
         )
 
         deploy_raw = spec.get("deploy", {})
         if not isinstance(deploy_raw, dict):
             raise ValueError(f"targets.yaml: target '{name}'.deploy must be a mapping")
         deploy_map = {
-            kind: _expand(path, home) for kind, path in deploy_raw.items() if isinstance(path, str)
+            kind: _expand(path) for kind, path in deploy_raw.items() if isinstance(path, str)
         }
-
-        mcp_raw = spec.get("mcp")
-        if mcp_raw is not None and not isinstance(mcp_raw, dict):
-            raise ValueError(f"targets.yaml: target '{name}'.mcp must be a mapping")
-        mcp_config: Path | None = None
-        mcp_format: str | None = None
-        if isinstance(mcp_raw, dict) and isinstance(mcp_raw.get("config"), str):
-            mcp_config = _expand(mcp_raw["config"], home)
-            mcp_format = str(mcp_raw.get("format", "agents")) if mcp_raw.get("format") else None
 
         fmt = str(spec.get("format", "copy"))
         targets.append(
@@ -252,9 +211,6 @@ def load_targets(config_path: Path | None = None, home: Path | None = None) -> T
                 detect_paths=detect_paths,
                 deploy_map=deploy_map,
                 format=fmt,
-                layout=str(spec.get("layout", "flat")),
-                mcp_config=mcp_config,
-                mcp_format=mcp_format,
             )
         )
 
@@ -408,12 +364,10 @@ class IntegrationManager:
         version: str,
         pack_root: Path | None = None,
         targets_config: TargetsConfig | None = None,
-        home: Path | None = None,
     ) -> None:
         self.version = version
         self.pack_root = pack_root or self._default_pack_root()
-        self.home = Path(home) if home is not None else Path.home()
-        self.targets = targets_config or load_targets(home=home)
+        self.targets = targets_config or load_targets()
 
     @staticmethod
     def _default_pack_root() -> Path:
@@ -508,7 +462,7 @@ class IntegrationManager:
 
             for src in files:
                 rel = src.relative_to(self.pack_root / kind.value)
-                dest = target.dest_for(kind.value, rel)
+                dest = dest_dir / rel
                 file_result = self._deploy_file(src, dest, dry_run=dry_run)
                 result.files.append(file_result)
 
@@ -579,7 +533,7 @@ class IntegrationManager:
             seen_dests: set[Path] = set()
             for src in files:
                 rel = src.relative_to(self.pack_root / kind.value)
-                dest = target.dest_for(kind.value, rel)
+                dest = dest_dir / rel
                 seen_dests.add(dest)
                 result.files.append(self._verify_file(src, dest))
 
@@ -697,7 +651,7 @@ class IntegrationManager:
             expected_dests: set[Path] = set()
             for src in files:
                 rel = src.relative_to(self.pack_root / kind.value)
-                expected_dests.add(target.dest_for(kind.value, rel))
+                expected_dests.add(dest_dir / rel)
 
             for path in sorted(dest_dir.rglob("*")):
                 if not path.is_file() or path in expected_dests:
@@ -807,84 +761,7 @@ class IntegrationManager:
                 return candidate
         return None
 
-    def register_mcp(
-        self, target_name: str | None = None, mnemos_bin: str | None = None
-    ) -> tuple[bool, str]:
-        """Register the MCP server for a target (or the legacy VS Code path).
-
-        Targets that declare ``mcp.config`` in targets.yaml (zcode, agents)
-        are registered by an in-place JSON merge that preserves every other
-        key in the file. Targets without one fall back to ``mcp-setup.sh``
-        (VS Code ``mcp.json``), keeping the historical behaviour.
-        """
-        target = self.targets.get(target_name) if target_name else None
-        if target is not None and target.mcp_config is not None:
-            return self._register_mcp_json(target, mnemos_bin=mnemos_bin)
-        return self._register_mcp_script(mnemos_bin=mnemos_bin)
-
-    # ── MCP: JSON-merge registration (zcode / agents) ─────────────────────────
-
-    def _register_mcp_json(self, target: Target, *, mnemos_bin: str | None) -> tuple[bool, str]:
-        """Merge a ``mnemos`` server entry into the target's JSON config.
-
-        The merge is additive: unknown top-level keys and other MCP servers
-        are preserved untouched. An existing ``mnemos`` entry keeps its
-        user-tuned ``env`` values (only missing keys are filled in).
-        """
-        cfg_path = target.mcp_config
-        assert cfg_path is not None  # guaranteed by register_mcp dispatch
-        try:
-            data = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
-        except (OSError, json.JSONDecodeError) as exc:
-            return False, f"cannot read {cfg_path}: {exc}"
-        if not isinstance(data, dict):
-            return False, f"{cfg_path}: expected a JSON object at top level"
-
-        if target.mcp_format == "zcode":
-            servers = data.setdefault("mcp", {}).setdefault("servers", {})
-        else:
-            servers = data.setdefault("mcpServers", {})
-        if not isinstance(servers, dict):
-            return False, f"{cfg_path}: server map is not an object"
-
-        existing = servers.get("mnemos")
-        servers["mnemos"] = self._mcp_entry(mnemos_bin, existing)
-
-        try:
-            cfg_path.parent.mkdir(parents=True, exist_ok=True)
-            cfg_path.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-            )
-        except OSError as exc:
-            return False, f"cannot write {cfg_path}: {exc}"
-        return True, f"MCP server registered in {cfg_path}"
-
-    def _mcp_entry(self, mnemos_bin: str | None, existing: dict[str, Any] | None) -> dict[str, Any]:
-        """Build the stdio server entry, preserving user tuning where present.
-
-        Env defaults mirror ``mcp-setup.sh``: ``<home>/.mnemos/{data,vault}``.
-        A pre-existing ``mnemos`` entry keeps its env verbatim, so cross-layout
-        installs never clobber tuned paths.
-        """
-        bin_path = (
-            mnemos_bin or shutil.which("mnemos") or str(self.home / ".mnemos/venv/bin/mnemos")
-        )
-        env = {
-            "MNEMOS_DATA_DIR": str(self.home / ".mnemos/data"),
-            "MNEMOS_VAULT__VAULT_PATH": str(self.home / ".mnemos/vault"),
-        }
-        entry = dict(existing) if isinstance(existing, dict) else {}
-        raw_env = entry.get("env")
-        kept_env: dict[str, Any] = raw_env if isinstance(raw_env, dict) else {}
-        for key, value in env.items():
-            kept_env.setdefault(key, value)
-        entry["env"] = kept_env
-        entry.update({"type": "stdio", "command": bin_path, "args": ["mcp-server"]})
-        return entry
-
-    # ── MCP: legacy script registration (VS Code) ─────────────────────────────
-
-    def _register_mcp_script(self, mnemos_bin: str | None = None) -> tuple[bool, str]:
+    def register_mcp(self, mnemos_bin: str | None = None) -> tuple[bool, str]:
         """Invoke ``mcp-setup.sh`` to register the MCP server in VS Code.
 
         Returns ``(success, note)``. This is a thin wrapper — the heavy
@@ -936,7 +813,7 @@ class IntegrationManager:
         result = self.deploy(target_name, dry_run=dry_run)
 
         if register_mcp and not dry_run:
-            ok, note = self.register_mcp(target_name=target_name, mnemos_bin=mnemos_bin)
+            ok, note = self.register_mcp(mnemos_bin=mnemos_bin)
             result.mcp_registered = ok
             result.mcp_note = note
 

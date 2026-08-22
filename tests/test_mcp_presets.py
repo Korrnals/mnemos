@@ -53,7 +53,10 @@ README_PRESET_ANCHORS = (
 #: Env names as pydantic-settings actually maps them for the nested
 #: ``Settings.mnemos`` section (``MNEMOS_`` prefix + ``__`` nesting).
 CANONICAL_ENV_VARS = ("MNEMOS_MNEMOS__DATA_DIR", "MNEMOS_MNEMOS__VAULT_PATH")
-LEGACY_ENV_VARS = ("MNEMOS_DATA_DIR", "MNEMOS_VAULT__VAULT_PATH")  # silently ignored
+#: Legacy short forms — #139 compat aliases (honoured again, but never the
+#: documented form; canonical wins when both are set). Allowed in the
+#: artefacts' prose notes only, never as an instruction.
+LEGACY_ENV_VARS = ("MNEMOS_DATA_DIR", "MNEMOS_VAULT__VAULT_PATH")
 
 #: Known ``mnemos:`` subtypes — a canary list; ``trace`` is NOT a subtype.
 CANDIDATE_SUBTYPES = (
@@ -269,11 +272,12 @@ def test_readme_preset_anchor_links_pinned(readme: str) -> None:
 
 def test_artefacts_use_canonical_env_names_only() -> None:
     """Env names in the artefacts must be the pydantic-settings-canonical
-    form; the legacy short forms are silently ignored by ``Settings``.
+    form; the legacy short forms are #139 compat aliases, not the
+    documented form.
 
-    The legacy names may appear ONLY in an explicit prose warning ("these
-    are ignored") — never as an instruction: not inside any fenced code
-    block, not as a ``--env`` flag, not as a tuning-table row.
+    The legacy names may appear ONLY in an explicit prose note (compat
+    aliases, canonical preferred) — never as an instruction: not inside any
+    fenced code block, not as a ``--env`` flag, not as a tuning-table row.
     """
     for artefact in (PRESETS, TEMPLATE):
         text = artefact.read_text(encoding="utf-8")
@@ -284,10 +288,10 @@ def test_artefacts_use_canonical_env_names_only() -> None:
         for legacy in LEGACY_ENV_VARS:
             for block in code_blocks:
                 assert legacy not in block, (
-                    f"{artefact.name} instructs the ignored env var {legacy} in a code block"
+                    f"{artefact.name} instructs the non-canonical env var {legacy} in a code block"
                 )
             assert f"| `{legacy}`" not in text, (
-                f"{artefact.name} lists the ignored env var {legacy} as a table row"
+                f"{artefact.name} lists the non-canonical env var {legacy} as a table row"
             )
 
 

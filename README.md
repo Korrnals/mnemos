@@ -81,11 +81,8 @@ mnemos integration setup
 
 This deploys memory-usage instructions, skills, and a prompt mode to your
 agent harness (Copilot `~/.copilot/`, generic Copilot, Cursor, and Hermes Agent
-`~/.hermes/`), plus two universal targets: `zcode` (native `~/.zcode/` skills +
-MCP config) and `agents` (the AGENTS.md standard `~/.agents/` — read natively
-by ZCode, Claude Code, Codex, Cursor and friends). Agents will now *know when
-and how* to use Mnemos memory — not just have the tools available. Use
-`--home <dir>` to install into another environment's home (e.g. a container).
+`~/.hermes/`). Agents will now *know when and how* to use Mnemos memory — not
+just have the tools available.
 
 Add `--wire-agents --all` to also grant `mnemos/*` tools to Copilot agent
 frontmatter in the same pass. See the

@@ -6,11 +6,12 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import yaml
 from pydantic import BaseModel, Field, SecretStr
-from pydantic_settings import BaseSettings
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +408,47 @@ class MeshConfig(BaseModel):
     timeout_s: float = Field(default=2.0, gt=0.0, le=60.0)
 
 
+# ── Issue #139: legacy short env-name compatibility ──────────────────────────
+#
+# ``Settings`` maps env vars with the ``MNEMOS_`` prefix + ``__`` nesting, so
+# the canonical names for the nested ``mnemos`` section fields are
+# ``MNEMOS_MNEMOS__DATA_DIR`` / ``MNEMOS_MNEMOS__VAULT_PATH``. Historically the
+# repo docs and ``scripts/mcp-setup.sh`` advertised the shorter
+# ``MNEMOS_DATA_DIR`` / ``MNEMOS_VAULT__VAULT_PATH`` forms, which
+# pydantic-settings silently ignores (no matching field). The mapping below
+# restores those two short names as compatibility aliases. Scope is
+# deliberately fixed to these two — this is NOT a general renaming engine.
+
+_ENV_COMPAT_ALIASES: Final[dict[str, tuple[str, str]]] = {
+    # legacy env name            -> (settings section, field)
+    "MNEMOS_DATA_DIR": ("mnemos", "data_dir"),
+    "MNEMOS_VAULT__VAULT_PATH": ("mnemos", "vault_path"),
+}
+
+
+class _EnvCompatAliasSettingsSource(PydanticBaseSettingsSource):
+    """Settings source mapping legacy short env names (#139) to nested fields.
+
+    Reads the process environment (NOT ``.env`` files — that is a separate,
+    lower-priority source) on every call, so each ``Settings()`` construction
+    observes the current ``os.environ``. Empty-string values are treated as
+    unset.
+    """
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        # Not consulted by the source-merge machinery (only __call__ is);
+        # required by the PydanticBaseSettingsSource ABC.
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        data: dict[str, dict[str, Any]] = {}
+        for alias, (section, field_name) in _ENV_COMPAT_ALIASES.items():
+            value = os.environ.get(alias, "")
+            if value:
+                data.setdefault(section, {})[field_name] = value
+        return data
+
+
 class Settings(BaseSettings):
     mnemos: MnemosConfig = MnemosConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
@@ -433,6 +475,42 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
     }
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Insert the #139 legacy alias source between env and dotenv sources.
+
+        Resulting precedence for ``mnemos.data_dir`` / ``mnemos.vault_path``
+        (high → low; sources deep-merge, so higher priority wins per field):
+
+        1. Init kwargs — ``load_settings()`` passes the YAML config file here,
+           so an explicit file value beats env vars. This mirrors the
+           pre-existing pydantic-settings behaviour of canonical names
+           (verified against pydantic-settings 2.14.2: init > env).
+        2. Canonical env: ``MNEMOS_MNEMOS__DATA_DIR`` /
+           ``MNEMOS_MNEMOS__VAULT_PATH``.
+        3. Compat alias (this source): ``MNEMOS_DATA_DIR`` /
+           ``MNEMOS_VAULT__VAULT_PATH`` — honoured only when neither the file
+           nor the canonical name provides the field. A short alias therefore
+           never overrides an explicit config-file value and never wins
+           against the canonical name; it only fills the gap that previously
+           fell through to the defaults.
+        4. ``.env`` dotenv file.  5. Field defaults.
+        """
+        return (
+            init_settings,
+            env_settings,
+            _EnvCompatAliasSettingsSource(settings_cls),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     def resolve_paths(self) -> None:
         self.mnemos.vault_path = self.mnemos.vault_path.expanduser().resolve()
@@ -526,20 +604,21 @@ class Settings(BaseSettings):
         return actions
 
 
-def find_config_file(config_path: str | Path | None = None) -> Path | None:
-    """Resolve the config file :func:`load_settings` would load, or ``None``.
+def load_settings(config_path: str | Path | None = None) -> Settings:
+    """Load settings from YAML config file plus environment variables.
 
-    Zero-config support (ADR-0017 Phase 0, D6): a ``None`` return means no
-    user config exists anywhere on the search path, so ``load_settings``
-    falls back to the built-in safe defaults (loopback bind, storage under
-    ``~/.mnemos/``). Surfaces such as ``mnemos serve`` use this to tell the
-    zero-config profile apart from an explicit config.
-
-    Search order (identical to :func:`load_settings`):
+    Search order:
       1. Explicit config_path argument
       2. MNEMOS_CONFIG env var
       3. ./config.yaml in cwd
       4. ~/.mnemos/config.yaml
+
+    Env handling for ``mnemos.data_dir`` / ``mnemos.vault_path`` (per field,
+    high → low; full contract in ``Settings.settings_customise_sources``):
+      config-file value > canonical env (``MNEMOS_MNEMOS__DATA_DIR`` /
+      ``MNEMOS_MNEMOS__VAULT_PATH``) > legacy short alias (``MNEMOS_DATA_DIR``
+      / ``MNEMOS_VAULT__VAULT_PATH``, issue #139 compatibility) > ``.env``
+      file > defaults.
     """
     if config_path is None:
         env_config = os.environ.get("MNEMOS_CONFIG", "")
@@ -551,32 +630,12 @@ def find_config_file(config_path: str | Path | None = None) -> Path | None:
     else:
         candidates = [Path(config_path)]
 
+    config_data: dict[str, Any] = {}
     for candidate in candidates:
         if candidate and candidate.is_file():
-            return candidate
-    return None
-
-
-def load_settings(config_path: str | Path | None = None) -> Settings:
-    """Load settings from YAML config file with env var overrides.
-
-    Search order:
-      1. Explicit config_path argument
-      2. MNEMOS_CONFIG env var
-      3. ./config.yaml in cwd
-      4. ~/.mnemos/config.yaml
-
-    When no config file is found (zero-config profile), the built-in
-    defaults apply: loopback-only API bind (127.0.0.1:8787), storage
-    auto-created under ``~/.mnemos/``, FTS5 lexical recall active with or
-    without an embedding provider (vector leg degrades non-fatally).
-    See :func:`find_config_file` for programmatic detection.
-    """
-    found = find_config_file(config_path)
-    config_data: dict[str, Any] = {}
-    if found is not None:
-        with found.open() as fh:
-            config_data = yaml.safe_load(fh) or {}
+            with candidate.open() as fh:
+                config_data = yaml.safe_load(fh) or {}
+            break
 
     settings = Settings(**config_data)
     settings.resolve_paths()

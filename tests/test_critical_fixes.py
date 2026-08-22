@@ -10,6 +10,8 @@ Covers:
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,6 +23,27 @@ from mnemos.config import Settings
 from mnemos.manager import MemoryManager
 from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType
 from mnemos.storage.sqlite_store import SQLiteStore
+
+
+@pytest.fixture(autouse=True)
+def _restore_compat_env_aliases() -> Iterator[None]:
+    """Restore the #139 compat env aliases after each test.
+
+    ``_make_settings`` writes ``MNEMOS_DATA_DIR`` / ``MNEMOS_VAULT__VAULT_PATH``
+    directly into ``os.environ``. Since the #139 compat shim made these names
+    live, a leak would bleed into later modules (e.g. ``test_config_layout``
+    asserts default paths under a fake home). Snapshot and restore around
+    every test in this module.
+    """
+    names = ("MNEMOS_DATA_DIR", "MNEMOS_VAULT__VAULT_PATH")
+    saved = {name: os.environ.get(name) for name in names}
+    yield
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -59,8 +82,6 @@ def _make_memory(mid: str = "m1", content: str = "hello world") -> Memory:
 
 def _make_settings(tmp_path: Path) -> Settings:
     """Create Settings with isolated tmp paths via env vars."""
-    import os
-
     os.environ["MNEMOS_DATA_DIR"] = str(tmp_path / "data")
     os.environ["MNEMOS_VAULT__VAULT_PATH"] = str(tmp_path / "vault")
     Path(tmp_path / "data").mkdir(parents=True, exist_ok=True)
