@@ -158,30 +158,38 @@ def _check_vector_store(settings: Any) -> CheckResult:
 
 
 def _check_mcp_server() -> CheckResult:
-    """Check VS Code mcp.json for a `mnemos` entry (user or workspace scope)."""
+    """Check known harness MCP configs for a `mnemos` entry."""
     candidates = [
-        Path.home() / ".config" / "Code" / "User" / "mcp.json",
-        Path.cwd() / ".vscode" / "mcp.json",
+        (Path.home() / ".config" / "Code" / "User" / "mcp.json", "VS Code, user scope"),
+        (Path.cwd() / ".vscode" / "mcp.json", "VS Code, workspace scope"),
+        (Path.home() / ".zcode" / "cli" / "config.json", "ZCode, user scope"),
+        (Path.home() / ".agents" / "mcp.json", "AGENTS.md standard (~/.agents)"),
     ]
-    for cfg_path in candidates:
+    for cfg_path, scope in candidates:
         if not cfg_path.exists():
             continue
         try:
             data = json.loads(cfg_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        servers = data.get("servers", {}) if isinstance(data, dict) else {}
+        servers: dict[str, Any] = {}
+        if isinstance(data, dict):
+            servers = (
+                data.get("servers")
+                or data.get("mcp", {}).get("servers")
+                or data.get("mcpServers")
+                or {}
+            )
         if "mnemos" in servers:
-            scope = "user" if cfg_path == candidates[0] else "workspace"
             return CheckResult(
                 "MCP server",
                 CheckStatus.PASS,
-                f"registered in VS Code ({scope} scope) — {cfg_path}",
+                f"registered in {scope} — {cfg_path}",
             )
     return CheckResult(
         "MCP server",
         CheckStatus.WARN,
-        "not registered in VS Code — run `mnemos integration setup` or mcp-setup.sh",
+        "not registered in any known harness — run `mnemos integration setup`",
     )
 
 
@@ -496,12 +504,21 @@ def _fix_agent_wiring() -> tuple[bool, str]:
 
 
 def _fix_mcp_registration() -> tuple[bool, str]:
-    """Register the MCP server via mcp-setup.sh."""
+    """Register the MCP server: JSON targets first, then mcp-setup.sh."""
     from mnemos.cli.integration import IntegrationManager
 
     mgr = IntegrationManager(version=__version__)
-    ok, note = mgr.register_mcp()
-    return ok, note
+    notes: list[str] = []
+    any_ok = False
+    for target in mgr.targets.detected():
+        if target.mcp_config is not None:
+            ok, note = mgr.register_mcp(target.name)
+            any_ok = any_ok or ok
+            notes.append(note)
+    ok, note = mgr.register_mcp()  # legacy VS Code path
+    any_ok = any_ok or ok
+    notes.append(note)
+    return any_ok, "; ".join(notes)
 
 
 def _fix_action_for(check_name: str) -> _FixAction | None:

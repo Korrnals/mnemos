@@ -39,3 +39,32 @@ targets:
       instructions: "~/.hermes/skills/"
       skills: "~/.hermes/skills/"
     format: copy
+
+  # ZCode agent. Skills live as <skills-dir>/<name>/SKILL.md (layout:
+  # nested); MCP is registered in the user config under mcp.servers,
+  # merged in place so other servers survive.
+  zcode:
+    detect:
+      - path: "~/.zcode/cli/config.json"
+      - path: "~/.zcode"
+    deploy:
+      skills: "~/.zcode/skills/"
+    format: copy
+    layout: nested
+    mcp:
+      config: "~/.zcode/cli/config.json"
+      format: zcode
+
+  # Universal AGENTS.md-standard target (~/.agents is read natively by
+  # ZCode, Claude Code, Codex, Cursor and others). Skills deploy as
+  # <name>/SKILL.md; MCP registers into the top-level mcpServers key.
+  agents:
+    detect:
+      - path: "~/.agents"
+    deploy:
+      skills: "~/.agents/skills/"
+    format: copy
+    layout: nested
+    mcp:
+      config: "~/.agents/mcp.json"
+      format: agents

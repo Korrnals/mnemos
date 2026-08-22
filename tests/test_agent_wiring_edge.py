@@ -78,8 +78,10 @@ def _isolate_copilot_target(
         format="copy",
     )
     config = TargetsConfig(targets=(copilot_target,))
-    monkeypatch.setattr("mnemos.cli.util.load_targets", lambda: config)
-    monkeypatch.setattr("mnemos.cli.integration.load_targets", lambda config_path=None: config)
+    monkeypatch.setattr("mnemos.cli.util.load_targets", lambda config_path=None, home=None: config)
+    monkeypatch.setattr(
+        "mnemos.cli.integration.load_targets", lambda config_path=None, home=None: config
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
