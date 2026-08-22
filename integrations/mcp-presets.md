@@ -90,6 +90,35 @@ existing `mcp_config.json`; otherwise paste the line above into `mcpServers`):
 mkdir -p ~/.codeium/windsurf && echo '{"mcpServers":{"mnemos":{"type":"stdio","command":"mnemos","args":["mcp-server"]}}}' > ~/.codeium/windsurf/mcp_config.json
 ```
 
+## Pi
+
+[Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+(npm `@earendil-works/pi-coding-agent`) has **no built-in MCP client by
+design** — tools arrive via TypeScript extensions, so there is no JSON
+config to paste. Mnemos ships a bridge extension that spawns the server over
+stdio (the same `mnemos mcp-server` wire) and registers every `mnemos_*`
+tool as a native Pi tool:
+
+```bash
+mnemos integration setup --target pi
+```
+
+That deploys:
+
+- `~/.pi/agent/extensions/mnemos-mcp.ts` — the MCP bridge (this IS the
+  registration; Pi loads extensions from that directory automatically)
+- `~/.pi/agent/skills/<name>/SKILL.md` — the skill pack, nested layout
+
+Restart Pi (or run `/reload` inside a session) and the `mnemos_*` tools
+appear; `/mnemos` reconnects the bridge on demand. Manual fallback — copy
+`integrations/extensions/mnemos-mcp.ts` from the repo into
+`~/.pi/agent/extensions/`. Override the server binary with the
+`MNEMOS_BIN` environment variable when `mnemos` is not on `PATH`.
+
+Note: Pi also reads `~/.agents/skills/`; when both the `pi` and `agents`
+targets are deployed, prefer `--target pi` to avoid duplicate skill
+listings.
+
 ## VS Code Copilot (reference)
 
 The scripted path — merges into user- or workspace-scope `mcp.json` safely:

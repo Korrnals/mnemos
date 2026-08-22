@@ -94,6 +94,29 @@ mnemos integration setup --target agents            # универсальный
 плагины и пользовательски настроенный `env` у записи `mnemos` никогда не
 перезаписываются.
 
+### Агент Pi
+
+Цель `pi` — для [агента Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+(npm `@earendil-works/pi-coding-agent`). У Pi нет встроенного MCP-клиента —
+инструменты приходят через TypeScript-расширения, поэтому регистрация MCP —
+это файл: поставляемый бридж `integrations/extensions/mnemos-mcp.ts`
+развёртывается (со штампом версии) в `~/.pi/agent/extensions/`, откуда Pi
+загружает его автоматически. При старте сессии бридж поднимает
+`mnemos mcp-server` по stdio и нативно регистрирует все инструменты
+`mnemos_*`; `/reload` перезагружает расширение, `/mnemos` переподключает
+бридж.
+
+```bash
+mnemos integration setup --target pi
+```
+
+Скиллы развёртываются во вложенной раскладке, которую Pi читает нативно
+(`~/.pi/agent/skills/<имя>/SKILL.md`). Поскольку Pi также читает
+`~/.agents/skills/`, предпочитайте `--target pi` вместо развёртывания обеих
+целей — чтобы не дублировать скиллы. `mnemos integration uninstall
+--target pi` удаляет только штампованные бридж и скиллы — пользовательские
+расширения не затрагиваются.
+
 ### Установка в другое окружение (--home)
 
 Развёртывание в home другого окружения (контейнер, checkout дотфайлов) без
