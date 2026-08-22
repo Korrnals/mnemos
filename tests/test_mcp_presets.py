@@ -8,14 +8,19 @@ fragment against the canonical ADR-0017 D1 stdio entry:
 
     command = "mnemos", args = ["mcp-server"], type = "stdio"
 
-Deliberately imports no ``mnemos`` module: the artefacts are plain files,
-so the guard runs identically from any interpreter / install layout.
+Import policy: tests operate on plain files (no ``mnemos`` import), so they
+run identically from any interpreter / install layout. One documented
+exception — ``test_canonical_env_names_and_subtypes_steer_src`` — proves the
+documented env-var names and tag subtypes against the ``src/`` tree in a
+subprocess, and skips itself when the deps are unavailable.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -29,6 +34,40 @@ TEMPLATE = REPO_ROOT / "integrations" / "adapter-template.md"
 CANONICAL_COMMAND = "mnemos"
 CANONICAL_ARGS = ["mcp-server"]
 CANONICAL_TYPE = "stdio"
+
+#: Harness config paths the presets must keep naming correctly.
+PRESET_CONFIG_PATHS = (
+    "~/.cursor/mcp.json",
+    "~/.codex/config.toml",
+    "~/.codeium/windsurf/mcp_config.json",
+)
+
+#: README compatibility-table links down to per-harness preset anchors.
+README_PRESET_ANCHORS = (
+    "integrations/mcp-presets.md#claude-code",
+    "integrations/mcp-presets.md#cursor",
+    "integrations/mcp-presets.md#codex",
+    "integrations/mcp-presets.md#windsurf",
+)
+
+#: Env names as pydantic-settings actually maps them for the nested
+#: ``Settings.mnemos`` section (``MNEMOS_`` prefix + ``__`` nesting).
+CANONICAL_ENV_VARS = ("MNEMOS_MNEMOS__DATA_DIR", "MNEMOS_MNEMOS__VAULT_PATH")
+LEGACY_ENV_VARS = ("MNEMOS_DATA_DIR", "MNEMOS_VAULT__VAULT_PATH")  # silently ignored
+
+#: Known ``mnemos:`` subtypes — a canary list; ``trace`` is NOT a subtype.
+CANDIDATE_SUBTYPES = (
+    "session",
+    "bug-pattern",
+    "learning",
+    "decision",
+    "rule",
+    "trace",
+    "open-question",
+    "checkpoint",
+    "legacy",
+    "synthesized",
+)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -208,3 +247,94 @@ def test_guides_reference_artefacts() -> None:
     for text in (en, ru):
         assert "mcp-presets.md" in text
         assert "adapter-template.md" in text
+
+
+# ── review pins (#124 code review) ────────────────────────────────────────────
+
+
+def test_presets_pin_config_paths() -> None:
+    """Each preset names its harness config file — pin the exact paths."""
+    text = PRESETS.read_text(encoding="utf-8")
+    for path in PRESET_CONFIG_PATHS:
+        assert path in text, f"presets no longer name the config path {path}"
+
+
+@pytest.mark.parametrize("readme", ["README.md", "README.ru.md"])
+def test_readme_preset_anchor_links_pinned(readme: str) -> None:
+    """README tables link to per-harness preset anchors — pin all four."""
+    text = (REPO_ROOT / readme).read_text(encoding="utf-8")
+    for link in README_PRESET_ANCHORS:
+        assert link in text, f"{readme} missing preset anchor link {link}"
+
+
+def test_artefacts_use_canonical_env_names_only() -> None:
+    """Env names in the artefacts must be the pydantic-settings-canonical
+    form; the legacy short forms are silently ignored by ``Settings``.
+
+    The legacy names may appear ONLY in an explicit prose warning ("these
+    are ignored") — never as an instruction: not inside any fenced code
+    block, not as a ``--env`` flag, not as a tuning-table row.
+    """
+    for artefact in (PRESETS, TEMPLATE):
+        text = artefact.read_text(encoding="utf-8")
+        for name in CANONICAL_ENV_VARS:
+            assert name in text, f"{artefact.name} missing canonical {name}"
+        code_blocks = fenced_blocks(text, "bash") + fenced_blocks(text, "json")
+        code_blocks += fenced_blocks(text, "toml") + fenced_blocks(text, "text")
+        for legacy in LEGACY_ENV_VARS:
+            for block in code_blocks:
+                assert legacy not in block, (
+                    f"{artefact.name} instructs the ignored env var {legacy} in a code block"
+                )
+            assert f"| `{legacy}`" not in text, (
+                f"{artefact.name} lists the ignored env var {legacy} as a table row"
+            )
+
+
+def test_canonical_env_names_and_subtypes_steer_src() -> None:
+    """Subprocess proof against the src tree (the one import exempt test).
+
+    1. The documented env names must actually move ``Settings.mnemos``
+       (pydantic-settings ``MNEMOS_`` prefix + ``__`` nesting).
+    2. Every ``mnemos:`` subtype listed in the template must exist in
+       ``MNEMOS_TAG_SUBTYPES`` (``trace`` is a canary: not a subtype).
+    Skips when this interpreter cannot import the src deps.
+    """
+    script = (
+        "import sys, os, json\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "os.environ['MNEMOS_MNEMOS__DATA_DIR'] = '/tmp/mnemos-pin-data'\n"
+        "os.environ['MNEMOS_MNEMOS__VAULT_PATH'] = '/tmp/mnemos-pin-vault'\n"
+        "os.environ.pop('MNEMOS_DATA_DIR', None)\n"
+        "os.environ.pop('MNEMOS_VAULT__VAULT_PATH', None)\n"
+        "from mnemos.config import Settings\n"
+        "from mnemos.models import MNEMOS_TAG_SUBTYPES\n"
+        "s = Settings(_env_file=None)\n"
+        "print(s.mnemos.data_dir, s.mnemos.vault_path)\n"
+        "print(json.dumps(sorted(MNEMOS_TAG_SUBTYPES)))\n"
+    )
+    proc = subprocess.run(  # nosec B603 — fixed argv, repo-local src tree
+        [sys.executable, "-c", script, str(REPO_ROOT / "src")],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if proc.returncode != 0 and re.search(r"(ModuleNotFound|Import)Error", proc.stderr):
+        pytest.skip(f"src deps unavailable under {sys.executable}")
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.strip().splitlines()
+    assert len(lines) == 2, f"unexpected subprocess output: {proc.stdout!r}"
+
+    # 1. Canonical env names steer Settings; the legacy ones do not.
+    assert "/tmp/mnemos-pin-data /tmp/mnemos-pin-vault" in lines[0], (
+        f"canonical env names ignored by Settings: {lines[0]!r}"
+    )
+
+    # 2. Subtypes listed in the template are real subtypes.
+    template_text = TEMPLATE.read_text(encoding="utf-8")
+    listed = {t for t in CANDIDATE_SUBTYPES if f"`{t}`" in template_text}
+    assert listed, "template no longer lists any mnemos: subtypes"
+    real = set(json.loads(lines[1]))
+    invalid = listed - real
+    assert not invalid, f"template lists non-existent mnemos: subtypes: {sorted(invalid)}"

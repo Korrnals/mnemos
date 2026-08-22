@@ -27,7 +27,8 @@ object (create the file if it is your first server):
 "mnemos": { "type": "stdio", "command": "mnemos", "args": ["mcp-server"] }
 ```
 
-Fresh setup — create the whole file in one shell line:
+Fresh setup — create the whole file in one shell line (overwrites an
+existing `mcp.json`; otherwise paste the line above into its `mcpServers`):
 
 ```bash
 echo '{"mcpServers":{"mnemos":{"type":"stdio","command":"mnemos","args":["mcp-server"]}}}' > ~/.cursor/mcp.json
@@ -82,7 +83,8 @@ toolbar: hammer icon → Configure). Paste inside `mcpServers`:
 "mnemos": { "type": "stdio", "command": "mnemos", "args": ["mcp-server"] }
 ```
 
-Fresh setup — create the whole file in one shell line:
+Fresh setup — create the whole file in one shell line (overwrites an
+existing `mcp_config.json`; otherwise paste the line above into `mcpServers`):
 
 ```bash
 mkdir -p ~/.codeium/windsurf && echo '{"mcpServers":{"mnemos":{"type":"stdio","command":"mnemos","args":["mcp-server"]}}}' > ~/.codeium/windsurf/mcp_config.json
@@ -100,19 +102,22 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-se
 
 ## Tuning
 
-Optional environment variables on the server entry (defaults shown):
+Optional environment variables on the server entry (defaults shown). The
+names are the canonical `pydantic-settings` form (`MNEMOS_` prefix +
+`MNEMOS` section + `__` + field — shorter variants like `MNEMOS_DATA_DIR`
+are silently ignored):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MNEMOS_DATA_DIR` | `~/.mnemos/data` | SQLite store location |
-| `MNEMOS_VAULT__VAULT_PATH` | `~/.mnemos/vault` | Obsidian vault mirror |
+| `MNEMOS_MNEMOS__DATA_DIR` | `~/.mnemos/data` | SQLite store location |
+| `MNEMOS_MNEMOS__VAULT_PATH` | `~/.mnemos/vault` | Obsidian vault mirror |
 
 Example — Claude Code with an explicit store path (expanded by your shell):
 
 ```bash
 claude mcp add --scope user mnemos \
-  --env MNEMOS_DATA_DIR="$HOME/.mnemos/data" \
-  --env MNEMOS_VAULT__VAULT_PATH="$HOME/.mnemos/vault" \
+  --env MNEMOS_MNEMOS__DATA_DIR="$HOME/.mnemos/data" \
+  --env MNEMOS_MNEMOS__VAULT_PATH="$HOME/.mnemos/vault" \
   -- mnemos mcp-server
 ```
 

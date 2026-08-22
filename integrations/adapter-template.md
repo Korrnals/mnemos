@@ -35,8 +35,8 @@ args = ["mcp-server"]
 ```
 
 Ready-made one-liners for major harnesses: [mcp-presets.md](mcp-presets.md).
-No env vars are required; optional `MNEMOS_DATA_DIR` /
-`MNEMOS_VAULT__VAULT_PATH` tune store locations (loopback needs no API key —
+No env vars are required; optional `MNEMOS_MNEMOS__DATA_DIR` /
+`MNEMOS_MNEMOS__VAULT_PATH` tune store locations (loopback needs no API key —
 never put secrets in the entry).
 
 ## 2 · Expose — grant the tools to the agent
@@ -74,7 +74,7 @@ Pick two slugs once and reuse them everywhere (keeps recall scoped):
 - `agent:<slug>` — this harness's identity (e.g. `agent:cursor`, or `agent:user`)
 
 Every write must carry exactly one of each plus at least one
-`mnemos:<subtype>` (`decision`, `rule`, `trace`, `checkpoint`, `learning`, …).
+`mnemos:<subtype>` (`decision`, `rule`, `session`, `checkpoint`, `learning`, …).
 Full schema: [tag-contract.md](../docs/en/user/tag-contract.md). The server
 rejects contract-breaking writes, so a failed `mnemos_add` means bad tags,
 not a broken connection.
