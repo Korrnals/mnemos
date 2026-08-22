@@ -558,8 +558,10 @@ class TestCLI:
 
         import mnemos.cli.util as util_mod
 
-        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: manager)
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: manager.targets)
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: manager)
+        monkeypatch.setattr(
+            util_mod, "load_targets", lambda config_path=None, home=None: manager.targets
+        )
 
         result = runner.invoke(app, ["integration", "verify", "--target", detected_target])
         assert result.exit_code == 0
@@ -1243,8 +1245,8 @@ class TestCLISetupUpdateUninstall:
 
         import mnemos.cli.util as util_mod
 
-        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
 
         result = runner.invoke(
             app, ["integration", "setup", "--target", "test-harness", "--dry-run", "--no-mcp"]
@@ -1267,8 +1269,8 @@ class TestCLISetupUpdateUninstall:
 
         import mnemos.cli.util as util_mod
 
-        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
 
         result = runner.invoke(
             app, ["integration", "setup", "--target", "test-harness", "--no-mcp"]
@@ -1290,8 +1292,8 @@ class TestCLISetupUpdateUninstall:
 
         import mnemos.cli.util as util_mod
 
-        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: new_mgr)
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: new_mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
 
         result = runner.invoke(app, ["integration", "update", "--target", "test-harness"])
         assert result.exit_code == 0
@@ -1309,8 +1311,8 @@ class TestCLISetupUpdateUninstall:
 
         import mnemos.cli.util as util_mod
 
-        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
 
         result = runner.invoke(app, ["integration", "uninstall", "--target", "test-harness"])
         assert result.exit_code == 0
@@ -1329,8 +1331,8 @@ class TestCLISetupUpdateUninstall:
 
         import mnemos.cli.util as util_mod
 
-        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None: mgr)
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+        monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
 
         result = runner.invoke(
             app, ["integration", "uninstall", "--target", "test-harness", "--dry-run"]
@@ -1348,7 +1350,7 @@ class TestCLISetupUpdateUninstall:
 
         # Empty config with no detected targets.
         empty_cfg = TargetsConfig(targets=())
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: empty_cfg)
 
         result = runner.invoke(app, ["integration", "setup", "--target", "all"])
         assert result.exit_code == 0
@@ -1362,7 +1364,7 @@ class TestCLISetupUpdateUninstall:
         import mnemos.cli.util as util_mod
 
         empty_cfg = TargetsConfig(targets=())
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: empty_cfg)
 
         result = runner.invoke(app, ["integration", "verify", "--target", "all"])
         assert result.exit_code == 0
@@ -1375,7 +1377,7 @@ class TestCLISetupUpdateUninstall:
         import mnemos.cli.util as util_mod
 
         empty_cfg = TargetsConfig(targets=())
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: empty_cfg)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: empty_cfg)
 
         result = runner.invoke(app, ["integration", "detect"])
         assert result.exit_code == 0
@@ -1399,7 +1401,7 @@ class TestCLISetupUpdateUninstall:
                 ),
             )
         )
-        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None: cfg)
+        monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
 
         result = runner.invoke(app, ["integration", "setup", "--target", "ghost"])
         assert result.exit_code == 0
@@ -1760,3 +1762,177 @@ class TestDetectAllAndDeployableTargets:
 
         empty = TargetsConfig(targets=())
         assert deployable_targets(empty) == []
+
+
+# ── Universal targets: zcode / agents ─────────────────────────────────────────
+
+
+class TestUniversalTargets:
+    """zcode + agents targets: nested layout, JSON MCP merge, --home override."""
+
+    @pytest.fixture
+    def universal_pack(self, tmp_path: Path) -> Path:
+        """Pack with flat skills + zcode/agents targets rooted at a fake home."""
+        fake_home = tmp_path / "fake-home"
+        (fake_home / ".zcode" / "cli").mkdir(parents=True)
+        (fake_home / ".agents").mkdir(parents=True)
+
+        pack = tmp_path / "integrations"
+        (pack / "skills").mkdir(parents=True)
+        (pack / "skills" / "mnemos-recall.md").write_text(
+            "---\nname: mnemos-recall\n---\n# Recall\n", encoding="utf-8"
+        )
+        (pack / "targets.yaml").write_text(
+            yaml.dump(
+                {
+                    "targets": {
+                        "zcode": {
+                            "detect": [{"path": "~/.zcode"}],
+                            "deploy": {"skills": "~/.zcode/skills/"},
+                            "layout": "nested",
+                            "mcp": {"config": "~/.zcode/cli/config.json", "format": "zcode"},
+                        },
+                        "agents": {
+                            "detect": [{"path": "~/.agents"}],
+                            "deploy": {"skills": "~/.agents/skills/"},
+                            "layout": "nested",
+                            "mcp": {"config": "~/.agents/mcp.json", "format": "agents"},
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        return pack
+
+    @pytest.fixture
+    def fake_home(self, universal_pack: Path) -> Path:
+        return universal_pack.parent / "fake-home"
+
+    @pytest.fixture
+    def universal_manager(
+        self, universal_pack: Path, fake_home: Path
+    ) -> IntegrationManager:
+        cfg = load_targets(universal_pack / "targets.yaml", home=fake_home)
+        return IntegrationManager(
+            version="9.9.9", pack_root=universal_pack, targets_config=cfg, home=fake_home
+        )
+
+    def test_home_override_resolves_tilde(self, universal_pack: Path, fake_home: Path) -> None:
+        cfg = load_targets(universal_pack / "targets.yaml", home=fake_home)
+        zcode = cfg.get("zcode")
+        assert zcode is not None
+        assert zcode.deploy_map["skills"] == fake_home / ".zcode" / "skills"
+        assert zcode.mcp_config == fake_home / ".zcode" / "cli" / "config.json"
+        assert zcode.layout == "nested"
+        agents = cfg.get("agents")
+        assert agents is not None
+        assert agents.mcp_format == "agents"
+
+    def test_dest_for_nested_rewrites_flat_skill(self, fake_home: Path) -> None:
+        cfg = load_targets(home=fake_home)
+        target = cfg.get("zcode")
+        assert target is not None
+        dest = target.dest_for("skills", Path("mnemos-recall.md"))
+        assert dest == fake_home / ".zcode" / "skills" / "mnemos-recall" / "SKILL.md"
+        # Already-nested pack sources pass through unchanged.
+        passthrough = target.dest_for("skills", Path("mnemos-recall/SKILL.md"))
+        assert passthrough == fake_home / ".zcode" / "skills" / "mnemos-recall" / "SKILL.md"
+
+    def test_deploy_nested_creates_skill_dirs(self, universal_manager: IntegrationManager) -> None:
+        result = universal_manager.deploy("zcode")
+        assert result.deployed_count == 1
+        dest = universal_manager.targets.get("zcode").dest_for(
+            "skills", Path("mnemos-recall.md")
+        )
+        assert dest.exists()
+        assert read_stamp(dest.read_text(encoding="utf-8")) == "9.9.9"
+
+    def test_register_mcp_zcode_merges_preserving(
+        self, universal_manager: IntegrationManager, fake_home: Path
+    ) -> None:
+        import json
+
+        cfg_path = fake_home / ".zcode" / "cli" / "config.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "plugins": {"enabledPlugins": {"github": True}},
+                    "mcp": {"servers": {"other": {"command": "x"}}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        ok, note = universal_manager.register_mcp("zcode", mnemos_bin="/bin/mnemos")
+        assert ok, note
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        assert data["plugins"]["enabledPlugins"]["github"] is True  # untouched
+        assert data["mcp"]["servers"]["other"] == {"command": "x"}  # untouched
+        entry = data["mcp"]["servers"]["mnemos"]
+        assert entry["command"] == "/bin/mnemos"
+        assert entry["args"] == ["mcp-server"]
+        assert entry["env"]["MNEMOS_DATA_DIR"] == str(fake_home / ".mnemos/data")
+
+    def test_register_mcp_zcode_preserves_existing_env(
+        self, universal_manager: IntegrationManager, fake_home: Path
+    ) -> None:
+        import json
+
+        cfg_path = fake_home / ".zcode" / "cli" / "config.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "mcp": {
+                        "servers": {
+                            "mnemos": {
+                                "command": "old",
+                                "env": {"MNEMOS_DATA_DIR": "/custom/data"},
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        ok, _ = universal_manager.register_mcp("zcode", mnemos_bin="/bin/mnemos")
+        assert ok
+        entry = json.loads(cfg_path.read_text(encoding="utf-8"))["mcp"]["servers"]["mnemos"]
+        assert entry["env"]["MNEMOS_DATA_DIR"] == "/custom/data"  # user tuning kept
+        assert entry["env"]["MNEMOS_VAULT__VAULT_PATH"] == str(fake_home / ".mnemos/vault")
+        assert entry["command"] == "/bin/mnemos"  # command refreshed
+
+    def test_register_mcp_agents_creates_file(
+        self, universal_manager: IntegrationManager, fake_home: Path
+    ) -> None:
+        import json
+
+        ok, note = universal_manager.register_mcp("agents", mnemos_bin="/bin/mnemos")
+        assert ok, note
+        cfg_path = fake_home / ".agents" / "mcp.json"
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        assert data["mcpServers"]["mnemos"]["command"] == "/bin/mnemos"
+
+    def test_update_removes_orphaned_nested_skill(
+        self, universal_manager: IntegrationManager
+    ) -> None:
+        universal_manager.deploy("agents")
+        skills_dir = universal_manager.targets.get("agents").deploy_map["skills"]
+        orphan = skills_dir / "mnemos-old-thing" / "SKILL.md"
+        orphan.parent.mkdir(parents=True)
+        orphan.write_text(
+            stamp_content("# Old\n", "8.8.8"), encoding="utf-8"
+        )
+        result = universal_manager.update("agents")
+        assert not orphan.exists()
+        assert not orphan.parent.exists()  # empty dir cleaned up
+        assert any("orphaned" in (f.note or "") for f in result.files)
+
+    def test_uninstall_nested_removes_dirs(
+        self, universal_manager: IntegrationManager
+    ) -> None:
+        universal_manager.deploy("zcode")
+        result = universal_manager.uninstall("zcode")
+        assert len(result.removed) == 1
+        skills_dir = universal_manager.targets.get("zcode").deploy_map["skills"]
+        # The deploy root itself survives (it may host user skills) but is empty.
+        assert not any(skills_dir.iterdir())

@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from mnemos.cli._manager import get_manager
-from mnemos.config import load_settings
+from mnemos.config import find_config_file, load_settings
 from mnemos.logging_setup import setup_logging
 from mnemos.models import MemoryCreate, MemorySource, MemoryType
 
@@ -202,9 +202,14 @@ def search(
     project: str = typer.Option(None, "--project", "-p", help="Filter by project slug"),
     tags: str = typer.Option(None, "--tags", "-T", help="Comma-separated tags to filter by"),
     include_raw: bool = typer.Option(
-        False,
-        "--include-raw",
-        help="Include raw/processing entries (skipped by default).",
+        True,
+        "--include-raw/--published-only",
+        help=(
+            "Include raw/processing entries. Default: include — a just-added "
+            "memory stays raw until the knowledge pipeline publishes it, and "
+            "the interactive CLI must find what was just added (issue #123). "
+            "Use --published-only to restrict to pipeline-published knowledge."
+        ),
     ),
     status: str = typer.Option(
         None,
@@ -216,7 +221,13 @@ def search(
     ),
     config: str = ConfigOption,
 ) -> None:
-    """Search long-term memory (hybrid FTS + vector)."""
+    """Search long-term memory (hybrid FTS + vector).
+
+    By default the CLI surfaces every status except archived — unlike the
+    MCP/HTTP surfaces (published-only by default), the interactive CLI must
+    complete the first add → search roundtrip from a clean install with no
+    running server and no pipeline pass yet (ADR-0017 Phase 0).
+    """
     from mnemos.models import MemoryStatus
 
     mgr = get_manager(config)
@@ -788,6 +799,19 @@ def serve(
     setup_logging(settings, verbose=_verbose)
     h = host or settings.api.host
     p = port or settings.api.port
+    # Zero-config profile notice (ADR-0017 Phase 0, D6): when no config file
+    # exists anywhere on the search path, say so once at startup so the
+    # operator knows which defaults are in effect and where data lives.
+    if find_config_file(config) is None:
+        console.print(
+            "[cyan]zero-config[/cyan] — no config file found, using built-in safe defaults"
+        )
+        console.print(
+            f"  bind: http://{h}:{p} (loopback only; non-loopback binds require auth + TOTP + TLS)"
+        )
+        console.print(
+            f"  data: {settings.mnemos.data_dir}  vault: {settings.mnemos.vault_path}"
+        )
     # Propagate effective bind to the app process so the startup guard and
     # AuthMiddleware see the real host/port (CLI overrides must reach
     # load_settings() inside the worker - finding auth-1).
