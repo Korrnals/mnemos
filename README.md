@@ -306,13 +306,31 @@ gods' benefit. They were for the songs.
 
 ## 🤝 Integrations
 
-Mnemos integrates with multiple AI agent platforms:
+Mnemos works with every MCP-capable agent harness. Three integration levels —
+pick the strongest one your harness supports:
 
-- **[Hermes Agent](https://hermes-agent.nousresearch.com/)** by Nous Research — native `MemoryProvider` plugin
-  at `integrations/hermes/`. Exposes all 15 `mnemos_*` tools as native Hermes tools, with automatic prefetch,
-  sync-turn, and built-in memory mirroring. See the [integration guide](docs/en/user/integration-guide.md#hermes-agent).
-- **GitHub Copilot / VS Code** — MCP server via `mnemos mcp-server`. See [MCP tools docs](docs/en/user/mcp-tools.md).
-- **Cursor** — instructions/rules deployed via `mnemos util-setup --target cursor`.
+| Harness | Native deploy target | One-line MCP preset | Adapter template |
+|---------|----------------------|---------------------|------------------|
+| VS Code Copilot | `copilot` (+ prompts via `generic-copilot`) | [mcp-setup.sh](scripts/mcp-setup.sh) | ✓ |
+| Claude Code | via `agents` | [preset](integrations/mcp-presets.md#claude-code) | ✓ |
+| Cursor | `cursor` | [preset](integrations/mcp-presets.md#cursor) | ✓ |
+| Codex | via `agents` | [preset](integrations/mcp-presets.md#codex) | ✓ |
+| Windsurf | — | [preset](integrations/mcp-presets.md#windsurf) | ✓ |
+| ZCode | `zcode` | — | ✓ |
+| Any AGENTS.md-standard harness | `agents` | — | ✓ |
+| [Hermes Agent](https://hermes-agent.nousresearch.com/) | `hermes` (native `MemoryProvider` plugin) | — | — |
+
+- **[Hermes Agent](https://hermes-agent.nousresearch.com/)** — native `MemoryProvider` plugin
+  (`integrations/hermes/`): automatic prefetch, sync-turn, built-in memory mirroring.
+  See the [integration guide](docs/en/user/integration-guide.md#hermes-agent).
+- **Native targets** — `mnemos integration setup --target <name>` deploys the
+  behavioral pack and registers the MCP server in one pass. See the
+  [integration guide](docs/en/user/integration-guide.md).
+- **One-line MCP presets** — [`integrations/mcp-presets.md`](integrations/mcp-presets.md):
+  connect Cursor, Claude Code, Codex, or Windsurf by pasting one line.
+- **Adapter template** — [`integrations/adapter-template.md`](integrations/adapter-template.md):
+  Connect / Expose / Configure + acceptance checklist for any harness that
+  speaks MCP stdio.
 
 The shared contract is the [tag schema](docs/en/user/tag-contract.md) — `project:<slug>`, `agent:<slug>`,
 and at least one `mnemos:<subtype>` — that every memory entry must carry.

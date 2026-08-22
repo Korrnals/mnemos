@@ -301,13 +301,31 @@ MCP-поверхность также предоставляет **A2A Sessions 
 
 ## 🤝 Интеграции
 
-Mnemos интегрируется с несколькими платформами AI-агентов:
+Mnemos работает с любым харнессом, говорящим по MCP. Три уровня интеграции —
+выберите самый сильный из доступных для вашего харнесса:
 
-- **[Hermes Agent](https://hermes-agent.nousresearch.com/)** от Nous Research — нативный `MemoryProvider` плагин
-  в `integrations/hermes/`. предоставляет все 15 `mnemos_*` инструментов как нативные Hermes-инструменты.
+| Харнесс | Нативная цель | Однострочный MCP-пресет | Шаблон адаптера |
+|---------|---------------|-------------------------|-----------------|
+| VS Code Copilot | `copilot` (+ промпты через `generic-copilot`) | [mcp-setup.sh](scripts/mcp-setup.sh) | ✓ |
+| Claude Code | через `agents` | [пресет](integrations/mcp-presets.md#claude-code) | ✓ |
+| Cursor | `cursor` | [пресет](integrations/mcp-presets.md#cursor) | ✓ |
+| Codex | через `agents` | [пресет](integrations/mcp-presets.md#codex) | ✓ |
+| Windsurf | — | [пресет](integrations/mcp-presets.md#windsurf) | ✓ |
+| ZCode | `zcode` | — | ✓ |
+| Любой харнесс стандарта AGENTS.md | `agents` | — | ✓ |
+| [Hermes Agent](https://hermes-agent.nousresearch.com/) | `hermes` (нативный `MemoryProvider` плагин) | — | — |
+
+- **[Hermes Agent](https://hermes-agent.nousresearch.com/)** — нативный `MemoryProvider` плагин
+  (`integrations/hermes/`): автоматический prefetch, sync-turn, зеркалирование встроенной памяти.
   См. [руководство по интеграции](docs/ru/user/integration-guide.md#hermes-agent).
-- **GitHub Copilot / VS Code** — MCP-сервер через `mnemos mcp-server`. См. [документацию MCP](docs/ru/user/mcp-tools.md).
-- **Cursor** — инструкции/правила развертываются через `mnemos util-setup --target cursor`.
+- **Нативные цели** — `mnemos integration setup --target <имя>` развёртывает
+  поведенческий пакет и регистрирует MCP-сервер за один проход. См.
+  [руководство по интеграции](docs/ru/user/integration-guide.md).
+- **Однострочные MCP-пресеты** — [`integrations/mcp-presets.md`](integrations/mcp-presets.md):
+  Cursor, Claude Code, Codex и Windsurf подключаются вставкой одной строки.
+- **Шаблон адаптера** — [`integrations/adapter-template.md`](integrations/adapter-template.md):
+  Connect / Expose / Configure + чеклист приёмки для любого харнесса,
+  говорящего по MCP stdio.
 
 Общий контракт — [схема тегов](docs/ru/user/tag-contract.md) — `project:<slug>`, `agent:<slug>`
 и хотя бы один `mnemos:<subtype>` — которую должна нести каждая запись.
