@@ -386,6 +386,37 @@ package tell the agent *when* and *how* to call those tools.
 
 ---
 
+## One-line MCP presets
+
+For harnesses without a native deploy target, Mnemos ships ready-made
+one-line MCP presets — the whole connection is a single line (or paste
+block) per harness, always the same stdio wire (ADR-0017 D1):
+`command "mnemos", args ["mcp-server"]`.
+
+| Harness | Config location | Preset |
+|---------|-----------------|--------|
+| Cursor | `~/.cursor/mcp.json` | `"mnemos": { "type": "stdio", "command": "mnemos", "args": ["mcp-server"] }` |
+| Claude Code | `claude mcp add` | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
+| Codex | `~/.codex/config.toml` | `[mcp_servers.mnemos]` TOML block |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | same JSON line as Cursor |
+
+Full copy-paste lines (plus fresh-setup shell one-liners and env tuning):
+[`integrations/mcp-presets.md`](../../../integrations/mcp-presets.md).
+No environment variables are required — the server defaults to
+`~/.mnemos/{data,vault}` and creates both on first run.
+
+## Adapter template
+
+For any harness not covered by a native target or a preset, copy the
+published adapter template —
+[`integrations/adapter-template.md`](../../../integrations/adapter-template.md):
+three sections (**Connect** the MCP wire → **Expose** the `mnemos_*` tools →
+**Configure** project/agent slugs and the tag contract) plus an acceptance
+checklist the template itself passes. If your harness speaks MCP stdio, the
+template is the whole integration.
+
+---
+
 ## Tag contract
 
 Every `mnemos_add` and `mnemos_ingest_url` call must carry:

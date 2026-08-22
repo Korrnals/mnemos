@@ -395,6 +395,37 @@ MCP-сервера в конфигурации клиента. Подключе�
 
 ---
 
+## Однострочные MCP-пресеты
+
+Для харнессов без нативной цели развёртывания Mnemos поставляет готовые
+однострочные MCP-пресеты — всё подключение это одна строка (или один блок)
+на харнесс, всегда один и тот же stdio-провод (ADR-0017 D1):
+`command "mnemos", args ["mcp-server"]`.
+
+| Харнесс | Конфиг | Пресет |
+|---------|--------|--------|
+| Cursor | `~/.cursor/mcp.json` | `"mnemos": { "type": "stdio", "command": "mnemos", "args": ["mcp-server"] }` |
+| Claude Code | `claude mcp add` | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
+| Codex | `~/.codex/config.toml` | TOML-блок `[mcp_servers.mnemos]` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | та же JSON-строка, что для Cursor |
+
+Полные строки для копирования (плюс shell-однострочники для чистой установки
+и настройку env): [`integrations/mcp-presets.md`](../../../integrations/mcp-presets.md).
+Переменные окружения не нужны — сервер по умолчанию использует
+`~/.mnemos/{data,vault}` и создаёт обе директории при первом запуске.
+
+## Шаблон адаптера
+
+Для любого харнесса, не покрытого нативной целью или пресетом, скопируйте
+опубликованный шаблон адаптера —
+[`integrations/adapter-template.md`](../../../integrations/adapter-template.md):
+три секции (**Connect** — MCP-провод → **Expose** — инструменты `mnemos_*` →
+**Configure** — слаги project/agent и контракт тегов) плюс чеклист приёмки,
+который сам шаблон проходит. Если ваш харнесс говорит по MCP stdio — шаблон
+и есть вся интеграция.
+
+---
+
 ## Контракт тегов
 
 Каждый вызов `mnemos_add` и `mnemos_ingest_url` должен содержать:
