@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ADR-0017 — memory system evolution roadmap** (provider contract `assemble_context`, memory graph + learning loop, phases 0–4).
+- **PyPI packaging Phase 0 (#122)** — local publish pipeline `scripts/pypi-publish.sh` (+ `make pypi-publish`): PyPI name gate G0 (free/taken/already-published), version gates G1–G4 (tag ↔ `pyproject.toml` ↔ artifacts ↔ installed package), wheel/sdist build, `twine check`, offline metadata smoke, optional `--full-smoke`. Upload is hard-gated behind `--publish` (+ `--i-own-name` for updates) — first publish and the final package name remain owner decisions (PyPI names/versions are immutable). Name check (2026-08-21): `mnemos` and `mnemos-memory` are taken on PyPI; recommended fallback `mnemos-memory-server` (also free: `mnemos-server`, `mnemos-mcp`). Runbook: `docs/en/admin/runbooks/pypi-publish.md` (+ RU mirror).
+
 ## [2.14.1] - 2026-07-31
 
 Docs-only patch — records the Architectural Committee decision on transport-level replay protection (ADR-0016, mnemos #88 point #4). No code, no API, no behavior change.

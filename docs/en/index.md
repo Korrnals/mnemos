@@ -121,6 +121,7 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 - [Runbooks — Backup & Restore](admin/runbooks/backup-restore.md) — backup, point-in-time recovery.
 - [Runbooks — Dependency Updates](admin/runbooks/dependency-updates.md) — CVE triage + weekly review.
 - [Runbooks — CI/CD](admin/runbooks/ci-cd.md) — GitHub Actions pipeline operation.
+- [Runbooks — PyPI Publish](admin/runbooks/pypi-publish.md) — name availability, wheel pipeline, version gates, first-publish procedure.
 - [Security Model](admin/security.md) — threat model, SSRF guard, secrets hygiene, auth model.
 
 ---
