@@ -70,10 +70,45 @@ mnemos integration setup
 mnemos integration setup --target vscode-copilot   # по умолчанию
 mnemos integration setup --target claude-code       # Claude Code
 mnemos integration setup --target cursor            # Cursor
+mnemos integration setup --target zcode             # агент ZCode
+mnemos integration setup --target agents            # универсальный стандарт AGENTS.md
 ```
 
 Полный список целей — `mnemos integration setup --help`. Цели определены в
 `integrations/targets.yaml` (управляется Stream A).
+
+### Универсальные цели: ZCode и стандарт AGENTS.md
+
+`zcode` и `agents` используют **вложенную раскладку скиллов** — каждый скилл
+ложится как `<каталог-скиллов>/<имя>/SKILL.md`, формат, который ZCode и
+кросс-инструментный стандарт `~/.agents` читают нативно:
+
+| Цель | Скиллы → | Регистрация MCP |
+|------|----------|-----------------|
+| `zcode` | `~/.zcode/skills/<имя>/SKILL.md` | `~/.zcode/cli/config.json` → `mcp.servers` (JSON-слияние, остальные серверы сохраняются) |
+| `agents` | `~/.agents/skills/<имя>/SKILL.md` | `~/.agents/mcp.json` → ключ `mcpServers` верхнего уровня |
+
+Цель `agents` работает в **любом харнессе**, читающем стандартные
+расположения AGENTS.md (ZCode, Claude Code, Codex, Cursor, …) — одна
+установка на все инструменты. Слияние MCP аддитивное: существующие серверы,
+плагины и пользовательски настроенный `env` у записи `mnemos` никогда не
+перезаписываются.
+
+### Установка в другое окружение (--home)
+
+Развёртывание в home другого окружения (контейнер, checkout дотфайлов) без
+правки targets.yaml:
+
+```bash
+mnemos integration setup --target zcode \
+  --home /var/home/you/.distrobox/other-box/home \
+  --mnemos-bin /path/to/mnemos-wrapper \
+  --no-wire-agents
+```
+
+`~` в targets.yaml резолвится относительно `--home`. Передавайте
+`--mnemos-bin`, если целевое окружение запускает mnemos через враппер или по
+другому пути.
 
 ### Куда что развёртывается
 
@@ -82,6 +117,8 @@ mnemos integration setup --target cursor            # Cursor
 | `vscode-copilot` | `~/.copilot/instructions/` | `~/.copilot/skills/` | `~/.config/Code/User/prompts/` |
 | `claude-code` | `~/.claude/instructions/` | `~/.claude/skills/` | `~/.claude/prompts/` |
 | `cursor` | `~/.cursor/instructions/` | `~/.cursor/skills/` | `~/.cursor/prompts/` |
+| `zcode` | — | `~/.zcode/skills/<имя>/SKILL.md` | MCP в `~/.zcode/cli/config.json` |
+| `agents` | — | `~/.agents/skills/<имя>/SKILL.md` | MCP в `~/.agents/mcp.json` |
 
 ---
 

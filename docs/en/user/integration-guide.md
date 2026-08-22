@@ -68,10 +68,43 @@ Deploys instructions, skills, and prompt mode to the default target
 mnemos integration setup --target vscode-copilot   # default
 mnemos integration setup --target claude-code       # Claude Code
 mnemos integration setup --target cursor            # Cursor
+mnemos integration setup --target zcode             # ZCode agent
+mnemos integration setup --target agents            # universal AGENTS.md standard
 ```
 
 See `mnemos integration setup --help` for the full target list. Targets are defined
 in `integrations/targets.yaml` (managed by Stream A).
+
+### Universal targets: ZCode and the AGENTS.md standard
+
+`zcode` and `agents` use the **nested skill layout** — each skill lands as
+`<skills-dir>/<name>/SKILL.md`, the format ZCode and the cross-tool
+`~/.agents` standard read natively:
+
+| Target | Skills → | MCP registration |
+|--------|----------|------------------|
+| `zcode` | `~/.zcode/skills/<name>/SKILL.md` | `~/.zcode/cli/config.json` → `mcp.servers` (JSON merge, other servers preserved) |
+| `agents` | `~/.agents/skills/<name>/SKILL.md` | `~/.agents/mcp.json` → top-level `mcpServers` |
+
+The `agents` target works for **any harness** that reads the AGENTS.md
+standard locations (ZCode, Claude Code, Codex, Cursor, …) — one install,
+every tool. The MCP merge is additive: existing servers, plugins, and a
+user-tuned `env` on the `mnemos` entry are never overwritten.
+
+### Cross-environment installs (--home)
+
+Deploy into another environment's home (a container, a dotfiles checkout)
+without rewriting targets.yaml:
+
+```bash
+mnemos integration setup --target zcode \
+  --home /var/home/you/.distrobox/other-box/home \
+  --mnemos-bin /path/to/mnemos-wrapper \
+  --no-wire-agents
+```
+
+`~` in targets.yaml resolves against `--home`. Pass `--mnemos-bin` when the
+target environment launches mnemos through a wrapper or a different path.
 
 ### What gets deployed where
 
@@ -80,6 +113,8 @@ in `integrations/targets.yaml` (managed by Stream A).
 | `vscode-copilot` | `~/.copilot/instructions/` | `~/.copilot/skills/` | `~/.config/Code/User/prompts/` |
 | `claude-code` | `~/.claude/instructions/` | `~/.claude/skills/` | `~/.claude/prompts/` |
 | `cursor` | `~/.cursor/instructions/` | `~/.cursor/skills/` | `~/.cursor/prompts/` |
+| `zcode` | — | `~/.zcode/skills/<name>/SKILL.md` | MCP in `~/.zcode/cli/config.json` |
+| `agents` | — | `~/.agents/skills/<name>/SKILL.md` | MCP in `~/.agents/mcp.json` |
 
 ---
 
