@@ -202,7 +202,7 @@ Add this to your VS Code `mcp.json` (User or Workspace):
       "command": "mnemos",
       "args": ["mcp-server"],
       "env": {
-        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos",
+        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos/data",
         "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/.mnemos/vault"
       }
     }

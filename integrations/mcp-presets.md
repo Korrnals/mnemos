@@ -104,8 +104,10 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-se
 
 Optional environment variables on the server entry (defaults shown). The
 names are the canonical `pydantic-settings` form (`MNEMOS_` prefix +
-`MNEMOS` section + `__` + field — shorter variants like `MNEMOS_DATA_DIR`
-are silently ignored):
+`MNEMOS` section + `__` + field). The shorter variants that
+`scripts/mcp-setup.sh` writes (`MNEMOS_DATA_DIR`, `MNEMOS_VAULT__VAULT_PATH`)
+work again as compatibility aliases since the #139 fix; the
+canonical names remain the documented form and win when both are set:
 
 | Variable | Default | Purpose |
 |---|---|---|
