@@ -767,6 +767,82 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="mnemos_assemble_context",
+            description=(
+                "ADR-0017 D1 provider contract — assemble the model-facing "
+                "context block for a pre-LLM-call injection. Fixed pipeline: "
+                "hybrid RRF recall (published/processed only, the entry-"
+                "invariant status gate) → optional CCR marker expansion → "
+                "context filter → MANDATORY secret scan (redacted spans are "
+                "counted per block; nothing enters the output unscanned) → "
+                "CacheAligner → token budget. Every injected block carries a "
+                "provenance line "
+                "'[mnemos:<id> project=<slug> status=<status> retrieved=<iso>]'. "
+                "mode: sync (default) / async (store the result, return a "
+                "handle, fetch it on a later call via async_handle) / code / "
+                "prose (filter recall candidates by stored content type). "
+                "Returns the assembled text, per-block provenance + redaction "
+                "counts, and token stats."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session": {
+                        "type": "string",
+                        "description": (
+                            "Caller's session identifier (echoed in the result; "
+                            "identifies the assembly, not the memories)."
+                        ),
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project slug scoping recall and CCR redemption.",
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": (
+                            "Optional file path: contributes recall query terms "
+                            "and pins applyTo-scoped rule memories to the top."
+                        ),
+                    },
+                    "budget": {
+                        "type": "integer",
+                        "default": 2048,
+                        "description": "Token budget for the assembled block.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["sync", "async", "code", "prose"],
+                        "default": "sync",
+                        "description": (
+                            "sync = return the assembled block now (default); "
+                            "async = return a handle, fetch via async_handle; "
+                            "code/prose = sync delivery + filter recall "
+                            "candidates by stored content type."
+                        ),
+                    },
+                    "expand_ccr": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Enable the optional CCR stage: expand inline "
+                            "[compressed: <hash> | ...] markers found in "
+                            "recalled content via project-scoped retrieval, "
+                            "budget-aware (originals that would not fit stay "
+                            "compressed)."
+                        ),
+                    },
+                    "async_handle": {
+                        "type": "string",
+                        "description": (
+                            "Fetch (and pop) a result stored by a previous mode='async' call."
+                        ),
+                    },
+                },
+                "required": ["session", "project"],
+            },
+        ),
+        Tool(
             name="mnemos_export",
             description=(
                 "Export memories to a file (JSON or SQLite snapshot). Writes the "
@@ -1591,6 +1667,31 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     # ── mnemos_align_prefix (P1-5 CacheAligner) ──────────────────────────────
     if name == "mnemos_align_prefix":
         return mgr.align_prefix(args["text"], profile=args.get("profile"))
+
+    # ── mnemos_assemble_context (ADR-0017 D1, #125) ─────────────────────────
+    if name == "mnemos_assemble_context":
+        # Locals are suffixed: `project` is already bound as `str` by the
+        # save/recall handlers above in this long dispatch function.
+        asm_session = args.get("session")
+        asm_project = args.get("project")
+        if not isinstance(asm_session, str) or not asm_session.strip():
+            return {"error": "session is required and must be a non-empty string"}
+        if not isinstance(asm_project, str) or not asm_project.strip():
+            return {"error": "project is required and must be a non-empty string"}
+        try:
+            return mgr.assemble_context(
+                session=asm_session,
+                project=asm_project,
+                file=args.get("file"),
+                budget=int(args.get("budget", 2048)),
+                mode=str(args.get("mode", "sync")),
+                expand_ccr=bool(args.get("expand_ccr", False)),
+                async_handle=args.get("async_handle"),
+            )
+        except ValueError as exc:
+            # Boundary validation (mode/budget/async_handle) — surface a
+            # clean error dict instead of the generic exception path.
+            return {"error": str(exc)}
 
     # ── mnemos_export (#84 federation export) ──────────────────────────────
     if name == "mnemos_export":

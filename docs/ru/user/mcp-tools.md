@@ -47,6 +47,7 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | [`mnemos_compress`](#mnemos_compress) | Обратимое сжатие (CCR) — кэш оригинала, маркер в вывод | нет |
 | [`mnemos_retrieve`](#mnemos_retrieve) | Извлечение оригинала из кэша CCR или FTS5-сниппеты | нет |
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — перенос динамического контента для стабильности prefix cache | нет |
+| [`mnemos_assemble_context`](#mnemos_assemble_context) *(#125)* | ADR-0017 D1 — сборка контекстного блока перед вызовом LLM (recall → CCR → filter → scan → align → budget) | нет |
 | [`mnemos_export`](#mnemos_export) | Экспорт записей в файл (JSON или SQLite-снимок) | нет |
 | [`mnemos_import`](#mnemos_import) | Импорт записей из файла экспорта (merge или restore) | нет |
 | [`mnemos_stats`](#mnemos_stats) | Счётчики состояния и ключевые пути | нет |
@@ -948,6 +949,97 @@ output_style:
 *Output style: terse. Be brief. No preambles, no restated context, no ceremony. Lead with the result. Omit explanations the caller already has.*
 *Effort: low — routine step, minimal reasoning.*
 ```
+
+---
+
+## `mnemos_assemble_context`
+
+**Контракт провайдера ADR-0017 D1 (mnemos #125, волна 1)** — один вызов собирает модельно-ориентированный контекстный блок для инъекции перед вызовом LLM. Любой MCP-совместимый харнесс получает стандартизованную сборку контекста вместо приватного recall-кода адаптера.
+
+Фиксированный конвейер, по порядку (дословно записывается в `stats.stages`):
+
+1. **recall** — гибридный RRF (FTS5 + вектор) через стандартный путь поиска; статусный гейт инварианта входа пропускает только записи `published` / `processed` (`raw` и DLQ недостижимы). Параметр `file` задаёт поисковый запрос и поднимает applyTo-правила в начало списка.
+2. **ccr** *(опционально, `expand_ccr=true`)* — встроенные маркеры `[compressed: <hash> | …]` в найденном контенте разворачиваются через project-scoped извлечение, с учётом бюджета: оригинал, не влезающий в бюджет, остаётся сжатым (маркер на месте — модель может вызвать `mnemos_retrieve` сама).
+3. **filter** — 5-стадийный контекстный фильтр по каждому блоку (профиль автоопределяется).
+4. **scan** *(обязательно)* — каждый блок проходит issuance-скан секретов; редacted-спаны (`<REDACTED:<pattern>>`) считаются по блокам; refuse-режим (`ccr.retrieve_refuse_on_secret`) выбрасывает блок (fail-closed). Ничто не попадает в собранный вывод без скана.
+5. **align** — CacheAligner переносит динамический контент в хвост каждого блока (выполняется ДО обёртки провенансом, чтобы строка провенанса оставалась парсабельной).
+6. **budget** — целые блоки с провенансом включаются жадно в порядке релевантности в рамках токен-бюджета; не влезающие блоки пропускаются целиком (без обрезания на середине).
+
+Каждый внедряемый блок несёт строку провенанса, точный формат:
+
+```text
+[mnemos:<memory-id> project=<slug> status=<status> retrieved=<iso8601>]
+```
+
+### Вход
+
+| Поле | Тип | Обяз. | По умолч. | Описание |
+|------|-----|-------|-----------|----------|
+| `session` | string | **да** | — | Идентификатор сессии вызывающего (эхом возвращается в результате; идентифицирует сборку, не записи). |
+| `project` | string | **да** | — | Слаг проекта, ограничивает recall и погашение CCR-маркеров. |
+| `file` | string | нет | — | Путь к файлу: задаёт recall-запрос и поднимает applyTo-правила в начало. |
+| `budget` | integer | нет | `2048` | Токен-бюджет собранного блока. |
+| `mode` | string | нет | `sync` | `sync` (по умолчанию) / `async` (сохранить результат, вернуть handle) / `code` / `prose` (синхронная доставка + фильтр кандидатов по типу контента, зафиксированному при ingest). |
+| `expand_ccr` | boolean | нет | `false` | Включить опциональную стадию разворота CCR-маркеров. |
+| `async_handle` | string | нет | — | Забрать (и изъять) результат, сохранённый вызовом с `mode="async"`. |
+
+### Выход
+
+```json
+{
+  "session": "sess-42",
+  "project": "my-project",
+  "file": null,
+  "mode": "sync",
+  "content_type": null,
+  "text": "[mnemos:3f2a… project=my-project status=published retrieved=2026-08-27T10:00:00+00:00]\nDeployment guide…",
+  "blocks": [
+    {
+      "memory_id": "3f2a…",
+      "project": "my-project",
+      "status": "published",
+      "score": 0.0114,
+      "search_type": "hybrid",
+      "content_type": "prose",
+      "provenance": "[mnemos:3f2a… project=my-project status=published retrieved=2026-08-27T10:00:00+00:00]",
+      "content": "Deployment guide…",
+      "tokens": 96,
+      "redactions": 1,
+      "redacted_patterns": {"aws-key": 1},
+      "ccr_expanded": false
+    }
+  ],
+  "tokens": {"budget": 2048, "estimated": 96},
+  "stats": {
+    "stages": ["recall", "ccr", "filter", "scan", "align", "budget"],
+    "recall": {"query": "my-project", "candidates": 3, "admissible": 3,
+                "project_scoped_out": 0, "content_type_filtered": 0,
+                "content_type_fallbacks": 1, "applyto_pinned": 0},
+    "ccr": {"enabled": false, "markers_found": 0, "expanded": 0,
+             "skipped_missing": 0, "skipped_budget": 0},
+    "filter": {"profiles": {"default": 1, "code": 1}},
+    "scan": {"blocks_scanned": 2, "blocks_refused": 0},
+    "align": {"blocks_aligned": 1, "moved_chars": 24},
+    "budget": {"budget": 2048, "estimated_tokens": 96,
+                "blocks_included": 2, "blocks_skipped": 0}
+  }
+}
+```
+
+При `mode="async"` вызов возвращает только конверт с handle (`{"mode": "async", "handle": "<hex>", "status": "ready", "note": …}`); передайте `async_handle` в следующем вызове, чтобы забрать сохранённый результат (однократно: handle можно выкупить один раз).
+
+### Замечания
+
+- **Валидация на границе** — некорректные `session` / `project` / `mode` / `budget` или неизвестный `async_handle` возвращают `{"error": …}` (REST-близнец отвечает 422).
+- **Разбиение contentType** — `mode=code` оставляет кандидатов, у которых ingest-время `detect_profile` дало `code`; `mode=prose` — остальных (бинарное разбиение). Легаси-строки без сохранённых метаданных классифицируются на лету и считаются в `recall.content_type_fallbacks`.
+- **Разбиение бюджета (аддендум 2)** — в этой волне бюджет монолитный; резервирование active-state линии до аллокации recall ждёт коридора по baseline D5.
+- **Async-реестр** — в памяти, на менеджере, с лимитом (вытеснение старейших); рестарт сервера теряет незабранные handle.
+
+### Связанное
+
+- REST-близнец: `POST /context/assemble` (тот же путь менеджера) — [http-api.md](http-api.md)
+- Обоснование конвейера: ADR-0017 (D1), ADR-0018 (инвариант входа: скан + провенанс + статусный гейт на каждом пути LTM → контекст)
+- CCR: [`mnemos_compress`](#mnemos_compress) / [`mnemos_retrieve`](#mnemos_retrieve)
 
 ---
 

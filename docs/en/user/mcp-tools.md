@@ -47,6 +47,7 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_compress`](#mnemos_compress) | Reversible compression (CCR) — cache original, embed marker | no |
 | [`mnemos_retrieve`](#mnemos_retrieve) | Retrieve a CCR-cached original or FTS5 snippets | no |
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — relocate dynamic content for prefix cache stability | no |
+| [`mnemos_assemble_context`](#mnemos_assemble_context) *(#125)* | ADR-0017 D1 — assemble the pre-LLM-call context block (recall → CCR → filter → scan → align → budget) | no |
 | [`mnemos_export`](#mnemos_export) | Export memories to a file (JSON or SQLite snapshot) | no |
 | [`mnemos_import`](#mnemos_import) | Import memories from an export file (merge or restore) | no |
 | [`mnemos_stats`](#mnemos_stats) | Health counters and key paths | no |
@@ -948,6 +949,97 @@ The tool result carries the normal payload **plus** a short guidance suffix:
 *Output style: terse. Be brief. No preambles, no restated context, no ceremony. Lead with the result. Omit explanations the caller already has.*
 *Effort: low — routine step, minimal reasoning.*
 ```
+
+---
+
+## `mnemos_assemble_context`
+
+**ADR-0017 D1 provider contract (mnemos #125, Wave 1)** — one call assembles the model-facing context block for a pre-LLM-call injection. Any MCP-capable harness gains standardized context assembly instead of adapter-private recall.
+
+Fixed pipeline, in order (recorded verbatim in `stats.stages`):
+
+1. **recall** — hybrid RRF (FTS5 + vector) via the standard search path; the entry-invariant status gate means only `published` / `processed` memories surface (`raw` and DLQ content is unreachable). A `file` contributes the recall query and pins applyTo-scoped rule memories to the top.
+2. **ccr** *(optional, `expand_ccr=true`)* — inline `[compressed: <hash> | …]` markers found in recalled content are expanded via project-scoped retrieval, budget-aware: an original that would not fit the budget stays compressed (the marker remains; the model can call `mnemos_retrieve` on demand).
+3. **filter** — the 5-stage context filter per block (auto-detected profile).
+4. **scan** *(mandatory)* — every block passes the issuance secret scan; redacted spans (`<REDACTED:<pattern>>`) are counted per block; refuse mode (`ccr.retrieve_refuse_on_secret`) drops the block (fail-closed). Nothing enters the assembled output unscanned.
+5. **align** — CacheAligner relocates dynamic content to each block's tail (runs before provenance wrapping so the provenance line stays parseable).
+6. **budget** — whole provenance-wrapped blocks are included greedily in rank order under the token budget; blocks that do not fit are skipped whole (never truncated mid-block).
+
+Every injected block carries a provenance line, exact format:
+
+```text
+[mnemos:<memory-id> project=<slug> status=<status> retrieved=<iso8601>]
+```
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `session` | string | **yes** | — | Caller's session identifier (echoed in the result; identifies the assembly, not the memories). |
+| `project` | string | **yes** | — | Project slug scoping recall and CCR redemption. |
+| `file` | string | no | — | File path: contributes the recall query and pins applyTo-matching rule memories to the top. |
+| `budget` | integer | no | `2048` | Token budget for the assembled block. |
+| `mode` | string | no | `sync` | `sync` (default) / `async` (store the result, return a handle) / `code` / `prose` (sync delivery + filter recall candidates by the content type captured at ingest). |
+| `expand_ccr` | boolean | no | `false` | Enable the optional CCR marker-expansion stage. |
+| `async_handle` | string | no | — | Fetch (and pop) a result stored by a previous `mode="async"` call. |
+
+### Output
+
+```json
+{
+  "session": "sess-42",
+  "project": "my-project",
+  "file": null,
+  "mode": "sync",
+  "content_type": null,
+  "text": "[mnemos:3f2a… project=my-project status=published retrieved=2026-08-27T10:00:00+00:00]\nDeployment guide…",
+  "blocks": [
+    {
+      "memory_id": "3f2a…",
+      "project": "my-project",
+      "status": "published",
+      "score": 0.0114,
+      "search_type": "hybrid",
+      "content_type": "prose",
+      "provenance": "[mnemos:3f2a… project=my-project status=published retrieved=2026-08-27T10:00:00+00:00]",
+      "content": "Deployment guide…",
+      "tokens": 96,
+      "redactions": 1,
+      "redacted_patterns": {"aws-key": 1},
+      "ccr_expanded": false
+    }
+  ],
+  "tokens": {"budget": 2048, "estimated": 96},
+  "stats": {
+    "stages": ["recall", "ccr", "filter", "scan", "align", "budget"],
+    "recall": {"query": "my-project", "candidates": 3, "admissible": 3,
+                "project_scoped_out": 0, "content_type_filtered": 0,
+                "content_type_fallbacks": 1, "applyto_pinned": 0},
+    "ccr": {"enabled": false, "markers_found": 0, "expanded": 0,
+             "skipped_missing": 0, "skipped_budget": 0},
+    "filter": {"profiles": {"default": 1, "code": 1}},
+    "scan": {"blocks_scanned": 2, "blocks_refused": 0},
+    "align": {"blocks_aligned": 1, "moved_chars": 24},
+    "budget": {"budget": 2048, "estimated_tokens": 96,
+                "blocks_included": 2, "blocks_skipped": 0}
+  }
+}
+```
+
+For `mode="async"` the call returns only a handle envelope (`{"mode": "async", "handle": "<hex>", "status": "ready", "note": …}`); pass `async_handle` on a later call to fetch the stored result (one-shot: a handle can be fetched once).
+
+### Notes
+
+- **Boundary validation** — invalid `session` / `project` / `mode` / `budget` or an unknown `async_handle` returns an `{"error": …}` dict (REST twin answers 422).
+- **contentType partition** — `mode=code` keeps candidates whose ingest-time `detect_profile` was `code`; `mode=prose` keeps the rest (binary partition). Legacy rows without stored metadata are classified on the fly and counted in `recall.content_type_fallbacks`.
+- **Budget partitioning (addendum 2)** — the budget stays monolithic in this wave; an active-state line reserved before recall allocation waits for the D5 baseline corridor.
+- **Async registry** — in-memory, per-manager, capped (oldest evicted); a server restart drops pending handles.
+
+### Related
+
+- REST twin: `POST /context/assemble` (same manager path) — [http-api.md](http-api.md)
+- Pipeline rationale: ADR-0017 (D1), ADR-0018 (entry invariant: scan + provenance + status gate on every LTM → context entry)
+- CCR: [`mnemos_compress`](#mnemos_compress) / [`mnemos_retrieve`](#mnemos_retrieve)
 
 ---
 

@@ -180,6 +180,13 @@ class MemoryManager:
         # every processor cycle, to avoid scanning the cache table
         # every `interval_sec` (default 120s).
         self._ccr_cleanup_last_ts: float = 0.0
+        # ADR-0017 D1 (#125) — bounded registry for assemble_context
+        # mode="async" results (handle -> ContextBlock dict). In-memory,
+        # single-tenant, capped by mnemos.assemble.ASYNC_REGISTRY_CAP with
+        # oldest-first eviction; a restart drops pending handles (the
+        # harness re-asks — async is a latency optimization, not storage).
+        self._assemble_async: dict[str, dict[str, Any]] = {}
+        self._assemble_async_lock: threading.Lock = threading.Lock()
 
     @property
     def embedder(self) -> EmbeddingProvider:
@@ -289,6 +296,24 @@ class MemoryManager:
         # scanner will catch it later).
         tags = self._scan_and_tag(list(data.tags), data.content)
 
+        # ADR-0017 D1 / #125 ArchCom addendum 1 — contentType metadata
+        # captured at ingest: detect_profile runs once here and the binary
+        # partition ("code" vs everything-else "prose") is persisted in
+        # metadata so assemble_context(mode=code|prose) filters recall
+        # candidates by the stored value instead of re-detecting on the
+        # hot path. Non-fatal: on failure the memory is saved without the
+        # key and recall falls back to on-the-fly detection (documented in
+        # mnemos.assemble).
+        ingest_metadata: dict[str, Any] = dict(data.metadata)
+        try:
+            from mnemos.filter.pipeline import detect_profile
+
+            ingest_metadata["content_type"] = (
+                "code" if detect_profile(data.content) == "code" else "prose"
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("content_type ingest capture failed (non-fatal): %s", exc)
+
         memory = Memory(
             content=data.content,
             title=data.title,
@@ -296,7 +321,7 @@ class MemoryManager:
             source=data.source,
             source_url=data.source_url,
             memory_type=data.memory_type,
-            metadata=data.metadata,
+            metadata=ingest_metadata,
             category=data.category,
             status=data.status,
             filter_profile=data.filter_profile,
@@ -2270,6 +2295,41 @@ class MemoryManager:
         if not cfg.extract_tokens:
             skip_kinds.add("token")
         return align(text, profile=profile, skip_kinds=skip_kinds or None)
+
+    # ── ADR-0017 D1: assemble_context provider contract (#125) ─────────────
+
+    def assemble_context(
+        self,
+        *,
+        session: str,
+        project: str,
+        file: str | None = None,
+        budget: int = 2048,
+        mode: str = "sync",
+        expand_ccr: bool = False,
+        async_handle: str | None = None,
+    ) -> dict[str, Any]:
+        """Assemble the model-facing context block (ADR-0017 D1 contract).
+
+        Thin delegation to :func:`mnemos.assemble.assemble_context` — the
+        fixed pipeline (recall → CCR → filter → scan → align → budget)
+        lives in that module; this method keeps the one-core-over-three-
+        surfaces pattern (MCP / REST / future SDK all call the manager).
+        Raises ``ValueError`` on invalid ``session`` / ``project`` /
+        ``mode`` / ``budget`` or an unknown ``async_handle``.
+        """
+        from mnemos.assemble import assemble_context as _assemble
+
+        return _assemble(
+            self,
+            session=session,
+            project=project,
+            file=file,
+            budget=budget,
+            mode=mode,
+            expand_ccr=expand_ccr,
+            async_handle=async_handle,
+        )
 
     # ── CCR (P1-4) ─────────────────────────────────────────────────────────
 

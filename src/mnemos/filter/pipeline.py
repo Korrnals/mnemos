@@ -587,6 +587,12 @@ def _estimate_tokens(text: str) -> int:
     return max(words, chars // 4)
 
 
+#: Public alias for :func:`_estimate_tokens` — single source of the token
+#: estimation heuristic, shared with the ``assemble_context`` budget stage
+#: (ADR-0017 D1, mnemos #125). Import this name, not the underscore one.
+estimate_tokens = _estimate_tokens
+
+
 def _stage_tokens(text: str, budget: int | None = None) -> tuple[str, dict[str, Any]]:
     """Estimate tokens and optionally truncate to budget.
 
