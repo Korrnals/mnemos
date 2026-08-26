@@ -2237,6 +2237,7 @@ class MemoryManager:
         *,
         query: str | None = None,
         snippet_count: int | None = None,
+        project: str | None = None,
     ) -> dict[str, Any]:
         """Retrieve a CCR-cached original (or FTS5 snippets if ``query``).
 
@@ -2252,6 +2253,15 @@ class MemoryManager:
         ``ccr.retrieve_refuse_on_secret`` is enabled, a detection
         returns ``refused=True`` with no content instead of a redacted
         copy. ``found=False`` responses are returned unchanged.
+
+        ADR-0018 P1-a — project scoping: ``project`` scopes the cache
+        lookup to that project's entries; a hash cached under another
+        project returns ``found=False`` (cross-session marker redemption
+        denied, fail-closed). The manager holds no ambient project
+        context, so the default is ``None`` = unscoped lookup (legacy
+        behavior preserved for callers without project context); the
+        explicit parameter is the override. The scan-at-store verdict on
+        the row is observability only and never fast-paths this scan.
         """
         from mnemos.ccr import retrieve
         from mnemos.secrets_detector import (
@@ -2266,6 +2276,7 @@ class MemoryManager:
             config=self.settings.ccr,
             query=query,
             snippet_count=snippet_count,
+            project=project,
         )
         if not result.get("found"):
             return result
@@ -2358,6 +2369,33 @@ class MemoryManager:
             "max_entries": self.settings.ccr.max_entries,
             "min_size_chars": self.settings.ccr.min_size_chars,
         }
+
+    # ── Memory edges (ADR-0018 Phase 1 groundwork) ────────────────────────
+
+    def add_memory_edge(
+        self,
+        from_memory_id: str,
+        to_memory_id: str,
+        *,
+        kind: str = "supersedes",
+    ) -> bool:
+        """Record that ``from_memory_id`` supersedes ``to_memory_id``.
+
+        Thin wrapper over ``SQLiteStore.add_memory_edge`` (validation and
+        constraints live there). Returns ``True`` when inserted, ``False``
+        when the edge already existed (idempotent). No MCP surface and no
+        graph expansion in Phase 1 — on_context_rewrite arrives with #125.
+        """
+        return self.sqlite.add_memory_edge(from_memory_id, to_memory_id, kind=kind)
+
+    def get_memory_edges(
+        self,
+        from_memory_id: str,
+        *,
+        kind: str = "supersedes",
+    ) -> list[dict[str, Any]]:
+        """Return direct outgoing edges (one hop, no expansion)."""
+        return self.sqlite.get_direct_edges(from_memory_id, kind=kind)
 
     # ── Policy / DLQ (M5) ─────────────────────────────────────────────────
 

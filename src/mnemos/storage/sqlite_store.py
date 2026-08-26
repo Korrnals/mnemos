@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from sys import getsizeof
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from mnemos.models import (
     Memory,
@@ -70,6 +70,13 @@ _FIELD_UPDATERS: dict[str, str] = {
 # into a literal phrase. This is the recommended hardening pattern from
 # https://www.sqlite.org/fts5.html#fts5_strings — see `_build_fts_query`.
 _FTS5_SPECIAL_CHARS = re.compile(r'["\'\*\(\):]')
+
+# ADR-0018 Phase 1 — the memory_edges table supports exactly one edge
+# kind. Expanding this set requires updating the SQL CHECK constraint on
+# memory_edges (schema migration), this whitelist, and the manager
+# wrappers — by design the surface stays minimal until on_context_rewrite
+# (#125) arrives with Phase 2.
+_EDGE_KINDS: Final[set[str]] = {"supersedes"}
 
 # ── TTL in-memory cache ───────────────────────────────────────────────────────
 
@@ -423,7 +430,16 @@ CREATE TABLE IF NOT EXISTS ccr_cache (
     created_at       TEXT NOT NULL,
     size_bytes       INTEGER NOT NULL DEFAULT 0,
     retrieval_count  INTEGER NOT NULL DEFAULT 0,
-    last_retrieved_at TEXT
+    last_retrieved_at TEXT,
+    -- ADR-0018 P1-a: verdict of the detect_secrets scan run at store
+    -- time. 'clean' | 'hit' | 'unknown' (scanner error). NULL on legacy
+    -- rows written before the migration — treated as unscanned. The
+    -- stored original is ALWAYS verbatim (zero-loss, committee
+    -- decision); this flag is observability only — issuance keeps
+    -- scanning unconditionally (patterns evolve; a store-time verdict
+    -- alone would go stale).
+    secret_scan_verdict TEXT,
+    secret_scan_at      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_ccr_cache_project   ON ccr_cache(project);
@@ -456,6 +472,24 @@ CREATE TRIGGER IF NOT EXISTS ccr_cache_au AFTER UPDATE ON ccr_cache BEGIN
     INSERT INTO ccr_cache_fts(rowid, hash, original)
     VALUES (new.rowid, new.hash, new.original);
 END;
+
+-- ADR-0018 Phase 1 groundwork: minimal memory graph edges. Only
+-- kind='supersedes' exists in Phase 1 (no expansion, no MCP surface —
+-- on_context_rewrite arrives with mnemos #125). PK (from, to, kind)
+-- makes add_edge idempotent (INSERT OR IGNORE). Self-edges are rejected
+-- both here (CHECK) and in add_memory_edge (friendly ValueError).
+-- ON DELETE CASCADE keeps edges consistent when memories are deleted.
+CREATE TABLE IF NOT EXISTS memory_edges (
+    from_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    to_memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    kind           TEXT NOT NULL CHECK (kind IN ('supersedes')),
+    created_at     TEXT NOT NULL,
+    PRIMARY KEY (from_memory_id, to_memory_id, kind),
+    CHECK (from_memory_id <> to_memory_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_memory_id, kind);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_to   ON memory_edges(to_memory_id, kind);
 """
 
 _MIGRATIONS: list[tuple[str, str]] = [
@@ -480,6 +514,22 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("workflow_status", "ALTER TABLE memories ADD COLUMN workflow_status TEXT"),
     ("locked_by", "ALTER TABLE memories ADD COLUMN locked_by TEXT"),
     ("locked_at", "ALTER TABLE memories ADD COLUMN locked_at TEXT"),
+]
+
+# ADR-0018 P1-a — scan-at-store verdict columns on ccr_cache. Existing
+# rows keep NULL (treated as unscanned; issuance keeps scanning them as
+# today). Fresh DBs get the columns from _DB_SCHEMA; the ALTER only runs
+# on legacy databases. Two columns (verdict + scan timestamp) so the
+# flag's freshness is auditable.
+_CCR_MIGRATIONS: list[tuple[str, str]] = [
+    (
+        "secret_scan_verdict",
+        "ALTER TABLE ccr_cache ADD COLUMN secret_scan_verdict TEXT",
+    ),
+    (
+        "secret_scan_at",
+        "ALTER TABLE ccr_cache ADD COLUMN secret_scan_at TEXT",
+    ),
 ]
 
 
@@ -513,6 +563,10 @@ class SQLiteStore:
         existing = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
         for col, sql in _MIGRATIONS:
             if col not in existing:
+                conn.execute(sql)
+        ccr_cols = {row[1] for row in conn.execute("PRAGMA table_info(ccr_cache)").fetchall()}
+        for col, sql in _CCR_MIGRATIONS:
+            if col not in ccr_cols:
                 conn.execute(sql)
         conn.commit()
 
@@ -1510,31 +1564,76 @@ class SQLiteStore:
     ) -> int:
         """Insert a CCR cache entry (idempotent on hash).
 
-        Uses ``INSERT OR IGNORE`` so re-compressing the same content is a
-        no-op (the original is already cached). Returns the rowid of the
-        stored (or pre-existing) entry.
+        Uses an UPSERT so re-compressing the same content is a no-op for
+        the stored row (the original is already cached) while still
+        refreshing the scan verdict. Returns the rowid of the stored (or
+        pre-existing) entry.
+
+        ADR-0018 P1-a — scan-at-store verdict: ``detect_secrets`` runs on
+        the ORIGINAL at store time and the verdict ('clean' | 'hit' |
+        'unknown') is persisted in ``secret_scan_verdict``. The stored
+        original itself remains verbatim (zero-loss, committee decision);
+        the flag is observability only — issuance (``retrieve_content``)
+        keeps scanning unconditionally because patterns evolve and a
+        store-time verdict alone would go stale. On 'hit' a WARNING is
+        logged with the hash and log-safe per-pattern counts only; raw
+        matched values are never logged (hard rule).
         """
+        from mnemos.secrets_detector import detect_secrets, findings_by_pattern
+
         conn = self._get_conn()
         now = datetime.now(UTC).isoformat()
         size_bytes = len(original.encode("utf-8"))
+        verdict = "unknown"
+        try:
+            findings = detect_secrets(original)
+        except Exception as exc:  # pragma: no cover — defensive, non-fatal
+            logger.warning("CCR store scan failed (verdict=unknown): hash=%s error=%s", hash, exc)
+        else:
+            verdict = "hit" if findings else "clean"
+            if findings:
+                # Log-safe: hash + pattern counts only, never matched values.
+                logger.warning(
+                    "CCR store scan hit: hash=%s patterns=%s — raw values not logged",
+                    hash,
+                    findings_by_pattern(findings),
+                )
         conn.execute(
-            "INSERT OR IGNORE INTO ccr_cache "
-            "(hash, original, project, created_at, size_bytes, retrieval_count) "
-            "VALUES (?,?,?,?,?,0)",
-            (hash, original, project, now, size_bytes),
+            "INSERT INTO ccr_cache "
+            "(hash, original, project, created_at, size_bytes, retrieval_count, "
+            " secret_scan_verdict, secret_scan_at) "
+            "VALUES (?,?,?,?,?,0,?,?) "
+            "ON CONFLICT(hash) DO UPDATE SET "
+            "  secret_scan_verdict=excluded.secret_scan_verdict, "
+            "  secret_scan_at=excluded.secret_scan_at",
+            (hash, original, project, now, size_bytes, verdict, now),
         )
         conn.commit()
         row = conn.execute("SELECT rowid FROM ccr_cache WHERE hash=?", (hash,)).fetchone()
         return int(row["rowid"]) if row else 0
 
-    def ccr_get(self, hash: str) -> dict[str, Any] | None:
+    def ccr_get(self, hash: str, *, project: str | None = None) -> dict[str, Any] | None:
         """Fetch a CCR cache entry by hash and bump its retrieval counter.
 
+        ADR-0018 P1-a — project scoping: when ``project`` is given (a
+        non-empty slug), the lookup additionally requires the entry to
+        belong to that project. A hash stored under a different project
+        returns ``None`` (cross-session marker redemption is denied,
+        fail-closed) and the retrieval counter is NOT bumped. When
+        ``project`` is ``None`` the lookup stays unscoped (legacy
+        behavior preserved for callers without project context).
+
         Returns ``{"hash","original","project","created_at","size_bytes",
-        "retrieval_count"}`` or ``None`` if not found.
+        "retrieval_count","secret_scan_verdict","secret_scan_at"}`` or
+        ``None`` if not found / project mismatch.
         """
         conn = self._get_conn()
-        row = conn.execute("SELECT * FROM ccr_cache WHERE hash=?", (hash,)).fetchone()
+        sql = "SELECT * FROM ccr_cache WHERE hash=?"
+        params: list[Any] = [hash]
+        if project:
+            sql += " AND project=?"
+            params.append(project)
+        row = conn.execute(sql, params).fetchone()
         if row is None:
             return None
         now = datetime.now(UTC).isoformat()
@@ -1551,6 +1650,8 @@ class SQLiteStore:
             "created_at": row["created_at"],
             "size_bytes": int(row["size_bytes"]),
             "retrieval_count": int(row["retrieval_count"]) + 1,
+            "secret_scan_verdict": row["secret_scan_verdict"],
+            "secret_scan_at": row["secret_scan_at"],
         }
 
     def ccr_count(self) -> int:
@@ -1597,14 +1698,30 @@ class SQLiteStore:
         hash: str,
         query: str,
         limit: int = 5,
+        *,
+        project: str | None = None,
     ) -> list[dict[str, Any]]:
         """FTS5-ranked snippet search within a single cached original.
 
         Returns a list of ``{"snippet","rank}`` dicts ordered by relevance.
         Uses the same FTS5 query sanitisation as ``fts_search`` so the
         user-supplied query cannot inject FTS5 operator syntax.
+
+        ADR-0018 P1-a — project scoping (same defect class as
+        ``ccr_get``): when ``project`` is given, the entry's project is
+        verified BEFORE the FTS query runs and an empty result is
+        returned on mismatch. Defence in depth — ``ccr.retrieve`` already
+        scopes the ``ccr_get`` lookup, this guard keeps the snippet
+        channel from leaking other projects' entries when a caller
+        invokes search directly.
         """
         conn = self._get_conn()
+        if project:
+            owner = conn.execute(
+                "SELECT 1 FROM ccr_cache WHERE hash=? AND project=?", (hash, project)
+            ).fetchone()
+            if owner is None:
+                return []
         fts_query = self._build_fts_query(query)
         try:
             rows = conn.execute(
@@ -1627,3 +1744,60 @@ class SQLiteStore:
         cur = conn.execute("DELETE FROM ccr_cache")
         conn.commit()
         return cur.rowcount or 0
+
+    # ── Memory edges (ADR-0018 Phase 1 groundwork) ─────────────────────────
+
+    def add_memory_edge(
+        self,
+        from_memory_id: str,
+        to_memory_id: str,
+        *,
+        kind: str = "supersedes",
+    ) -> bool:
+        """Add a directed edge between two memories (idempotent).
+
+        Returns ``True`` when a new edge was inserted, ``False`` when an
+        identical edge already existed (INSERT OR IGNORE on the
+        (from, to, kind) primary key).
+
+        Raises:
+            ValueError: self-edge (``from == to``) or unknown ``kind``.
+                A memory superseding itself is meaningless and signals a
+                caller bug — rejected here with a friendly error; the
+                SQL CHECK constraint is the defence-in-depth backstop.
+            sqlite3.IntegrityError: either memory id does not exist
+                (foreign key, ``PRAGMA foreign_keys=ON``).
+        """
+        if kind not in _EDGE_KINDS:
+            raise ValueError(f"unknown edge kind {kind!r}; supported kinds: {sorted(_EDGE_KINDS)}")
+        if from_memory_id == to_memory_id:
+            raise ValueError("self-edges are not allowed (from_memory_id == to_memory_id)")
+        conn = self._get_conn()
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO memory_edges "
+            "(from_memory_id, to_memory_id, kind, created_at) VALUES (?,?,?,?)",
+            (from_memory_id, to_memory_id, kind, datetime.now(UTC).isoformat()),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def get_direct_edges(
+        self,
+        from_memory_id: str,
+        *,
+        kind: str = "supersedes",
+    ) -> list[dict[str, Any]]:
+        """Return direct outgoing edges for ``from_memory_id`` (no expansion).
+
+        One hop only — graph traversal/expansion is Phase 2 (ADR-0018).
+        Returns ``[{"from_memory_id","to_memory_id","kind","created_at"}]``
+        ordered by creation time ascending.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT from_memory_id, to_memory_id, kind, created_at "
+            "FROM memory_edges WHERE from_memory_id = ? AND kind = ? "
+            "ORDER BY created_at ASC",
+            (from_memory_id, kind),
+        ).fetchall()
+        return [dict(r) for r in rows]

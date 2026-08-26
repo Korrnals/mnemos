@@ -897,6 +897,9 @@ class RetrieveRequest(BaseModel):
     hash: str
     query: str | None = None
     snippet_count: int | None = None
+    # ADR-0018 P1-a: optional project scopes the cache lookup — a hash
+    # cached under another project is reported as not found.
+    project: str | None = None
 
 
 @app.post("/compress")
@@ -918,11 +921,17 @@ async def retrieve_content(req: RetrieveRequest) -> dict[str, Any]:
     Mirrors the ``mnemos_retrieve`` MCP tool. Issued content is scanned for
     secrets (ADR-0018 P0): matched spans are redacted in the response
     (``redactions`` counts them; ``redacted_patterns`` gives per-pattern
-    counts); the stored original is never mutated.
+    counts); the stored original is never mutated. An optional ``project``
+    scopes the lookup to that project's entries (ADR-0018 P1-a).
     """
     _track_http_call()
     mgr = get_manager()
-    return mgr.retrieve_content(req.hash, query=req.query, snippet_count=req.snippet_count)
+    return mgr.retrieve_content(
+        req.hash,
+        query=req.query,
+        snippet_count=req.snippet_count,
+        project=req.project,
+    )
 
 
 # ── Auto-collect signal vector ─────────────────────────────────────────────────

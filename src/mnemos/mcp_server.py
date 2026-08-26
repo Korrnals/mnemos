@@ -725,6 +725,14 @@ async def list_tools() -> list[Tool]:
                         "default": 5,
                         "description": "Number of snippets when query is provided",
                     },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Optional project slug: scope the lookup to this "
+                            "project's entries — a hash cached under another "
+                            "project is reported as not found"
+                        ),
+                    },
                 },
                 "required": ["hash"],
             },
@@ -1439,10 +1447,13 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         )
     # ── mnemos_retrieve (P1-4 CCR) ───────────────────────────────────────────
     if name == "mnemos_retrieve":
+        # ADR-0018 P1-a: optional project scopes the cache lookup — a hash
+        # cached under another project is reported as not found.
         return mgr.retrieve_content(
             args["hash"],
             query=args.get("query"),
             snippet_count=args.get("snippet_count"),
+            project=args.get("project"),
         )
     # ── mnemos_filter (M10) ─────────────────────────────────────────────────
     if name == "mnemos_filter":
