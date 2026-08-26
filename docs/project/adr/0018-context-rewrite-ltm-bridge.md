@@ -70,9 +70,10 @@ flowchart LR
 Every path by which LTM content enters working context — `assemble_context`
 injection, tool-call rehydrate (`mnemos_retrieve`), future graph expansion
 (D2) — passes three controls: secret scan, provenance wrapper, and status
-gate. The status gate admits `published` entries only; `raw` and DLQ content
-is unreachable from context, otherwise knowledge-pipeline gating becomes
-bypassable. Scan runs on issuance always (scanner patterns evolve, stored
+gate. The status gate admits `published` and `processed` entries (the
+documented search-default set); `raw` and DLQ content is unreachable from
+context, otherwise knowledge-pipeline gating becomes bypassable. Narrowing
+to `published` only is a one-line constant change if Phase 1 decides so. Scan runs on issuance always (scanner patterns evolve, stored
 records age); a verdict flag cached at store time is a later optimization,
 not a substitute. When a secret is found at store time, the original is
 still stored unchanged (zero-loss storage) with a verdict flag, and
@@ -128,7 +129,7 @@ Target corridors are set after the baseline on the golden set is recorded
 
 | Phase | Scope | Size | Exit gate |
 |---|---|---|---|
-| P0 fix (immediately, before any mechanics) | Scan on `mnemos_retrieve` (redact or refuse at issuance) + status gate (`published` only) — one PR | S | Tests for secret echo and raw issuance; Security review |
+| P0 fix (immediately, before any mechanics) | Scan on `mnemos_retrieve` (redact or refuse at issuance) + status gate (`published` + `processed`, the documented search-default set — narrowing to `published`-only is a one-line constant change if Phase 1 decides so) — one PR | S | Tests for secret echo and raw issuance; Security review |
 | P1 fix | Scan at `ccr_store` (verdict flag; secret → store with flag + redacted issuance); project scoping of `ccr_get` + audit of `ccr_search`; minimal `memory_edges` table (`kind=supersedes`, no expansion) | S–M | Security review; CCR regression suite green |
 | P2 fix | Marker validation (faux-marker source) | S | Escalation rule enforced: no marker-driven automation merges before validation |
 | Phase 1 (D1 contract, per ADR-0017 roadmap) | `assemble_context` + CCR stage; `on_context_rewrite` as an MCP event tool; harness acceptance checklist (pinned-zones golden test, replace-event); `post_tool_call` autocompression; D5 metrics incl. the new pair | M | ADR-0017 Phase 1 gate: golden set, precision/recall@k, injection-acceptance |

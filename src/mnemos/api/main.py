@@ -915,7 +915,10 @@ async def compress_content(req: CompressRequest) -> dict[str, Any]:
 async def retrieve_content(req: RetrieveRequest) -> dict[str, Any]:
     """Retrieve a CCR-cached original (or FTS5 snippets when ``query`` is set).
 
-    Mirrors the ``mnemos_retrieve`` MCP tool.
+    Mirrors the ``mnemos_retrieve`` MCP tool. Issued content is scanned for
+    secrets (ADR-0018 P0): matched spans are redacted in the response
+    (``redactions`` counts them; ``redacted_patterns`` gives per-pattern
+    counts); the stored original is never mutated.
     """
     _track_http_call()
     mgr = get_manager()

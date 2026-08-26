@@ -703,7 +703,11 @@ async def list_tools() -> list[Tool]:
                 "Retrieve the original uncompressed content for a CCR marker hash. "
                 "If query is omitted: returns the full original. If query is "
                 "provided: returns FTS5-ranked snippets from within the cached "
-                "original. Use the hash from a [compressed: <hash> | ...] marker."
+                "original. Use the hash from a [compressed: <hash> | ...] marker. "
+                "Issued content is scanned for secrets: matched spans are "
+                "redacted (<REDACTED:<pattern>>) in the response, which reports "
+                "the count via 'redactions' (0 when clean); the stored original "
+                "is preserved unchanged."
             ),
             inputSchema={
                 "type": "object",
