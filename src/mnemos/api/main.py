@@ -21,7 +21,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Header, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
@@ -846,6 +846,26 @@ class RecallContextRequest(BaseModel):
     limit: int = 5
 
 
+class AssembleContextRequest(BaseModel):
+    """Request body for POST /context/assemble — mirrors ``mnemos_assemble_context``.
+
+    ADR-0017 D1 provider contract. ``mode`` carries both axes on one
+    parameter: delivery (``sync`` default / ``async`` = store + handle) and
+    contentType (``code`` / ``prose`` filter recall candidates by the
+    content type captured at ingest). Boundary validation of the values
+    lives in the manager (single authority); this endpoint maps a
+    ``ValueError`` to HTTP 422.
+    """
+
+    session: str
+    project: str
+    file: str | None = None
+    budget: int = Field(default=2048, ge=1, le=1_000_000)
+    mode: str = "sync"
+    expand_ccr: bool = False
+    async_handle: str | None = None
+
+
 @app.post("/context/save", status_code=201)
 async def save_context(req: SaveContextRequest) -> dict[str, Any]:
     """Save a session checkpoint memory tagged ``mnemos:checkpoint``.
@@ -915,6 +935,34 @@ async def recall_context(req: RecallContextRequest) -> dict[str, Any]:
             item["redacted_patterns"] = scan.redacted_patterns
         checkpoints.append(item)
     return {"project": req.project, "checkpoints": checkpoints}
+
+
+@app.post("/context/assemble")
+async def assemble_context(req: AssembleContextRequest) -> dict[str, Any]:
+    """Assemble the model-facing context block (ADR-0017 D1, mnemos #125).
+
+    Mirrors the ``mnemos_assemble_context`` MCP tool over the same manager
+    path: fixed pipeline (recall → optional CCR expansion → filter →
+    MANDATORY secret scan → CacheAligner → token budget), provenance on
+    every injected block, per-block redaction counts and token stats.
+    ``mode='async'`` returns a handle envelope; pass ``async_handle`` on a
+    later call to fetch the stored result.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    try:
+        return mgr.assemble_context(
+            session=req.session,
+            project=req.project,
+            file=req.file,
+            budget=req.budget,
+            mode=req.mode,
+            expand_ccr=req.expand_ccr,
+            async_handle=req.async_handle,
+        )
+    except ValueError as exc:
+        # Boundary validation (session/project/mode/budget/async_handle).
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ── Reversible content compression (CCR) ───────────────────────────────────────

@@ -504,6 +504,53 @@ curl -s -X POST http://127.0.0.1:8000/context/recall \
 
 ---
 
+## Контракт провайдера (ADR-0017 D1)
+
+### `POST /context/assemble` — сборка контекстного блока перед вызовом LLM
+
+Зеркало MCP-инструмента `mnemos_assemble_context` через тот же путь менеджера
+(mnemos #125, волна 1). Фиксированный конвейер: гибридный RRF recall
+(статусный гейт инварианта входа — наружу выходят только `published`/
+`processed`) → опциональный разворот CCR-маркеров → контекстный фильтр →
+**обязательный** скан секретов (редакции считаются по блокам; refuse-режим
+выбрасывает блок) → CacheAligner → токен-бюджет. Каждый внедряемый блок
+несёт строку провенанса
+`[mnemos:<id> project=<slug> status=<status> retrieved=<iso>]`.
+
+**Тело запроса**
+
+| Поле | Тип | Обяз. | По умолч. | Описание |
+|------|-----|-------|-----------|----------|
+| `session` | string | **да** | — | Идентификатор сессии вызывающего (эхом в результате). |
+| `project` | string | **да** | — | Слаг проекта: ограничивает recall и погашение CCR. |
+| `file` | string | нет | `null` | Путь к файлу: термины recall-запроса + пиннинг applyTo-правил. |
+| `budget` | integer | нет | `2048` | Токен-бюджет (`1..1_000_000`). |
+| `mode` | string | нет | `sync` | `sync` / `async` (сохранение + handle) / `code` / `prose` (фильтр contentType). |
+| `expand_ccr` | boolean | нет | `false` | Включить опциональную стадию разворота CCR. |
+| `async_handle` | string | нет | `null` | Забрать (однократно) результат, сохранённый через `mode="async"`. Привязан к сессии: выкупить может только собравшая сессия; несовпадение → 422, handle не изымается. |
+
+**Ответы**
+
+- `200` — ContextBlock: `text` (блоки с провенансом), `blocks[]`
+  (по-блочный провенанс, счётчики редакций и токенов), `tokens`
+  (`budget`, `estimated`), `stats` (телеметрия по стадиям, включая дословный
+  порядок стадий). При `mode="async"` — только конверт с handle.
+- `422` — ошибка валидации на границе (некорректные `session`/`project`/
+  `mode`/`budget`, неизвестный `async_handle` или handle, принадлежащий
+  другой сессии).
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/context/assemble \
+  -H "Content-Type: application/json" \
+  -d '{"session": "sess-42", "project": "mnemos", "file": "src/manager.py", "budget": 1024}'
+```
+
+Полная документация по полям: [`mcp-tools.md` → `mnemos_assemble_context`](mcp-tools.md#mnemos_assemble_context).
+
+---
+
 ## Обратимое сжатие (CCR)
 
 Эти эндпоинты реализуют **Compress-Cache-Retrieve (CCR)** — сжатие без потери

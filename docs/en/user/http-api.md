@@ -504,6 +504,52 @@ curl -s -X POST http://127.0.0.1:8000/context/recall \
 
 ---
 
+## Provider contract (ADR-0017 D1)
+
+### `POST /context/assemble` — assemble the pre-LLM-call context block
+
+Mirrors the `mnemos_assemble_context` MCP tool over the same manager path
+(mnemos #125, Wave 1). Fixed pipeline: hybrid RRF recall (entry-invariant
+status gate — only `published`/`processed` surface) → optional CCR marker
+expansion → context filter → **mandatory** secret scan (per-block redaction
+counts; refuse mode drops the block) → CacheAligner → token budget. Every
+injected block carries a provenance line
+`[mnemos:<id> project=<slug> status=<status> retrieved=<iso>]`.
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `session` | string | **yes** | — | Caller's session identifier (echoed in the result). |
+| `project` | string | **yes** | — | Project slug scoping recall and CCR redemption. |
+| `file` | string | no | `null` | File path: recall query terms + applyTo rule pinning. |
+| `budget` | integer | no | `2048` | Token budget (`1..1_000_000`). |
+| `mode` | string | no | `sync` | `sync` / `async` (store + handle) / `code` / `prose` (contentType filter). |
+| `expand_ccr` | boolean | no | `false` | Enable the optional CCR expansion stage. |
+| `async_handle` | string | no | `null` | Fetch (once) a result stored by `mode="async"`. Session-bound: only the assembling session may redeem; mismatch → 422, handle not consumed. |
+
+**Responses**
+
+- `200` — the ContextBlock: `text` (provenance-wrapped blocks), `blocks[]`
+  (per-block provenance, redaction counts, token counts), `tokens`
+  (`budget`, `estimated`), `stats` (per-stage telemetry incl. the verbatim
+  stage order). For `mode="async"`: a handle envelope only.
+- `422` — boundary validation failure (invalid `session`/`project`/`mode`/
+  `budget`, unknown `async_handle`, or an `async_handle` owned by a
+  different session).
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/context/assemble \
+  -H "Content-Type: application/json" \
+  -d '{"session": "sess-42", "project": "mnemos", "file": "src/manager.py", "budget": 1024}'
+```
+
+Full field-by-field documentation: [`mcp-tools.md` → `mnemos_assemble_context`](mcp-tools.md#mnemos_assemble_context).
+
+---
+
 ## Reversible compression (CCR)
 
 These endpoints implement **Compress-Cache-Retrieve (CCR)** — zero-data-loss
