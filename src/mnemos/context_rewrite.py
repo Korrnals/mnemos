@@ -41,6 +41,29 @@ Event semantics (ADR-0018 §"on_context_rewrite", verbatim requirements):
   compress marker for the original via the existing ``compress_content``
   (content-addressed, project-scoped, Layer-1 scanned at write).
 
+Write-surface guardrails (#125 W2 security review, finding 1 — these are
+preconditions for the W3 automation slice):
+
+* **Rate limit** — ``mnemos.context_rewrite_rate_limit_per_minute``
+  (default 30, 0 disables) counts STORED events per ``(project, session)``
+  in a one-minute window (the #96 guardrail-5 SQL pattern over
+  ``memories``). Deliberately counts writes, not deliveries: a
+  deduplicated re-delivery performs no write and consumes no quota, so
+  at-least-once retry storms stay harmless. Over-limit raises
+  :class:`ContextRewriteRateLimitError` — a backpressure signal, NOT a
+  validation failure (REST maps it to 429, MCP to a clean error dict;
+  ``ValueError`` remains 422/``{"error": …}``).
+* **Size caps** — ``mnemos.context_rewrite_max_content_chars`` (default
+  1 MiB in chars) and ``mnemos.context_rewrite_max_diff_chars`` (default
+  256 KiB in chars) reject oversized payloads at the boundary before
+  any write.
+
+Supersedes scoping (#125 W2 security review, finding 2): the target must
+exist AND belong to the caller's project — the pre-flight message is
+deliberately identical for "no such memory" and "memory of another
+project" (no global existence oracle, mirroring the P1-a ``ccr_get``
+project-scoping semantics).
+
 Design decisions (flagged for ArchCom ratification in the #125 report):
 
 * **Idempotency key** — content-hash over the canonical tuple, not a
@@ -64,6 +87,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final
 
 from mnemos.models import MemoryCreate, MemorySource, validate_tag_contract
@@ -81,6 +105,16 @@ SOURCE_CONTEXT_REWRITE: Final[str] = "context-rewrite"
 _DIFF_VERDICT_CLEAN: Final[str] = "clean"
 _DIFF_VERDICT_HIT: Final[str] = "hit"
 _DIFF_VERDICT_UNKNOWN: Final[str] = "unknown"
+
+
+class ContextRewriteRateLimitError(RuntimeError):
+    """Rewrite-event write quota exceeded (#125 W2 review F1).
+
+    Deliberately NOT a ``ValueError``: this is backpressure, not a
+    validation failure — the REST surface maps it to HTTP 429 and the MCP
+    surface to a clean ``{"error": …, "rate_limited": true}`` dict, while
+    ``ValueError`` keeps its 422 / plain-error-dict semantics.
+    """
 
 
 # ── Idempotency key ───────────────────────────────────────────────────────────
@@ -117,10 +151,23 @@ def _validate(
     session: str | None,
     supersedes: str | None,
     diff: str | None,
+    *,
+    max_content_chars: int,
+    max_diff_chars: int,
 ) -> None:
-    """Boundary validation — raises ``ValueError`` with actionable messages."""
+    """Boundary validation — raises ``ValueError`` with actionable messages.
+
+    Size caps (W2 review F1) reject oversized payloads BEFORE any write:
+    the rewrite surface must not become a dump channel for whole-file
+    blobs or multi-megabyte "advisory" diffs.
+    """
     if not content or not content.strip():
         raise ValueError("content is required (non-empty string)")
+    if len(content) > max_content_chars:
+        raise ValueError(
+            f"content exceeds the rewrite size cap: {len(content)} chars "
+            f"> {max_content_chars} (mnemos.context_rewrite_max_content_chars)"
+        )
     if not project or not project.strip():
         raise ValueError("project is required (non-empty string)")
     if not agent or not agent.strip():
@@ -128,6 +175,11 @@ def _validate(
     for name, value in (("session", session), ("supersedes", supersedes), ("diff", diff)):
         if value is not None and not value.strip():
             raise ValueError(f"{name} must be a non-empty string when provided")
+    if diff is not None and len(diff) > max_diff_chars:
+        raise ValueError(
+            f"diff exceeds the rewrite size cap: {len(diff)} chars "
+            f"> {max_diff_chars} (mnemos.context_rewrite_max_diff_chars)"
+        )
 
 
 # ── Layer-1 verdict for the advisory diff ─────────────────────────────────────
@@ -211,10 +263,24 @@ def context_rewrite(
         result, only when ``include_marker``).
 
     Raises:
-        ValueError: Invalid boundary input, tag-contract violation, or a
-            ``supersedes`` target that does not exist.
+        ValueError: Invalid boundary input (incl. size-cap violations), a
+            tag-contract violation, or a ``supersedes`` target that is not
+            found in the caller's project (existence and cross-project
+            cases share one message — no global existence oracle).
+        ContextRewriteRateLimitError: The per-(project, session) stored-event
+            quota is exhausted (W2 review F1; REST → 429).
     """
-    _validate(content, project, agent, session, supersedes, diff)
+    mnemos_cfg = mgr.settings.mnemos
+    _validate(
+        content,
+        project,
+        agent,
+        session,
+        supersedes,
+        diff,
+        max_content_chars=mnemos_cfg.context_rewrite_max_content_chars,
+        max_diff_chars=mnemos_cfg.context_rewrite_max_diff_chars,
+    )
 
     event_key = compute_event_key(
         project=project, agent=agent, session=session, supersedes=supersedes, content=content
@@ -234,7 +300,7 @@ def context_rewrite(
             "session": session,
         }
         if supersedes is not None:
-            receipt["supersedes"] = _link_supersedes(mgr, existing_id, supersedes)
+            receipt["supersedes"] = _link_supersedes(mgr, existing_id, supersedes, project)
         else:
             receipt["supersedes"] = None
         if include_marker:
@@ -248,9 +314,37 @@ def context_rewrite(
         )
         return receipt
 
+    # ── Write quota (W2 review F1): STORED events per (project, session) ──
+    # Runs only on the write path — a deduplicated delivery (above) never
+    # reaches this check, so retry storms stay harmless by construction.
+    limit = mnemos_cfg.context_rewrite_rate_limit_per_minute
+    if limit > 0:
+        minute_ago = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+        recent = mgr.sqlite.count_recent_context_rewrites(project, session, minute_ago)
+        if recent >= limit:
+            logger.warning(
+                "context_rewrite: RATE LIMITED project=%s agent=%s session=%s "
+                "recent=%d limit=%d/min — content never logged",
+                project,
+                agent,
+                session,
+                recent,
+                limit,
+            )
+            raise ContextRewriteRateLimitError(
+                f"context rewrite rate limit exceeded: {recent} stored events for "
+                f"project={project!r} session={session!r} in the last minute "
+                f"(limit: {limit}/min). Wait or raise "
+                f"mnemos.context_rewrite_rate_limit_per_minute."
+            )
+
     # ── Pre-flight the supersedes target (clean error before any write) ──
-    if supersedes is not None and mgr.get(supersedes) is None:
-        raise ValueError(f"supersedes target {supersedes!r} does not exist")
+    # W2 review F2: project-scoped, and the message deliberately does NOT
+    # distinguish "no such memory" from "memory of another project".
+    if supersedes is not None:
+        target = mgr.get(supersedes)
+        if target is None or (target.project or "") != project:
+            raise ValueError(f"supersedes target {supersedes!r} not found in project {project!r}")
 
     # ── Store the original via the NORMAL knowledge-pipeline path ────────
     diff_verdict, extra_tags = _scan_diff(diff)
@@ -288,7 +382,7 @@ def context_rewrite(
         "supersedes": None,
     }
     if supersedes is not None:
-        receipt["supersedes"] = _link_supersedes(mgr, memory.id, supersedes)
+        receipt["supersedes"] = _link_supersedes(mgr, memory.id, supersedes, project)
     if include_marker:
         receipt["ccr_marker"] = mgr.compress_content(content, project=project)
 
@@ -302,17 +396,18 @@ def context_rewrite(
     return receipt
 
 
-def _link_supersedes(mgr: MemoryManager, new_id: str, old_id: str) -> dict[str, Any]:
+def _link_supersedes(mgr: MemoryManager, new_id: str, old_id: str, project: str) -> dict[str, Any]:
     """Create the ``new → old`` supersedes edge (idempotent by PK).
 
     The P1-a store method is ``INSERT OR IGNORE`` on the composite PK, so
     a re-delivery reports ``edge_created=False`` instead of failing. The
-    FK backstop converts a vanished target into a clean ``ValueError``
-    (the pre-flight in :func:`context_rewrite` normally catches this
-    first; the race window between pre-flight and insert is the only gap).
+    FK backstop converts a vanished target into the SAME clean
+    ``ValueError`` shape as the pre-flight in :func:`context_rewrite`
+    (the race window between pre-flight and insert is the only gap;
+    message stays project-scoped and oracle-free).
     """
     try:
         created = mgr.add_memory_edge(new_id, old_id, kind="supersedes")
     except sqlite3.IntegrityError as exc:
-        raise ValueError(f"supersedes target {old_id!r} does not exist") from exc
+        raise ValueError(f"supersedes target {old_id!r} not found in project {project!r}") from exc
     return {"to_memory_id": old_id, "edge_created": created}

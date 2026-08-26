@@ -577,9 +577,15 @@ version-less (replacement lineage is an optional `supersedes` edge).
   `project`/`agent`/`session`, `supersedes`
   (`{"to_memory_id", "edge_created"}` or `null`), and `ccr_marker` when
   `include_marker=true`. No version or ordering fields — by design.
+- `429` — write-quota exceeded: more than
+  `mnemos.context_rewrite_rate_limit_per_minute` (default 30) STORED
+  events for this `(project, session)` in the last minute. Deduplicated
+  re-deliveries consume no quota.
 - `422` — boundary validation failure (empty required fields, blank
-  optional strings, tag-contract violation in strict mode, or a missing
-  `supersedes` target).
+  optional strings, size-cap violation — `content` > 1 MiB / `diff` >
+  256 KiB by default, tag-contract violation in strict mode, or a
+  `supersedes` target not found in this project — the message does not
+  distinguish "not found" from "another project's memory").
 
 **Example**
 

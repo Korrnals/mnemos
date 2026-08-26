@@ -20,6 +20,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from mnemos.config import load_settings
+from mnemos.context_rewrite import ContextRewriteRateLimitError
 from mnemos.models import (
     AgentRecallQuery,
     MemoryCreate,
@@ -1799,9 +1800,14 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
                 diff=cr_diff,
                 include_marker=bool(args.get("include_marker", False)),
             )
+        except ContextRewriteRateLimitError as exc:
+            # W2 review F1: backpressure, not validation — a distinct,
+            # machine-checkable flag so the harness can back off.
+            return {"error": str(exc), "rate_limited": True}
         except ValueError as exc:
-            # Boundary validation + tag-contract violations (strict mode) +
-            # missing supersedes target — clean error dict, no trace echo.
+            # Boundary validation + size caps + tag-contract violations
+            # (strict mode) + supersedes not found in project — clean
+            # error dict, no trace echo.
             return {"error": str(exc)}
 
     # ── mnemos_export (#84 federation export) ──────────────────────────────

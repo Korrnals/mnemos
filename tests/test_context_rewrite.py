@@ -20,6 +20,13 @@ Wave 2 acceptance for the rewrite event:
   (simulated via a status update), then it assembles with provenance and
   issuance redaction; the CCR marker (when requested) redeems through
   ``retrieve_content`` (project-scoped, issuance-scanned);
+* **write-surface guardrails (W2 review F1)** — per-(project, session)
+  stored-event rate limit (dedupe re-deliveries consume no quota; 0
+  disables; 429 on REST, flagged error dict on MCP) and boundary size
+  caps for content/diff;
+* **project-scoped supersedes (W2 review F2)** — a target of another
+  project is rejected with the SAME message as a nonexistent target (no
+  global existence oracle), no edge, no write;
 * **surfaces** — MCP ``mnemos_context_rewrite`` and REST
   ``POST /context/rewrite`` ride the same manager path.
 
@@ -45,6 +52,7 @@ import mnemos.mcp_server as mcp_mod
 from mnemos.api import main as api_main
 from mnemos.api.main import app, lifespan
 from mnemos.config import Settings
+from mnemos.context_rewrite import ContextRewriteRateLimitError
 from mnemos.manager import MemoryManager
 from mnemos.mcp_server import _dispatch
 from mnemos.models import MemoryCreate, MemorySource, MemoryStatus, MemoryUpdate
@@ -74,15 +82,22 @@ ORIGINAL_V2 = (
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
-def _settings(tmp: Path, **ccr_overrides: object) -> Settings:
+def _settings(
+    tmp: Path,
+    *,
+    mnemos_extra: dict[str, object] | None = None,
+    **ccr_overrides: object,
+) -> Settings:
     ccr: dict[str, object] = {"min_size_chars": 100, "max_entries": 100, "ttl_days": 1}
     ccr.update(ccr_overrides)
+    mnemos_cfg: dict[str, object] = {
+        "vault_path": str(tmp / "vault"),
+        "data_dir": str(tmp / "data"),
+        "db_name": "test.db",
+    }
+    mnemos_cfg.update(mnemos_extra or {})
     settings = Settings(
-        mnemos={
-            "vault_path": str(tmp / "vault"),
-            "data_dir": str(tmp / "data"),
-            "db_name": "test.db",
-        },
+        mnemos=mnemos_cfg,  # type: ignore[arg-type]
         scanner={"enabled": False},
         ccr=ccr,  # type: ignore[arg-type]
     )
@@ -107,10 +122,40 @@ def manager() -> Iterator[MemoryManager]:
 
 
 @pytest.fixture
+def tight_manager() -> Iterator[MemoryManager]:
+    """Small guardrail knobs: 3 events/min, content ≤ 200 chars, diff ≤ 50."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = _manager(
+            _settings(
+                Path(tmpdir),
+                mnemos_extra={
+                    "context_rewrite_rate_limit_per_minute": 3,
+                    "context_rewrite_max_content_chars": 200,
+                    "context_rewrite_max_diff_chars": 50,
+                },
+            )
+        )
+        yield mgr
+        mgr.close()
+
+
+@pytest.fixture
 def rest_client(manager: MemoryManager) -> Iterator[TestClient]:
     """TestClient wired to the shared ``manager`` fixture (test_p1b pattern)."""
     api_main._manager = manager
     test_app = FastAPI(title="Mnemos-Rewrite-Test", version="0.1.0", lifespan=lifespan)
+    for route in app.routes:
+        test_app.routes.append(route)
+    with TestClient(test_app) as tc:
+        yield tc
+    api_main._manager = None
+
+
+@pytest.fixture
+def tight_rest_client(tight_manager: MemoryManager) -> Iterator[TestClient]:
+    """TestClient wired to ``tight_manager`` (rate-limit surface tests)."""
+    api_main._manager = tight_manager
+    test_app = FastAPI(title="Mnemos-Rewrite-Tight-Test", version="0.1.0", lifespan=lifespan)
     for route in app.routes:
         test_app.routes.append(route)
     with TestClient(test_app) as tc:
@@ -205,6 +250,21 @@ class TestIdempotency:
         assert len(edges) == 1
         assert edges[0]["to_memory_id"] == old_id
 
+    def test_deduplicated_receipt_still_carries_marker(
+        self, manager: MemoryManager
+    ) -> None:
+        """Review gap: dedupe + include_marker — the re-delivery receipt
+        still carries the CCR marker (the caller may have lost the first
+        receipt and re-asks with the marker flag set)."""
+        first = _rewrite(manager, session=SESSION, include_marker=True)
+        second = _rewrite(manager, session=SESSION, include_marker=True)
+
+        assert first["status"] == "stored"
+        assert first["ccr_marker"]["marker"]
+        assert second["status"] == "deduplicated"
+        assert second["ccr_marker"]["marker"], "dedupe receipt keeps the marker"
+        assert second["ccr_marker"]["hash"] == first["ccr_marker"]["hash"]
+
 
 # ── Supersedes linkage ────────────────────────────────────────────────────────
 
@@ -224,7 +284,7 @@ class TestSupersedes:
 
     def test_unknown_target_raises_valueerror(self, manager: MemoryManager) -> None:
         ghost = "00000000-0000-0000-0000-000000000000"
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(ValueError, match=r"not found in project 'crw-proj'$"):
             _rewrite(manager, session=SESSION, supersedes=ghost)
         # Nothing was written — the pre-flight runs before the store.
         conn = manager.sqlite._get_conn()
@@ -232,6 +292,54 @@ class TestSupersedes:
             "SELECT COUNT(*) AS n FROM memories WHERE content = ?", (ORIGINAL_V2,)
         ).fetchone()
         assert rows["n"] == 0
+
+
+# ── Project-scoped supersedes (W2 review F2) ─────────────────────────────────
+
+
+class TestCrossProjectSupersedes:
+    def _foreign_block(self, mgr: MemoryManager) -> str:
+        """A memory that EXISTS — but under another project."""
+        memory = mgr.add(
+            MemoryCreate(
+                content=ORIGINAL,
+                tags=["project:crw-other", f"agent:{AGENT}", "mnemos:session"],
+                source=MemorySource.MCP,
+                status=MemoryStatus.PUBLISHED,
+            ),
+            project="crw-other",
+            agent=AGENT,
+        )
+        return memory.id
+
+    def test_cross_project_target_rejected_no_oracle(
+        self, manager: MemoryManager
+    ) -> None:
+        """F2: a foreign-project target is rejected with the SAME message
+        template as a nonexistent one — the error must not double as a
+        global existence oracle (mirrors P1-a ccr_get semantics)."""
+        foreign_id = self._foreign_block(manager)
+
+        with pytest.raises(ValueError, match=r"not found in project 'crw-proj'$"):
+            _rewrite(manager, session=SESSION, supersedes=foreign_id)
+        with pytest.raises(ValueError, match=r"not found in project 'crw-proj'$"):
+            _rewrite(
+                manager,
+                session=SESSION,
+                supersedes="00000000-0000-0000-0000-000000000000",
+            )
+
+        # No write, no edge — only the foreign block exists.
+        conn = manager.sqlite._get_conn()
+        total = conn.execute("SELECT COUNT(*) AS n FROM memories").fetchone()
+        assert total["n"] == 1
+        edges = conn.execute("SELECT COUNT(*) AS n FROM memory_edges").fetchone()
+        assert edges["n"] == 0
+
+    def test_same_project_target_still_links(self, manager: MemoryManager) -> None:
+        old_id = _add_old_block(manager)
+        receipt = _rewrite(manager, session=SESSION, supersedes=old_id)
+        assert receipt["supersedes"]["edge_created"] is True
 
 
 # ── Advisory diff ─────────────────────────────────────────────────────────────
@@ -362,6 +470,189 @@ class TestValidation:
             _rewrite(manager, **{field: "   "})
 
 
+# ── Write-surface guardrails (W2 review F1) ──────────────────────────────────
+
+
+class TestRateLimit:
+    def test_over_limit_raises_and_blocks_write(
+        self, tight_manager: MemoryManager
+    ) -> None:
+        for i in range(3):
+            receipt = _rewrite(
+                tight_manager, content=f"distinct block number {i} for the service", session=SESSION
+            )
+            assert receipt["status"] == "stored"
+        with pytest.raises(ContextRewriteRateLimitError, match="rate limit exceeded"):
+            _rewrite(
+                tight_manager,
+                content="fourth distinct block for the service",
+                session=SESSION,
+            )
+
+        conn = tight_manager.sqlite._get_conn()
+        rows = conn.execute(
+            "SELECT COUNT(*) AS n FROM memories WHERE project = ?", (PROJECT,)
+        ).fetchone()
+        assert rows["n"] == 3, "the blocked event must not write"
+
+    def test_dedup_redelivery_consumes_no_quota(
+        self, tight_manager: MemoryManager
+    ) -> None:
+        """The quota counts STORED events — retry storms of an already
+        stored event stay harmless (at-least-once delivery)."""
+        _rewrite(tight_manager, content="block alpha for the gateway service", session=SESSION)
+        for _ in range(5):
+            again = _rewrite(
+                tight_manager, content="block alpha for the gateway service", session=SESSION
+            )
+            assert again["status"] == "deduplicated"
+        # Quota still has room for two more DISTINCT events.
+        assert _rewrite(
+            tight_manager, content="block beta for the gateway service", session=SESSION
+        )["status"] == "stored"
+        assert _rewrite(
+            tight_manager, content="block gamma for the gateway service", session=SESSION
+        )["status"] == "stored"
+        with pytest.raises(ContextRewriteRateLimitError):
+            _rewrite(tight_manager, content="block delta for the gateway service", session=SESSION)
+
+    def test_quota_is_per_project_and_session(
+        self, tight_manager: MemoryManager
+    ) -> None:
+        for i in range(3):
+            _rewrite(tight_manager, content=f"session block number {i}", session=SESSION)
+        with pytest.raises(ContextRewriteRateLimitError):
+            _rewrite(tight_manager, content="session block number three", session=SESSION)
+        # Another session in the same project: its own bucket.
+        assert _rewrite(tight_manager, content="other session block", session="sess-other")[
+            "status"
+        ] == "stored"
+        # Another project: its own bucket entirely.
+        assert _rewrite(
+            tight_manager,
+            content="other project block",
+            project="crw-other",
+            session=SESSION,
+        )["status"] == "stored"
+
+    def test_session_none_is_its_own_bucket(self, tight_manager: MemoryManager) -> None:
+        for i in range(3):
+            _rewrite(tight_manager, content=f"sessionless block number {i}")
+        with pytest.raises(ContextRewriteRateLimitError):
+            _rewrite(tight_manager, content="sessionless block number three")
+        # A sessioned event in the same project is a different bucket.
+        assert _rewrite(tight_manager, content="sessioned block", session=SESSION)[
+            "status"
+        ] == "stored"
+
+    def test_zero_disables_the_limiter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _manager(
+                _settings(Path(tmpdir), mnemos_extra={"context_rewrite_rate_limit_per_minute": 0})
+            )
+            try:
+                for i in range(35):
+                    assert (
+                        _rewrite(mgr, content=f"unlimited block number {i:02d}", session=SESSION)[
+                            "status"
+                        ]
+                        == "stored"
+                    )
+            finally:
+                mgr.close()
+
+    def test_mcp_rate_limited_shape(
+        self, tight_manager: MemoryManager, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(mcp_mod, "_manager", tight_manager)
+        loop = asyncio.new_event_loop()
+        for i in range(3):
+            loop.run_until_complete(
+                _dispatch(
+                    "mnemos_context_rewrite",
+                    {
+                        "content": f"mcp block number {i}",
+                        "project": PROJECT,
+                        "agent": AGENT,
+                        "session": SESSION,
+                    },
+                )
+            )
+        blocked = loop.run_until_complete(
+            _dispatch(
+                "mnemos_context_rewrite",
+                {
+                    "content": "mcp block number three",
+                    "project": PROJECT,
+                    "agent": AGENT,
+                    "session": SESSION,
+                },
+            )
+        )
+        loop.close()
+        assert blocked.get("rate_limited") is True
+        assert "rate limit exceeded" in str(blocked.get("error", ""))
+
+    def test_rest_surfaces_429(
+        self, tight_manager: MemoryManager, tight_rest_client: TestClient
+    ) -> None:
+        for i in range(3):
+            resp = tight_rest_client.post(
+                "/context/rewrite",
+                json={
+                    "content": f"rest block number {i}",
+                    "project": PROJECT,
+                    "agent": AGENT,
+                    "session": SESSION,
+                },
+            )
+            assert resp.status_code == 200
+        blocked = tight_rest_client.post(
+            "/context/rewrite",
+            json={
+                "content": "rest block number three",
+                "project": PROJECT,
+                "agent": AGENT,
+                "session": SESSION,
+            },
+        )
+        assert blocked.status_code == 429, "backpressure is 429, not 500/422"
+        assert "rate limit exceeded" in blocked.json()["detail"]
+
+
+class TestSizeCaps:
+    def test_content_over_cap_rejected_no_write(
+        self, tight_manager: MemoryManager
+    ) -> None:
+        with pytest.raises(ValueError, match="content exceeds the rewrite size cap"):
+            _rewrite(tight_manager, content="x" * 201, session=SESSION)
+        conn = tight_manager.sqlite._get_conn()
+        rows = conn.execute("SELECT COUNT(*) AS n FROM memories").fetchone()
+        assert rows["n"] == 0
+
+    def test_diff_over_cap_rejected_no_write(
+        self, tight_manager: MemoryManager
+    ) -> None:
+        with pytest.raises(ValueError, match="diff exceeds the rewrite size cap"):
+            _rewrite(tight_manager, diff="d" * 51)
+        conn = tight_manager.sqlite._get_conn()
+        rows = conn.execute("SELECT COUNT(*) AS n FROM memories").fetchone()
+        assert rows["n"] == 0
+
+    def test_boundary_at_cap_accepted(self, tight_manager: MemoryManager) -> None:
+        """Exactly at the cap is NOT over the cap (≤ semantics)."""
+        receipt = _rewrite(tight_manager, content="y" * 200, session=SESSION, diff="d" * 50)
+        assert receipt["status"] == "stored"
+
+    def test_documented_defaults(self) -> None:
+        from mnemos.config import MnemosConfig
+
+        cfg = MnemosConfig()
+        assert cfg.context_rewrite_rate_limit_per_minute == 30
+        assert cfg.context_rewrite_max_content_chars == 1_048_576  # 1 MiB
+        assert cfg.context_rewrite_max_diff_chars == 262_144  # 256 KiB
+
+
 # ── Rehydrate roundtrip (existing gated paths only) ──────────────────────────
 
 
@@ -480,7 +771,7 @@ class TestSurfaces:
 
         assert missing == {"error": "content is required and must be a non-empty string"}
         assert bad_session == {"error": "session must be a non-empty string when provided"}
-        assert "does not exist" in str(ghost.get("error", ""))
+        assert "not found in project" in str(ghost.get("error", ""))
 
     def test_rest_endpoint_stored_and_dedup(
         self, manager: MemoryManager, rest_client: TestClient

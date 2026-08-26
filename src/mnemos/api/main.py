@@ -33,6 +33,7 @@ from mnemos.api.federation import router as federation_router
 from mnemos.api.middleware import AuthMiddleware
 from mnemos.api.rate_limit import limiter
 from mnemos.config import ApiConfig, Settings, load_settings
+from mnemos.context_rewrite import ContextRewriteRateLimitError
 from mnemos.manager import MemoryManager
 from mnemos.models import (
     AgentRecallQuery,
@@ -1001,9 +1002,13 @@ async def context_rewrite(req: ContextRewriteRequest) -> dict[str, Any]:
             diff=req.diff,
             include_marker=req.include_marker,
         )
+    except ContextRewriteRateLimitError as exc:
+        # W2 review F1: backpressure maps to 429, not 500/422 — the
+        # harness can distinguish "retry later" from "fix the payload".
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ValueError as exc:
-        # Boundary validation + tag-contract violations (strict mode) +
-        # missing supersedes target.
+        # Boundary validation + size caps + tag-contract violations
+        # (strict mode) + supersedes not found in this project.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

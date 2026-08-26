@@ -2355,7 +2355,11 @@ class MemoryManager:
         call the manager). The original enters LTM through the NORMAL
         knowledge-pipeline ``add`` path; rehydrate is the existing
         scanned/gated issuance channels. Raises ``ValueError`` on invalid
-        input, tag-contract violations, or a missing ``supersedes`` target.
+        input (incl. size caps), tag-contract violations, or a
+        ``supersedes`` target not found in the caller's project; raises
+        :class:`mnemos.context_rewrite.ContextRewriteRateLimitError` when the
+        per-(project, session) stored-event quota is exhausted (W2
+        review F1 — REST maps it to 429).
         """
         from mnemos.context_rewrite import context_rewrite as _event
 
