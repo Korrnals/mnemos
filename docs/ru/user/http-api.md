@@ -527,7 +527,7 @@ curl -s -X POST http://127.0.0.1:8000/context/recall \
 | `budget` | integer | нет | `2048` | Токен-бюджет (`1..1_000_000`). |
 | `mode` | string | нет | `sync` | `sync` / `async` (сохранение + handle) / `code` / `prose` (фильтр contentType). |
 | `expand_ccr` | boolean | нет | `false` | Включить опциональную стадию разворота CCR. |
-| `async_handle` | string | нет | `null` | Забрать (однократно) результат, сохранённый через `mode="async"`. |
+| `async_handle` | string | нет | `null` | Забрать (однократно) результат, сохранённый через `mode="async"`. Привязан к сессии: выкупить может только собравшая сессия; несовпадение → 422, handle не изымается. |
 
 **Ответы**
 
@@ -536,7 +536,8 @@ curl -s -X POST http://127.0.0.1:8000/context/recall \
   (`budget`, `estimated`), `stats` (телеметрия по стадиям, включая дословный
   порядок стадий). При `mode="async"` — только конверт с handle.
 - `422` — ошибка валидации на границе (некорректные `session`/`project`/
-  `mode`/`budget`, неизвестный `async_handle`).
+  `mode`/`budget`, неизвестный `async_handle` или handle, принадлежащий
+  другой сессии).
 
 **Пример**
 

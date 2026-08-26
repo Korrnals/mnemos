@@ -1678,19 +1678,25 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             return {"error": "session is required and must be a non-empty string"}
         if not isinstance(asm_project, str) or not asm_project.strip():
             return {"error": "project is required and must be a non-empty string"}
+        asm_file = args.get("file")
+        if asm_file is not None and not isinstance(asm_file, str):
+            # Review F3: without the guard a non-str file reaches the
+            # pipeline and dies as a TypeError echoing caller input.
+            return {"error": "file must be a string when provided"}
         try:
             return mgr.assemble_context(
                 session=asm_session,
                 project=asm_project,
-                file=args.get("file"),
+                file=asm_file,
                 budget=int(args.get("budget", 2048)),
                 mode=str(args.get("mode", "sync")),
                 expand_ccr=bool(args.get("expand_ccr", False)),
                 async_handle=args.get("async_handle"),
             )
         except ValueError as exc:
-            # Boundary validation (mode/budget/async_handle) — surface a
-            # clean error dict instead of the generic exception path.
+            # Boundary validation (mode/budget/async_handle incl. the
+            # session-bound handle check) — surface a clean error dict
+            # instead of the generic exception path.
             return {"error": str(exc)}
 
     # ── mnemos_export (#84 federation export) ──────────────────────────────

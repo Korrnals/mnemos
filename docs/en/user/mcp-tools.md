@@ -981,7 +981,7 @@ Every injected block carries a provenance line, exact format:
 | `budget` | integer | no | `2048` | Token budget for the assembled block. |
 | `mode` | string | no | `sync` | `sync` (default) / `async` (store the result, return a handle) / `code` / `prose` (sync delivery + filter recall candidates by the content type captured at ingest). |
 | `expand_ccr` | boolean | no | `false` | Enable the optional CCR marker-expansion stage. |
-| `async_handle` | string | no | — | Fetch (and pop) a result stored by a previous `mode="async"` call. |
+| `async_handle` | string | no | — | Fetch (and pop) a result stored by a previous `mode="async"` call. Session-bound: only the assembling session may redeem; mismatch → error, handle not consumed. |
 
 ### Output
 
@@ -1006,7 +1006,8 @@ Every injected block carries a provenance line, exact format:
       "tokens": 96,
       "redactions": 1,
       "redacted_patterns": {"aws-key": 1},
-      "ccr_expanded": false
+      "ccr_expanded": false,
+      "ccr_hashes": []
     }
   ],
   "tokens": {"budget": 2048, "estimated": 96},
@@ -1026,14 +1027,15 @@ Every injected block carries a provenance line, exact format:
 }
 ```
 
-For `mode="async"` the call returns only a handle envelope (`{"mode": "async", "handle": "<hex>", "status": "ready", "note": …}`); pass `async_handle` on a later call to fetch the stored result (one-shot: a handle can be fetched once).
+For `mode="async"` the call returns only a handle envelope (`{"mode": "async", "handle": "<hex>", "status": "ready", "note": …}`); pass `async_handle` on a later call to fetch the stored result (one-shot: a handle can be fetched once, and only by the session that assembled it — a cross-session fetch is denied without consuming the handle).
 
 ### Notes
 
-- **Boundary validation** — invalid `session` / `project` / `mode` / `budget` or an unknown `async_handle` returns an `{"error": …}` dict (REST twin answers 422).
+- **Boundary validation** — invalid `session` / `project` / `mode` / `budget`, a non-string `file`, an unknown `async_handle`, or an `async_handle` owned by a different session returns an `{"error": …}` dict (REST twin answers 422).
 - **contentType partition** — `mode=code` keeps candidates whose ingest-time `detect_profile` was `code`; `mode=prose` keeps the rest (binary partition). Legacy rows without stored metadata are classified on the fly and counted in `recall.content_type_fallbacks`.
 - **Budget partitioning (addendum 2)** — the budget stays monolithic in this wave; an active-state line reserved before recall allocation waits for the D5 baseline corridor.
-- **Async registry** — in-memory, per-manager, capped (oldest evicted); a server restart drops pending handles.
+- **Async registry** — in-memory, per-manager, capped (oldest evicted); entries are session-bound (CWE-863: the handle is a bearer token, so only the assembling session may redeem); a server restart drops pending handles.
+- **`ccr_hashes`** — per-block observability: the content-addressed origin hashes of the CCR markers expanded into that block (empty when none). The provenance wrapper format is unchanged — it names the outer memory.
 
 ### Related
 

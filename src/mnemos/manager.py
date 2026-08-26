@@ -181,11 +181,14 @@ class MemoryManager:
         # every `interval_sec` (default 120s).
         self._ccr_cleanup_last_ts: float = 0.0
         # ADR-0017 D1 (#125) — bounded registry for assemble_context
-        # mode="async" results (handle -> ContextBlock dict). In-memory,
-        # single-tenant, capped by mnemos.assemble.ASYNC_REGISTRY_CAP with
-        # oldest-first eviction; a restart drops pending handles (the
-        # harness re-asks — async is a latency optimization, not storage).
-        self._assemble_async: dict[str, dict[str, Any]] = {}
+        # mode="async" results (handle -> (ContextBlock dict, session)).
+        # In-memory, single-tenant, capped by
+        # mnemos.assemble.ASYNC_REGISTRY_CAP with oldest-first eviction;
+        # entries are session-bound (review F1, CWE-863 — only the
+        # assembling session may redeem a handle); a restart drops
+        # pending handles (the harness re-asks — async is a latency
+        # optimization, not storage).
+        self._assemble_async: dict[str, tuple[dict[str, Any], str]] = {}
         self._assemble_async_lock: threading.Lock = threading.Lock()
 
     @property

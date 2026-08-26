@@ -74,8 +74,10 @@ silently):
 * delivery: ``sync`` (default) or ``async``. ``async`` runs the same
   pipeline, stores the result in a bounded per-manager registry, and
   returns only a handle envelope; the full result is fetched on a later
-  call by passing ``async_handle=<id>``. Deliberately minimal — no worker
-  threads, no persistence.
+  call by passing ``async_handle=<id>``. Handles are session-bound
+  (review F1, CWE-863): only the session that assembled may redeem, a
+  mismatch raises without consuming the entry. Deliberately minimal —
+  no worker threads, no persistence.
 * contentType (addendum 1): ``code`` / ``prose`` filter recall candidates
   by stored content type (delivery defaults to sync).
 """
@@ -142,6 +144,10 @@ class _Candidate:
     ccr_expanded: bool = False
     ccr_redactions: int = 0
     ccr_patterns: dict[str, int] = field(default_factory=dict)
+    # Origin hashes of the markers expanded into this block (review F2:
+    # provenance fidelity — the wrapper names the outer memory only, so
+    # the expanded spans' content-addressed origins are recorded here).
+    ccr_hashes: list[str] = field(default_factory=list)
     # Scan stage bookkeeping.
     redactions: int = 0
     redacted_patterns: dict[str, int] = field(default_factory=dict)
@@ -331,6 +337,7 @@ def _ccr_stage(
             cand.content = expanded_content
             cand.ccr_expanded = True
             cand.ccr_redactions = int(result.get("redactions", 0))
+            cand.ccr_hashes.append(str(marker["hash"]))
             patterns = result.get("redacted_patterns")
             if isinstance(patterns, dict):
                 cand.ccr_patterns = {str(k): int(v) for k, v in patterns.items()}
@@ -456,6 +463,10 @@ def _budget_stage(
             "tokens": tokens,
             "redactions": cand.redactions,
             "ccr_expanded": cand.ccr_expanded,
+            # Observability (review F2): origin hashes of the CCR markers
+            # expanded into this block — empty when none. The provenance
+            # wrapper format is unchanged (it names the outer memory).
+            "ccr_hashes": list(cand.ccr_hashes),
         }
         if cand.redactions:
             block["redacted_patterns"] = cand.redacted_patterns
@@ -474,22 +485,48 @@ def _budget_stage(
 # ── Async result registry (per-manager, bounded) ───────────────────────────────
 
 
-def _store_async_result(mgr: MemoryManager, handle: str, result: dict[str, Any]) -> None:
-    """Store an async result, evicting the oldest entry past the cap."""
+def _store_async_result(
+    mgr: MemoryManager, handle: str, result: dict[str, Any], session: str
+) -> None:
+    """Store an async result bound to its assembling session, evicting
+    the oldest entry past the cap.
+
+    Review F1 (CWE-863): the handle is a bearer token — binding the entry
+    to the session that created it stops any other session sharing the
+    same manager from redeeming it. The INFO log keeps naming the handle
+    (uuid4 — unguessable) but never content.
+    """
     with mgr._assemble_async_lock:
-        registry: dict[str, dict[str, Any]] = mgr._assemble_async
-        registry[handle] = result
+        registry: dict[str, tuple[dict[str, Any], str]] = mgr._assemble_async
+        registry[handle] = (result, session)
         while len(registry) > ASYNC_REGISTRY_CAP:
             oldest = next(iter(registry))
             del registry[oldest]
 
 
-def _fetch_async_result(mgr: MemoryManager, handle: str) -> dict[str, Any]:
-    """Pop a stored async result — unknown handles raise ``ValueError``."""
+def _fetch_async_result(mgr: MemoryManager, handle: str, session: str) -> dict[str, Any]:
+    """Pop a stored async result — session-bound, one-shot.
+
+    Unknown handles raise ``ValueError``. A session MISMATCH also raises
+    ``ValueError`` but does NOT consume the entry (fail-closed without
+    burning the handle for the legitimate session): only a fetch by the
+    assembling session pops it.
+    """
     with mgr._assemble_async_lock:
-        result = mgr._assemble_async.pop(handle, None)
-    if result is None:
-        raise ValueError(f"unknown or already-fetched async_handle: {handle!r}")
+        entry = mgr._assemble_async.get(handle)
+        if entry is None:
+            raise ValueError(f"unknown or already-fetched async_handle: {handle!r}")
+        result, owner = entry
+        if owner != session:
+            logger.warning(
+                "assemble_context: async handle=%s fetch denied (session mismatch) "
+                "— entry left in place for the owning session",
+                handle,
+            )
+            raise ValueError(
+                "async_handle belongs to a different session (CWE-863: handles are session-bound)"
+            )
+        del mgr._assemble_async[handle]
     return result
 
 
@@ -523,23 +560,27 @@ def assemble_context(
             the module docstring for the two-axis semantics.
         expand_ccr: Enable the optional CCR stage (default off).
         async_handle: When given, fetch (and pop) a previously stored
-            async result instead of running a new pipeline.
+            async result instead of running a new pipeline. The fetch is
+            session-bound (review F1): only the session that created the
+            handle may redeem it.
 
     Returns:
         The ContextBlock dict: ``text`` (provenance-wrapped blocks joined
         by blank lines), per-``blocks`` detail with provenance + redaction
-        counts, ``tokens`` stats, and per-``stats`` stage telemetry. For
-        ``mode="async"`` only a handle envelope is returned; the full
-        result comes back on the next call with ``async_handle``.
+        counts + expanded CCR origin hashes (``ccr_hashes``), ``tokens``
+        stats, and per-``stats`` stage telemetry. For ``mode="async"``
+        only a handle envelope is returned; the full result comes back on
+        the next call with ``async_handle``.
 
     Raises:
-        ValueError: Invalid ``session`` / ``project`` / ``mode`` / ``budget``
-            or an unknown ``async_handle`` (boundary validation).
+        ValueError: Invalid ``session`` / ``project`` / ``mode`` / ``budget``,
+        an unknown ``async_handle``, or an ``async_handle`` owned by a
+        different session (boundary validation).
     """
     _validate(session, project, budget, mode)
 
     if async_handle is not None:
-        fetched = _fetch_async_result(mgr, async_handle)
+        fetched = _fetch_async_result(mgr, async_handle, session)
         fetched["async_handle"] = async_handle
         logger.info(
             "assemble_context: fetched async handle=%s session=%s project=%s",
@@ -603,7 +644,7 @@ def assemble_context(
 
     if delivery == "async":
         handle = uuid.uuid4().hex
-        _store_async_result(mgr, handle, result)
+        _store_async_result(mgr, handle, result, session)
         logger.info("assemble_context: stored async handle=%s", handle)
         return {
             "mode": "async",

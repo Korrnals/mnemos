@@ -526,7 +526,7 @@ injected block carries a provenance line
 | `budget` | integer | no | `2048` | Token budget (`1..1_000_000`). |
 | `mode` | string | no | `sync` | `sync` / `async` (store + handle) / `code` / `prose` (contentType filter). |
 | `expand_ccr` | boolean | no | `false` | Enable the optional CCR expansion stage. |
-| `async_handle` | string | no | `null` | Fetch (once) a result stored by `mode="async"`. |
+| `async_handle` | string | no | `null` | Fetch (once) a result stored by `mode="async"`. Session-bound: only the assembling session may redeem; mismatch → 422, handle not consumed. |
 
 **Responses**
 
@@ -535,7 +535,8 @@ injected block carries a provenance line
   (`budget`, `estimated`), `stats` (per-stage telemetry incl. the verbatim
   stage order). For `mode="async"`: a handle envelope only.
 - `422` — boundary validation failure (invalid `session`/`project`/`mode`/
-  `budget`, unknown `async_handle`).
+  `budget`, unknown `async_handle`, or an `async_handle` owned by a
+  different session).
 
 **Example**
 

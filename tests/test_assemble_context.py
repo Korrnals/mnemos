@@ -369,6 +369,23 @@ class TestModes:
         with pytest.raises(ValueError, match="async_handle"):
             manager.assemble_context(session=SESSION, project=PROJECT, async_handle=handle)
 
+    def test_async_handle_session_bound(self, manager: MemoryManager) -> None:
+        """Review F1 (CWE-863): a handle is redeemable only by the session
+        that assembled it; a mismatch does NOT burn the handle."""
+        _add(manager, PROSE_CONTENT)
+        envelope = manager.assemble_context(session=SESSION, project=PROJECT, mode="async")
+        handle = envelope["handle"]
+
+        with pytest.raises(ValueError, match="different session"):
+            manager.assemble_context(session="sess-attacker", project=PROJECT, async_handle=handle)
+
+        # Mismatch left the entry in place — the owning session redeems.
+        fetched = manager.assemble_context(session=SESSION, project=PROJECT, async_handle=handle)
+        assert fetched["blocks"]
+        # One-shot: the legit session cannot redeem twice either.
+        with pytest.raises(ValueError, match="async_handle"):
+            manager.assemble_context(session=SESSION, project=PROJECT, async_handle=handle)
+
     def test_validation_errors(self, manager: MemoryManager) -> None:
         with pytest.raises(ValueError, match="session"):
             manager.assemble_context(session="", project=PROJECT)
@@ -384,10 +401,12 @@ class TestModes:
 
 
 class TestCcrStage:
-    def _marker_memory(self, mgr: MemoryManager, original: str) -> Memory:
-        """Compress ``original`` (caching it under PROJECT) and store a
+    def _marker_memory(
+        self, mgr: MemoryManager, original: str, *, project: str = PROJECT
+    ) -> Memory:
+        """Compress ``original`` (caching it under ``project``) and store a
         memory whose content carries the inline CCR marker."""
-        compressed = mgr.compress_content(original, profile="default", project=PROJECT)
+        compressed = mgr.compress_content(original, profile="default", project=project)
         marker = str(compressed["marker"])
         assert marker, "fixture requires content above ccr.min_size_chars"
         return _add(
@@ -396,6 +415,15 @@ class TestCcrStage:
             f"{marker}\n"
             "(original available via the marker above)",
         )
+
+    @staticmethod
+    def _marker_hash(memory: Memory) -> str:
+        """Re-extract the CCR hash embedded in a marker memory's content."""
+        from mnemos.ccr import parse_marker
+
+        parsed = parse_marker(memory.content)
+        assert parsed is not None, "fixture memory must carry a CCR marker"
+        return str(parsed["hash"])
 
     def test_expand_ccr_off_keeps_marker(self, manager: MemoryManager) -> None:
         original = "deployment log line with unique marker quokka-77\n" + "payload " * 80
@@ -408,6 +436,7 @@ class TestCcrStage:
         block = next(b for b in result["blocks"] if b["memory_id"] == mem.id)
         assert "[compressed:" in block["content"]
         assert block["ccr_expanded"] is False
+        assert block["ccr_hashes"] == []
 
     def test_expand_ccr_on_expands_within_budget(self, manager: MemoryManager) -> None:
         original = "deployment log line with unique marker quokka-88\n" + "payload " * 80
@@ -422,6 +451,8 @@ class TestCcrStage:
         assert block["ccr_expanded"] is True
         assert "[compressed:" not in block["content"]
         assert "quokka-88" in block["content"], "expanded original must replace the marker"
+        # Review F2: the expanded span's content-addressed origin is recorded.
+        assert block["ccr_hashes"] == [self._marker_hash(mem)]
         assert result["tokens"]["estimated"] <= 4096
 
     def test_expand_ccr_budget_aware_keeps_compressed(self, manager: MemoryManager) -> None:
@@ -438,6 +469,7 @@ class TestCcrStage:
         block = next(b for b in result["blocks"] if b["memory_id"] == mem.id)
         assert block["ccr_expanded"] is False
         assert "[compressed:" in block["content"]
+        assert block["ccr_hashes"] == []
 
     def test_expansion_secret_redaction_counted(self, manager: MemoryManager) -> None:
         original = (
@@ -455,6 +487,56 @@ class TestCcrStage:
         blocks_with_redactions = [b for b in result["blocks"] if b["redactions"]]
         assert blocks_with_redactions, "CCR-channel redaction must be attributed to the block"
         assert any(b.get("redacted_patterns", {}).get("aws-key") for b in blocks_with_redactions)
+
+    def test_splice_point_rescan_redacts_merged_secret(self, manager: MemoryManager) -> None:
+        """Review note (a): neither channel alone carries the full secret.
+
+        The cached original ENDS with the first half of an AWS-shaped key
+        (AKIA + 10 chars — below every pattern threshold alone); the outer
+        memory's post-marker text begins with the completing half. Only
+        the MERGED block (marker span replaced by the original) contains
+        the whole key — the assemble-level scan stage must catch it there,
+        even though ``retrieve_content`` issued the original clean.
+        """
+        first_half = "AKIAEXAMPLEABC"  # + "DEFGH1" below == FAKE_AWS_KEY
+        original = (
+            "deployment log body with unique token quokka-sp\n"
+            + "payload " * 80
+            + f"\napi key {first_half}"
+        )
+        compressed = manager.compress_content(original, profile="default", project=PROJECT)
+        marker = str(compressed["marker"])
+        # Marker immediately followed by the completing half — no separator.
+        _add(manager, f"{marker}DEFGH1 rotate quarterly per policy")
+        result = manager.assemble_context(
+            session=SESSION, project=PROJECT, expand_ccr=True, budget=8192
+        )
+
+        assert result["stats"]["ccr"]["expanded"] == 1, "splice fixture must expand"
+        assert FAKE_AWS_KEY not in result["text"], "splice-formed secret leaked"
+        hit = next(b for b in result["blocks"] if b["redactions"])
+        assert "<REDACTED:aws-key>" in hit["content"]
+        assert hit["redacted_patterns"].get("aws-key") == 1
+
+    def test_cross_project_marker_redemption_denied(self, manager: MemoryManager) -> None:
+        """Review note (b): a marker cached under ANOTHER project must not
+        redeem through assemble (ADR-0018 P1-a scoping) — the block keeps
+        the compressed marker and the other project's content never
+        enters this project's assembled output."""
+        other_project = "other-proj"
+        original = "cross project secret body with unique token quokka-xp\n" + "payload " * 80
+        mem = self._marker_memory(manager, original, project=other_project)
+        result = manager.assemble_context(
+            session=SESSION, project=PROJECT, expand_ccr=True, budget=4096
+        )
+
+        assert result["stats"]["ccr"]["skipped_missing"] == 1
+        assert result["stats"]["ccr"]["expanded"] == 0
+        assert "quokka-xp" not in result["text"], "cross-project original leaked"
+        block = next(b for b in result["blocks"] if b["memory_id"] == mem.id)
+        assert block["ccr_expanded"] is False
+        assert "[compressed:" in block["content"], "unredeemed marker must stay"
+        assert block["ccr_hashes"] == []
 
 
 # ── applyTo pinning (file context) ────────────────────────────────────────────
@@ -507,6 +589,46 @@ class TestSurfaces:
             )
         )
         assert result == {"error": "invalid mode 'bogus'; valid values: async, code, prose, sync"}
+
+    def test_mcp_tool_file_arg_guard(self, manager: MemoryManager, monkeypatch) -> None:
+        """Review F3: a non-str file gets a clean error dict, not a
+        TypeError echoing caller input from inside the pipeline."""
+        monkeypatch.setattr(mcp_mod, "_manager", manager)
+        result = asyncio.new_event_loop().run_until_complete(
+            _dispatch(
+                "mnemos_assemble_context",
+                {"session": SESSION, "project": PROJECT, "file": 12345},
+            )
+        )
+        assert result == {"error": "file must be a string when provided"}
+
+    def test_mcp_tool_async_session_mismatch_shape(
+        self, manager: MemoryManager, monkeypatch
+    ) -> None:
+        """Review F1 at the MCP surface: cross-session redemption is a clean
+        error dict (the generic exception path would echo a traceback)."""
+        _add(manager, PROSE_CONTENT)
+        monkeypatch.setattr(mcp_mod, "_manager", manager)
+        loop = asyncio.new_event_loop()
+        envelope = loop.run_until_complete(
+            _dispatch(
+                "mnemos_assemble_context",
+                {"session": SESSION, "project": PROJECT, "mode": "async"},
+            )
+        )
+        denied = loop.run_until_complete(
+            _dispatch(
+                "mnemos_assemble_context",
+                {
+                    "session": "sess-other",
+                    "project": PROJECT,
+                    "async_handle": envelope["handle"],
+                },
+            )
+        )
+        loop.close()
+        assert isinstance(denied, dict)
+        assert "different session" in str(denied.get("error", ""))
 
     def test_mcp_tool_async_roundtrip(self, manager: MemoryManager, monkeypatch) -> None:
         _add(manager, PROSE_CONTENT)
