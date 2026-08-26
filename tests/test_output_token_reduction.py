@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mnemos.manager import IssuanceScan
 from mnemos.mcp_server import _EFFORT_GUIDANCE, _VERBOSITY_GUIDANCE, _dispatch
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -35,6 +36,12 @@ def _make_mock_manager() -> MagicMock:
     mgr.add.return_value = mock_memory
     mgr.search.return_value = []
     mgr.recall_context.return_value = []
+    # ADR-0018 P1-b: content-echoing handlers now route the issued string
+    # through MemoryManager.scan_issuance — stub it as a clean pass-through
+    # so mocked managers keep issuing their fixture content unchanged.
+    mgr.scan_issuance.side_effect = lambda text, *, context: IssuanceScan(
+        text=text, refused=False, reason=None, redactions=0, redacted_patterns={}
+    )
     return mgr
 
 

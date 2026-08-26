@@ -206,6 +206,14 @@ class CCRConfig(BaseModel):
     # replaced with <REDACTED:<pattern>> in the returned payload only;
     # the stored original is never mutated (zero-loss storage).
     retrieve_refuse_on_secret: bool = False
+    # ADR-0018 P1-b (Security findings 1+4, CWE-668 ergonomics) — when
+    # True, retrieving a project-scoped cache entry WITHOUT a matching
+    # ``project`` argument is DENIED (refused=True, no content) instead
+    # of merely logged as a WARNING. Default False preserves the legacy
+    # unscoped behavior for callers without project context (the
+    # WARNING still fires); flip to True on single-project deployments
+    # to make the scope check enforceable.
+    require_project_match: bool = False
     # P1-5/T3: background CCR cleanup interval (seconds). Default 1200s = 20 min.
     # The processor loop runs every `interval_sec` (default 120s); CCR cleanup runs
     # every `ccr_cleanup_interval_sec` to avoid scanning the cache table every cycle.

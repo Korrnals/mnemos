@@ -33,6 +33,17 @@ from mnemos.models import (
 
 logger = logging.getLogger(__name__)
 
+# ADR-0018 P1-b (m2) — FTS5 snippet highlight markers used by
+# ``ccr_search``. Module-level so the issuance-side scanner
+# (``MemoryManager.retrieve_content``) strips EXACTLY these markers
+# before scanning a snippet: the markers wrap query-matched tokens and
+# split multi-token secrets (e.g. a JWT whose payload segment matched
+# the query), which makes the raw marked snippet text evade
+# ``detect_secrets``.
+FTS_SNIPPET_START_MARK: Final[str] = ">>>"
+FTS_SNIPPET_END_MARK: Final[str] = "<<<"
+FTS_SNIPPET_ELLIPSIS: Final[str] = " ... "
+
 # M15.2 — Whitelisted dispatch for dynamic UPDATE setters.
 # Maps public field name -> literal "column=?" SQL fragment. Bandit B608
 # requires no user-controlled identifier be interpolated into SQL; this
@@ -1612,7 +1623,13 @@ class SQLiteStore:
         row = conn.execute("SELECT rowid FROM ccr_cache WHERE hash=?", (hash,)).fetchone()
         return int(row["rowid"]) if row else 0
 
-    def ccr_get(self, hash: str, *, project: str | None = None) -> dict[str, Any] | None:
+    def ccr_get(
+        self,
+        hash: str,
+        *,
+        project: str | None = None,
+        bump: bool = True,
+    ) -> dict[str, Any] | None:
         """Fetch a CCR cache entry by hash and bump its retrieval counter.
 
         ADR-0018 P1-a — project scoping: when ``project`` is given (a
@@ -1622,6 +1639,14 @@ class SQLiteStore:
         fail-closed) and the retrieval counter is NOT bumped. When
         ``project`` is ``None`` the lookup stays unscoped (legacy
         behavior preserved for callers without project context).
+
+        ADR-0018 P1-b review (F4) — ``bump=False`` skips the
+        ``retrieval_count`` / ``last_retrieved_at`` UPDATE (and returns
+        the CURRENT count): the issuance layer reads the entry unbumped,
+        decides, and calls :meth:`ccr_touch` only when content is
+        actually issued — a refused/denied issuance must not LRU-pin
+        the entry (``ccr_evict_lru`` protects high-count entries) or
+        inflate retrieval stats.
 
         Returns ``{"hash","original","project","created_at","size_bytes",
         "retrieval_count","secret_scan_verdict","secret_scan_at"}`` or
@@ -1636,23 +1661,41 @@ class SQLiteStore:
         row = conn.execute(sql, params).fetchone()
         if row is None:
             return None
-        now = datetime.now(UTC).isoformat()
-        conn.execute(
-            "UPDATE ccr_cache SET retrieval_count=retrieval_count+1, "
-            "last_retrieved_at=? WHERE hash=?",
-            (now, hash),
-        )
-        conn.commit()
+        if bump:
+            now = datetime.now(UTC).isoformat()
+            conn.execute(
+                "UPDATE ccr_cache SET retrieval_count=retrieval_count+1, "
+                "last_retrieved_at=? WHERE hash=?",
+                (now, hash),
+            )
+            conn.commit()
         return {
             "hash": row["hash"],
             "original": row["original"],
             "project": row["project"],
             "created_at": row["created_at"],
             "size_bytes": int(row["size_bytes"]),
-            "retrieval_count": int(row["retrieval_count"]) + 1,
+            "retrieval_count": int(row["retrieval_count"]) + (1 if bump else 0),
             "secret_scan_verdict": row["secret_scan_verdict"],
             "secret_scan_at": row["secret_scan_at"],
         }
+
+    def ccr_touch(self, hash: str) -> None:
+        """Bump a CCR entry's retrieval counter (ADR-0018 P1-b review F4).
+
+        Companion to ``ccr_get(bump=False)``: the issuance layer calls
+        this only AFTER deciding to issue content, so refused/denied
+        issuances leave ``retrieval_count`` / ``last_retrieved_at``
+        untouched. Updating a hash that no longer exists (evicted between
+        the read and the decision) is a no-op.
+        """
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE ccr_cache SET retrieval_count=retrieval_count+1, "
+            "last_retrieved_at=? WHERE hash=?",
+            (datetime.now(UTC).isoformat(), hash),
+        )
+        conn.commit()
 
     def ccr_count(self) -> int:
         """Total number of cached CCR entries."""
@@ -1714,6 +1757,13 @@ class SQLiteStore:
         scopes the ``ccr_get`` lookup, this guard keeps the snippet
         channel from leaking other projects' entries when a caller
         invokes search directly.
+
+        The snippet highlight markers are the module-level
+        ``FTS_SNIPPET_*`` constants (single source of truth): the
+        issuance-side scanner (ADR-0018 P1-b m2) strips exactly these
+        markers before scanning a snippet, because they split
+        multi-token secrets (e.g. a JWT whose payload token matched the
+        query) so the raw marked snippet text evades ``detect_secrets``.
         """
         conn = self._get_conn()
         if project:
@@ -1725,11 +1775,18 @@ class SQLiteStore:
         fts_query = self._build_fts_query(query)
         try:
             rows = conn.execute(
-                "SELECT snippet(ccr_cache_fts, 1, '>>>', '<<<', ' ... ', 32) AS snip, "
+                "SELECT snippet(ccr_cache_fts, 1, ?, ?, ?, 32) AS snip, "
                 "rank AS rank "
                 "FROM ccr_cache_fts WHERE ccr_cache_fts MATCH ? AND hash=? "
                 "ORDER BY rank LIMIT ?",
-                (fts_query, hash, limit),
+                (
+                    FTS_SNIPPET_START_MARK,
+                    FTS_SNIPPET_END_MARK,
+                    FTS_SNIPPET_ELLIPSIS,
+                    fts_query,
+                    hash,
+                    limit,
+                ),
             ).fetchall()
         except sqlite3.OperationalError as exc:
             if "missing row" in str(exc) or "content table" in str(exc):

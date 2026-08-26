@@ -13,9 +13,10 @@ import logging
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from mnemos import __version__
 from mnemos.config import Settings
@@ -37,7 +38,12 @@ from mnemos.pipeline import (
     SynthesisResult,
 )
 from mnemos.policy.engine import PolicyAction
-from mnemos.storage.sqlite_store import SQLiteStore
+from mnemos.storage.sqlite_store import (
+    FTS_SNIPPET_ELLIPSIS,
+    FTS_SNIPPET_END_MARK,
+    FTS_SNIPPET_START_MARK,
+    SQLiteStore,
+)
 from mnemos.storage.vault import VaultManager
 from mnemos.storage.vector_store import VectorStore
 
@@ -77,6 +83,74 @@ def _lock_is_stale(locked_at_iso: str, threshold_hours: int) -> bool:
         locked_at = locked_at.replace(tzinfo=UTC)
     age = datetime.now(UTC) - locked_at
     return age > timedelta(hours=threshold_hours)
+
+
+# ADR-0018 P1-b (m2) — artificial insertions FTS5's snippet() places in a
+# snippet: highlight markers around query-matched tokens and the ellipsis
+# between non-contiguous fragments. All three can split a multi-token
+# secret (e.g. a JWT whose payload segment matched the query), so the
+# issuance scan runs on a copy with them removed. Sourced from the
+# store's own FTS_SNIPPET_* constants (single source of truth).
+_SNIPPET_STRIP_MARKS: Final[tuple[str, ...]] = (
+    FTS_SNIPPET_START_MARK,
+    FTS_SNIPPET_END_MARK,
+    FTS_SNIPPET_ELLIPSIS,
+)
+
+
+def _snippet_scan_text(snippet: str) -> str:
+    """Return a copy of an FTS5 snippet stripped of highlight markers.
+
+    ``ccr_search`` snippets wrap query-matched tokens in ``>>>``/``<<<``
+    and join non-contiguous fragments with ``' ... '``; those insertions
+    break multi-token secret patterns, so ``detect_secrets`` on the raw
+    snippet misses them. The stripped copy is used for DETECTION only —
+    its character offsets do not map back to the marked snippet (every
+    span after the first marker shifts), so callers must not use finding
+    offsets to redact the marked text (see ``retrieve_content``).
+    """
+    for mark in _SNIPPET_STRIP_MARKS:
+        snippet = snippet.replace(mark, "")
+    return snippet
+
+
+@dataclass(frozen=True, slots=True)
+class IssuanceScan:
+    """Outcome of an issuance-boundary secret scan (ADR-0018 P1-b M1).
+
+    ``text`` is the string safe to issue: the redacted copy when
+    secrets were found (and refuse mode is off), the input unchanged
+    when clean, and ``""`` when ``refused`` — a refused outcome NEVER
+    carries content, so callers branch on ``refused`` first.
+    """
+
+    text: str
+    refused: bool
+    # Machine-readable refusal cause: "secret detected" | "scanner error" | None.
+    reason: str | None
+    redactions: int
+    redacted_patterns: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class IssuanceItemScan:
+    """Per-item outcome for ALL strings one result item echoes (P1-b F1).
+
+    Security-review round F1: ``auto_title()`` derives from the first
+    line of raw content (or echoes an explicitly-set title) and was
+    returned unscanned next to redacted content — the title is now
+    scanned as part of the same item. ``content``/``title`` are the
+    strings safe to issue (``""`` when refused or when the item echoes
+    no such field); ``redactions``/``redacted_patterns`` are the MERGED
+    counts across both fields.
+    """
+
+    content: str
+    title: str
+    refused: bool
+    reason: str | None
+    redactions: int
+    redacted_patterns: dict[str, int]
 
 
 class MemoryManager:
@@ -2231,6 +2305,128 @@ class MemoryManager:
             project=project,
         )
 
+    def scan_issuance(self, text: str, *, context: str) -> IssuanceScan:
+        """Scan one issuance-boundary string and redact/refuse (P1-b M1).
+
+        Single helper for every content-echoing path — MCP
+        ``mnemos_search`` / ``mnemos_agent_recall`` / ``mnemos_recall_context``
+        and REST ``/search`` / ``/recall/agent`` — so no channel can drift
+        from the P0 ``retrieve_content`` semantics: matched spans become
+        ``<REDACTED:<pattern>>`` in the returned copy (zero-loss storage —
+        the caller's stored model is never mutated), or the whole string
+        is refused (no content) when ``ccr.retrieve_refuse_on_secret`` is
+        on. A scanner exception is NEVER allowed to degrade into issuing
+        unscanned content (fail-closed): it maps to ``refused=True`` with
+        ``reason="scanner error"`` (P1-b m5). The ``context`` label names
+        the calling channel in log lines (never the content).
+
+        Cost control: scan runs on exactly the string being issued (per
+        item, once) — titles/tags/metadata are the caller's business.
+        """
+        from mnemos.secrets_detector import (
+            detect_secrets,
+            findings_by_pattern,
+            redact_content,
+        )
+
+        try:
+            findings = detect_secrets(text)
+            if not findings:
+                return IssuanceScan(
+                    text=text,
+                    refused=False,
+                    reason=None,
+                    redactions=0,
+                    redacted_patterns={},
+                )
+            pattern_counts = findings_by_pattern(findings)
+            if self.settings.ccr.retrieve_refuse_on_secret:
+                logger.warning(
+                    "Issuance refused (%s): redactions=%d patterns=%s — raw values not logged",
+                    context,
+                    len(findings),
+                    pattern_counts,
+                )
+                return IssuanceScan(
+                    text="",
+                    refused=True,
+                    reason="secret detected",
+                    redactions=len(findings),
+                    redacted_patterns=pattern_counts,
+                )
+            redacted = redact_content(text, findings)
+            logger.info(
+                "Issuance redacted (%s): redactions=%d patterns=%s",
+                context,
+                len(findings),
+                pattern_counts,
+            )
+            return IssuanceScan(
+                text=redacted,
+                refused=False,
+                reason=None,
+                redactions=len(findings),
+                redacted_patterns=pattern_counts,
+            )
+        except Exception as exc:
+            # Fail-closed (P1-b m5): any scanner failure refuses the
+            # issuance rather than echoing unscanned content. Broad catch
+            # is deliberate at this security boundary; the error is
+            # logged (context label + exception, never the content).
+            logger.error("Issuance scanner error (%s): %s", context, exc)
+            return IssuanceScan(
+                text="",
+                refused=True,
+                reason="scanner error",
+                redactions=0,
+                redacted_patterns={},
+            )
+
+    def scan_issuance_item(
+        self,
+        text: str | None,
+        *,
+        title: str | None = None,
+        context: str,
+    ) -> IssuanceItemScan:
+        """Scan every string ONE result item echoes (P1-b review F1).
+
+        Composite over :meth:`scan_issuance` for items that echo both a
+        content field and a title (``auto_title()`` derives from the
+        first line of raw content OR echoes an explicitly-set title —
+        either can carry a secret, so scanning only the content leaks
+        the title verbatim in the same response). ``text``/``title`` are
+        ``None`` when the item does not echo that field (e.g. title-only
+        ``mnemos_list_recent``); at least one must be given. Refuse mode
+        refuses the item when EITHER field trips; ``redactions`` /
+        ``redacted_patterns`` are merged across both fields. The
+        ``context`` label should carry the item id (F3 forensics); the
+        scanned field is appended here (``<context>:content`` /
+        ``<context>:title``).
+        """
+        content_scan = (
+            self.scan_issuance(text, context=f"{context}:content") if text is not None else None
+        )
+        title_scan = (
+            self.scan_issuance(title, context=f"{context}:title") if title is not None else None
+        )
+        scans = [s for s in (content_scan, title_scan) if s is not None]
+        refused = any(s.refused for s in scans)
+        reason = next((s.reason for s in scans if s.refused), None)
+        redactions = sum(s.redactions for s in scans)
+        patterns: dict[str, int] = {}
+        for s in scans:
+            for name, count in s.redacted_patterns.items():
+                patterns[name] = patterns.get(name, 0) + count
+        return IssuanceItemScan(
+            content=content_scan.text if content_scan is not None and not refused else "",
+            title=title_scan.text if title_scan is not None and not refused else "",
+            refused=refused,
+            reason=reason,
+            redactions=redactions,
+            redacted_patterns=patterns,
+        )
+
     def retrieve_content(
         self,
         h: str,
@@ -2262,12 +2458,30 @@ class MemoryManager:
         behavior preserved for callers without project context); the
         explicit parameter is the override. The scan-at-store verdict on
         the row is observability only and never fast-paths this scan.
+
+        ADR-0018 P1-b — issuance hardening:
+
+        * CWE-668 ergonomics (Security findings 1+4): retrieving a
+          project-scoped entry with ``project=None`` logs a WARNING; with
+          ``ccr.require_project_match`` (default False) the issuance is
+          denied instead (``refused=True``, ``reason`` names the scope
+          requirement).
+        * m2 — FTS5 snippets are scanned on a marker-stripped copy
+          (highlight markers split multi-token secrets); on a hit the
+          WHOLE snippet is withheld (``<REDACTED:snippet>``) because
+          stripped-copy offsets do not map back to the marked snippet.
+        * m5 — a scanner exception maps to the refused shape with
+          ``reason="scanner error"`` (fail-closed, observable) instead
+          of propagating as a 500 / MCP error.
+        * review F4 — the retrieval counter is bumped only when content
+          is actually ISSUED (``ccr_touch`` after the decision; the
+          entry is read via ``bump=False``): refused/denied issuances no
+          longer inflate ``retrieval_count`` or LRU-pin the entry.
         """
         from mnemos.ccr import retrieve
         from mnemos.secrets_detector import (
             detect_secrets,
             findings_by_pattern,
-            redact_content,
         )
 
         result = retrieve(
@@ -2277,23 +2491,77 @@ class MemoryManager:
             query=query,
             snippet_count=snippet_count,
             project=project,
+            bump=False,
         )
         if not result.get("found"):
             return result
+
+        def _mark_issued() -> None:
+            """Bump the counter post-decision (F4) and reflect it in result."""
+            self.sqlite.ccr_touch(h)
+            result["retrieval_count"] = int(result["retrieval_count"]) + 1
+
+        # ── CWE-668 ergonomics: unscoped retrieval of a scoped row ────
+        entry_project = str(result.get("project") or "")
+        if not project and entry_project:
+            if self.settings.ccr.require_project_match:
+                logger.warning(
+                    "CCR issuance denied (project scope required): hash=%s entry_project=%s",
+                    h,
+                    entry_project,
+                )
+                return {
+                    "hash": h,
+                    "found": True,
+                    "refused": True,
+                    "reason": (
+                        "project-scoped entry requires a matching project "
+                        "(ccr.require_project_match)"
+                    ),
+                    "redactions": 0,
+                    "redacted_patterns": {},
+                }
+            logger.warning(
+                "Unscoped CCR retrieval of project-scoped entry (CWE-668): "
+                "hash=%s entry_project=%s — pass project=<slug> to scope "
+                "the lookup",
+                h,
+                entry_project,
+            )
 
         # ── Snippet path: scan + redact each snippet in place ───────────
         if "snippets" in result:
             redactions = 0
             pattern_counts: dict[str, int] = {}
-            for snippet in result["snippets"]:
-                text = str(snippet.get("snippet", ""))
-                findings = detect_secrets(text)
-                if not findings:
-                    continue
-                snippet["snippet"] = redact_content(text, findings)
-                redactions += len(findings)
-                for name, count in findings_by_pattern(findings).items():
-                    pattern_counts[name] = pattern_counts.get(name, 0) + count
+            try:
+                for snippet in result["snippets"]:
+                    text = str(snippet.get("snippet", ""))
+                    # m2: detect on a marker-stripped copy — the raw
+                    # marked snippet can split a multi-token secret.
+                    findings = detect_secrets(_snippet_scan_text(text))
+                    if not findings:
+                        continue
+                    # Offsets in the stripped copy do not map back to the
+                    # marked snippet, so the whole snippet is withheld.
+                    snippet["snippet"] = "<REDACTED:snippet>"
+                    redactions += len(findings)
+                    for name, count in findings_by_pattern(findings).items():
+                        pattern_counts[name] = pattern_counts.get(name, 0) + count
+            except Exception as exc:
+                # m5: fail-closed — never issue unscanned snippets.
+                logger.error(
+                    "CCR issuance scanner error (snippets): hash=%s error=%s",
+                    h,
+                    exc,
+                )
+                return {
+                    "hash": h,
+                    "found": True,
+                    "refused": True,
+                    "reason": "scanner error",
+                    "redactions": 0,
+                    "redacted_patterns": {},
+                }
             if redactions and self.settings.ccr.retrieve_refuse_on_secret:
                 logger.warning(
                     "CCR issuance refused (secret in snippets): hash=%s redactions=%d",
@@ -2308,6 +2576,7 @@ class MemoryManager:
                     "redactions": redactions,
                     "redacted_patterns": pattern_counts,
                 }
+            _mark_issued()
             result["redactions"] = redactions
             if redactions:
                 result["redacted_patterns"] = pattern_counts
@@ -2324,34 +2593,38 @@ class MemoryManager:
         if not isinstance(original, str):
             result["redactions"] = 0
             return result
-        findings = detect_secrets(original)
-        if not findings:
-            result["redactions"] = 0
-            return result
-        pattern_counts = findings_by_pattern(findings)
-        if self.settings.ccr.retrieve_refuse_on_secret:
+        scan = self.scan_issuance(original, context="ccr:retrieve-original")
+        if scan.refused:
+            reason = (
+                "secret detected in cached original"
+                if scan.reason == "secret detected"
+                else scan.reason
+            )
             logger.warning(
-                "CCR issuance refused (secret in original): hash=%s redactions=%d",
+                "CCR issuance refused (%s): hash=%s redactions=%d",
+                "secret in original" if scan.redactions else scan.reason,
                 h,
-                len(findings),
+                scan.redactions,
             )
             return {
                 "hash": h,
                 "found": True,
                 "refused": True,
-                "reason": "secret detected in cached original",
-                "redactions": len(findings),
-                "redacted_patterns": pattern_counts,
+                "reason": reason,
+                "redactions": scan.redactions,
+                "redacted_patterns": scan.redacted_patterns,
             }
-        result["original"] = redact_content(original, findings)
-        result["redactions"] = len(findings)
-        result["redacted_patterns"] = pattern_counts
-        logger.info(
-            "CCR issuance redacted: hash=%s redactions=%d patterns=%s",
-            h,
-            len(findings),
-            pattern_counts,
-        )
+        result["original"] = scan.text
+        result["redactions"] = scan.redactions
+        _mark_issued()
+        if scan.redactions:
+            result["redacted_patterns"] = scan.redacted_patterns
+            logger.info(
+                "CCR issuance redacted: hash=%s redactions=%d patterns=%s",
+                h,
+                scan.redactions,
+                scan.redacted_patterns,
+            )
         return result
 
     def ccr_cleanup(self) -> dict[str, int]:

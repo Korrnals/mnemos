@@ -514,17 +514,28 @@ async def search(query: SearchQuery) -> list[dict[str, Any]]:
         content = mem.effective_content()
         if query.include_raw and mem.raw_content:
             content = mem.raw_content
-        out.append(
-            {
-                "id": mem.id,
-                "title": mem.auto_title(),
-                "content": content,
-                "tags": mem.tags,
-                "status": mem.status.value,
-                "score": r.score,
-                "search_type": r.search_type,
-            }
+        # ADR-0018 P1-b (M1 + review F1/F3): scan-at-issuance — BOTH echoed
+        # strings (the exact content being issued, post raw_content swap,
+        # and the title) are scanned/redacted per item; refuse mode drops
+        # the item (fail-closed; drop log carries the memory id).
+        scan = mgr.scan_issuance_item(
+            content, title=mem.auto_title(), context=f"api:/search:{mem.id}"
         )
+        if scan.refused:
+            continue
+        item = {
+            "id": mem.id,
+            "title": scan.title,
+            "content": scan.content,
+            "tags": mem.tags,
+            "status": mem.status.value,
+            "score": r.score,
+            "search_type": r.search_type,
+            "redactions": scan.redactions,
+        }
+        if scan.redactions:
+            item["redacted_patterns"] = scan.redacted_patterns
+        out.append(item)
     return out
 
 
@@ -541,16 +552,30 @@ async def agent_recall(
     mgr = get_manager()
     query = AgentRecallQuery(agent=name, project=project, query=q, limit=limit)
     results = mgr.agent_recall(query)
-    return [
-        {
+    # ADR-0018 P1-b (M1 + review F1/F3): scan-at-issuance on BOTH echoed
+    # strings (content and title) — same policy and per-item notes as
+    # /search.
+    out = []
+    for r in results:
+        scan = mgr.scan_issuance_item(
+            r.memory.effective_content(),
+            title=r.memory.auto_title(),
+            context=f"api:/recall/agent:{r.memory.id}",
+        )
+        if scan.refused:
+            continue
+        item = {
             "id": r.memory.id,
-            "title": r.memory.auto_title(),
-            "content": r.memory.effective_content(),
+            "title": scan.title,
+            "content": scan.content,
             "tags": r.memory.tags,
             "created_at": r.memory.created_at.isoformat(),
+            "redactions": scan.redactions,
         }
-        for r in results
-    ]
+        if scan.redactions:
+            item["redacted_patterns"] = scan.redacted_patterns
+        out.append(item)
+    return out
 
 
 # ── Pipeline endpoints (M4) ────────────────────────────────────────────────────
@@ -865,19 +890,31 @@ async def recall_context(req: RecallContextRequest) -> dict[str, Any]:
             "checkpoints": [],
             "message": "No context found. Start by saving context with POST /context/save.",
         }
-    return {
-        "project": req.project,
-        "checkpoints": [
-            {
-                "id": m.id,
-                "title": m.auto_title(),
-                "content": m.effective_content(),
-                "tags": m.tags,
-                "created_at": m.created_at.isoformat(),
-            }
-            for m in memories
-        ],
-    }
+    # ADR-0018 P1-b review (F2a): channel symmetry — the MCP twin
+    # mnemos_recall_context scans at issuance, so this endpoint does too
+    # (both echoed strings: content and title; refuse mode drops the
+    # checkpoint, logged with the memory id).
+    checkpoints = []
+    for m in memories:
+        scan = mgr.scan_issuance_item(
+            m.effective_content(),
+            title=m.auto_title(),
+            context=f"api:/context/recall:{m.id}",
+        )
+        if scan.refused:
+            continue
+        item = {
+            "id": m.id,
+            "title": scan.title,
+            "content": scan.content,
+            "tags": m.tags,
+            "created_at": m.created_at.isoformat(),
+            "redactions": scan.redactions,
+        }
+        if scan.redactions:
+            item["redacted_patterns"] = scan.redacted_patterns
+        checkpoints.append(item)
+    return {"project": req.project, "checkpoints": checkpoints}
 
 
 # ── Reversible content compression (CCR) ───────────────────────────────────────

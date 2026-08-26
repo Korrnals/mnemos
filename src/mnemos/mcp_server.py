@@ -1249,18 +1249,32 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             include_raw=args.get("include_raw", False),
             status=status,
         )
-        _search_results = [
-            {
+        # ADR-0018 P1-b (M1 + review F1/F3): scan-at-issuance — BOTH echoed
+        # strings (content and title; auto_title() derives from raw content)
+        # are scanned/redacted per item; refuse mode drops the item
+        # entirely (fail-closed); the drop log carries the memory id.
+        _search_results = []
+        for r in results:
+            scan = mgr.scan_issuance_item(
+                r.memory.effective_content(),
+                title=r.memory.auto_title(),
+                context=f"mcp:mnemos_search:{r.memory.id}",
+            )
+            if scan.refused:
+                continue
+            item = {
                 "id": r.memory.id,
-                "title": r.memory.auto_title(),
-                "content": r.memory.effective_content(),
+                "title": scan.title,
+                "content": scan.content,
                 "tags": r.memory.tags,
                 "score": r.score,
                 "search_type": r.search_type,
                 "status": r.memory.status,
+                "redactions": scan.redactions,
             }
-            for r in results
-        ]
+            if scan.redactions:
+                item["redacted_patterns"] = scan.redacted_patterns
+            _search_results.append(item)
         _suffix = _steering_suffix(args, settings)
         if _suffix:
             return {"results": _search_results, "_output_style_hint": _suffix}
@@ -1275,17 +1289,30 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             limit=args.get("limit", 20),
         )
         results = mgr.agent_recall(recall_query)
-        return [
-            {
+        # ADR-0018 P1-b (M1 + review F1/F3): scan-at-issuance on BOTH echoed
+        # strings (content and title) — same policy as mnemos_search.
+        recalled = []
+        for r in results:
+            scan = mgr.scan_issuance_item(
+                r.memory.effective_content(),
+                title=r.memory.auto_title(),
+                context=f"mcp:mnemos_agent_recall:{r.memory.id}",
+            )
+            if scan.refused:
+                continue
+            item = {
                 "id": r.memory.id,
-                "title": r.memory.auto_title(),
-                "content": r.memory.effective_content(),
+                "title": scan.title,
+                "content": scan.content,
                 "tags": r.memory.tags,
                 "created_at": r.memory.created_at.isoformat(),
                 "status": r.memory.status,
+                "redactions": scan.redactions,
             }
-            for r in results
-        ]
+            if scan.redactions:
+                item["redacted_patterns"] = scan.redacted_patterns
+            recalled.append(item)
+        return recalled
 
     # ── mnemos_save_context ─────────────────────────────────────────────────
     if name == "mnemos_save_context":
@@ -1317,7 +1344,16 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             )
         out = [f"# Context for project '{project}'\n"]
         for m in memories:
-            out.append(f"---\n{m.effective_content()}\n")
+            # ADR-0018 P1-b (M1 + review F3): scan-at-issuance on the echoed
+            # content (this channel renders no titles); refuse mode drops
+            # the memory's section, logged with the memory id.
+            scan = mgr.scan_issuance(
+                m.effective_content(),
+                context=f"mcp:mnemos_recall_context:{m.id}",
+            )
+            if scan.refused:
+                continue
+            out.append(f"---\n{scan.text}\n")
         instructions = _auto_collect_instructions(project) if _auto_collect_state["enabled"] else ""
         return "\n".join(out) + instructions + _steering_suffix(args, settings)
 
@@ -1328,16 +1364,28 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             tags=args.get("tags"),
             project=args.get("project"),
         )
-        return [
-            {
+        # ADR-0018 P1-b review (F1): this channel echoes titles
+        # (auto_title() derives from raw content) and no content — the
+        # title is scanned; refuse mode drops the row.
+        listed = []
+        for m in memories:
+            scan = mgr.scan_issuance_item(
+                None, title=m.auto_title(), context=f"mcp:mnemos_list_recent:{m.id}"
+            )
+            if scan.refused:
+                continue
+            item = {
                 "id": m.id,
-                "title": m.auto_title(),
+                "title": scan.title,
                 "tags": m.tags,
                 "status": m.status,
                 "created_at": m.created_at.isoformat(),
+                "redactions": scan.redactions,
             }
-            for m in memories
-        ]
+            if scan.redactions:
+                item["redacted_patterns"] = scan.redacted_patterns
+            listed.append(item)
+        return listed
 
     # ── mnemos_list_tags ────────────────────────────────────────────────────
     if name == "mnemos_list_tags":

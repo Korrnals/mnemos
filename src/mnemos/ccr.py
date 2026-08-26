@@ -163,6 +163,7 @@ def retrieve(
     query: str | None = None,
     snippet_count: int | None = None,
     project: str | None = None,
+    bump: bool = True,
 ) -> dict[str, Any]:
     """Retrieve the original content for ``h``, or FTS5 snippets if ``query``.
 
@@ -179,13 +180,23 @@ def retrieve(
             (``found=False``), closing the cross-session marker
             redemption channel. ``None`` keeps the legacy unscoped
             behavior for callers without project context.
+        bump: Pass-through to ``ccr_get`` (ADR-0018 P1-b review F4).
+            ``False`` reads the entry WITHOUT bumping the retrieval
+            counter — the issuance layer then calls ``ccr_touch`` only
+            when content is actually issued, so refused/denied
+            retrievals do not LRU-pin the entry.
 
     Returns:
         Dict with ``hash``, ``found``, and either ``original`` (full) or
         ``snippets`` (ranked list). ``found=False`` if the hash is absent
-        (or project-scoped out).
+        (or project-scoped out). Both ``found=True`` branches carry the
+        entry's ``project`` so callers can audit unscoped retrievals of
+        project-scoped entries (ADR-0018 P1-b, CWE-668 ergonomics)
+        without a second ``ccr_get`` (which would bump the retrieval
+        counter). With ``bump=False`` the reported ``retrieval_count``
+        is the CURRENT (pre-bump) value.
     """
-    entry = store.ccr_get(h, project=project)
+    entry = store.ccr_get(h, project=project, bump=bump)
     if entry is None:
         return {"hash": h, "found": False, "reason": "hash not in cache"}
 
@@ -194,6 +205,7 @@ def retrieve(
             "hash": h,
             "found": True,
             "original": entry["original"],
+            "project": entry["project"],
             "size_bytes": entry["size_bytes"],
             "retrieval_count": entry["retrieval_count"],
         }
@@ -204,6 +216,7 @@ def retrieve(
         "hash": h,
         "found": True,
         "query": query,
+        "project": entry["project"],
         "snippets": snippets,
         "retrieval_count": entry["retrieval_count"],
     }
