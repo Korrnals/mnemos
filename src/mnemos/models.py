@@ -46,6 +46,22 @@ class MemoryStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+# ADR-0018 entry invariant — the single status gate every path that
+# surfaces memory-record content into working context must consult.
+# It encodes the documented search default ("only 'published' knowledge
+# units by default", plus 'processed'). Future LTM → context paths — the
+# on_context_rewrite rehydrate channel, D2 graph expansion — gate on this
+# set by construction instead of re-deriving their own: originals entering
+# via the knowledge pipeline start at 'raw' and are context-reachable only
+# after passing 'processed'/'published'. Deliberately NOT the full status
+# enum: 'raw', 'processing' and 'archived' content must stay unreachable
+# from default context issuance (an explicit status= query or the
+# documented include_raw widening remains a caller decision).
+CONTEXT_ADMISSIBLE_STATUSES: frozenset[MemoryStatus] = frozenset(
+    {MemoryStatus.PUBLISHED, MemoryStatus.PROCESSED}
+)
+
+
 # ── Mnemos Tag Contract (M2) ──────────────────────────────────────────────────────
 
 

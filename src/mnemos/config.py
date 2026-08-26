@@ -200,6 +200,12 @@ class CCRConfig(BaseModel):
     snippet_count: int = Field(default=5, ge=1, le=50)
     # Token budget passed to apply_filter for the compress stage.
     filter_budget: int = Field(default=4096, ge=256, le=1_000_000)
+    # ADR-0018 P0 — issuance guard. When True, retrieve refuses to issue
+    # content whose scan detected a secret (refused=True, no content in
+    # the response). Default False → redact-and-issue: matched spans are
+    # replaced with <REDACTED:<pattern>> in the returned payload only;
+    # the stored original is never mutated (zero-loss storage).
+    retrieve_refuse_on_secret: bool = False
     # P1-5/T3: background CCR cleanup interval (seconds). Default 1200s = 20 min.
     # The processor loop runs every `interval_sec` (default 120s); CCR cleanup runs
     # every `ccr_cleanup_interval_sec` to avoid scanning the cache table every cycle.

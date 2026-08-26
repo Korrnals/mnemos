@@ -21,6 +21,7 @@ from mnemos import __version__
 from mnemos.config import Settings
 from mnemos.embeddings import EmbeddingProvider, create_embedding_provider
 from mnemos.models import (
+    CONTEXT_ADMISSIBLE_STATUSES,
     AgentRecallQuery,
     Memory,
     MemoryCreate,
@@ -696,11 +697,10 @@ class MemoryManager:
         # normal search). An explicit ``status`` skips this post-hoc filter
         # entirely — ``fts_search`` already filtered on it.
         if status is None and not include_raw:
-            # Default: only published + processed
-            allowed: set[MemoryStatus] | None = {
-                MemoryStatus.PUBLISHED,
-                MemoryStatus.PROCESSED,
-            }
+            # Default: only published + processed (ADR-0018 entry invariant
+            # gate — CONTEXT_ADMISSIBLE_STATUSES is the single constant all
+            # content-surfacing paths consult).
+            allowed: set[MemoryStatus] | None = set(CONTEXT_ADMISSIBLE_STATUSES)
         elif status is None and include_raw:
             # include_raw: all except archived (archived = intentionally hidden)
             allowed = {
@@ -2238,16 +2238,110 @@ class MemoryManager:
         query: str | None = None,
         snippet_count: int | None = None,
     ) -> dict[str, Any]:
-        """Retrieve a CCR-cached original (or FTS5 snippets if ``query``)."""
-        from mnemos.ccr import retrieve
+        """Retrieve a CCR-cached original (or FTS5 snippets if ``query``).
 
-        return retrieve(
+        ADR-0018 P0 — issuance secret scan. Every retrieval is scanned
+        with ``detect_secrets`` (patterns evolve and stored records age,
+        so a store-time verdict alone would go stale): matched spans in
+        the RETURNED payload — full original or FTS5 snippets — are
+        replaced with ``<REDACTED:<pattern>>``. The stored original is
+        never mutated (zero-loss storage). The response carries
+        ``redactions`` (number of redacted spans; ``0`` when clean) and,
+        when non-zero, ``redacted_patterns`` (log-safe per-pattern
+        counts — raw matched values never leave storage). When
+        ``ccr.retrieve_refuse_on_secret`` is enabled, a detection
+        returns ``refused=True`` with no content instead of a redacted
+        copy. ``found=False`` responses are returned unchanged.
+        """
+        from mnemos.ccr import retrieve
+        from mnemos.secrets_detector import (
+            detect_secrets,
+            findings_by_pattern,
+            redact_content,
+        )
+
+        result = retrieve(
             h,
             store=self.sqlite,
             config=self.settings.ccr,
             query=query,
             snippet_count=snippet_count,
         )
+        if not result.get("found"):
+            return result
+
+        # ── Snippet path: scan + redact each snippet in place ───────────
+        if "snippets" in result:
+            redactions = 0
+            pattern_counts: dict[str, int] = {}
+            for snippet in result["snippets"]:
+                text = str(snippet.get("snippet", ""))
+                findings = detect_secrets(text)
+                if not findings:
+                    continue
+                snippet["snippet"] = redact_content(text, findings)
+                redactions += len(findings)
+                for name, count in findings_by_pattern(findings).items():
+                    pattern_counts[name] = pattern_counts.get(name, 0) + count
+            if redactions and self.settings.ccr.retrieve_refuse_on_secret:
+                logger.warning(
+                    "CCR issuance refused (secret in snippets): hash=%s redactions=%d",
+                    h,
+                    redactions,
+                )
+                return {
+                    "hash": h,
+                    "found": True,
+                    "refused": True,
+                    "reason": "secret detected in retrieved snippets",
+                    "redactions": redactions,
+                    "redacted_patterns": pattern_counts,
+                }
+            result["redactions"] = redactions
+            if redactions:
+                result["redacted_patterns"] = pattern_counts
+                logger.info(
+                    "CCR issuance redacted (snippets): hash=%s redactions=%d patterns=%s",
+                    h,
+                    redactions,
+                    pattern_counts,
+                )
+            return result
+
+        # ── Full-original path: scan + redact the returned copy ─────────
+        original = result.get("original")
+        if not isinstance(original, str):
+            result["redactions"] = 0
+            return result
+        findings = detect_secrets(original)
+        if not findings:
+            result["redactions"] = 0
+            return result
+        pattern_counts = findings_by_pattern(findings)
+        if self.settings.ccr.retrieve_refuse_on_secret:
+            logger.warning(
+                "CCR issuance refused (secret in original): hash=%s redactions=%d",
+                h,
+                len(findings),
+            )
+            return {
+                "hash": h,
+                "found": True,
+                "refused": True,
+                "reason": "secret detected in cached original",
+                "redactions": len(findings),
+                "redacted_patterns": pattern_counts,
+            }
+        result["original"] = redact_content(original, findings)
+        result["redactions"] = len(findings)
+        result["redacted_patterns"] = pattern_counts
+        logger.info(
+            "CCR issuance redacted: hash=%s redactions=%d patterns=%s",
+            h,
+            len(findings),
+            pattern_counts,
+        )
+        return result
 
     def ccr_cleanup(self) -> dict[str, int]:
         """Run CCR TTL expiry + LRU eviction. Returns removal counts."""
