@@ -162,6 +162,7 @@ def retrieve(
     config: CCRConfig,
     query: str | None = None,
     snippet_count: int | None = None,
+    project: str | None = None,
 ) -> dict[str, Any]:
     """Retrieve the original content for ``h``, or FTS5 snippets if ``query``.
 
@@ -172,12 +173,19 @@ def retrieve(
         query: Optional search query. If provided, returns ranked snippets
             from within the cached original instead of the full text.
         snippet_count: Override the config default snippet count.
+        project: Optional project slug (ADR-0018 P1-a security fix).
+            When given, the lookup is scoped to that project — a hash
+            cached under a different project is reported as not found
+            (``found=False``), closing the cross-session marker
+            redemption channel. ``None`` keeps the legacy unscoped
+            behavior for callers without project context.
 
     Returns:
         Dict with ``hash``, ``found``, and either ``original`` (full) or
-        ``snippets`` (ranked list). ``found=False`` if the hash is absent.
+        ``snippets`` (ranked list). ``found=False`` if the hash is absent
+        (or project-scoped out).
     """
-    entry = store.ccr_get(h)
+    entry = store.ccr_get(h, project=project)
     if entry is None:
         return {"hash": h, "found": False, "reason": "hash not in cache"}
 
@@ -191,7 +199,7 @@ def retrieve(
         }
 
     count = snippet_count if snippet_count is not None else config.snippet_count
-    snippets = store.ccr_search(h, query, limit=count)
+    snippets = store.ccr_search(h, query, limit=count, project=project)
     return {
         "hash": h,
         "found": True,

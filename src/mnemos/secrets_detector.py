@@ -34,7 +34,10 @@ Design constraints
   (see ``_HIGH_ENTROPY_THRESHOLD`` docstring).
 * **Overlapping patterns** are resolved by first-match precedence: the
   scanner sorts matches by start position and, for ties, by the order in
-  which patterns are declared. Earlier-declared patterns win.
+  which patterns are declared. Earlier-declared patterns win. A partially
+  overlapping later finding (e.g. a high-entropy run whose prefix matched
+  a discrete pattern) extends the accepted span to its end so no tail is
+  left unredacted (m3, ADR-0018 P1).
 """
 
 from __future__ import annotations
@@ -199,6 +202,9 @@ def detect_secrets(content: str) -> list[SecretFinding]:
         Overlapping matches are resolved by first-match precedence:
         the earliest-starting match wins; ties broken by pattern
         declaration order (specific patterns first, entropy last).
+        A partially overlapping later finding extends the accepted
+        span to its own end (the tail of the longer run must not
+        survive unredacted); fully contained findings are dropped.
 
     Notes:
         * The scanner is **read-only** — it never mutates ``content``.
@@ -257,6 +263,14 @@ def detect_secrets(content: str) -> list[SecretFinding]:
     # case: the JWT starts earlier and is accepted; any AWS-key match
     # that falls *inside* the JWT span is dropped. Discrete patterns
     # that start earlier always win because of the sort above.
+    #
+    # Partial overlap (m3 fix, ADR-0018 P1): when a later finding starts
+    # inside the accepted span but runs past it — e.g. a discrete pattern
+    # matching the prefix of a longer high-entropy run — the accepted
+    # span is EXTENDED to the later finding's end. Dropping the partial
+    # overlap entirely would leave the tail of the longer run unredacted;
+    # extending keeps the earlier finding's name (first-match precedence
+    # for labelling) while guaranteeing no tail leaks into the clear.
     accepted: list[SecretFinding] = []
     last_end = -1
     for f in raw_findings:
@@ -264,10 +278,14 @@ def detect_secrets(content: str) -> list[SecretFinding]:
             accepted.append(f)
             last_end = f.end
         elif f.end > last_end:
-            # Partial overlap — extend the accepted span is NOT done;
-            # we keep the earlier-starting finding and drop the partial.
-            # This is the documented first-match-precedence rule.
-            continue
+            prev = accepted[-1]
+            accepted[-1] = SecretFinding(
+                pattern_name=prev.pattern_name,
+                matched_value=content[prev.start : f.end],
+                start=prev.start,
+                end=f.end,
+            )
+            last_end = f.end
         # else: fully contained → dropped
 
     return accepted
