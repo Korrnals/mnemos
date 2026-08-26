@@ -1858,3 +1858,23 @@ class SQLiteStore:
             (from_memory_id, kind),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_memory_id_by_rewrite_event_key(self, event_key: str) -> str | None:
+        """Return the memory id carrying ``metadata.rewrite_event_key``.
+
+        Idempotency lookup for the ``on_context_rewrite`` event (ADR-0018,
+        mnemos #125 Wave 2): the event handler computes a content-addressed
+        key and consults this BEFORE any write, so a re-delivered event
+        performs no duplicate writes. Deliberately a specific method, not a
+        generic metadata query — JSON extraction is unindexed and the
+        surface stays minimal (same philosophy as ``_EDGE_KINDS``).
+        Returns the EARLIEST match (creation order) or ``None``.
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT id FROM memories "
+            "WHERE json_extract(metadata, '$.rewrite_event_key') = ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (event_key,),
+        ).fetchone()
+        return str(row["id"]) if row is not None else None

@@ -843,6 +843,78 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="mnemos_context_rewrite",
+            description=(
+                "ADR-0018 on_context_rewrite lifecycle event — the harness "
+                "reports that it REWROTE a block of its working context: the "
+                "original is stored to long-term memory losslessly (normal "
+                "knowledge pipeline: enters raw, context-reachable only after "
+                "the pipeline advances it to processed/published; write-path "
+                "secret scan auto-tags mnemos:no-federate on a hit). "
+                "IDEMPOTENT: the same event re-delivered performs no "
+                "duplicate writes (content-addressed event key over "
+                "project/agent/session/supersedes/content; the advisory diff "
+                "is excluded — it is not load-bearing). VERSION-LESS: no "
+                "ordering promise, no version chains — replacement lineage "
+                "is a supersedes edge (optional 'supersedes' = memory id of "
+                "the replaced block). Rehydrate goes through the EXISTING "
+                "scanned/gated channels (mnemos_retrieve / "
+                "mnemos_assemble_context). Set include_marker=true to also "
+                "get the CCR compress marker for the original to keep in the "
+                "window."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Original text of the replaced context block — "
+                            "the source of truth, stored unchanged."
+                        ),
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project slug (tag project:<slug>).",
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": "Agent slug (tag agent:<slug>).",
+                    },
+                    "session": {
+                        "type": "string",
+                        "description": (
+                            "Optional session id — provenance metadata and "
+                            "part of the idempotency key."
+                        ),
+                    },
+                    "supersedes": {
+                        "type": "string",
+                        "description": (
+                            "Optional memory id of the block being replaced — "
+                            "creates the supersedes edge new → old."
+                        ),
+                    },
+                    "diff": {
+                        "type": "string",
+                        "description": (
+                            "Optional advisory was→becomes diff — stored as "
+                            "metadata only, never load-bearing."
+                        ),
+                    },
+                    "include_marker": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Also return the CCR compress marker for the "
+                            "original (the caller keeps it in its window)."
+                        ),
+                    },
+                },
+                "required": ["content", "project", "agent"],
+            },
+        ),
+        Tool(
             name="mnemos_export",
             description=(
                 "Export memories to a file (JSON or SQLite snapshot). Writes the "
@@ -1697,6 +1769,39 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             # Boundary validation (mode/budget/async_handle incl. the
             # session-bound handle check) — surface a clean error dict
             # instead of the generic exception path.
+            return {"error": str(exc)}
+
+    # ── mnemos_context_rewrite (ADR-0018, #125 Wave 2) ──────────────────────
+    if name == "mnemos_context_rewrite":
+        cr_content = args.get("content")
+        cr_project = args.get("project")
+        cr_agent = args.get("agent")
+        if not isinstance(cr_content, str) or not cr_content.strip():
+            return {"error": "content is required and must be a non-empty string"}
+        if not isinstance(cr_project, str) or not cr_project.strip():
+            return {"error": "project is required and must be a non-empty string"}
+        if not isinstance(cr_agent, str) or not cr_agent.strip():
+            return {"error": "agent is required and must be a non-empty string"}
+        cr_session = args.get("session")
+        cr_supersedes = args.get("supersedes")
+        cr_diff = args.get("diff")
+        optional_strs = (("session", cr_session), ("supersedes", cr_supersedes), ("diff", cr_diff))
+        for label, value in optional_strs:
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                return {"error": f"{label} must be a non-empty string when provided"}
+        try:
+            return mgr.context_rewrite(
+                content=cr_content,
+                project=cr_project,
+                agent=cr_agent,
+                session=cr_session,
+                supersedes=cr_supersedes,
+                diff=cr_diff,
+                include_marker=bool(args.get("include_marker", False)),
+            )
+        except ValueError as exc:
+            # Boundary validation + tag-contract violations (strict mode) +
+            # missing supersedes target — clean error dict, no trace echo.
             return {"error": str(exc)}
 
     # ── mnemos_export (#84 federation export) ──────────────────────────────

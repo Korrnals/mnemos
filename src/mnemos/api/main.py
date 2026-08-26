@@ -965,6 +965,48 @@ async def assemble_context(req: AssembleContextRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+class ContextRewriteRequest(BaseModel):
+    """Request body for POST /context/rewrite — mirrors ``mnemos_context_rewrite``."""
+
+    content: str
+    project: str
+    agent: str
+    session: str | None = None
+    supersedes: str | None = None
+    diff: str | None = None
+    include_marker: bool = False
+
+
+@app.post("/context/rewrite")
+async def context_rewrite(req: ContextRewriteRequest) -> dict[str, Any]:
+    """Handle one ``on_context_rewrite`` lifecycle event (ADR-0018, #125 W2).
+
+    Mirrors the ``mnemos_context_rewrite`` MCP tool over the same manager
+    path: the original of the replaced context block is stored to LTM via
+    the normal knowledge pipeline (raw → published gating, write-path
+    secret scan), idempotent by content-addressed event key, version-less
+    (replacement lineage is an optional ``supersedes`` edge). HTTP 200 for
+    both ``stored`` and ``deduplicated`` receipts — the event is
+    idempotent, so re-delivery is not a new resource (201 would lie).
+    """
+    _track_http_call()
+    mgr = get_manager()
+    try:
+        return mgr.context_rewrite(
+            content=req.content,
+            project=req.project,
+            agent=req.agent,
+            session=req.session,
+            supersedes=req.supersedes,
+            diff=req.diff,
+            include_marker=req.include_marker,
+        )
+    except ValueError as exc:
+        # Boundary validation + tag-contract violations (strict mode) +
+        # missing supersedes target.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 # ── Reversible content compression (CCR) ───────────────────────────────────────
 
 
