@@ -548,6 +548,51 @@ curl -s -X POST http://127.0.0.1:8000/context/assemble \
 
 Full field-by-field documentation: [`mcp-tools.md` → `mnemos_assemble_context`](mcp-tools.md#mnemos_assemble_context).
 
+### `POST /context/rewrite` — report a context rewrite (ADR-0018)
+
+Mirrors the `mnemos_context_rewrite` MCP tool over the same manager path
+(mnemos #125, Wave 2). The harness reports that it rewrote a block of its
+working context; the original is stored to LTM through the normal
+knowledge pipeline (enters `raw`, context-reachable only after the
+pipeline advances it), idempotent by content-addressed event key,
+version-less (replacement lineage is an optional `supersedes` edge).
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `content` | string | **yes** | — | Original text of the replaced block — the source of truth, stored unchanged. |
+| `project` | string | **yes** | — | Project slug (tag `project:<slug>`). |
+| `agent` | string | **yes** | — | Agent slug (tag `agent:<slug>`). |
+| `session` | string | no | `null` | Session id — provenance metadata, part of the idempotency key. |
+| `supersedes` | string | no | `null` | Memory id of the replaced block — creates the `supersedes` edge new → old (must exist). |
+| `diff` | string | no | `null` | Advisory was→becomes diff — stored as metadata, never load-bearing. |
+| `include_marker` | boolean | no | `false` | Also return the CCR compress marker for the original. |
+
+**Responses**
+
+- `200` — event receipt: `status` (`stored` / `deduplicated` — the event is
+  idempotent, so re-delivery is 200, not 201), `memory_id`,
+  `memory_status` (`raw` on first delivery), `event_key`, echoed
+  `project`/`agent`/`session`, `supersedes`
+  (`{"to_memory_id", "edge_created"}` or `null`), and `ccr_marker` when
+  `include_marker=true`. No version or ordering fields — by design.
+- `422` — boundary validation failure (empty required fields, blank
+  optional strings, tag-contract violation in strict mode, or a missing
+  `supersedes` target).
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/context/rewrite \
+  -H "Content-Type: application/json" \
+  -d '{"content": "<original block text>", "project": "mnemos", "agent": "zcode",
+       "session": "sess-42", "supersedes": "3f2a…", "diff": "was: v1 → became: v2",
+       "include_marker": true}'
+```
+
+Full field-by-field documentation: [`mcp-tools.md` → `mnemos_context_rewrite`](mcp-tools.md#mnemos_context_rewrite).
+
 ---
 
 ## Reversible compression (CCR)

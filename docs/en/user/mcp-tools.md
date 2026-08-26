@@ -48,6 +48,7 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_retrieve`](#mnemos_retrieve) | Retrieve a CCR-cached original or FTS5 snippets | no |
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — relocate dynamic content for prefix cache stability | no |
 | [`mnemos_assemble_context`](#mnemos_assemble_context) *(#125)* | ADR-0017 D1 — assemble the pre-LLM-call context block (recall → CCR → filter → scan → align → budget) | no |
+| [`mnemos_context_rewrite`](#mnemos_context_rewrite) *(#125)* | ADR-0018 — `on_context_rewrite` lifecycle event: report a context rewrite, the original lands in LTM (idempotent, version-less) | no |
 | [`mnemos_export`](#mnemos_export) | Export memories to a file (JSON or SQLite snapshot) | no |
 | [`mnemos_import`](#mnemos_import) | Import memories from an export file (merge or restore) | no |
 | [`mnemos_stats`](#mnemos_stats) | Health counters and key paths | no |
@@ -1042,6 +1043,62 @@ For `mode="async"` the call returns only a handle envelope (`{"mode": "async", "
 - REST twin: `POST /context/assemble` (same manager path) — [http-api.md](http-api.md)
 - Pipeline rationale: ADR-0017 (D1), ADR-0018 (entry invariant: scan + provenance + status gate on every LTM → context entry)
 - CCR: [`mnemos_compress`](#mnemos_compress) / [`mnemos_retrieve`](#mnemos_retrieve)
+
+---
+
+## `mnemos_context_rewrite`
+
+**ADR-0018 `on_context_rewrite` lifecycle event (mnemos #125, Wave 2)** — the harness reports that it *rewrote* a block of its working context. The original of the replaced block is the source of truth: it is stored to long-term memory losslessly through the **normal knowledge pipeline** and becomes rehydratable through the **existing** scanned/gated channels. Harness compaction becomes lossless when originals land in the provider.
+
+Semantics (ADR-0018, verbatim):
+
+- **Idempotent** — re-delivery of the same event performs no duplicate writes. The idempotency key is content-addressed: SHA-256 over the length-prefixed canonical tuple `project/agent/session/supersedes/content`, persisted as `metadata["rewrite_event_key"]` and looked up *before* any write. The advisory `diff` is deliberately excluded from the key — it is not load-bearing, so a re-delivery carrying a different diff is still the same event. Two identical blocks replaced in two different sessions are two events (`session` participates in the key).
+- **Version-less** — no ordering promise, no version chains. Replacement lineage is a `supersedes` edge (Phase 1 minimal `memory_edges` surface); traversal/expansion is Phase 2 (ADR-0017 D2).
+- **Pipeline entry** — the original enters at `raw` via `MemoryManager.add`; it is context-reachable only after the pipeline advances it to `processed`/`published` (the `CONTEXT_ADMISSIBLE_STATUSES` gate). The Layer-1 write-path secret scan runs on `content` (a hit auto-tags `mnemos:no-federate`; zero-loss — the original is stored unchanged). The advisory diff gets its own Layer-1 verdict (`rewrite_diff_scan_verdict`: clean/hit/unknown) and a hit also tags the record `mnemos:no-federate` — otherwise the advisory payload would federate unflagged through a channel that only scans `content`.
+- **Rehydrate = existing channels** — rewrite-stored originals surface through `mnemos_retrieve` / `mnemos_assemble_context` (scan-at-issuance, provenance, status gate). There is deliberately no new retrieval path.
+- **Marker** — the CCR marker stays in the harness window (caller-side). Set `include_marker=true` to also receive the compress marker for the original; rehydrate of that marker goes through `mnemos_retrieve` (project-scoped, issuance-scanned).
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `content` | string | **yes** | — | Original text of the replaced context block — the source of truth, stored unchanged. |
+| `project` | string | **yes** | — | Project slug (tag `project:<slug>`). |
+| `agent` | string | **yes** | — | Agent slug (tag `agent:<slug>`). |
+| `session` | string | no | — | Session id — provenance metadata and part of the idempotency key. |
+| `supersedes` | string | no | — | Memory id of the block being replaced — creates the `supersedes` edge new → old (must exist; also part of the event key). |
+| `diff` | string | no | — | Advisory was→becomes diff — stored as metadata, never load-bearing, never echoed. |
+| `include_marker` | boolean | no | `false` | Also return the CCR compress marker for the original. |
+
+### Output
+
+```json
+{
+  "status": "stored",
+  "memory_id": "3f2a…",
+  "memory_status": "raw",
+  "event_key": "9c1d…",
+  "project": "my-project",
+  "agent": "my-agent",
+  "session": "sess-42",
+  "supersedes": {"to_memory_id": "a17b…", "edge_created": true}
+}
+```
+
+`status` is `stored` (first delivery; `memory_status` is `raw` — the pipeline has not run yet) or `deduplicated` (re-delivery: same `memory_id`, no new writes; the idempotent edge insert reports `edge_created: false`). `ccr_marker` (the full `mnemos_compress` result) appears only when `include_marker=true`. The receipt carries **no version or ordering fields** — by design (version-less event).
+
+### Notes
+
+- **Boundary validation** — empty `content`/`project`/`agent`, blank optional strings, a tag-contract violation (strict mode), or a missing `supersedes` target returns an `{"error": …}` dict (REST twin answers 422).
+- **Stored tags** — `project:<slug>`, `agent:<slug>`, `mnemos:session` (closest existing subtype for live session material; a dedicated `mnemos:context-rewrite` subtype is a tag-contract vocabulary change deferred to the committee), plus `mnemos:no-federate` on any secret hit.
+- **Provenance metadata** — `metadata["source"] = "context-rewrite"`, `rewrite_session`, `rewrite_event_key`, and (when supplied) `rewrite_diff` + `rewrite_diff_scan_verdict`.
+- **Single-tenant trust model** — the harness is trusted software; the provider guarantees storage, scanning, gating and provenance, not replacement policy (pinned zones, budgets and replace-event emission stay harness-side).
+
+### Related
+
+- REST twin: `POST /context/rewrite` (same manager path) — [http-api.md](http-api.md)
+- Rationale: ADR-0018 (§"on_context_rewrite": lifecycle event, not a versioned primitive)
+- Rehydrate channels: [`mnemos_retrieve`](#mnemos_retrieve) / [`mnemos_assemble_context`](#mnemos_assemble_context); marker via [`mnemos_compress`](#mnemos_compress)
 
 ---
 
