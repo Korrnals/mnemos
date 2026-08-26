@@ -143,9 +143,16 @@ def rest_client(manager: MemoryManager) -> Iterator[TestClient]:
     api_main._manager = None
 
 
-def _add(mgr: MemoryManager, content: str, *, tags: list[str] | None = None) -> object:
+def _add(
+    mgr: MemoryManager,
+    content: str,
+    *,
+    tags: list[str] | None = None,
+    title: str | None = None,
+) -> object:
     data = MemoryCreate(
         content=content,
+        title=title,
         tags=tags or [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
         source=MemorySource.MCP,
         status=MemoryStatus.PUBLISHED,
@@ -157,6 +164,16 @@ def _secret_note(secret: str, marker: str = "unobtanium") -> str:
     return (
         f"Service {marker} deployment notes.\n"
         f"The {marker} service authenticates with api key {secret}\n"
+        "Rotate quarterly per policy."
+    )
+
+
+def _first_line_secret_note(secret: str, marker: str = "unobtanium") -> str:
+    """Content whose FIRST line carries the secret — auto_title() derives
+    from the first line, so the title leaks unless it is scanned too."""
+    return (
+        f"credentials for {marker}: {secret}\n"
+        f"{marker} backup rotation schedule and ownership notes.\n"
         "Rotate quarterly per policy."
     )
 
@@ -568,3 +585,216 @@ class TestIssuanceScanShape:
         assert scan.reason == "secret detected"
         assert scan.redactions == 1
         assert scan.redacted_patterns == {"aws-key": 1}
+
+
+# ── Review round F1: title channel (auto_title bypass) ───────────────────────
+
+
+class TestReviewF1TitleScan:
+    def test_first_line_secret_title_redacted_mcp_search(self, manager, monkeypatch):
+        mem = _add(manager, _first_line_secret_note(FAKE_AWS_KEY))
+        monkeypatch.setattr(mcp_mod, "_manager", manager)
+
+        results = asyncio.new_event_loop().run_until_complete(
+            _dispatch("mnemos_search", {"query": "unobtanium", "project": PROJECT})
+        )
+
+        assert results, "FTS must match 'unobtanium'"
+        hit = results[0]
+        # Title derives from the secret-bearing first line — must be redacted.
+        assert FAKE_AWS_KEY not in hit["title"]
+        assert "<REDACTED:aws-key>" in hit["title"]
+        # Content redacted in the same response.
+        assert FAKE_AWS_KEY not in hit["content"]
+        assert "<REDACTED:aws-key>" in hit["content"]
+        # Merged per-item note: one finding in the title + one in content.
+        assert hit["redactions"] == 2
+        assert hit["redacted_patterns"] == {"aws-key": 2}
+        # Zero-loss storage.
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert FAKE_AWS_KEY in stored.content
+
+    def test_explicit_title_secret_redacted_rest_search(self, rest_client, manager):
+        _add(
+            manager,
+            "unobtanium deployment runbook body without secrets",
+            title=f"backup key {FAKE_GITHUB_TOKEN}",
+        )
+
+        resp = rest_client.post("/search", json={"query": "unobtanium", "project": PROJECT})
+
+        assert resp.status_code == 200
+        results = resp.json()
+        assert results
+        hit = results[0]
+        # auto_title() echoes an explicitly-set title — scanned too.
+        assert FAKE_GITHUB_TOKEN not in hit["title"]
+        assert "<REDACTED:github-token>" in hit["title"]
+        assert hit["redactions"] == 1  # title only; content is clean
+        assert hit["redacted_patterns"] == {"github-token": 1}
+
+    def test_list_recent_title_redacted(self, manager, monkeypatch):
+        _add(manager, _first_line_secret_note(FAKE_AWS_KEY))
+        monkeypatch.setattr(mcp_mod, "_manager", manager)
+
+        listed = asyncio.new_event_loop().run_until_complete(
+            _dispatch("mnemos_list_recent", {"project": PROJECT})
+        )
+
+        assert listed
+        for item in listed:
+            assert FAKE_AWS_KEY not in item["title"]
+        titled = next(i for i in listed if "<REDACTED:" in i["title"])
+        assert titled["redactions"] >= 1
+        assert "redacted_patterns" in titled
+
+    def test_refuse_mode_drops_title_only_secret(self, refuse_manager, monkeypatch):
+        # Content clean, explicit title dirty — the ITEM must be dropped.
+        _add(
+            refuse_manager,
+            "unobtanium clean body text",
+            title=f"leaked {FAKE_GITHUB_TOKEN}",
+        )
+        _add(refuse_manager, "quokka facts entirely clean note")
+        monkeypatch.setattr(mcp_mod, "_manager", refuse_manager)
+
+        results = asyncio.new_event_loop().run_until_complete(
+            _dispatch("mnemos_search", {"query": "unobtanium", "project": PROJECT})
+        )
+
+        assert all(FAKE_GITHUB_TOKEN not in r["title"] for r in results)
+        assert all(FAKE_GITHUB_TOKEN not in r["content"] for r in results)
+
+    def test_scan_issuance_item_merges_and_refuses(self, manager, refuse_manager):
+        clean = manager.scan_issuance_item(
+            _secret_note(FAKE_AWS_KEY),
+            title=f"key {FAKE_AWS_KEY}",
+            context="test",
+        )
+        assert clean.refused is False
+        assert clean.redactions == 2
+        assert clean.redacted_patterns == {"aws-key": 2}
+
+        dirty = refuse_manager.scan_issuance_item(
+            "clean body", title=f"key {FAKE_AWS_KEY}", context="test"
+        )
+        assert dirty.refused is True
+        assert dirty.title == ""
+        assert dirty.content == ""  # refused items carry NOTHING
+        assert dirty.redactions == 1
+
+
+# ── Review round F2a: /context/recall channel symmetry ───────────────────────
+
+
+class TestReviewF2aContextRecall:
+    def _checkpoint(self, mgr: MemoryManager, content: str, title: str | None = None):
+        return _add(
+            mgr,
+            content,
+            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:checkpoint"],
+            title=title,
+        )
+
+    def test_context_recall_scans_content_and_title(self, rest_client, manager):
+        self._checkpoint(
+            manager,
+            _first_line_secret_note(FAKE_AWS_KEY),
+        )
+
+        resp = rest_client.post("/context/recall", json={"project": PROJECT})
+
+        assert resp.status_code == 200
+        checkpoints = resp.json()["checkpoints"]
+        assert checkpoints
+        first = checkpoints[0]
+        assert FAKE_AWS_KEY not in first["content"]
+        assert FAKE_AWS_KEY not in first["title"]
+        assert "<REDACTED:aws-key>" in first["content"]
+        assert "<REDACTED:aws-key>" in first["title"]
+        assert first["redactions"] == 2
+
+    def test_context_recall_clean_checkpoints_unchanged(self, rest_client, manager):
+        self._checkpoint(manager, "## Goals\nship the release checklist")
+
+        resp = rest_client.post("/context/recall", json={"project": PROJECT})
+
+        assert resp.status_code == 200
+        first = resp.json()["checkpoints"][0]
+        assert "release checklist" in first["content"]
+        assert first["redactions"] == 0
+        assert "redacted_patterns" not in first
+
+
+# ── Review round F3: drop-log forensics (item id in the context label) ───────
+
+
+class TestReviewF3DropForensics:
+    def test_refuse_warning_carries_memory_id(self, refuse_manager, monkeypatch, caplog):
+        mem = _add(refuse_manager, _secret_note(FAKE_AWS_KEY))
+        monkeypatch.setattr(mcp_mod, "_manager", refuse_manager)
+
+        with caplog.at_level("WARNING", logger="mnemos.manager"):
+            asyncio.new_event_loop().run_until_complete(
+                _dispatch("mnemos_search", {"query": "unobtanium", "project": PROJECT})
+            )
+
+        refusal_logs = [r for r in caplog.records if "Issuance refused" in r.message]
+        assert refusal_logs, "the drop must be WARNING-logged"
+        assert any(f"mcp:mnemos_search:{mem.id}" in r.message for r in refusal_logs)
+
+
+# ── Review round F4: retrieval counter bump ordering ─────────────────────────
+
+
+class TestReviewF4BumpOrdering:
+    def _count(self, mgr: MemoryManager, h: str) -> int:
+        entry = mgr.sqlite.ccr_get(h, bump=False)
+        assert entry is not None
+        return int(entry["retrieval_count"])
+
+    def test_refused_issuance_does_not_bump(self, refuse_manager):
+        text = _cacheable_secret_log(FAKE_AWS_KEY)
+        h = refuse_manager.compress_content(text, profile="log")["hash"]
+        assert self._count(refuse_manager, h) == 0
+
+        result = refuse_manager.retrieve_content(h)
+
+        assert result["refused"] is True
+        assert self._count(refuse_manager, h) == 0, "refusal must not LRU-pin"
+
+    def test_denied_unscoped_retrieval_does_not_bump(self, scoped_manager):
+        text = _cacheable_secret_log("plain-value-no-pattern")
+        h = scoped_manager.compress_content(text, profile="log", project="alpha")["hash"]
+
+        result = scoped_manager.retrieve_content(h)  # require_project_match deny
+
+        assert result["refused"] is True
+        assert self._count(scoped_manager, h) == 0
+
+    def test_scanner_error_issuance_does_not_bump(self, manager, monkeypatch):
+        text = _cacheable_secret_log(FAKE_AWS_KEY)
+        h = manager.compress_content(text, profile="log")["hash"]
+
+        def _raise(content: str) -> list[object]:
+            raise RuntimeError("simulated detector crash")
+
+        monkeypatch.setattr("mnemos.secrets_detector.detect_secrets", _raise)
+        result = manager.retrieve_content(h)
+
+        assert result["refused"] is True
+        assert result["reason"] == "scanner error"
+        assert self._count(manager, h) == 0
+
+    def test_successful_issuance_bumps_exactly_once(self, manager):
+        text = _cacheable_secret_log("plain-value-no-pattern")
+        h = manager.compress_content(text, profile="log")["hash"]
+
+        first = manager.retrieve_content(h)
+
+        assert first["found"] is True
+        assert first["retrieval_count"] == 1, "response reflects the post-bump count"
+        assert self._count(manager, h) == 1
+        manager.retrieve_content(h)
+        assert self._count(manager, h) == 2

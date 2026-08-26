@@ -132,6 +132,27 @@ class IssuanceScan:
     redacted_patterns: dict[str, int]
 
 
+@dataclass(frozen=True, slots=True)
+class IssuanceItemScan:
+    """Per-item outcome for ALL strings one result item echoes (P1-b F1).
+
+    Security-review round F1: ``auto_title()`` derives from the first
+    line of raw content (or echoes an explicitly-set title) and was
+    returned unscanned next to redacted content — the title is now
+    scanned as part of the same item. ``content``/``title`` are the
+    strings safe to issue (``""`` when refused or when the item echoes
+    no such field); ``redactions``/``redacted_patterns`` are the MERGED
+    counts across both fields.
+    """
+
+    content: str
+    title: str
+    refused: bool
+    reason: str | None
+    redactions: int
+    redacted_patterns: dict[str, int]
+
+
 class MemoryManager:
     """Central coordinator for all memory operations."""
 
@@ -2361,6 +2382,51 @@ class MemoryManager:
                 redacted_patterns={},
             )
 
+    def scan_issuance_item(
+        self,
+        text: str | None,
+        *,
+        title: str | None = None,
+        context: str,
+    ) -> IssuanceItemScan:
+        """Scan every string ONE result item echoes (P1-b review F1).
+
+        Composite over :meth:`scan_issuance` for items that echo both a
+        content field and a title (``auto_title()`` derives from the
+        first line of raw content OR echoes an explicitly-set title —
+        either can carry a secret, so scanning only the content leaks
+        the title verbatim in the same response). ``text``/``title`` are
+        ``None`` when the item does not echo that field (e.g. title-only
+        ``mnemos_list_recent``); at least one must be given. Refuse mode
+        refuses the item when EITHER field trips; ``redactions`` /
+        ``redacted_patterns`` are merged across both fields. The
+        ``context`` label should carry the item id (F3 forensics); the
+        scanned field is appended here (``<context>:content`` /
+        ``<context>:title``).
+        """
+        content_scan = (
+            self.scan_issuance(text, context=f"{context}:content") if text is not None else None
+        )
+        title_scan = (
+            self.scan_issuance(title, context=f"{context}:title") if title is not None else None
+        )
+        scans = [s for s in (content_scan, title_scan) if s is not None]
+        refused = any(s.refused for s in scans)
+        reason = next((s.reason for s in scans if s.refused), None)
+        redactions = sum(s.redactions for s in scans)
+        patterns: dict[str, int] = {}
+        for s in scans:
+            for name, count in s.redacted_patterns.items():
+                patterns[name] = patterns.get(name, 0) + count
+        return IssuanceItemScan(
+            content=content_scan.text if content_scan is not None and not refused else "",
+            title=title_scan.text if title_scan is not None and not refused else "",
+            refused=refused,
+            reason=reason,
+            redactions=redactions,
+            redacted_patterns=patterns,
+        )
+
     def retrieve_content(
         self,
         h: str,
@@ -2407,6 +2473,10 @@ class MemoryManager:
         * m5 — a scanner exception maps to the refused shape with
           ``reason="scanner error"`` (fail-closed, observable) instead
           of propagating as a 500 / MCP error.
+        * review F4 — the retrieval counter is bumped only when content
+          is actually ISSUED (``ccr_touch`` after the decision; the
+          entry is read via ``bump=False``): refused/denied issuances no
+          longer inflate ``retrieval_count`` or LRU-pin the entry.
         """
         from mnemos.ccr import retrieve
         from mnemos.secrets_detector import (
@@ -2421,9 +2491,15 @@ class MemoryManager:
             query=query,
             snippet_count=snippet_count,
             project=project,
+            bump=False,
         )
         if not result.get("found"):
             return result
+
+        def _mark_issued() -> None:
+            """Bump the counter post-decision (F4) and reflect it in result."""
+            self.sqlite.ccr_touch(h)
+            result["retrieval_count"] = int(result["retrieval_count"]) + 1
 
         # ── CWE-668 ergonomics: unscoped retrieval of a scoped row ────
         entry_project = str(result.get("project") or "")
@@ -2500,6 +2576,7 @@ class MemoryManager:
                     "redactions": redactions,
                     "redacted_patterns": pattern_counts,
                 }
+            _mark_issued()
             result["redactions"] = redactions
             if redactions:
                 result["redacted_patterns"] = pattern_counts
@@ -2539,6 +2616,7 @@ class MemoryManager:
             }
         result["original"] = scan.text
         result["redactions"] = scan.redactions
+        _mark_issued()
         if scan.redactions:
             result["redacted_patterns"] = scan.redacted_patterns
             logger.info(
