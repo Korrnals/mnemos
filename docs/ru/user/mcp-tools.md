@@ -48,6 +48,7 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | [`mnemos_retrieve`](#mnemos_retrieve) | Извлечение оригинала из кэша CCR или FTS5-сниппеты | нет |
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — перенос динамического контента для стабильности prefix cache | нет |
 | [`mnemos_assemble_context`](#mnemos_assemble_context) *(#125)* | ADR-0017 D1 — сборка контекстного блока перед вызовом LLM (recall → CCR → filter → scan → align → budget) | нет |
+| [`mnemos_context_rewrite`](#mnemos_context_rewrite) *(#125)* | ADR-0018 — событие жизненного цикла `on_context_rewrite`: сообщить о перезаписи контекста, оригинал уходит в LTM (идемпотентно, без версий) | нет |
 | [`mnemos_export`](#mnemos_export) | Экспорт записей в файл (JSON или SQLite-снимок) | нет |
 | [`mnemos_import`](#mnemos_import) | Импорт записей из файла экспорта (merge или restore) | нет |
 | [`mnemos_stats`](#mnemos_stats) | Счётчики состояния и ключевые пути | нет |
@@ -1042,6 +1043,63 @@ output_style:
 - REST-близнец: `POST /context/assemble` (тот же путь менеджера) — [http-api.md](http-api.md)
 - Обоснование конвейера: ADR-0017 (D1), ADR-0018 (инвариант входа: скан + провенанс + статусный гейт на каждом пути LTM → контекст)
 - CCR: [`mnemos_compress`](#mnemos_compress) / [`mnemos_retrieve`](#mnemos_retrieve)
+
+---
+
+## `mnemos_context_rewrite`
+
+**Событие жизненного цикла `on_context_rewrite` (ADR-0018, mnemos #125, волна 2)** — харнесс сообщает, что он *перезаписал* блок своего рабочего контекста. Оригинал заменённого блока — источник истины: он без потерь попадает в долговременную память через **обычный knowledge-конвейер** и становится доступен для rehydrate через **существующие** просканированные/гейтованные каналы. Компакция харнесса становится lossless, когда оригиналы ложатся в провайдера.
+
+Семантика (ADR-0018, дословно):
+
+- **Идемпотентность** — повторная доставка того же события не выполняет повторных записей. Ключ идемпотентности content-addressed: SHA-256 по length-prefixed каноническому кортежу `project/agent/session/supersedes/content`, сохраняется как `metadata["rewrite_event_key"]` и проверяется *до* любой записи. Адвизорный `diff` в ключ сознательно не входит — он не load-bearing, поэтому повторная доставка с другим diff — то же событие. Два одинаковых блока, перезаписанные в двух разных сессиях, — два события (`session` участвует в ключе).
+- **Без версий** — никаких обещаний порядка и цепочек версий. Линия замены — ребро `supersedes` (минимальная поверхность `memory_edges` фазы 1); обход/расширение — фаза 2 (ADR-0017 D2).
+- **Вход в конвейер** — оригинал входит как `raw` через `MemoryManager.add`; в контексте он достижим только после продвижения конвейером в `processed`/`published` (гейт `CONTEXT_ADMISSIBLE_STATUSES`). Layer-1 скан на записи выполняется по `content` (при находке автоматом ставится `mnemos:no-federate`; zero-loss — оригинал сохраняется без изменений). Адвизорный diff получает собственный Layer-1-вердикт (`rewrite_diff_scan_verdict`: clean/hit/unknown), и находка тоже помечает запись `mnemos:no-federate` — иначе адвизорная полезная нагрузка федерировалась бы без флага через канал, сканирующий только `content`.
+- **Rehydrate = существующие каналы** — сохранённые перезаписью оригиналы всплывают через `mnemos_retrieve` / `mnemos_assemble_context` (скан на выдаче, провенанс, статусный гейт). Нового пути извлечения сознательно нет.
+- **Маркер** — CCR-маркер остаётся в окне харнесса (на стороне вызывающего). Установите `include_marker=true`, чтобы также получить compress-маркер оригинала; rehydrate этого маркера идёт через `mnemos_retrieve` (скоуп по проекту, скан на выдаче).
+
+### Вход
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|-------|------|----------|---------|-------------|
+| `content` | string | **да** | — | Оригинальный текст заменённого блока контекста — источник истины, сохраняется без изменений. |
+| `project` | string | **да** | — | Слаг проекта (тег `project:<slug>`). |
+| `agent` | string | **да** | — | Слаг агента (тег `agent:<slug>`). |
+| `session` | string | нет | — | Идентификатор сессии — метаданные провенанса и часть ключа идемпотентности. |
+| `supersedes` | string | нет | — | id записи, которую заменили, — создаёт ребро `supersedes` новый → старый (должна существовать; тоже часть ключа события). |
+| `diff` | string | нет | — | Адвизорный diff was→becomes — хранится в метаданных, никогда не load-bearing, не возвращается. |
+| `include_marker` | boolean | нет | `false` | Также вернуть CCR compress-маркер оригинала. |
+
+### Выход
+
+```json
+{
+  "status": "stored",
+  "memory_id": "3f2a…",
+  "memory_status": "raw",
+  "event_key": "9c1d…",
+  "project": "my-project",
+  "agent": "my-agent",
+  "session": "sess-42",
+  "supersedes": {"to_memory_id": "a17b…", "edge_created": true}
+}
+```
+
+`status` — `stored` (первая доставка; `memory_status` = `raw` — конвейер ещё не отработал) или `deduplicated` (повторная доставка: тот же `memory_id`, новых записей нет; идемпотентная вставка ребра вернёт `edge_created: false`). `ccr_marker` (полный результат `mnemos_compress`) появляется только при `include_marker=true`. Квитанция **не содержит версионных полей и полей порядка** — by design (событие без версий).
+
+### Замечания
+
+- **Валидация на границе** — пустые `content`/`project`/`agent`, пустые опциональные строки, нарушение контракта тегов (strict-режим), нарушение размерных лимитов (`content` > `mnemos.context_rewrite_max_content_chars`, по умолчанию 1 МиБ; `diff` > `mnemos.context_rewrite_max_diff_chars`, по умолчанию 256 КиБ) или цель `supersedes`, **не найденная в проекте вызывающего**, возвращают `{"error": …}` (REST-близнец отвечает 422). Сообщение о supersedes сознательно не различает «нет такой записи» и «запись другого проекта» — глобального оракула существования нет.
+- **Rate limit на поверхность записи** — `mnemos.context_rewrite_rate_limit_per_minute` (по умолчанию 30, 0 отключает) считает СОХРАНЁННЫЕ события на `(project, session)` в скользящую минуту; при превышении возвращается `{"error": …, "rate_limited": true}` (REST 429). Дедуплицированные повторные доставки не пишут и не расходуют квоту — штормы ретраев безвредны.
+- **Сохраняемые теги** — `project:<slug>`, `agent:<slug>`, `mnemos:session` (ближайший существующий подтип для живого сессионного материала; отдельный подтип `mnemos:context-rewrite` — изменение словаря контракта тегов, отложено на комитет), плюс `mnemos:no-federate` при любой находке секрета.
+- **Метаданные провенанса** — `metadata["source"] = "context-rewrite"`, `rewrite_session`, `rewrite_event_key` и (при наличии) `rewrite_diff` + `rewrite_diff_scan_verdict`.
+- **Модель доверия single-tenant** — харнесс является доверенным ПО; провайдер гарантирует хранение, сканирование, гейтирование и провенанс, но не политику замены (pinned-зоны, бюджеты и эмиссия событий замены остаются на стороне харнесса).
+
+### Связанное
+
+- REST-близнец: `POST /context/rewrite` (тот же путь менеджера) — [http-api.md](http-api.md)
+- Обоснование: ADR-0018 (§"on_context_rewrite": событие жизненного цикла, а не версионируемый примитив)
+- Каналы rehydrate: [`mnemos_retrieve`](#mnemos_retrieve) / [`mnemos_assemble_context`](#mnemos_assemble_context); маркер через [`mnemos_compress`](#mnemos_compress)
 
 ---
 

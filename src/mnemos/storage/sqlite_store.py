@@ -1858,3 +1858,45 @@ class SQLiteStore:
             (from_memory_id, kind),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_memory_id_by_rewrite_event_key(self, event_key: str) -> str | None:
+        """Return the memory id carrying ``metadata.rewrite_event_key``.
+
+        Idempotency lookup for the ``on_context_rewrite`` event (ADR-0018,
+        mnemos #125 Wave 2): the event handler computes a content-addressed
+        key and consults this BEFORE any write, so a re-delivered event
+        performs no duplicate writes. Deliberately a specific method, not a
+        generic metadata query — JSON extraction is unindexed and the
+        surface stays minimal (same philosophy as ``_EDGE_KINDS``).
+        Returns the EARLIEST match (creation order) or ``None``.
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT id FROM memories "
+            "WHERE json_extract(metadata, '$.rewrite_event_key') = ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (event_key,),
+        ).fetchone()
+        return str(row["id"]) if row is not None else None
+
+    def count_recent_context_rewrites(
+        self, project: str, session: str | None, since_iso: str
+    ) -> int:
+        """Count STORED rewrite-event memories for ``(project, session)`` at/after ``since_iso``.
+
+        Backs the per-(project, session) write quota (#125 W2 review F1 —
+        mirrors the #96 guardrail-5 pattern). Counts rows in ``memories``,
+        i.e. stored events only: a deduplicated re-delivery performs no
+        write and therefore consumes no quota. ``session=None`` matches
+        rows stored without a session (null-safe ``IS`` comparison —
+        ``json_extract`` yields NULL for a missing key).
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM memories "
+            "WHERE project = ? AND created_at >= ? "
+            "AND json_extract(metadata, '$.source') = 'context-rewrite' "
+            "AND json_extract(metadata, '$.rewrite_session') IS ?",
+            (project, since_iso, session),
+        ).fetchone()
+        return int(row["n"]) if row else 0

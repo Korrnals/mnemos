@@ -549,6 +549,57 @@ curl -s -X POST http://127.0.0.1:8000/context/assemble \
 
 Полная документация по полям: [`mcp-tools.md` → `mnemos_assemble_context`](mcp-tools.md#mnemos_assemble_context).
 
+### `POST /context/rewrite` — сообщить о перезаписи контекста (ADR-0018)
+
+Зеркало MCP-инструмента `mnemos_context_rewrite` через тот же путь менеджера
+(mnemos #125, волна 2). Харнесс сообщает, что перезаписал блок своего
+рабочего контекста; оригинал без поток попадает в LTM через обычный
+knowledge-конвейер (входит как `raw`, в контексте достижим только после
+продвижения конвейером), идемпотентен по content-addressed ключу события,
+без версий (линия замены — опциональное ребро `supersedes`).
+
+**Тело запроса**
+
+| Поле | Тип | Обяз. | По умолч. | Описание |
+|------|-----|-------|-----------|----------|
+| `content` | string | **да** | — | Оригинальный текст заменённого блока — источник истины, сохраняется без изменений. |
+| `project` | string | **да** | — | Слаг проекта (тег `project:<slug>`). |
+| `agent` | string | **да** | — | Слаг агента (тег `agent:<slug>`). |
+| `session` | string | нет | `null` | Идентификатор сессии — провенанс, часть ключа идемпотентности. |
+| `supersedes` | string | нет | `null` | id заменяемой записи — создаёт ребро `supersedes` новый → старый (должна существовать). |
+| `diff` | string | нет | `null` | Адвизорный diff was→becomes — хранится в метаданных, никогда не load-bearing. |
+| `include_marker` | boolean | нет | `false` | Также вернуть CCR compress-маркер оригинала. |
+
+**Ответы**
+
+- `200` — квитанция события: `status` (`stored` / `deduplicated` — событие
+  идемпотентно, повторная доставка это 200, а не 201), `memory_id`,
+  `memory_status` (`raw` при первой доставке), `event_key`, эхо
+  `project`/`agent`/`session`, `supersedes`
+  (`{"to_memory_id", "edge_created"}` или `null`) и `ccr_marker` при
+  `include_marker=true`. Версионных полей и полей порядка нет — by design.
+- `429` — превышена квота записи: более
+  `mnemos.context_rewrite_rate_limit_per_minute` (по умолчанию 30)
+  СОХРАНЁННЫХ событий на `(project, session)` за последнюю минуту.
+  Дедуплицированные повторные доставки квоту не расходуют.
+- `422` — ошибка валидации на границе (пустые обязательные поля, пустые
+  опциональные строки, нарушение размерных лимитов — `content` > 1 МиБ /
+  `diff` > 256 КиБ по умолчанию, нарушение контракта тегов в
+  strict-режиме или цель `supersedes`, не найденная в этом проекте, —
+  сообщение не различает «не найдено» и «запись другого проекта»).
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/context/rewrite \
+  -H "Content-Type: application/json" \
+  -d '{"content": "<текст оригинального блока>", "project": "mnemos", "agent": "zcode",
+       "session": "sess-42", "supersedes": "3f2a…", "diff": "was: v1 → became: v2",
+       "include_marker": true}'
+```
+
+Полная документация по полям: [`mcp-tools.md` → `mnemos_context_rewrite`](mcp-tools.md#mnemos_context_rewrite).
+
 ---
 
 ## Обратимое сжатие (CCR)

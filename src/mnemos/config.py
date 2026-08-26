@@ -37,6 +37,16 @@ class MnemosConfig(BaseModel):
     # actor drives the transitions.
     workflow_stale_lock_threshold_hours: int = Field(default=24, ge=1, le=720)
     workflow_rate_limit_per_minute: int = Field(default=30, ge=1, le=1000)
+    # mnemos #125 W2 review F1: on_context_rewrite write-surface guardrails.
+    # The rate limit counts STORED rewrite events per (project, session) per
+    # minute — a deduplicated re-delivery performs no write and consumes no
+    # quota, so at-least-once retry storms stay harmless. 0 disables the
+    # limiter. Size caps reject oversized payloads at the boundary before
+    # any write: content = the original block (default 1 MiB in chars),
+    # diff = the advisory was→becomes payload (default 256 KiB in chars).
+    context_rewrite_rate_limit_per_minute: int = Field(default=30, ge=0, le=10_000)
+    context_rewrite_max_content_chars: int = Field(default=1_048_576, ge=1)
+    context_rewrite_max_diff_chars: int = Field(default=262_144, ge=1)
 
 
 class LoggingConfig(BaseModel):

@@ -2334,6 +2334,46 @@ class MemoryManager:
             async_handle=async_handle,
         )
 
+    # ── ADR-0018: on_context_rewrite lifecycle event (#125, Wave 2) ────────
+
+    def context_rewrite(
+        self,
+        *,
+        content: str,
+        project: str,
+        agent: str,
+        session: str | None = None,
+        supersedes: str | None = None,
+        diff: str | None = None,
+        include_marker: bool = False,
+    ) -> dict[str, Any]:
+        """Handle one ``on_context_rewrite`` event (idempotent, version-less).
+
+        Thin delegation to :func:`mnemos.context_rewrite.context_rewrite` —
+        the event logic lives in that module; this method keeps the
+        one-core-over-three-surfaces pattern (MCP / REST / future SDK all
+        call the manager). The original enters LTM through the NORMAL
+        knowledge-pipeline ``add`` path; rehydrate is the existing
+        scanned/gated issuance channels. Raises ``ValueError`` on invalid
+        input (incl. size caps), tag-contract violations, or a
+        ``supersedes`` target not found in the caller's project; raises
+        :class:`mnemos.context_rewrite.ContextRewriteRateLimitError` when the
+        per-(project, session) stored-event quota is exhausted (W2
+        review F1 — REST maps it to 429).
+        """
+        from mnemos.context_rewrite import context_rewrite as _event
+
+        return _event(
+            self,
+            content=content,
+            project=project,
+            agent=agent,
+            session=session,
+            supersedes=supersedes,
+            diff=diff,
+            include_marker=include_marker,
+        )
+
     # ── CCR (P1-4) ─────────────────────────────────────────────────────────
 
     def compress_content(
