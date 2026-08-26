@@ -183,7 +183,11 @@ def retrieve(
     Returns:
         Dict with ``hash``, ``found``, and either ``original`` (full) or
         ``snippets`` (ranked list). ``found=False`` if the hash is absent
-        (or project-scoped out).
+        (or project-scoped out). Both ``found=True`` branches carry the
+        entry's ``project`` so callers can audit unscoped retrievals of
+        project-scoped entries (ADR-0018 P1-b, CWE-668 ergonomics)
+        without a second ``ccr_get`` (which would bump the retrieval
+        counter).
     """
     entry = store.ccr_get(h, project=project)
     if entry is None:
@@ -194,6 +198,7 @@ def retrieve(
             "hash": h,
             "found": True,
             "original": entry["original"],
+            "project": entry["project"],
             "size_bytes": entry["size_bytes"],
             "retrieval_count": entry["retrieval_count"],
         }
@@ -204,6 +209,7 @@ def retrieve(
         "hash": h,
         "found": True,
         "query": query,
+        "project": entry["project"],
         "snippets": snippets,
         "retrieval_count": entry["retrieval_count"],
     }

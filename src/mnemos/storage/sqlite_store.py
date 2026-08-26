@@ -33,6 +33,17 @@ from mnemos.models import (
 
 logger = logging.getLogger(__name__)
 
+# ADR-0018 P1-b (m2) — FTS5 snippet highlight markers used by
+# ``ccr_search``. Module-level so the issuance-side scanner
+# (``MemoryManager.retrieve_content``) strips EXACTLY these markers
+# before scanning a snippet: the markers wrap query-matched tokens and
+# split multi-token secrets (e.g. a JWT whose payload segment matched
+# the query), which makes the raw marked snippet text evade
+# ``detect_secrets``.
+FTS_SNIPPET_START_MARK: Final[str] = ">>>"
+FTS_SNIPPET_END_MARK: Final[str] = "<<<"
+FTS_SNIPPET_ELLIPSIS: Final[str] = " ... "
+
 # M15.2 — Whitelisted dispatch for dynamic UPDATE setters.
 # Maps public field name -> literal "column=?" SQL fragment. Bandit B608
 # requires no user-controlled identifier be interpolated into SQL; this
@@ -1714,6 +1725,13 @@ class SQLiteStore:
         scopes the ``ccr_get`` lookup, this guard keeps the snippet
         channel from leaking other projects' entries when a caller
         invokes search directly.
+
+        The snippet highlight markers are the module-level
+        ``FTS_SNIPPET_*`` constants (single source of truth): the
+        issuance-side scanner (ADR-0018 P1-b m2) strips exactly these
+        markers before scanning a snippet, because they split
+        multi-token secrets (e.g. a JWT whose payload token matched the
+        query) so the raw marked snippet text evades ``detect_secrets``.
         """
         conn = self._get_conn()
         if project:
@@ -1725,11 +1743,18 @@ class SQLiteStore:
         fts_query = self._build_fts_query(query)
         try:
             rows = conn.execute(
-                "SELECT snippet(ccr_cache_fts, 1, '>>>', '<<<', ' ... ', 32) AS snip, "
+                "SELECT snippet(ccr_cache_fts, 1, ?, ?, ?, 32) AS snip, "
                 "rank AS rank "
                 "FROM ccr_cache_fts WHERE ccr_cache_fts MATCH ? AND hash=? "
                 "ORDER BY rank LIMIT ?",
-                (fts_query, hash, limit),
+                (
+                    FTS_SNIPPET_START_MARK,
+                    FTS_SNIPPET_END_MARK,
+                    FTS_SNIPPET_ELLIPSIS,
+                    fts_query,
+                    hash,
+                    limit,
+                ),
             ).fetchall()
         except sqlite3.OperationalError as exc:
             if "missing row" in str(exc) or "content table" in str(exc):

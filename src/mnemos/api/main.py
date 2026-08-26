@@ -514,17 +514,25 @@ async def search(query: SearchQuery) -> list[dict[str, Any]]:
         content = mem.effective_content()
         if query.include_raw and mem.raw_content:
             content = mem.raw_content
-        out.append(
-            {
-                "id": mem.id,
-                "title": mem.auto_title(),
-                "content": content,
-                "tags": mem.tags,
-                "status": mem.status.value,
-                "score": r.score,
-                "search_type": r.search_type,
-            }
-        )
+        # ADR-0018 P1-b (M1): scan-at-issuance — the exact string being
+        # echoed (post raw_content swap) is scanned/redacted per item;
+        # refuse mode drops the item (fail-closed, logged not returned).
+        scan = mgr.scan_issuance(content, context="api:/search")
+        if scan.refused:
+            continue
+        item = {
+            "id": mem.id,
+            "title": mem.auto_title(),
+            "content": scan.text,
+            "tags": mem.tags,
+            "status": mem.status.value,
+            "score": r.score,
+            "search_type": r.search_type,
+            "redactions": scan.redactions,
+        }
+        if scan.redactions:
+            item["redacted_patterns"] = scan.redacted_patterns
+        out.append(item)
     return out
 
 
@@ -541,16 +549,25 @@ async def agent_recall(
     mgr = get_manager()
     query = AgentRecallQuery(agent=name, project=project, query=q, limit=limit)
     results = mgr.agent_recall(query)
-    return [
-        {
+    # ADR-0018 P1-b (M1): scan-at-issuance on the echoed content field
+    # (same policy and per-item notes as /search).
+    out = []
+    for r in results:
+        scan = mgr.scan_issuance(r.memory.effective_content(), context="api:/recall/agent")
+        if scan.refused:
+            continue
+        item = {
             "id": r.memory.id,
             "title": r.memory.auto_title(),
-            "content": r.memory.effective_content(),
+            "content": scan.text,
             "tags": r.memory.tags,
             "created_at": r.memory.created_at.isoformat(),
+            "redactions": scan.redactions,
         }
-        for r in results
-    ]
+        if scan.redactions:
+            item["redacted_patterns"] = scan.redacted_patterns
+        out.append(item)
+    return out
 
 
 # ── Pipeline endpoints (M4) ────────────────────────────────────────────────────

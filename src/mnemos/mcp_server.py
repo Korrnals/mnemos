@@ -1249,18 +1249,28 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             include_raw=args.get("include_raw", False),
             status=status,
         )
-        _search_results = [
-            {
+        # ADR-0018 P1-b (M1): scan-at-issuance — the echoed content field
+        # is scanned/redacted per item (titles/tags/metadata are not
+        # content and are not scanned). Refuse mode drops the item
+        # entirely (fail-closed); the drop is logged, never returned.
+        _search_results = []
+        for r in results:
+            scan = mgr.scan_issuance(r.memory.effective_content(), context="mcp:mnemos_search")
+            if scan.refused:
+                continue
+            item = {
                 "id": r.memory.id,
                 "title": r.memory.auto_title(),
-                "content": r.memory.effective_content(),
+                "content": scan.text,
                 "tags": r.memory.tags,
                 "score": r.score,
                 "search_type": r.search_type,
                 "status": r.memory.status,
+                "redactions": scan.redactions,
             }
-            for r in results
-        ]
+            if scan.redactions:
+                item["redacted_patterns"] = scan.redacted_patterns
+            _search_results.append(item)
         _suffix = _steering_suffix(args, settings)
         if _suffix:
             return {"results": _search_results, "_output_style_hint": _suffix}
@@ -1275,17 +1285,29 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             limit=args.get("limit", 20),
         )
         results = mgr.agent_recall(recall_query)
-        return [
-            {
+        # ADR-0018 P1-b (M1): scan-at-issuance on the echoed content
+        # field (same policy as mnemos_search — refuse mode drops the
+        # item, logged not returned).
+        recalled = []
+        for r in results:
+            scan = mgr.scan_issuance(
+                r.memory.effective_content(), context="mcp:mnemos_agent_recall"
+            )
+            if scan.refused:
+                continue
+            item = {
                 "id": r.memory.id,
                 "title": r.memory.auto_title(),
-                "content": r.memory.effective_content(),
+                "content": scan.text,
                 "tags": r.memory.tags,
                 "created_at": r.memory.created_at.isoformat(),
                 "status": r.memory.status,
+                "redactions": scan.redactions,
             }
-            for r in results
-        ]
+            if scan.redactions:
+                item["redacted_patterns"] = scan.redacted_patterns
+            recalled.append(item)
+        return recalled
 
     # ── mnemos_save_context ─────────────────────────────────────────────────
     if name == "mnemos_save_context":
@@ -1317,7 +1339,13 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             )
         out = [f"# Context for project '{project}'\n"]
         for m in memories:
-            out.append(f"---\n{m.effective_content()}\n")
+            # ADR-0018 P1-b (M1): scan-at-issuance on the echoed content
+            # (same policy as mnemos_search; refuse mode drops the
+            # memory's section, logged not returned).
+            scan = mgr.scan_issuance(m.effective_content(), context="mcp:mnemos_recall_context")
+            if scan.refused:
+                continue
+            out.append(f"---\n{scan.text}\n")
         instructions = _auto_collect_instructions(project) if _auto_collect_state["enabled"] else ""
         return "\n".join(out) + instructions + _steering_suffix(args, settings)
 
