@@ -322,7 +322,7 @@ RRF fusion of FTS5 and vector legs. Only `published` memories are searched by de
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `query` | string | **yes** | — | Natural-language search string. |
+| `query` | string | **yes** | — | Natural-language search string. Matched as ONE whole phrase by the FTS5 leg (see Query semantics above). |
 | `tags` | string[] | no | — | Filter: all of these tags must be present. |
 | `project` | string | no | — | Restrict to a project slug. |
 | `limit` | int | no | `20` | Max results. |

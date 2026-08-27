@@ -318,6 +318,8 @@ Mnemos работает с любым харнессом, говорящим п�
 
 - **[Hermes Agent](https://hermes-agent.nousresearch.com/)** — нативный `MemoryProvider` плагин
   (`integrations/hermes/`): автоматический prefetch, sync-turn, зеркалирование встроенной памяти.
+  С версии плагина **3.0.0** (ADR-0017 D1) плагин работает **in-process** — требуется `pip install mnemos`
+  в Python-окружении Hermes, а легаси-ключи конфигурации `base_url` / `api_key` / `totp_secret` удалены.
   См. [руководство по интеграции](docs/ru/user/integration-guide.md#hermes-agent).
 - **Нативные цели** — `mnemos integration setup --target <имя>` развёртывает
   поведенческий пакет и регистрирует MCP-сервер за один проход. См.
