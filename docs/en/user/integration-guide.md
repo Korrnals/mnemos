@@ -325,10 +325,14 @@ Mnemos ships two dedicated surfaces for harness/automation integrations
 - **`MnemosSDK`** (`from mnemos.sdk import MnemosSDK`) — the thin typed
   Python facade over `MemoryManager` for in-process adapters:
   `remember` / `recall` / `forget` / `stats` / `assemble_context` /
-  `rewrite` delegate one-to-one to the manager (no new logic; the same
-  scans, gates and idempotency the MCP/REST surfaces apply). Local-first:
-  `MnemosSDK(settings)` builds its own manager, `MnemosSDK(manager=…)`
-  reuses yours.
+  `rewrite`. The domain logic lives in the manager paths (the same
+  scans, gates and idempotency the MCP/REST surfaces apply); the two
+  channel-boundary duties are the facade's own, mirroring every other
+  surfaced channel: `recall` scans every echoed item at issuance
+  (content + title, per-item redactions, refuse-mode drop) and
+  `remember` validates caller tags against the tag contract before any
+  write. Local-first: `MnemosSDK(settings)` builds its own manager,
+  `MnemosSDK(manager=…)` reuses yours.
 
 The full adapter documentation (Hermes migration, acceptance checklist)
 lands with the adapter wave.

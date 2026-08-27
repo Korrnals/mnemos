@@ -617,7 +617,9 @@ curl -s -X POST http://127.0.0.1:8000/context/rewrite \
 404). Поля конкретного действия валидируются границей хуков (`ValueError` →
 422): `context_hint`/`file`/`budget` для `pre_llm_call`, `limit` для
 `on_session_start`, `tool_name`/`output_text`/`auto_compress`/`profile` для
-`post_tool_call`.
+`post_tool_call`. `output_text` ограничен капом `hooks.max_output_chars`
+(по умолчанию 1 048 576 символов, конвенция капов context-rewrite; `0`
+отключает) — превышение отклоняется с 422 ДО любой записи.
 
 **Тело запроса**
 

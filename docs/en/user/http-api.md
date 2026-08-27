@@ -616,7 +616,9 @@ validation can later prove provenance.
 404). Per-action fields are validated by the hooks boundary (`ValueError` →
 422): `context_hint`/`file`/`budget` for `pre_llm_call`, `limit` for
 `on_session_start`, `tool_name`/`output_text`/`auto_compress`/`profile` for
-`post_tool_call`.
+`post_tool_call`. `output_text` is capped at `hooks.max_output_chars`
+(default 1,048,576 chars, the context-rewrite caps convention; `0` disables)
+— an over-cap payload is rejected 422 BEFORE any write.
 
 **Request body**
 

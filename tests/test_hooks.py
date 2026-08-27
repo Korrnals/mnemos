@@ -49,7 +49,16 @@ AGENT = "hooks-agent"
 SESSION = "hooks-session"
 
 
-def _settings(tmp: Path, *, hooks_auto_compress: bool = False, **ccr: Any) -> Settings:
+def _settings(
+    tmp: Path,
+    *,
+    hooks_auto_compress: bool = False,
+    hooks_max_output_chars: int | None = None,
+    **ccr: Any,
+) -> Settings:
+    hooks: dict[str, Any] = {"auto_compress": hooks_auto_compress}
+    if hooks_max_output_chars is not None:
+        hooks["max_output_chars"] = hooks_max_output_chars
     settings = Settings(
         mnemos={
             "vault_path": str(tmp / "vault"),
@@ -57,7 +66,7 @@ def _settings(tmp: Path, *, hooks_auto_compress: bool = False, **ccr: Any) -> Se
             "db_name": "test.db",
         },
         ccr={"min_size_chars": 100, **ccr},  # type: ignore[arg-type]
-        hooks={"auto_compress": hooks_auto_compress},  # type: ignore[arg-type]
+        hooks=hooks,  # type: ignore[arg-type]
     )
     settings.resolve_paths()
     return settings
@@ -336,6 +345,57 @@ class TestPostToolCall:
                 auto_compress=True,
             )
 
+    def test_over_cap_output_rejected_no_write(self, manager: MemoryManager) -> None:
+        """F3 (W3 review): hooks.max_output_chars rejects an oversized
+        output_text at the boundary BEFORE any write — even on an
+        auto_compress=off call (the harness learns the contract early)."""
+        manager.settings.hooks.max_output_chars = 500
+        oversized = TOOL_OUTPUT + "x" * 5_000
+
+        with pytest.raises(ValueError, match=r"hooks\.max_output_chars"):
+            dispatch_hook(
+                manager,
+                action="post_tool_call",
+                session=SESSION,
+                project=PROJECT,
+                agent=AGENT,
+                tool_name="bash",
+                output_text=oversized,
+                auto_compress=True,
+            )
+        # The same payload is rejected with autocompression OFF too.
+        with pytest.raises(ValueError, match=r"hooks\.max_output_chars"):
+            dispatch_hook(
+                manager,
+                action="post_tool_call",
+                session=SESSION,
+                project=PROJECT,
+                agent=AGENT,
+                tool_name="bash",
+                output_text=oversized,
+            )
+        cached = (
+            manager.sqlite._get_conn()
+            .execute("SELECT COUNT(*) AS n FROM ccr_cache")
+            .fetchone()["n"]
+        )
+        assert cached == 0, "over-cap output must never reach the cache/FTS"
+
+    def test_default_cap_allows_normal_output(self, manager: MemoryManager) -> None:
+        """The default cap (1,048,576) does not trip on realistic output."""
+        assert manager.settings.hooks.max_output_chars == 1_048_576
+        result = dispatch_hook(
+            manager,
+            action="post_tool_call",
+            session=SESSION,
+            project=PROJECT,
+            agent=AGENT,
+            tool_name="bash",
+            output_text=TOOL_OUTPUT,
+            auto_compress=True,
+        )
+        assert result["compressed"] is True
+
 
 # ── dispatch ─────────────────────────────────────────────────────────────────
 
@@ -479,6 +539,32 @@ class TestRestHooksRoute:
         )
         assert resp.status_code == 422
         assert "tool_name" in resp.json()["detail"]
+
+    def test_over_cap_output_is_422_no_write(
+        self, rest_client: TestClient, manager: MemoryManager
+    ) -> None:
+        """F3: the cap maps to 422 at the REST surface (context_rewrite
+        caps convention) and nothing is written."""
+        manager.settings.hooks.max_output_chars = 500
+        resp = rest_client.post(
+            "/hooks/post_tool_call",
+            json={
+                "session": SESSION,
+                "project": PROJECT,
+                "agent": AGENT,
+                "tool_name": "bash",
+                "output_text": TOOL_OUTPUT + "x" * 5_000,
+                "auto_compress": True,
+            },
+        )
+        assert resp.status_code == 422
+        assert "hooks.max_output_chars" in resp.json()["detail"]
+        cached = (
+            manager.sqlite._get_conn()
+            .execute("SELECT COUNT(*) AS n FROM ccr_cache")
+            .fetchone()["n"]
+        )
+        assert cached == 0
 
     def test_pre_llm_call(self, rest_client: TestClient, manager: MemoryManager) -> None:
         _add_published(manager, "rest hook body quokka-rest token")

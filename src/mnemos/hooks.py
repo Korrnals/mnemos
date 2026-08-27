@@ -51,10 +51,11 @@ re-implemented:
   threaded identity.
 
 Configuration (``hooks.`` section, :class:`mnemos.config.HooksConfig`):
-minimal by design — one knob, ``hooks.auto_compress`` (default False;
-the per-call ``auto_compress`` argument overrides it per invocation).
-The read-only hooks need no enablement: they add no capability the
-server surfaces do not already expose.
+minimal by design — two knobs: ``hooks.auto_compress`` (default False;
+the per-call ``auto_compress`` argument overrides it per invocation) and
+``hooks.max_output_chars`` (default 1,048,576 chars — the post_tool_call
+size cap, W3 review F3). The read-only hooks need no enablement: they
+add no capability the server surfaces do not already expose.
 
 Surfaces: one grouped MCP tool ``mnemos_hooks`` with
 ``action: enum [pre_llm_call, on_session_start, post_tool_call]``
@@ -246,12 +247,37 @@ def post_tool_call(
     is deliberately NOT wired to a knob in this wave: an explicit
     ``MnemosSDK.remember`` call is strictly more controllable than an
     implicit write on every tool result. Flagged for ratification.
+
+    Size cap (W3 review F3): ``hooks.max_output_chars`` (default
+    1,048,576 chars — the context_rewrite caps convention) rejects an
+    oversized ``output_text`` at the hook boundary BEFORE any write
+    (``ValueError`` → 422 / MCP error dict); nothing reaches
+    ``ccr_store`` / FTS. The cap applies REGARDLESS of the
+    ``auto_compress`` resolution — the boundary rejects the payload
+    before the mode is even consulted (a 10 MB output is rejected on an
+    off-hook call too, so the harness learns the contract early). 0
+    disables.
     """
     _require_identity(session, project, agent)
     if not isinstance(tool_name, str) or not tool_name.strip():
         raise ValueError("tool_name is required and must be a non-empty string")
     if not isinstance(output_text, str):
         raise ValueError("output_text is required and must be a string")
+    max_chars = mgr.settings.hooks.max_output_chars
+    if max_chars and len(output_text) > max_chars:
+        logger.warning(
+            "hooks.post_tool_call: output_text over cap (%d > %d) — rejected, "
+            "no write; session=%s project=%s agent=%s tool=%s",
+            len(output_text),
+            max_chars,
+            session,
+            project,
+            agent,
+            tool_name,
+        )
+        raise ValueError(
+            f"output_text exceeds hooks.max_output_chars ({len(output_text)} > {max_chars})"
+        )
 
     enabled = mgr.settings.hooks.auto_compress if auto_compress is None else auto_compress
     if not enabled:

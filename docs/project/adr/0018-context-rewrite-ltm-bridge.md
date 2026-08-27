@@ -187,6 +187,18 @@ Bullets below update the residual register after the deferrals triage
   ranking is a tier-2 heuristic; primary controls are the unconditional
   issuance scan + refuse + zero-loss storage. No parameterization without
   evidence (rejected in committee).
+- **B5 tier-2 — margin-straddle residual: documented (W3).** The
+  offset-mapped snippet scan redacts findings INTERSECTING the localized
+  snippet window ± `SNIPPET_SCAN_MARGIN_CHARS` (64). A secret straddling
+  a fragment edge with a >64-char overhang INSIDE the original but
+  outside the margin-augmented window may evade the window scan while
+  its visible fragment still reaches the snippet (the intersection is
+  what gets redacted; a missed finding redacts nothing). The margin is
+  pattern-catalogue-dependent — sized to the longest detector pattern
+  tails (jwt) at both window edges; it is deliberately generous (a wider
+  margin only shrinks the intersecting redaction) but not exhaustive.
+  Revisit when the detector pattern catalogue changes (a longer pattern
+  than margin × 2 implies raising the constant).
 - **A2 — same-project seeding residual: documented ahead of
   implementation.** The strong-form marker validation (existence +
   provenance/issuer-ledger + `original_chars` integrity) closes

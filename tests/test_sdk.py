@@ -1,11 +1,18 @@
 """MnemosSDK facade (mnemos #125, Wave 3) — delegation contract.
 
-The facade owns NO logic (src/mnemos/sdk.py): every verb is a one-line
-delegation to a ``MemoryManager`` method. These tests pin the DELEGATION
-(spy/monkeypatch the manager methods) plus the facade's two boundary
-behaviours: the constructor's exactly-one-of rule and ``forget``'s
-project guard. The delegated-to paths themselves are covered by their
-own suites (test_assemble_context.py, test_context_rewrite.py, …).
+The facade owns no DOMAIN logic (src/mnemos/sdk.py): every verb is a
+one-line delegation to a ``MemoryManager`` method — EXCEPT the two
+channel-boundary duties the W3 security review pinned (F1/F2): ``recall``
+scans every echoed item at issuance (mirroring ``mnemos_search``) and
+``remember`` validates caller tags against the tag contract (mirroring
+``mnemos_add``). These tests pin the delegation (spy/monkeypatch the
+manager methods), the two channel duties, and the facade's other
+boundary behaviours (constructor exactly-one-of, ``forget``'s project
+guard). The delegated-to paths themselves are covered by their own
+suites (test_assemble_context.py, test_context_rewrite.py, …).
+
+All secrets below are obviously fake EXAMPLE-style values built from
+the detector's own pattern catalogue; real credentials never appear.
 """
 
 from __future__ import annotations
@@ -19,12 +26,13 @@ import pytest
 
 from mnemos.config import Settings
 from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate
+from mnemos.models import MemoryCreate, MemoryStatus, TagContractError
 from mnemos.sdk import MnemosSDK
 
 PROJECT = "sdk-proj"
 AGENT = "sdk-agent"
 SESSION = "sdk-session"
+FAKE_AWS_KEY = "AKIAEXAMPLEABCDEFGH1"
 
 
 def _settings(tmp: Path, **ccr: Any) -> Settings:
@@ -44,6 +52,15 @@ def _settings(tmp: Path, **ccr: Any) -> Settings:
 def manager() -> Iterator[MemoryManager]:
     with tempfile.TemporaryDirectory() as tmpdir:
         mgr = MemoryManager(_settings(Path(tmpdir)))
+        yield mgr
+        mgr.close()
+
+
+@pytest.fixture
+def refuse_manager() -> Iterator[MemoryManager]:
+    """Refuse-mode deployment (ccr.retrieve_refuse_on_secret=True)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = MemoryManager(_settings(Path(tmpdir), retrieve_refuse_on_secret=True))
         yield mgr
         mgr.close()
 
@@ -93,8 +110,35 @@ class TestRemember:
         assert calls[0]["project"] == PROJECT
         assert calls[0]["agent"] == AGENT
 
+    def test_invalid_mnemos_subtype_rejected_no_write(
+        self, sdk: MnemosSDK, manager: MemoryManager
+    ) -> None:
+        """F2: the tag contract runs at the facade — an invalid reserved
+        ``mnemos:*`` subtype raises BEFORE any write (the store count is
+        unchanged), mirroring the mnemos_add channel."""
+        before = manager.sqlite.count()
+        with pytest.raises(TagContractError):
+            sdk.remember(
+                "note body",
+                PROJECT,
+                AGENT,
+                tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:bogus-subtype"],
+            )
+        assert manager.sqlite.count() == before, "rejected tags must not write"
 
-# ── recall → search ───────────────────────────────────────────────────────────
+    def test_valid_tags_pass_through(
+        self, sdk: MnemosSDK, manager: MemoryManager
+    ) -> None:
+        memory = sdk.remember(
+            "note body",
+            PROJECT,
+            AGENT,
+            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
+        )
+        assert "mnemos:learning" in memory.tags
+
+
+# ── recall → search + ISSUANCE SCAN (F1) ──────────────────────────────────────
 
 
 class TestRecall:
@@ -116,6 +160,63 @@ class TestRecall:
         assert calls[0]["query"] == "quokka-sdk"
         assert calls[0]["project"] == PROJECT
         assert calls[0]["limit"] == 3, "kw passes through to search"
+
+
+class TestRecallIssuanceScan:
+    """F1 (W3 review): the SDK returns SCANNED items, never stored rows."""
+
+    def _published_secret_row(self, mgr: MemoryManager) -> None:
+        data = MemoryCreate(
+            content=f"deploy note with api key {FAKE_AWS_KEY} inline",
+            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
+            status=MemoryStatus.PUBLISHED,
+        )
+        mgr.add(data, project=PROJECT, agent=AGENT)
+
+    def test_secret_in_recalled_row_masked_via_sdk(
+        self, sdk: MnemosSDK, manager: MemoryManager
+    ) -> None:
+        self._published_secret_row(manager)
+
+        items = sdk.recall("quokka", PROJECT)
+
+        assert items, "the row must be recalled"
+        for item in items:
+            assert FAKE_AWS_KEY not in item["content"], "raw secret leaked via SDK content"
+            assert FAKE_AWS_KEY not in item["title"], "raw secret leaked via SDK title"
+        assert any("<REDACTED:aws-key>" in i["content"] for i in items)
+        assert any("<REDACTED:aws-key>" in i["title"] for i in items)
+        # 2 = content span + title span (auto_title derives from the first
+        # line, which carries the key — the P1-b F1 both-fields semantics).
+        assert any(i["redactions"] == 2 for i in items)
+        assert any(i.get("redacted_patterns") == {"aws-key": 2} for i in items)
+
+    def test_refuse_mode_drops_the_item(
+        self, refuse_manager: MemoryManager
+    ) -> None:
+        sdk = MnemosSDK(manager=refuse_manager)
+        self._published_secret_row(refuse_manager)
+
+        items = sdk.recall("quokka", PROJECT)
+
+        assert items == [], "refuse mode must drop the secret-carrying item entirely"
+
+    def test_clean_row_carries_zero_redactions(
+        self, sdk: MnemosSDK, manager: MemoryManager
+    ) -> None:
+        data = MemoryCreate(
+            content="clean deploy note about quokka-plain rotation",
+            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
+            status=MemoryStatus.PUBLISHED,
+        )
+        manager.add(data, project=PROJECT, agent=AGENT)
+
+        items = sdk.recall("quokka-plain", PROJECT)
+
+        assert items, "the row must be recalled"
+        assert items[0]["redactions"] == 0
+        assert "redacted_patterns" not in items[0]
+        assert "quokka-plain" in items[0]["content"]
 
 
 # ── forget → get + delete (project-guarded) ──────────────────────────────────

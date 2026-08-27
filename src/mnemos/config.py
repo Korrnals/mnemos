@@ -272,6 +272,13 @@ class HooksConfig(BaseModel):
     # (the W3+ harness configs) enable it. The per-call ``auto_compress``
     # argument overrides per invocation.
     auto_compress: bool = False
+    # W3 review F3 — hard cap on ``post_tool_call`` ``output_text`` (in
+    # characters, enforced at the hook boundary BEFORE any write: an
+    # oversized payload is rejected with ValueError → 422 / MCP error
+    # dict, nothing reaches ccr_store/FTS). Default matches the
+    # ``mnemos.context_rewrite_max_content_chars`` caps convention
+    # (1 MiB in chars). 0 disables the cap.
+    max_output_chars: int = Field(default=1_048_576, ge=0, le=100_000_000)
 
 
 class CacheAlignerConfig(BaseModel):

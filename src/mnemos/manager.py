@@ -178,9 +178,7 @@ class SnippetScanOutcome:
     findings: tuple[SecretFinding, ...]
 
 
-def _offset_mapped_snippet_scan(
-    marked_snippet: str, original: str | None
-) -> SnippetScanOutcome:
+def _offset_mapped_snippet_scan(marked_snippet: str, original: str | None) -> SnippetScanOutcome:
     """B5 tier-2 — scan the ORIGINAL over the localized snippet window.
 
     Localization reuses the W1 CCR-stage approach (``ccr.parse_marker``
@@ -209,15 +207,11 @@ def _offset_mapped_snippet_scan(
     """
     from mnemos.secrets_detector import detect_secrets
 
-    fallback = SnippetScanOutcome(
-        clean=False, localizable=False, text="", findings=()
-    )
+    fallback = SnippetScanOutcome(clean=False, localizable=False, text="", findings=())
     if original is None:
         return fallback
 
-    stripped = marked_snippet.replace(FTS_SNIPPET_START_MARK, "").replace(
-        FTS_SNIPPET_END_MARK, ""
-    )
+    stripped = marked_snippet.replace(FTS_SNIPPET_START_MARK, "").replace(FTS_SNIPPET_END_MARK, "")
     fragments = [f for f in stripped.split(FTS_SNIPPET_ELLIPSIS) if f]
     if not fragments:
         return fallback
@@ -1657,9 +1651,7 @@ class MemoryManager:
             "requests_total": int(self._search_stats["requests_total"]),
             # A9: searches that ran in the explicit global mode
             # (``project=None``) — cross-project by definition.
-            "cross_project_requests_total": int(
-                self._search_stats["cross_project_requests_total"]
-            ),
+            "cross_project_requests_total": int(self._search_stats["cross_project_requests_total"]),
             "avg_latency_ms": avg_latency_ms,
             "avg_results": avg_results,
         }
@@ -3119,11 +3111,15 @@ class MemoryManager:
             # echoed in the response (the snippet channel issues snippets,
             # not originals).
             cached_original = result.pop("original", None)
-            original_for_scan = (
-                cached_original if isinstance(cached_original, str) else None
-            )
+            original_for_scan = cached_original if isinstance(cached_original, str) else None
             redactions = 0
             pattern_counts: dict[str, int] = {}
+            # W3 review F5: localization failures are counted separately
+            # so a refuse-mode refusal names its TRUE cause — "we could
+            # not prove this snippet safe" (ambiguous offsets) is not
+            # "we detected a secret", and conflating them misleads
+            # forensics.
+            localization_failures = 0
             try:
                 for snippet in result["snippets"]:
                     text = str(snippet.get("snippet", ""))
@@ -3142,15 +3138,12 @@ class MemoryManager:
                     if not outcome.localizable:
                         snippet["snippet"] = "<REDACTED:snippet>"
                         redactions += 1
-                        pattern_counts["snippet"] = (
-                            pattern_counts.get("snippet", 0) + 1
-                        )
+                        localization_failures += 1
+                        pattern_counts["snippet"] = pattern_counts.get("snippet", 0) + 1
                         continue
                     snippet["snippet"] = outcome.text
                     redactions += len(outcome.findings)
-                    for name, count in findings_by_pattern(
-                        list(outcome.findings)
-                    ).items():
+                    for name, count in findings_by_pattern(list(outcome.findings)).items():
                         pattern_counts[name] = pattern_counts.get(name, 0) + count
             except Exception as exc:
                 # m5: fail-closed — never issue unscanned snippets.
@@ -3168,16 +3161,35 @@ class MemoryManager:
                     "redacted_patterns": {},
                 }
             if redactions and self.settings.ccr.retrieve_refuse_on_secret:
+                # W3 review F5: distinct, honest reason per cause. A
+                # localization failure withheld snippets that could not
+                # be PROVEN secret-free (nothing was detected); that is
+                # a different incident from a detection and the refusal
+                # forensics must not claim a detection that did not
+                # happen. When BOTH occurred, the detection — the more
+                # severe, actionable cause — names the refusal. Both
+                # remain fail-closed refusals with no content and no
+                # bump.
+                detected = redactions - localization_failures
+                refusal_reason = (
+                    "secret detected in retrieved snippets"
+                    if detected > 0
+                    else "snippet localization failed (ambiguous) — refusing under refuse-mode"
+                )
                 logger.warning(
-                    "CCR issuance refused (secret in snippets): hash=%s redactions=%d",
+                    "CCR issuance refused (%s): hash=%s redactions=%d "
+                    "detected=%d localization_failures=%d",
+                    refusal_reason,
                     h,
                     redactions,
+                    detected,
+                    localization_failures,
                 )
                 return {
                     "hash": h,
                     "found": True,
                     "refused": True,
-                    "reason": "secret detected in retrieved snippets",
+                    "reason": refusal_reason,
                     "redactions": redactions,
                     "redacted_patterns": pattern_counts,
                 }

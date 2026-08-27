@@ -47,7 +47,7 @@ FAKE_JWT = "eyJfakeHeaderContent22.eyJfakePayloadXYZ.fakesigABCDEF1234567890"
 PROJECT = "b5t2-proj"
 
 
-def _settings(tmp: Path) -> Settings:
+def _settings(tmp: Path, **ccr: object) -> Settings:
     settings = Settings(
         mnemos={
             "vault_path": str(tmp / "vault"),
@@ -58,6 +58,7 @@ def _settings(tmp: Path) -> Settings:
             "min_size_chars": 100,
             "max_entries": 100,
             "ttl_days": 1,
+            **ccr,
         },  # type: ignore[arg-type]
     )
     settings.resolve_paths()
@@ -68,6 +69,15 @@ def _settings(tmp: Path) -> Settings:
 def manager() -> Iterator[MemoryManager]:
     with tempfile.TemporaryDirectory() as tmpdir:
         mgr = MemoryManager(_settings(Path(tmpdir)))
+        yield mgr
+        mgr.close()
+
+
+@pytest.fixture
+def refuse_manager() -> Iterator[MemoryManager]:
+    """Refuse-mode deployment (ccr.retrieve_refuse_on_secret=True)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = MemoryManager(_settings(Path(tmpdir), retrieve_refuse_on_secret=True))
         yield mgr
         mgr.close()
 
@@ -163,6 +173,68 @@ class TestNonLocalizableFallback:
             assert snippet["snippet"] == "<REDACTED:snippet>"
         assert result["redactions"] >= 1
         assert result["redacted_patterns"] == {"snippet": len(snippets)}
+
+
+class TestRefuseModeReasons:
+    """W3 review F5: refuse-mode forensics name the TRUE cause — a
+    localization failure (nothing detected) is not a detection."""
+
+    def test_localization_failure_reason_is_distinct(
+        self, refuse_manager: MemoryManager
+    ) -> None:
+        """Non-localizable snippet (repeated text) under refuse mode: the
+        refusal must NOT claim a detection — the fixed distinct reason
+        names the ambiguity; still fail-closed (no snippets, no bump)."""
+        line = "worker quokka-repeat processing batch item completed status ok"
+        text = "\n".join([line] * 80)
+        h = refuse_manager.compress_content(text, profile="log", project=PROJECT)[
+            "hash"
+        ]
+        before = refuse_manager.sqlite.ccr_get(h, project=PROJECT, bump=False)[
+            "retrieval_count"
+        ]
+
+        result = refuse_manager.retrieve_content(
+            h, query="quokka-repeat", project=PROJECT
+        )
+
+        assert result["found"] is True
+        assert result["refused"] is True
+        assert result["reason"] == (
+            "snippet localization failed (ambiguous) — refusing under refuse-mode"
+        )
+        assert result["redacted_patterns"] == {"snippet": result["redactions"]}
+        assert "snippets" not in result
+        after = refuse_manager.sqlite.ccr_get(h, project=PROJECT, bump=False)[
+            "retrieval_count"
+        ]
+        assert after == before, "refusal must not bump the retrieval counter"
+
+    def test_real_detection_keeps_detection_reason(
+        self, refuse_manager: MemoryManager
+    ) -> None:
+        """A genuine intersecting finding under refuse mode keeps the
+        detection reason — the F5 split never downgrades a real hit."""
+        filler = " ".join(f"filler{i:03d}" for i in range(21))
+        text = (
+            "deploy run quokka-window boundary probe start\n"
+            f"{filler}\n"
+            f"service token {FAKE_JWT} rotate monthly\n"
+            + "trailing payload " * 40
+        )
+        h = refuse_manager.compress_content(text, profile="log", project=PROJECT)[
+            "hash"
+        ]
+        _as_legacy_unscanned(refuse_manager, h)
+
+        result = refuse_manager.retrieve_content(
+            h, query="quokka-window", project=PROJECT
+        )
+
+        assert result["found"] is True
+        assert result["refused"] is True
+        assert result["reason"] == "secret detected in retrieved snippets"
+        assert result["redacted_patterns"].get("jwt") == 1
 
 
 class TestCleanPathUnchanged:

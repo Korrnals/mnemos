@@ -1158,10 +1158,10 @@ Semantics (ADR-0018, verbatim):
 
 ### Notes
 
-- **Config** — one knob: `hooks.auto_compress` (default `false`). The read-only hooks need no enablement; they expose no capability the server surfaces do not already have.
+- **Config** — two knobs: `hooks.auto_compress` (default `false`) and `hooks.max_output_chars` (default 1,048,576 chars — `post_tool_call` rejects an oversized `output_text` at the boundary BEFORE any write, mirroring the context-rewrite caps convention; `0` disables). The read-only hooks need no enablement; they expose no capability the server surfaces do not already have.
 - **Sync only (this wave)** — ADR-0017 D1 names sync/async hook modes; async delivery waits for a consumer that needs it. Harnesses needing `async`/`code`/`prose` assembly modes call `mnemos_assemble_context` directly.
 - **Memory capture is explicit** — `post_tool_call` does not silently store tool outputs as memories; use `MnemosSDK.remember` (or `mnemos_add`/REST) when a result is worth keeping.
-- **Errors** — boundary violations return `{"error": …}` (REST twin answers 422; unknown action is 404 there).
+- **Errors** — boundary violations return `{"error": …}` (REST twin answers 422; unknown action is 404 there). An over-cap `output_text` is a boundary violation: `{"error": "output_text exceeds hooks.max_output_chars (N > M)"}`, nothing written.
 
 ### Related
 
