@@ -412,6 +412,11 @@ def context_rewrite(
         MemoryCreate(content=content, tags=tags, source=MemorySource.MCP, metadata=metadata),
         project=project,
         agent=agent,
+        # Trusted caller: ONLY this path may derive the denormalised
+        # rewrite quota columns from metadata (C10 review round — generic
+        # create surfaces never derive them, so planted client metadata
+        # cannot mint quota counters).
+        trusted_rewrite_provenance=True,
     )
 
     receipt = {

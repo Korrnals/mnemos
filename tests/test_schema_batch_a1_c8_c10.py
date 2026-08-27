@@ -734,3 +734,255 @@ class TestManagerIssuanceCallSite:
         assert mgr.sqlite.ccr_get(h, project="pA", bump=False)["retrieval_count"] == 1
         assert mgr.sqlite.ccr_get(h, project="pB", bump=False)["retrieval_count"] == 0
         mgr.close()
+
+
+# ── Review round: A1 migration crash safety ──────────────────────────────────
+
+
+class TestA1MigrationCrashSafety:
+    """The rebuild is ONE transaction; a crash cannot wedge the store.
+
+    The pre-transactional code ran create/copy/drop/rename as separate
+    autocommitted statements — a crash between CREATE ``ccr_cache_a1_rebuild``
+    and the RENAME left an orphan that made every later open fail on the
+    plain CREATE. These tests simulate both crash windows with hand-built
+    orphans and assert reopen CONVERGES (store opens, migration completes).
+    """
+
+    def _orphan(self, path: Path, *, with_partial_row: bool) -> None:
+        conn = sqlite3.connect(str(path))
+        conn.execute(
+            """
+            CREATE TABLE ccr_cache_a1_rebuild (
+                hash               TEXT NOT NULL,
+                original           TEXT NOT NULL,
+                project            TEXT NOT NULL DEFAULT '',
+                created_at         TEXT NOT NULL,
+                size_bytes         INTEGER NOT NULL DEFAULT 0,
+                retrieval_count    INTEGER NOT NULL DEFAULT 0,
+                last_retrieved_at  TEXT,
+                secret_scan_verdict TEXT,
+                secret_scan_at     TEXT,
+                PRIMARY KEY (project, hash)
+            )
+            """
+        )
+        if with_partial_row:
+            conn.execute(
+                "INSERT INTO ccr_cache_a1_rebuild (rowid, hash, original,"
+                " project, created_at, size_bytes) VALUES (99, 'zz',"
+                " 'partial copy', 'pX', '2026-01-01T00:00:00+00:00', 0)"
+            )
+        conn.commit()
+        conn.close()
+
+    def test_crash_between_create_and_rename_converges(self, tmp_path: Path) -> None:
+        """Orphan rebuild table + intact legacy table (crash after CREATE,
+        before RENAME): reopen drops the orphan and completes the migration."""
+        db = tmp_path / "crash1.db"
+        _build_legacy_db(db, ccr_rows=(("h1", "original one", "projA", 3),))
+        self._orphan(db, with_partial_row=True)
+        store = SQLiteStore(db)  # must not raise
+        conn = store._get_conn()
+        pk = _pk_positions(conn, "ccr_cache")
+        assert pk.get("project") == 1 and pk.get("hash") == 2
+        assert not _object_exists(conn, "ccr_cache_a1_rebuild")
+        rows = [
+            tuple(r)
+            for r in conn.execute("SELECT rowid, hash, project, retrieval_count FROM ccr_cache")
+        ]
+        assert rows == [(1, "h1", "projA", 3)]  # partial orphan copy gone
+        assert store.ccr_get("h1", project="projA", bump=False) is not None
+        store.close()
+
+    def test_crash_after_drop_before_rename_opens_and_converges(self, tmp_path: Path) -> None:
+        """Worst window: legacy table dropped, rename never ran (only
+        reachable from a pre-transactional crash). Reopen must OPEN: the
+        schema script recreates an empty composite-PK cache (the cache is
+        derived, recompressible — committee-ratified data-loss bound) and
+        the orphan is dropped."""
+        db = tmp_path / "crash2.db"
+        _build_legacy_db(db, ccr_rows=(("h1", "original one", "projA", 3),))
+        conn = sqlite3.connect(str(db))
+        conn.execute("DROP TABLE ccr_cache")
+        conn.commit()
+        conn.close()
+        self._orphan(db, with_partial_row=True)
+        store = SQLiteStore(db)  # must not raise
+        conn = store._get_conn()
+        pk = _pk_positions(conn, "ccr_cache")
+        assert pk.get("project") == 1 and pk.get("hash") == 2
+        assert not _object_exists(conn, "ccr_cache_a1_rebuild")
+        assert store.ccr_count() == 0
+        store.close()
+
+    def test_transaction_rolls_back_on_script_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failure INSIDE the rebuild script leaves the legacy table
+        intact (rolled back) and no transaction dangling — the next
+        connect sees the legacy shape and re-runs the migration."""
+        db = tmp_path / "txfail.db"
+        _build_legacy_db(db, ccr_rows=(("h1", "original one", "projA", 3),))
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        # Force a mid-script failure: sabotage the CREATE with invalid SQL
+        # (unbalanced paren) — the script dies INSIDE the open transaction.
+        monkeypatch.setattr(
+            "mnemos.storage.sqlite_store._CCR_REBUILD_DDL",
+            "CREATE TABLE ccr_cache_a1_rebuild (bad_col TEXT",
+        )
+        with pytest.raises(sqlite3.OperationalError):
+            SQLiteStore._migrate_a1_ccr_composite_pk(conn)
+        monkeypatch.undo()
+        # The except-branch rolled the script back: legacy row survived,
+        # no orphan, no dangling transaction.
+        assert not conn.in_transaction
+        assert not _object_exists(conn, "ccr_cache_a1_rebuild")
+        survived = conn.execute("SELECT COUNT(*) FROM ccr_cache WHERE hash='h1'").fetchone()[0]
+        assert survived == 1
+        conn.close()
+        # And the store re-opens cleanly, completing the migration.
+        store = SQLiteStore(db)
+        migrated = store._get_conn()
+        assert _pk_positions(migrated, "ccr_cache").get("project") == 1
+        assert store.ccr_count() == 1
+        store.close()
+
+    def test_concurrent_first_connects_converge(self, tmp_path: Path) -> None:
+        """Many threads first-connecting a legacy DB must serialize their
+        bootstrap (schema script + migrations) — review-round race
+        regression: without the bootstrap lock the A1 rebuild's DROP/RENAME
+        interleaved with concurrent schema-script CREATEs ("database disk
+        image is malformed" / "database is locked"), and the backfill's
+        plain flag INSERT raised UNIQUE under racing connections.
+        """
+        import threading
+
+        db = tmp_path / "race.db"
+        _build_legacy_db(db, ccr_rows=(("h1", "original one", "projA", 3),))
+        store = SQLiteStore(db)
+        errors: list[str] = []
+
+        def worker() -> None:
+            try:
+                conn = store._get_conn()
+                conn.execute("SELECT COUNT(*) FROM memories").fetchone()
+            except Exception as exc:  # collected and asserted below
+                errors.append(repr(exc))
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert errors == []
+        conn = store._get_conn()
+        pk = _pk_positions(conn, "ccr_cache")
+        assert pk.get("project") == 1 and pk.get("hash") == 2
+        backfilled = [
+            tuple(r)
+            for r in conn.execute(
+                "SELECT id, rewrite_source, rewrite_session FROM memories"
+                " WHERE id IN ('m1','m2') ORDER BY id"
+            )
+        ]
+        assert backfilled == [("m1", "context-rewrite", "s1"), ("m2", "context-rewrite", None)]
+        store.close()
+
+
+# ── Review round: trusted-gated rewrite column derivation ────────────────────
+
+
+class TestRewriteColumnForgeryGate:
+    """C10 review round — generic create paths must never mint quota columns.
+
+    POST /memories (and every other generic surface) accepts
+    client-controlled ``metadata``; before the gate, ``save()`` derived
+    ``rewrite_source``/``rewrite_session`` from it unconditionally, so a
+    client could plant ``source='context-rewrite'`` + a victim session and
+    burn the rewrite channel's quotas without touching the rewrite API.
+    """
+
+    def _columns(self, mgr: MemoryManager, memory_id: str) -> tuple[str | None, str | None]:
+        conn = mgr.sqlite._get_conn()
+        row = conn.execute(
+            "SELECT rewrite_source, rewrite_session FROM memories WHERE id=?",
+            (memory_id,),
+        ).fetchone()
+        return (row["rewrite_source"], row["rewrite_session"])
+
+    def test_generic_add_with_planted_metadata_never_derives(self, tmp_path: Path) -> None:
+        mgr = _manager(_settings(tmp_path))
+        mem = mgr.add(
+            MemoryCreate(
+                content="forged provenance attempt",
+                tags=[f"project:{PROJECT}", f"agent:{AGENT}"],
+                metadata={"source": SOURCE_CONTEXT_REWRITE, "rewrite_session": "victim-sess"},
+            ),
+            project=PROJECT,
+            agent=AGENT,
+        )
+        assert self._columns(mgr, mem.id) == (None, None)
+        # Quota untouched in both directions (session bucket + aggregate).
+        assert mgr.sqlite.count_recent_context_rewrites(PROJECT, "victim-sess", "2000-01-01") == 0
+        rows, sessions = mgr.sqlite.count_recent_context_rewrites_by_project(PROJECT, "2000-01-01")
+        assert (rows, sessions) == (0, 0)
+        mgr.close()
+
+    def test_rest_add_with_planted_metadata_no_quota(self, tmp_path: Path) -> None:
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from mnemos.api import main as api_main
+        from mnemos.api.main import app, lifespan
+
+        mgr = _manager(_settings(tmp_path))
+        api_main._manager = mgr
+        test_app = FastAPI(title="Mnemos-Forgery-Test", version="0.1.0", lifespan=lifespan)
+        for route in app.routes:
+            test_app.routes.append(route)
+        try:
+            with TestClient(test_app) as tc:
+                resp = tc.post(
+                    "/memories",
+                    json={
+                        "content": "rest forged provenance",
+                        "tags": [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
+                        "metadata": {
+                            "source": SOURCE_CONTEXT_REWRITE,
+                            "rewrite_session": "victim-sess",
+                        },
+                    },
+                )
+                assert resp.status_code == 201
+                mem_id = resp.json()["id"]
+        finally:
+            api_main._manager = None
+        assert self._columns(mgr, mem_id) == (None, None)
+        assert mgr.sqlite.count_recent_context_rewrites(PROJECT, "victim-sess", "2000-01-01") == 0
+        mgr.close()
+
+    def test_trusted_rewrite_path_still_derives(self, tmp_path: Path) -> None:
+        mgr = _manager(_settings(tmp_path))
+        receipt = _rewrite_event(mgr, session="real-sess", n=1)
+        assert self._columns(mgr, str(receipt["memory_id"])) == (
+            SOURCE_CONTEXT_REWRITE,
+            "real-sess",
+        )
+        assert mgr.sqlite.count_recent_context_rewrites(PROJECT, "real-sess", "2000-01-01") == 1
+        mgr.close()
+
+    def test_generic_update_preserves_trusted_columns(self, tmp_path: Path) -> None:
+        from mnemos.models import MemoryUpdate
+
+        mgr = _manager(_settings(tmp_path))
+        receipt = _rewrite_event(mgr, session="keep-sess", n=1)
+        mem_id = str(receipt["memory_id"])
+        updated = mgr.update(mem_id, MemoryUpdate(content="edited after the fact"))
+        assert updated is not None
+        # The untrusted UPDATE omits the columns from SET: an edited
+        # legitimate event keeps counting (cannot be forged or erased).
+        assert self._columns(mgr, mem_id) == (SOURCE_CONTEXT_REWRITE, "keep-sess")
+        assert mgr.sqlite.count_recent_context_rewrites(PROJECT, "keep-sess", "2000-01-01") == 1
+        mgr.close()

@@ -579,18 +579,33 @@ class SQLiteStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._cache = _TTLCache()
+        # Serialises CONNECTION BOOTSTRAP (schema script + migrations)
+        # across this store's threads. The per-thread connections
+        # themselves run unlocked as before — only the first connect of
+        # each thread takes the lock. Without it, a manager's background
+        # threads (scanner loop, CCR cleanup) racing the main thread's
+        # first connect interleave multi-statement DDL: the A1 rebuild's
+        # DROP/RENAME can collide with a concurrent fresh-CREATE from
+        # the schema script ("database disk image is malformed" /
+        # "database is locked"). Cross-PROCESS first-connects are
+        # serialized at the SQLite level instead (BEGIN IMMEDIATE +
+        # busy_timeout + IF EXISTS convergence).
+        self._bootstrap_lock = threading.Lock()
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(str(self.db_path), check_same_thread=True)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.executescript(_DB_SCHEMA)
-            self._run_migrations(conn)
-            self._local.conn = conn
+            with self._bootstrap_lock:
+                conn = getattr(self._local, "conn", None)
+                if conn is None:
+                    conn = sqlite3.connect(str(self.db_path), check_same_thread=True)
+                    conn.row_factory = sqlite3.Row
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA foreign_keys=ON")
+                    conn.execute("PRAGMA busy_timeout=5000")
+                    conn.executescript(_DB_SCHEMA)
+                    self._run_migrations(conn)
+                    self._local.conn = conn
         return conn
 
     @staticmethod
@@ -636,11 +651,21 @@ class SQLiteStore:
 
         Existing rows get the values extracted from the metadata JSON (the
         pre-C10 write path stored them there only). The meta-table flag is
-        set in the SAME transaction so an interrupted backfill re-runs on
-        the next connect (idempotent: re-running the UPDATE converges).
-        Rows whose metadata is not valid JSON are skipped defensively
-        (json_extract would raise); ``save()`` re-derives both columns on
-        the next write of such a row anyway.
+        set in the same commit so an interrupted backfill re-runs on the
+        next connect. Rows whose metadata is not valid JSON are skipped
+        defensively (json_extract would raise); ``save()`` re-derives both
+        columns on the next write of such a row anyway.
+
+        CONCURRENT-CONNECT SAFE (review round): ``_run_migrations`` runs on
+        every THREAD-LOCAL connection, and a manager's background threads
+        (scanner loop, CCR cleanup) can open their first connection while
+        the main thread is still inside this routine. Both connections then
+        observe "flag absent" and both run the backfill. The UPDATE is
+        idempotent (converges to the same values) and the flag INSERT is
+        ``INSERT OR IGNORE`` — the losing racer no-ops instead of raising
+        ``UNIQUE constraint failed: meta.key`` (the plain INSERT made
+        random concurrent first-connects crash the store and flaked the
+        REST suite).
         """
         flag = conn.execute(
             "SELECT 1 FROM meta WHERE key = ?", (_BACKFILL_REWRITE_COLS_FLAG,)
@@ -656,7 +681,7 @@ class SQLiteStore:
             "     OR json_extract(metadata, '$.rewrite_session') IS NOT NULL)"
         )
         conn.execute(
-            "INSERT INTO meta (key, value, updated_at) VALUES (?,?,?)",
+            "INSERT OR IGNORE INTO meta (key, value, updated_at) VALUES (?,?,?)",
             (
                 _BACKFILL_REWRITE_COLS_FLAG,
                 "1",
@@ -685,27 +710,61 @@ class SQLiteStore:
         ``_DB_SCHEMA`` is re-executed after the rename to restore the
         ccr_cache indexes and triggers in one place (all IF NOT EXISTS —
         the rest of the script no-ops).
+
+        Review round — CRASH SAFETY: create+copy+drop+rename run inside
+        ONE explicit transaction (``BEGIN IMMEDIATE … COMMIT`` via
+        executescript; SQLite DDL is transactional). The pre-fix sequence
+        of autocommitted statements had a crash wedge: a process death
+        between CREATE ``ccr_cache_a1_rebuild`` and the RENAME left an
+        orphan rebuild table, and the reopen re-ran the plain CREATE →
+        OperationalError from ``_get_conn`` → the store became PERMANENTLY
+        unopenable. Now a crash before COMMIT rolls back to the intact
+        legacy table (reopen re-runs the migration cleanly), and the
+        leading ``DROP TABLE IF EXISTS`` converges an orphan left by any
+        pre-fix crash. The post-rename schema re-exec and the FTS 'rebuild'
+        stay OUTSIDE the transaction (idempotent, self-healing on the next
+        connect) as before.
         """
         info = conn.execute("PRAGMA table_info(ccr_cache)").fetchall()
         pk_positions = {str(row[1]): int(row[5]) for row in info}
-        if pk_positions.get("project") == 1 and pk_positions.get("hash") == 2:
-            return  # already composite (fresh or migrated)
-        if not pk_positions:
-            return  # no ccr_cache table (created by _DB_SCHEMA on this connect)
+        already_composite = pk_positions.get("project") == 1 and pk_positions.get("hash") == 2
+        if already_composite or not pk_positions:
+            # Already composite (fresh/migrated) or no ccr_cache table —
+            # nothing to rebuild. Still converge a possible orphan from a
+            # PRE-transactional crash: in the worst window the legacy table
+            # was dropped, the rename never ran, and the schema script has
+            # just recreated an empty composite cache — the half-built
+            # ``ccr_cache_a1_rebuild`` would otherwise linger forever.
+            conn.execute("DROP TABLE IF EXISTS ccr_cache_a1_rebuild")
+            conn.commit()
+            return
         total = int(conn.execute("SELECT COUNT(*) FROM ccr_cache").fetchone()[0])
-        conn.execute(_CCR_REBUILD_DDL)
-        conn.execute(
-            "INSERT INTO ccr_cache_a1_rebuild "
-            "(rowid, hash, original, project, created_at, size_bytes, "
-            " retrieval_count, last_retrieved_at, secret_scan_verdict, secret_scan_at) "
-            "SELECT rowid, hash, original, project, created_at, size_bytes, "
-            "       retrieval_count, last_retrieved_at, secret_scan_verdict, "
-            "       secret_scan_at "
-            "FROM ccr_cache "
-            "WHERE rowid IN (SELECT MIN(rowid) FROM ccr_cache GROUP BY hash)"
-        )
-        conn.execute("DROP TABLE ccr_cache")
-        conn.execute("ALTER TABLE ccr_cache_a1_rebuild RENAME TO ccr_cache")
+        try:
+            conn.executescript(
+                "BEGIN IMMEDIATE;\n"
+                # Converge an orphaned rebuild table from a pre-fix crash.
+                "DROP TABLE IF EXISTS ccr_cache_a1_rebuild;\n"
+                + _CCR_REBUILD_DDL.rstrip()
+                + ";\n"
+                + "INSERT INTO ccr_cache_a1_rebuild "
+                "(rowid, hash, original, project, created_at, size_bytes, "
+                " retrieval_count, last_retrieved_at, secret_scan_verdict, "
+                " secret_scan_at) "
+                "SELECT rowid, hash, original, project, created_at, size_bytes, "
+                "       retrieval_count, last_retrieved_at, secret_scan_verdict, "
+                "       secret_scan_at "
+                "FROM ccr_cache "
+                "WHERE rowid IN (SELECT MIN(rowid) FROM ccr_cache GROUP BY hash);\n"
+                "DROP TABLE ccr_cache;\n"
+                "ALTER TABLE ccr_cache_a1_rebuild RENAME TO ccr_cache;\n"
+                "COMMIT;"
+            )
+        except Exception:
+            # Roll the half-run script back so the next connect sees the
+            # intact legacy table and re-runs cleanly; re-raise as-is.
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
         # Restore indexes + triggers (and re-assert the rest of the schema).
         conn.executescript(_DB_SCHEMA)
         # Re-sync the external-content FTS index with the rebuilt table.
@@ -797,7 +856,7 @@ class SQLiteStore:
 
     # ── CRUD ──────────────────────────────────────────────────────────────
 
-    def save(self, memory: Memory) -> None:
+    def save(self, memory: Memory, *, trusted_rewrite_provenance: bool = False) -> None:
         """Insert or update a memory, keeping the FTS5 index consistent.
 
         Uses UPDATE for existing rows (fires AFTER UPDATE trigger) and
@@ -805,6 +864,20 @@ class SQLiteStore:
         INSERT OR REPLACE — that fires the INSERT trigger with a new
         rowid while the FTS5 external-content table still references the
         old rowid, causing ``missing row N from content table`` errors.
+
+        C10 review round — TRUSTED GATE on the denormalised rewrite
+        provenance: ``rewrite_source`` / ``rewrite_session`` derive from
+        ``memory.metadata`` ONLY when the trusted rewrite-event path
+        (``context_rewrite`` → ``MemoryManager.add``) passes
+        ``trusted_rewrite_provenance=True``. The generic create paths
+        (REST/MCP/CLI) accept client-controlled ``metadata`` and must
+        never mint rewrite quota counters — planted
+        ``source='context-rewrite'`` + ``rewrite_session`` there would
+        otherwise burn the rewrite channel's per-session and per-project
+        quotas (429 DoS) without ever touching the rewrite API. On the
+        untrusted UPDATE path the two columns are left UNTOUCHED (an
+        edited legitimate event keeps counting; a forged row never had
+        them derived in the first place).
         """
         conn = self._get_conn()
         existing = conn.execute("SELECT 1 FROM memories WHERE id = ?", (memory.id,)).fetchone()
@@ -817,55 +890,103 @@ class SQLiteStore:
         )
         # C10 — denormalised rewrite provenance (metadata is the source of
         # truth; these columns exist purely so the rewrite quota counts are
-        # index-backed). Only non-empty str values are promoted; anything
-        # else (missing key, JSON object, empty string) stores NULL.
-        meta_src = memory.metadata.get("source")
-        rewrite_source = meta_src if isinstance(meta_src, str) and meta_src else None
-        meta_sess = memory.metadata.get("rewrite_session")
-        rewrite_session = meta_sess if isinstance(meta_sess, str) and meta_sess else None
+        # index-backed). Gated on the trusted caller — see the docstring.
+        # Only non-empty str values are promoted; anything else (missing
+        # key, JSON object, empty string) stores NULL.
+        if trusted_rewrite_provenance:
+            meta_src = memory.metadata.get("source")
+            rewrite_source = meta_src if isinstance(meta_src, str) and meta_src else None
+            meta_sess = memory.metadata.get("rewrite_session")
+            rewrite_session = meta_sess if isinstance(meta_sess, str) and meta_sess else None
+        else:
+            rewrite_source = None
+            rewrite_session = None
         if existing:
-            conn.execute(
-                """UPDATE memories SET
-                   content = ?, title = ?, tags = ?, source = ?, source_url = ?,
-                   memory_type = ?, created_at = ?, updated_at = ?, metadata = ?,
-                   file_path = ?, category = ?, project = ?, agent = ?, status = ?,
-                   quality_score = ?, confidence = ?, source_coverage = ?,
-                   cluster_id = ?, derived_from = ?, embedding_id = ?,
-                   raw_content = ?, clean_content = ?, filter_profile = ?,
-                   filter_stats = ?, filter_version = ?,
-                   rewrite_source = ?, rewrite_session = ?
-                   WHERE id = ?""",
-                (
-                    memory.content,
-                    title,
-                    tags_json,
-                    memory.source.value,
-                    memory.source_url,
-                    memory.memory_type.value,
-                    memory.created_at.isoformat(),
-                    memory.updated_at.isoformat(),
-                    meta_json,
-                    memory.file_path,
-                    memory.category,
-                    memory.project,
-                    memory.agent,
-                    memory.status.value,
-                    memory.quality_score,
-                    memory.confidence,
-                    memory.source_coverage,
-                    memory.cluster_id,
-                    derived_json,
-                    memory.embedding_id,
-                    memory.raw_content,
-                    memory.clean_content,
-                    memory.filter_profile,
-                    filter_stats_json,
-                    memory.filter_version,
-                    rewrite_source,
-                    rewrite_session,
-                    memory.id,
-                ),
-            )
+            if trusted_rewrite_provenance:
+                conn.execute(
+                    """UPDATE memories SET
+                       content = ?, title = ?, tags = ?, source = ?, source_url = ?,
+                       memory_type = ?, created_at = ?, updated_at = ?, metadata = ?,
+                       file_path = ?, category = ?, project = ?, agent = ?, status = ?,
+                       quality_score = ?, confidence = ?, source_coverage = ?,
+                       cluster_id = ?, derived_from = ?, embedding_id = ?,
+                       raw_content = ?, clean_content = ?, filter_profile = ?,
+                       filter_stats = ?, filter_version = ?,
+                       rewrite_source = ?, rewrite_session = ?
+                       WHERE id = ?""",
+                    (
+                        memory.content,
+                        title,
+                        tags_json,
+                        memory.source.value,
+                        memory.source_url,
+                        memory.memory_type.value,
+                        memory.created_at.isoformat(),
+                        memory.updated_at.isoformat(),
+                        meta_json,
+                        memory.file_path,
+                        memory.category,
+                        memory.project,
+                        memory.agent,
+                        memory.status.value,
+                        memory.quality_score,
+                        memory.confidence,
+                        memory.source_coverage,
+                        memory.cluster_id,
+                        derived_json,
+                        memory.embedding_id,
+                        memory.raw_content,
+                        memory.clean_content,
+                        memory.filter_profile,
+                        filter_stats_json,
+                        memory.filter_version,
+                        rewrite_source,
+                        rewrite_session,
+                        memory.id,
+                    ),
+                )
+            else:
+                # Untrusted UPDATE: the rewrite columns are NOT in the SET
+                # list — preserved as-is (cannot be forged or erased here).
+                conn.execute(
+                    """UPDATE memories SET
+                       content = ?, title = ?, tags = ?, source = ?, source_url = ?,
+                       memory_type = ?, created_at = ?, updated_at = ?, metadata = ?,
+                       file_path = ?, category = ?, project = ?, agent = ?, status = ?,
+                       quality_score = ?, confidence = ?, source_coverage = ?,
+                       cluster_id = ?, derived_from = ?, embedding_id = ?,
+                       raw_content = ?, clean_content = ?, filter_profile = ?,
+                       filter_stats = ?, filter_version = ?
+                       WHERE id = ?""",
+                    (
+                        memory.content,
+                        title,
+                        tags_json,
+                        memory.source.value,
+                        memory.source_url,
+                        memory.memory_type.value,
+                        memory.created_at.isoformat(),
+                        memory.updated_at.isoformat(),
+                        meta_json,
+                        memory.file_path,
+                        memory.category,
+                        memory.project,
+                        memory.agent,
+                        memory.status.value,
+                        memory.quality_score,
+                        memory.confidence,
+                        memory.source_coverage,
+                        memory.cluster_id,
+                        derived_json,
+                        memory.embedding_id,
+                        memory.raw_content,
+                        memory.clean_content,
+                        memory.filter_profile,
+                        filter_stats_json,
+                        memory.filter_version,
+                        memory.id,
+                    ),
+                )
         else:
             conn.execute(
                 """INSERT INTO memories
@@ -903,6 +1024,7 @@ class SQLiteStore:
                     memory.filter_profile,
                     filter_stats_json,
                     memory.filter_version,
+                    # NULL on the generic path regardless of metadata claims.
                     rewrite_source,
                     rewrite_session,
                 ),
