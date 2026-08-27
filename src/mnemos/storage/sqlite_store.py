@@ -740,13 +740,17 @@ class SQLiteStore:
             return
         total = int(conn.execute("SELECT COUNT(*) FROM ccr_cache").fetchone()[0])
         try:
+            # B608: the script is composed EXCLUSIVELY of static module
+            # constants and literals (transaction keywords + the DDL
+            # constant + a fully-static copy statement) — no user-controlled
+            # fragment ever enters it. One transaction so DDL is atomic.
             conn.executescript(
-                "BEGIN IMMEDIATE;\n"
+                "BEGIN IMMEDIATE;\n"  # nosec B608 - static literal
                 # Converge an orphaned rebuild table from a pre-fix crash.
                 "DROP TABLE IF EXISTS ccr_cache_a1_rebuild;\n"
                 + _CCR_REBUILD_DDL.rstrip()
-                + ";\n"
-                + "INSERT INTO ccr_cache_a1_rebuild "
+                + ";\n"  # nosec B608 - static literal
+                + "INSERT INTO ccr_cache_a1_rebuild "  # nosec B608 - static copy stmt
                 "(rowid, hash, original, project, created_at, size_bytes, "
                 " retrieval_count, last_retrieved_at, secret_scan_verdict, "
                 " secret_scan_at) "
