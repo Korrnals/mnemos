@@ -295,6 +295,7 @@ MCP-поверхность также предоставляет **A2A Sessions 
 | [container-deployment.md](docs/ru/admin/runbooks/container-deployment.md) | Сборка, push, compose, podman, Kubernetes, quadlet |
 | [adr/](docs/project/adr/) | Архитектурные решения (ADR) — *почему* за каждым дизайном |
 | [milestones.md](docs/project/milestones.md) | Журнал milestones со статусами |
+| [reports/](docs/project/reports/) | Отчёты о завершённых этапах — итоговый отчёт по каждой фазе дорожной карты |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes — формат Keep a Changelog |
 
 ---

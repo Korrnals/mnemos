@@ -300,6 +300,7 @@ gods' benefit. They were for the songs.
 | [container-deployment.md](docs/en/admin/runbooks/container-deployment.md) | Build, push, compose, podman, Kubernetes, quadlet |
 | [adr/](docs/project/adr/) | Architectural decision records — the *why* behind the design |
 | [milestones.md](docs/project/milestones.md) | Milestone ledger with status legend |
+| [reports/](docs/project/reports/) | Phase completion reports — final report per completed roadmap phase |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes — Keep a Changelog format |
 
 ---

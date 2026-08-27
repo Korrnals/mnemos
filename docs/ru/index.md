@@ -140,6 +140,7 @@ mnemos mcp-server
 
 - [Architecture Decision Records](../project/adr/README.md) — 14 ADR по эволюции M1 → M16
 - [Milestones](../project/milestones.md) — журнал вех с легендой статусов
+- [Отчёты о завершённых этапах](../project/reports/) — итоговые отчёты по фазам дорожной карты (Фазы 0–1: PR #135–#157)
 - [Code Review 2026-06](../project/code-review-2026-06.md) — итоги финального код-ревью
 
 ---
