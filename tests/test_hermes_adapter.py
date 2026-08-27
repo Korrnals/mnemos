@@ -1,0 +1,396 @@
+"""Hermes adapter e2e on the ADR-0017 D1 provider contract (#125, Wave 5).
+
+The ADR-0017 Phase 1 exit gate is "Hermes e2e on contract": this suite
+drives :class:`mnemos.adapters.hermes.HermesMemoryAdapter` — the migration
+target of the legacy Hermes plugin — through a full harness lifecycle
+IN-PROCESS over a real ``MnemosSDK`` and proves every memory operation
+lands on the contract surfaces:
+
+* writes  → ``MnemosSDK.remember`` (tag contract at the channel, entries
+  enter the knowledge pipeline at ``raw``; ``publish_on_write`` uses the
+  first-class ``publish`` surface);
+* reads   → ``MnemosSDK.recall`` / channel-scanned checkpoint + agent
+  recall (issuance scan, refuse mode drops);
+* context → the ``pre_llm_call`` hook → ``assemble_context`` (the D1
+  fixed pipeline with provenance);
+* compression → the ``post_tool_call`` hook (ADR-0018, N2 identity);
+* Hermes' context-compression loss → the ADR-0018
+  ``on_context_rewrite`` event via ``MnemosSDK.rewrite``.
+
+No HTTP, no mocks of mnemos internals — the adapter talks to a real
+``MemoryManager`` over a temp store, like ``test_sdk.py``. Secrets below
+are fake EXAMPLE literals from the detector's own pattern catalogue.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from mnemos.adapters.hermes import HermesMemoryAdapter
+from mnemos.config import Settings
+from mnemos.manager import MemoryManager
+from mnemos.models import MemoryStatus, TagContractError
+from mnemos.sdk import MnemosSDK
+
+PROJECT = "hermes"
+AGENT = "hermes-main"
+SESSION = "sess-e2e-0001"
+FAKE_AWS_KEY = "AKIAEXAMPLEABCDEFGH2"
+
+
+def _settings(tmp: Path, **ccr: Any) -> Settings:
+    settings = Settings(
+        mnemos={
+            "vault_path": str(tmp / "vault"),
+            "data_dir": str(tmp / "data"),
+            "db_name": "test.db",
+        },
+        ccr={"min_size_chars": 100, **ccr},  # type: ignore[arg-type]
+    )
+    settings.resolve_paths()
+    return settings
+
+
+@pytest.fixture
+def manager() -> Iterator[MemoryManager]:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = MemoryManager(_settings(Path(tmpdir)))
+        yield mgr
+        mgr.close()
+
+
+@pytest.fixture
+def refuse_manager() -> Iterator[MemoryManager]:
+    """Refuse-mode deployment (ccr.retrieve_refuse_on_secret=True)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = MemoryManager(_settings(Path(tmpdir), retrieve_refuse_on_secret=True))
+        yield mgr
+        mgr.close()
+
+
+@pytest.fixture
+def adapter(manager: MemoryManager) -> Iterator[HermesMemoryAdapter]:
+    sdk = MnemosSDK(manager=manager)
+    adapter = HermesMemoryAdapter(sdk, project=PROJECT, agent=AGENT)
+    adapter.bind_session(SESSION)
+    yield adapter
+
+
+# ── Boundary: identity validation ────────────────────────────────────────────
+
+
+class TestIdentity:
+    def test_constructor_rejects_bad_slug(self, manager: MemoryManager) -> None:
+        """A slug that would break the tag contract fails at construction,
+        not on the first write."""
+        with pytest.raises(TagContractError):
+            HermesMemoryAdapter(MnemosSDK(manager=manager), project="not a slug", agent=AGENT)
+
+    def test_constructor_rejects_empty_agent(self, manager: MemoryManager) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            HermesMemoryAdapter(MnemosSDK(manager=manager), project=PROJECT, agent="")
+
+    def test_session_scoped_verbs_require_bound_session(self, manager: MemoryManager) -> None:
+        adapter = HermesMemoryAdapter(MnemosSDK(manager=manager), project=PROJECT, agent=AGENT)
+        with pytest.raises(ValueError, match="bind_session"):
+            adapter.pre_llm_call()
+        with pytest.raises(ValueError, match="bind_session"):
+            adapter.report_context_rewrite("dropped block")
+
+    def test_bad_sync_interval_rejected(self, manager: MemoryManager) -> None:
+        with pytest.raises(ValueError, match="sync_interval"):
+            HermesMemoryAdapter(
+                MnemosSDK(manager=manager), project=PROJECT, agent=AGENT, sync_interval=0
+            )
+
+
+# ── E2E: full harness lifecycle on the contract ─────────────────────────────
+
+
+class TestSessionLifecycleE2E:
+    """The acceptance scenario: one Hermes session, start to end."""
+
+    def test_full_session_flow(self, adapter: HermesMemoryAdapter) -> None:
+        # 1. Session start — bootstrap recall (empty store).
+        bootstrap = adapter.session_start()
+        assert bootstrap["hook"] == "on_session_start"
+        assert bootstrap["session"] == SESSION
+        assert bootstrap["checkpoints"] == []
+
+        # 2. A significant turn is written through the SDK channel with
+        #    the full tag contract + identity threading.
+        turn = adapter.sync_turn(
+            "How do we rotate the gateway certificates zero-downtime?",
+            "Use the double-serve swap documented in the runbook.",
+        )
+        assert turn is not None
+        assert turn.project == PROJECT
+        assert turn.agent == AGENT
+        assert f"project:{PROJECT}" in turn.tags
+        assert f"agent:{AGENT}" in turn.tags
+        assert "mnemos:session" in turn.tags
+        assert turn.metadata["session_id"] == SESSION
+        assert turn.metadata["channel"] == "hermes-adapter"
+        assert turn.metadata["turn"] == 1
+        # publish_on_write default: the entry is recallable immediately
+        # (the legacy LLM-less deployment posture, now explicit).
+        assert turn.status == MemoryStatus.PUBLISHED
+
+        # 3. The model searches through the scanned SDK recall channel.
+        hits = adapter.search("certificates")
+        assert hits, "the synced turn must be recallable"
+        assert any("gateway" in h["content"] for h in hits)
+
+        # 4. A checkpoint is stored and recalled through the scanned
+        #    checkpoint channel.
+        checkpoint = adapter.save_checkpoint(
+            goals="Ship the Hermes migration",
+            completed=["adapter verbs on contract"],
+            in_progress=["plugin shim"],
+        )
+        assert "mnemos:checkpoint" in checkpoint.tags
+        recalled = adapter.recall_checkpoints()
+        assert len(recalled) == 1
+        assert recalled[0]["id"] == checkpoint.id
+        assert "Ship the Hermes migration" in recalled[0]["content"]
+
+        # 5. Session bootstrap now sees the checkpoint.
+        assert adapter.session_start()["checkpoints"]
+
+        # 6. Agent recall finds the agent's own entries.
+        own = adapter.agent_recall()
+        ids = {item["id"] for item in own}
+        assert turn.id in ids
+        assert checkpoint.id in ids
+
+        # 7. Session end writes exactly one summary entry.
+        messages = [
+            {"role": "user", "content": "We finished rotating all gateway certificates today."},
+            {
+                "role": "assistant",
+                "content": "Rotation complete; summary checkpoint saved for the next session.",
+            },
+        ]
+        summary = adapter.session_end(messages)
+        assert summary is not None
+        assert "mnemos:session" in summary.tags
+        assert summary.metadata["session_id"] == SESSION
+        assert "Key User Messages" in summary.content
+
+        # 8. Project-scoped stats slice.
+        stats = adapter.stats()
+        assert stats["project"] == PROJECT
+        assert stats["project_total"] >= 3
+
+    def test_insignificant_turn_writes_nothing(self, adapter: HermesMemoryAdapter) -> None:
+        assert adapter.sync_turn("hi", "hello") is None
+
+    def test_sync_interval_promotes_insignificant_turn(self, adapter: HermesMemoryAdapter) -> None:
+        for i in range(9):
+            assert adapter.sync_turn(f"turn {i}", f"ok {i}") is None
+        # 10th turn hits the default sync_interval → written.
+        assert adapter.sync_turn("turn 9", "ok 9") is not None
+
+    def test_auto_sync_off_disables_turn_writes(self, manager: MemoryManager) -> None:
+        adapter = HermesMemoryAdapter(
+            MnemosSDK(manager=manager),
+            project=PROJECT,
+            agent=AGENT,
+            auto_sync=False,
+        )
+        adapter.bind_session(SESSION)
+        before = manager.sqlite.count()
+        assert adapter.sync_turn("x" * 200, "y" * 200) is None
+        assert adapter.session_end([{"role": "user", "content": "x" * 200}]) is None
+        assert adapter.mirror_memory_write("add", "memory", "mirrored body") is None
+        assert manager.sqlite.count() == before
+
+
+# ── Writes: tag contract at the channel ──────────────────────────────────────
+
+
+class TestWriteChannel:
+    def test_add_memory_contract_violation_rejected_before_write(
+        self, adapter: HermesMemoryAdapter, manager: MemoryManager
+    ) -> None:
+        before = manager.sqlite.count()
+        with pytest.raises(TagContractError):
+            adapter.add_memory("body", [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:bogus"])
+        assert manager.sqlite.count() == before, "rejected tags must not write"
+
+    def test_add_memory_requires_tags(self, adapter: HermesMemoryAdapter) -> None:
+        with pytest.raises(ValueError, match="tags are required"):
+            adapter.add_memory("body", [])
+
+    def test_publish_on_write_off_leaves_raw_and_unrecallable(self, manager: MemoryManager) -> None:
+        """Pipeline posture: with publish_on_write=False the entry stays
+        raw — invisible to recall (entry-invariant status gate) until the
+        pipeline advances it."""
+        adapter = HermesMemoryAdapter(
+            MnemosSDK(manager=manager),
+            project=PROJECT,
+            agent=AGENT,
+            publish_on_write=False,
+        )
+        adapter.bind_session(SESSION)
+        turn = adapter.sync_turn(
+            "verifiable keystone deployment notes for the staging gateway cluster",
+            "ack",
+        )
+        assert turn is not None
+        assert turn.status == MemoryStatus.RAW
+        assert adapter.search("keystone") == []
+
+        # The first-class publish surface advances it; recall finds it.
+        manager.publish(turn.id, skip_quality_check=True)
+        assert adapter.search("keystone") != []
+
+    def test_mirror_user_write_uses_agent_user_and_rule_subtype(
+        self, adapter: HermesMemoryAdapter
+    ) -> None:
+        memory = adapter.mirror_memory_write("add", "user", "Always answer in English.")
+        assert memory is not None
+        assert "agent:user" in memory.tags
+        assert "mnemos:rule" in memory.tags
+        assert memory.agent == "user"
+        assert memory.metadata["mirror_of"] == "hermes-builtin-memory"
+
+    def test_mirror_memory_write_uses_learning_subtype(self, adapter: HermesMemoryAdapter) -> None:
+        memory = adapter.mirror_memory_write("add", "memory", "Gateway needs two replicas.")
+        assert memory is not None
+        assert "mnemos:learning" in memory.tags
+        assert f"agent:{AGENT}" in memory.tags
+
+    def test_mirror_ignores_non_add_actions(self, adapter: HermesMemoryAdapter) -> None:
+        assert adapter.mirror_memory_write("delete", "memory", "stale note") is None
+
+
+# ── Reads: issuance scan at every channel ────────────────────────────────────
+
+
+class TestIssuanceScan:
+    def _plant_secret_row(self, mgr: MemoryManager) -> None:
+        """A published row carrying a planted fake secret (the write-path
+        scan tags it no-federate but stores it — issuance must redact)."""
+        adapter = HermesMemoryAdapter(MnemosSDK(manager=mgr), project=PROJECT, agent=AGENT)
+        adapter.bind_session(SESSION)
+        adapter.add_memory(
+            f"deploy note with api key {FAKE_AWS_KEY} inline",
+            [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
+        )
+
+    def test_search_masks_secret(
+        self, adapter: HermesMemoryAdapter, manager: MemoryManager
+    ) -> None:
+        self._plant_secret_row(manager)
+
+        hits = adapter.search("deploy")
+
+        assert hits, "the row must be recalled"
+        for hit in hits:
+            assert FAKE_AWS_KEY not in hit["content"]
+        assert any("<REDACTED:aws-key>" in h["content"] for h in hits)
+
+    def test_refuse_mode_drops_secret_hit(self, refuse_manager: MemoryManager) -> None:
+        self._plant_secret_row(refuse_manager)
+        adapter = HermesMemoryAdapter(
+            MnemosSDK(manager=refuse_manager), project=PROJECT, agent=AGENT
+        )
+        adapter.bind_session(SESSION)
+
+        assert adapter.search("deploy") == []
+
+    def test_checkpoint_refuse_mode_drops_entry(self, refuse_manager: MemoryManager) -> None:
+        adapter = HermesMemoryAdapter(
+            MnemosSDK(manager=refuse_manager), project=PROJECT, agent=AGENT
+        )
+        adapter.bind_session(SESSION)
+        secret_checkpoint = adapter.save_checkpoint(context=f"key {FAKE_AWS_KEY} leaked")
+
+        recalled = adapter.recall_checkpoints()
+
+        # The checkpoint exists in the store but is dropped at issuance.
+        assert refuse_manager.get(secret_checkpoint.id) is not None
+        assert all(c["id"] != secret_checkpoint.id for c in recalled)
+
+
+# ── Context delivery: the D1 pipeline ────────────────────────────────────────
+
+
+class TestPreLlmCall:
+    def test_injection_block_carries_provenance(self, adapter: HermesMemoryAdapter) -> None:
+        adapter.add_memory(
+            "The gateway certificate rotation runbook lives in ops/rotate.md.",
+            [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
+        )
+
+        block = adapter.pre_llm_call(query="certificate rotation")
+
+        assert block["hook"] == "pre_llm_call"
+        assert block["injection"].startswith("prepend result['text']")
+        text = block["text"]
+        assert "[mnemos:" in text, "every injected block carries provenance"
+        assert "rotate.md" in text
+        # The mandatory pipeline stages ran, in the fixed order.
+        stages = block["stats"]["stages"]
+        assert stages.index("recall") < stages.index("filter") < stages.index("scan")
+        assert stages.index("scan") < stages.index("align") < stages.index("budget")
+
+    def test_agent_identity_threaded_into_assembly(self, adapter: HermesMemoryAdapter) -> None:
+        block = adapter.pre_llm_call(query="anything")
+        # session/project are echoed by the contract; agent is THREADED
+        # into the call (the A2 strict-mode CCR issuer gate inside
+        # assemble_context), not echoed — pinned by tests/test_hooks.py.
+        assert block["session"] == SESSION
+        assert block["project"] == PROJECT
+
+
+class TestPostToolCall:
+    def test_autocompression_roundtrip(self, adapter: HermesMemoryAdapter) -> None:
+        """auto_compress on → marker-headed compressed_text; the N2
+        identity (agent+session) is threaded onto the cache row by the
+        hook — verified via the receipt, the deep issuer-ledger check is
+        pinned by test_hooks.py."""
+        large = "INFO worker processing item 0123456789\n" * 60
+        envelope = adapter.post_tool_call(
+            tool_name="shell",
+            output_text=large,
+            auto_compress=True,
+        )
+
+        assert envelope["hook"] == "post_tool_call"
+        assert envelope["compressed"] is True
+        assert envelope["marker"]
+        assert envelope["compressed_text"].startswith("[compressed:")
+
+    def test_autocompression_off_returns_asis(self, adapter: HermesMemoryAdapter) -> None:
+        envelope = adapter.post_tool_call(
+            tool_name="shell",
+            output_text="tiny output",
+            auto_compress=False,
+        )
+        assert envelope["compressed"] is False
+        assert "compressed_text" not in envelope
+
+
+# ── ADR-0018 bridge: Hermes context compression ─────────────────────────────
+
+
+class TestContextRewriteBridge:
+    def test_rewrite_event_stored_then_deduplicated(self, adapter: HermesMemoryAdapter) -> None:
+        dropped = "Long context block Hermes is about to discard: cert rotation notes."
+        first = adapter.report_context_rewrite(dropped)
+        second = adapter.report_context_rewrite(dropped)
+
+        assert first["status"] == "stored"
+        assert second["status"] == "deduplicated"
+        assert first["memory_id"] == second["memory_id"], "content-addressed event key"
+
+    def test_empty_original_rejected(self, adapter: HermesMemoryAdapter) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            adapter.report_context_rewrite("  ")
