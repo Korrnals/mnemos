@@ -85,6 +85,8 @@ def compress(
     config: CCRConfig,
     profile: str | None = None,
     project: str = "",
+    issuer_agent: str | None = None,
+    issuer_session: str | None = None,
 ) -> dict[str, Any]:
     """Compress ``text``, cache the original, return a marker-embedded result.
 
@@ -94,6 +96,11 @@ def compress(
         config: CCRConfig (ttl, max_entries, min_size_chars, ...).
         profile: Filter profile hint (auto-detected if None).
         project: Optional project slug to scope the cache entry.
+        issuer_agent: A2 issuer ledger — agent slug of the caller whose
+            compress call minted the marker (``None`` stores an
+            unverifiable row; strict marker validation will refuse it).
+        issuer_session: A2 issuer ledger — session id of the caller
+            (``None`` = identity-less store, same as above).
 
     Returns:
         Dict with ``compressed_text``, ``hash``, ``original_size``,
@@ -124,9 +131,16 @@ def compress(
     )
     compressed_body = filtered["clean_content"]
 
-    # 2. Cache the original (content-addressed, idempotent).
+    # 2. Cache the original (content-addressed, idempotent) with the A2
+    #    issuer ledger (first writer owns the row's issuer columns).
     h = content_hash(text)
-    store.ccr_store(hash=h, original=text, project=project)
+    store.ccr_store(
+        hash=h,
+        original=text,
+        project=project,
+        issuer_agent=issuer_agent,
+        issuer_session=issuer_session,
+    )
 
     # 3. Build marker + embed at the head of the compressed output.
     compressed_size = len(compressed_body)

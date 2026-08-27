@@ -13,6 +13,7 @@ import logging
 import threading
 import time
 import uuid
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -2392,8 +2393,17 @@ class MemoryManager:
         *,
         profile: str | None = None,
         project: str = "",
+        agent: str | None = None,
+        session: str | None = None,
     ) -> dict[str, Any]:
         """Compress ``text`` via CCR and cache the original in SQLite.
+
+        A2 (ArchCom 2026-08-27) — issuer ledger: ``agent``/``session``
+        record the caller identity on the cache row so strict marker
+        validation (see :meth:`retrieve_content`) can later prove the
+        marker was minted in the redeemer's own context. Callers without
+        identity context pass ``None`` (stored NULL → the row's markers
+        are unverifiable and strict mode refuses them).
 
         Returns the CCR result dict (see ``mnemos.ccr.compress``).
         """
@@ -2416,7 +2426,114 @@ class MemoryManager:
             config=self.settings.ccr,
             profile=profile,
             project=project,
+            issuer_agent=agent,
+            issuer_session=session,
         )
+
+    def validate_marker(
+        self,
+        h: str,
+        *,
+        project: str | None,
+        original_chars: int | None,
+        trusted_issuers: AbstractSet[tuple[str, str | None]],
+    ) -> dict[str, Any]:
+        """A2 (ArchCom 2026-08-27) — validate a CCR marker before issuance.
+
+        Strong-form gate for the W3 automation rehydrate channel
+        (committee decision ``archcom-2026-08-27-deferrals-triage``):
+        existence-only validation does NOT catch same-project seeding,
+        so all three checks run:
+
+        * **existence** — the row must exist under ``(project, hash)``
+          (project-scoped after A1). Strict validation REQUIRES a
+          project scope: an unscoped lookup would redeem a marker
+          against the first-stored copy of any project.
+        * **integrity** — the marker's ``original_chars`` (the N parsed
+          from ``[compressed: <hash> | N→M chars | …]``) must equal the
+          character length of the stored original. ``None`` fails
+          (fail-closed: an unverifiable dimension is a failed
+          dimension).
+        * **provenance** — the row's issuer ledger
+          (``issuer_agent``/``issuer_session``, recorded at store time)
+          must match the caller's trusted issuer context: the stored
+          ``(agent, session)`` pair must be a member of
+          ``trusted_issuers``. The minimal sound spec for W3 automation
+          is exactly one pair — its OWN ``(agent, session)`` — so a
+          hook redeems only markers minted in its own context; an
+          explicit allowlist is the same predicate with more pairs. A
+          spec session of ``None`` matches only NULL issuer sessions
+          (component-wise equality, never wildcards). Rows stored
+          without identity (legacy migration or identity-less callers)
+          are UNVERIFIABLE and fail with the distinct reason
+          ``unverifiable legacy marker``; an empty spec fails with
+          ``no trusted issuer context``.
+
+        Residual (ADR-0018 residual register, accepted): a trusted
+        harness with compress access can still seed content inside its
+        own project and redeem the marker from the same identity —
+        same-project seeding by a trusted principal; single-operator
+        threat model, revisit on the first multi-principal trigger.
+
+        Args:
+            h: SHA-256 hash from the marker (validated by existence).
+            project: Project scope; ``None``/empty fails existence
+                (strict validation requires the scope).
+            original_chars: N from the marker; ``None`` fails integrity.
+            trusted_issuers: Set of ``(agent, session | None)`` pairs
+                allowed to have minted the marker. Agents must be
+                non-empty strings (``ValueError`` otherwise — the
+                caller builds this set from its own identity).
+
+        Returns:
+            ``{"valid": bool, "reason": str | None, "check": str | None}``
+            where ``check`` names the failed dimension (``existence`` /
+            ``integrity`` / ``provenance``) for the refusal reason.
+            The read is unbumped (``bump=False``): a failed validation
+            must not LRU-pin the entry (P1-b review F4 semantics).
+        """
+        for agent_i, _session_i in trusted_issuers:
+            if not agent_i or not agent_i.strip():
+                raise ValueError(
+                    f"trusted_issuers agents must be non-empty slugs (got {agent_i!r})"
+                )
+
+        def _verdict(valid: bool, check: str | None, reason: str | None) -> dict[str, Any]:
+            return {"valid": valid, "reason": reason, "check": check}
+
+        # (a) existence — project-scoped (strict mode requires a scope).
+        if not project:
+            return _verdict(False, "existence", "project scope required for marker validation")
+        entry = self.sqlite.ccr_get(h, project=project, bump=False)
+        if entry is None:
+            return _verdict(False, "existence", f"hash not in cache under project {project!r}")
+
+        # (b) integrity — marker N vs stored character length.
+        if original_chars is None:
+            return _verdict(False, "integrity", "original_chars not provided by the caller")
+        stored_chars = len(entry["original"])
+        if original_chars != stored_chars:
+            return _verdict(
+                False,
+                "integrity",
+                f"original_chars mismatch: marker={original_chars} stored={stored_chars}",
+            )
+
+        # (c) provenance — issuer ledger vs the trusted context.
+        if not trusted_issuers:
+            return _verdict(False, "provenance", "no trusted issuer context (agent required)")
+        issuer_agent = entry.get("issuer_agent")
+        if not issuer_agent:
+            return _verdict(False, "provenance", "unverifiable legacy marker")
+        issuer_pair = (issuer_agent, entry.get("issuer_session"))
+        if issuer_pair not in trusted_issuers:
+            return _verdict(
+                False,
+                "provenance",
+                f"issuer mismatch: stored=({issuer_agent}, "
+                f"{entry.get('issuer_session')}) not in the trusted issuer context",
+            )
+        return _verdict(True, None, None)
 
     def scan_issuance(self, text: str, *, context: str) -> IssuanceScan:
         """Scan one issuance-boundary string and redact/refuse (P1-b M1).
@@ -2547,8 +2664,27 @@ class MemoryManager:
         query: str | None = None,
         snippet_count: int | None = None,
         project: str | None = None,
+        validate_marker: bool | None = None,
+        original_chars: int | None = None,
+        agent: str | None = None,
+        session: str | None = None,
     ) -> dict[str, Any]:
         """Retrieve a CCR-cached original (or FTS5 snippets if ``query``).
+
+        A2 (ArchCom 2026-08-27) — strict marker validation. The request
+        is MARKER-SHAPED when it carries any of ``original_chars`` /
+        ``agent`` / ``session`` (the metadata a harness parses out of a
+        ``[compressed: <hash> | N→M chars | …]`` marker plus its own
+        identity). When strict mode is on (per-call ``validate_marker``
+        override, else the ``ccr.validate_markers`` knob) a marker-shaped
+        request must first pass :meth:`validate_marker` — existence
+        (project-scoped), ``original_chars`` integrity, and provenance
+        against the caller's own ``(agent, session)`` issuer context —
+        and any failed check returns the refused shape with
+        ``reason="marker validation failed: <check>: <detail>"`` and NO
+        content (fail-closed). Plain hash-only retrieves are unaffected
+        either way. A refused validation never bumps the retrieval
+        counter (F4 semantics preserved).
 
         ADR-0018 P0 — issuance secret scan. Every retrieval is scanned
         with ``detect_secrets`` (patterns evolve and stored records age,
@@ -2596,6 +2732,44 @@ class MemoryManager:
             detect_secrets,
             findings_by_pattern,
         )
+
+        # ── A2 (ArchCom 2026-08-27): strict marker validation gate ──────
+        # Fail-closed BEFORE any content is read for issuance: a failed
+        # check returns the refused shape with no content and never
+        # bumps the retrieval counter (the validation read itself is
+        # unbumped — validate_marker uses bump=False).
+        strict = self.settings.ccr.validate_markers if validate_marker is None else validate_marker
+        marker_shaped = original_chars is not None or agent is not None or session is not None
+        if strict and marker_shaped:
+            trusted: set[tuple[str, str | None]] = set()
+            if agent and agent.strip():
+                trusted.add((agent.strip(), (session.strip() or None) if session else None))
+            verdict = self.validate_marker(
+                h,
+                project=project,
+                original_chars=original_chars,
+                trusted_issuers=trusted,
+            )
+            if not verdict["valid"]:
+                refusal_reason = (
+                    f"marker validation failed: {verdict['check']}: {verdict['reason']}"
+                )
+                logger.warning(
+                    "CCR issuance refused (marker validation): hash=%s check=%s "
+                    "project=%s agent=%s — no content issued",
+                    h,
+                    verdict["check"],
+                    project,
+                    agent,
+                )
+                return {
+                    "hash": h,
+                    "found": verdict["check"] != "existence",
+                    "refused": True,
+                    "reason": refusal_reason,
+                    "redactions": 0,
+                    "redacted_patterns": {},
+                }
 
         result = retrieve(
             h,
