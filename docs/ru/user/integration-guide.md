@@ -316,6 +316,35 @@ compress, tokens), который очищает сырой контент от 
 
 ---
 
+## Хуки и SDK для автоматизации
+
+В mnemos есть две выделенные поверхности для интеграции харнессов и
+автоматизации (ADR-0017 D1 / ADR-0018, mnemos #125 Wave 3):
+
+- **Хуки жизненного цикла** — групповой MCP-инструмент `mnemos_hooks` и
+  REST-близнец `POST /hooks/{action}` с тремя действиями: `pre_llm_call`
+  (собрать контекстный блок для инъекции перед вызовом модели — передайте
+  `context_hint` = о чём вызов), `on_session_start` (вспомнить недавние
+  чекпоинты) и `post_tool_call` (автосжатие: при `hooks.auto_compress: true`
+  в конфиге — или точечном `auto_compress: true` — вывод инструмента сжимается
+  через CCR и возвращается `compressed_text` с маркером в голове для
+  подстановки в ваше окно). Идентичность (`session`/`project`/`agent`)
+  обязательна на каждом вызове хука. Полный справочник:
+  [mcp-tools.md → `mnemos_hooks`](mcp-tools.md#mnemos_hooks)
+  / [http-api.md → Хуки жизненного цикла](http-api.md).
+- **`MnemosSDK`** (`from mnemos.sdk import MnemosSDK`) — тонкая типизированная
+  Python-обёртка над `MemoryManager` для in-process адаптеров:
+  `remember` / `recall` / `forget` / `stats` / `assemble_context` /
+  `rewrite` делегируют один-к-одному менеджеру (без новой логики; те же
+  сканы, гейты и идемпотентность, что у поверхностей MCP/REST).
+  Local-first: `MnemosSDK(settings)` строит свой менеджер,
+  `MnemosSDK(manager=…)` переиспользует ваш.
+
+Полная документация адаптеров (миграция Hermes, чек-лист приёмки) приходит
+с волной адаптеров.
+
+---
+
 ## `mnemos integration setup` — поток по умолчанию
 
 По умолчанию `mnemos integration setup` теперь **запрашивает подключение
