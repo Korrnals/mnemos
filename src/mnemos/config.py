@@ -45,6 +45,17 @@ class MnemosConfig(BaseModel):
     # any write: content = the original block (default 1 MiB in chars),
     # diff = the advisory was→becomes payload (default 256 KiB in chars).
     context_rewrite_rate_limit_per_minute: int = Field(default=30, ge=0, le=10_000)
+    # C10 (ArchCom 2026-08-27) — SECONDARY per-project aggregate ceiling:
+    # total stored rewrite events per project per minute across ALL of
+    # that project's sessions (the distinct-session count rides along in
+    # the 429 message as the noisy-neighbor signal). Same 429/rate_limited
+    # shape as the primary limiter; NULL-session events land in their own
+    # bucket under the same knobs. 0 disables the aggregate ceiling (the
+    # per-(project, session) limiter still applies). Default 300 = ten
+    # sessions at full per-session burn; the residual noisy-neighbor risk
+    # (one project starving its siblings on a shared node) is
+    # ADR-0018-accepted (single-operator).
+    context_rewrite_project_rate_limit_per_minute: int = Field(default=300, ge=0, le=100_000)
     context_rewrite_max_content_chars: int = Field(default=1_048_576, ge=1)
     context_rewrite_max_diff_chars: int = Field(default=262_144, ge=1)
 

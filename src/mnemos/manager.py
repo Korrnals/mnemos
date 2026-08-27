@@ -2599,13 +2599,18 @@ class MemoryManager:
         if not result.get("found"):
             return result
 
+        # A1 (ArchCom 2026-08-27): the entry's own project — under the
+        # composite PK the same hash may live in several projects, and
+        # the bump must hit exactly the row that was issued. Computed
+        # BEFORE _mark_issued is first called.
+        entry_project = str(result.get("project") or "")
+
         def _mark_issued() -> None:
             """Bump the counter post-decision (F4) and reflect it in result."""
-            self.sqlite.ccr_touch(h)
+            self.sqlite.ccr_touch(h, project=entry_project)
             result["retrieval_count"] = int(result["retrieval_count"]) + 1
 
         # ── CWE-668 ergonomics: unscoped retrieval of a scoped row ────
-        entry_project = str(result.get("project") or "")
         if not project and entry_project:
             if self.settings.ccr.require_project_match:
                 logger.warning(
