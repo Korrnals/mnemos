@@ -475,6 +475,11 @@ class TestContextFilter:
         assert resp.status_code == 201
         mem_id = resp.json()["id"]
 
+        # M1 (final review): /filter is issuance-gated — publish the memory
+        # first (raw is not filterable into context).
+        resp = client.post(f"/publish/{mem_id}?skip_quality_check=true")
+        assert resp.status_code == 200
+
         # Apply filter
         resp = client.post(f"/filter/{mem_id}", json={"profile": "default"})
         assert resp.status_code == 200

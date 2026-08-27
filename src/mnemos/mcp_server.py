@@ -351,7 +351,9 @@ async def list_tools() -> list[Tool]:
             name="mnemos_filter",
             description=(
                 "Run or refresh the context filter on an existing memory. "
-                "Useful when auto_filter was off, or to re-filter with a different profile."
+                "Useful when auto_filter was off, or to re-filter with a different profile. "
+                "Issuance-gated: only published/processed memories are filterable into "
+                "context, and the returned clean_content is secret-scanned."
             ),
             inputSchema={
                 "type": "object",
@@ -368,6 +370,13 @@ async def list_tools() -> list[Tool]:
                     "budget": {
                         "type": "integer",
                         "description": "Token budget for truncation (optional)",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": (
+                            "Caller project slug — the memory must belong to it "
+                            "(mismatch fails closed). Omit for operator semantics."
+                        ),
                     },
                 },
                 "required": ["memory_id"],
@@ -1843,19 +1852,33 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     # ── mnemos_filter (M10) ─────────────────────────────────────────────────
     if name == "mnemos_filter":
         memory_id = args["memory_id"]
-        result = mgr.apply_context_filter(
+        filter_project_arg = args.get("project")
+        if filter_project_arg is not None and not isinstance(filter_project_arg, str):
+            return {"error": "project must be a string when provided"}
+        # M1 (final review): the issuance twin — status gate (raw/archived
+        # not filterable into context), optional caller-project scope, and
+        # scan-at-issuance on the echoed clean_content (refuse mode drops
+        # the content). apply_context_filter itself stays the maintenance
+        # primitive (auto-filter on ingest, filter_all, CLI).
+        result = mgr.issue_context_filter(
             memory_id,
             profile=args.get("profile"),
             budget=args.get("budget"),
+            project=filter_project_arg,
+            channel="mcp:mnemos_filter",
         )
         if result.get("status") == "error":
             return result
-        return {
+        filter_item: dict[str, Any] = {
             "memory_id": memory_id,
             "profile": result["filter_profile"],
             "clean_content": result["clean_content"],
             "stats": result["stats"],
+            "redactions": result["redactions"],
         }
+        if result["redactions"]:
+            filter_item["redacted_patterns"] = result["redacted_patterns"]
+        return filter_item
 
     # ── mnemos_ingest_url ───────────────────────────────────────────────────
     if name == "mnemos_ingest_url":
@@ -1872,7 +1895,15 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         project = next((t[len("project:") :] for t in tags if t.startswith("project:")), "")
         agent = next((t[len("agent:") :] for t in tags if t.startswith("agent:")), "")
         memory = mgr.ingest_url(url_clean, tags=tags, project=project, agent=agent)
-        return {"id": memory.id, "title": memory.auto_title(), "url": url_clean}
+        # m2 (final review): auto_title() derives from the fetched page
+        # content — the echoed title is scanned at issuance like every
+        # other echoed string; refuse mode drops it (error shape, no echo).
+        title_scan = mgr.scan_issuance_item(
+            None, title=memory.auto_title(), context=f"mcp:mnemos_ingest_url:{memory.id}"
+        )
+        if title_scan.refused:
+            return {"error": f"issuance refused: {title_scan.reason}"}
+        return {"id": memory.id, "title": title_scan.title, "url": url_clean}
 
     # ── mnemos_watch_* ──────────────────────────────────────────────────────
     if name == "mnemos_watch_start":

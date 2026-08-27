@@ -409,6 +409,10 @@ class FilterRequest(BaseModel):
 
     profile: str | None = None
     budget: int | None = None
+    # M1 (final review): caller project scope — with it, the memory must
+    # belong to the project (fail-closed on mismatch); without it the call
+    # is explicit operator semantics (mirrors GET /memories/{id}).
+    project: str | None = None
 
 
 class MemoryUpdate(BaseModel):

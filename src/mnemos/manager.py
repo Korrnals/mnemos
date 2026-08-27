@@ -1851,6 +1851,105 @@ class MemoryManager:
             "stats": result["stats"],
         }
 
+    def issue_context_filter(
+        self,
+        memory_id: str,
+        *,
+        profile: str | None = None,
+        budget: int | None = None,
+        project: str | None = None,
+        channel: str = "issue_context_filter",
+    ) -> dict[str, Any]:
+        """Issuance-boundary twin of :meth:`apply_context_filter` (M1 fix).
+
+        ``apply_context_filter`` is the maintenance primitive — it is also
+        called internally on ingest (auto-filter) and by ``filter_all``,
+        so it cannot carry the context gates. THIS method is what
+        content-echoing channels (MCP ``mnemos_filter``, REST
+        ``POST /filter/{id}``) must call; it enforces the ADR-0018 entry
+        invariant on the echoed ``clean_content``:
+
+        * **status gate** — only ``CONTEXT_ADMISSIBLE_STATUSES``
+          (``published`` / ``processed``) memories are filterable into
+          context; ``raw`` / ``processing`` / ``archived`` refuse
+          (fail-closed) instead of echoing stored raw content.
+        * **project scope** — with ``project`` given, the memory must
+          belong to it; the error deliberately does not distinguish
+          "no such memory" from "another project's memory" (same
+          wording discipline as the ``supersedes`` check — no global
+          existence oracle). Without ``project`` the call is explicit
+          operator semantics, mirroring ``GET /memories/{id}`` which
+          reads by id without a caller project.
+        * **issuance scan** — the returned ``clean_content`` passes
+          :meth:`scan_issuance_item`; refuse mode drops the content
+          (error shape, no echo) exactly like the other issuance
+          channels, redact mode returns the redacted copy plus
+          ``redactions`` / ``redacted_patterns`` counts.
+
+        Returns ``{"status": "error", "error": …, "reason": …}`` on any
+        gate failure (``reason`` ∈ ``not_found`` / ``status_gate`` /
+        ``project_scope`` / ``refused``) and the ``apply_context_filter``
+        success shape (plus redaction counts) otherwise. The stored
+        filter fields are updated exactly as before — storage stays
+        zero-loss; only the echo is scanned.
+        """
+        memory = self.sqlite.get(memory_id)
+        if memory is None:
+            return {
+                "status": "error",
+                "error": f"Memory {memory_id} not found",
+                "reason": "not_found",
+            }
+        if memory.status not in CONTEXT_ADMISSIBLE_STATUSES:
+            logger.warning(
+                "issue_context_filter: STATUS GATE memory=%s status=%s channel=%s",
+                memory_id,
+                memory.status.value,
+                channel,
+            )
+            return {
+                "status": "error",
+                "error": (
+                    f"Memory {memory_id} not filterable into context "
+                    f"(status={memory.status.value}; requires published/processed)"
+                ),
+                "reason": "status_gate",
+            }
+        if project is not None and (memory.project or "") != project:
+            logger.warning(
+                "issue_context_filter: PROJECT SCOPE memory=%s channel=%s",
+                memory_id,
+                channel,
+            )
+            return {
+                "status": "error",
+                "error": f"Memory {memory_id} not found in project {project!r}",
+                "reason": "project_scope",
+            }
+
+        result = self.apply_context_filter(memory_id, profile=profile, budget=budget)
+        if result.get("status") == "error":
+            # The primitive's two error shapes, disambiguated for the
+            # channel mapping: not-found vs. no-content-to-filter.
+            result["reason"] = (
+                "no_content" if "No content" in str(result.get("error")) else "not_found"
+            )
+            return result
+
+        scan = self.scan_issuance_item(result["clean_content"], context=f"{channel}:{memory_id}")
+        if scan.refused:
+            return {
+                "status": "error",
+                "error": f"issuance refused: {scan.reason}",
+                "reason": "refused",
+            }
+        issued = dict(result)
+        issued["clean_content"] = scan.content
+        issued["redactions"] = scan.redactions
+        if scan.redactions:
+            issued["redacted_patterns"] = scan.redacted_patterns
+        return issued
+
     def filter_all(
         self,
         *,

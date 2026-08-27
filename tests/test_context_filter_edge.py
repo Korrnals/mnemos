@@ -539,6 +539,7 @@ class TestMcpFilterWithoutRawContent:
     async def test_mnemos_filter_uses_content_fallback(self, mgr: MemoryManager) -> None:
         """mnemos_filter works on a memory with raw_content=NULL."""
         from mnemos.mcp_server import _dispatch
+        from mnemos.models import MemoryStatus
 
         data = MemoryCreate(
             content="2024-01-15 [ERROR] legacy mcp memory",
@@ -546,6 +547,8 @@ class TestMcpFilterWithoutRawContent:
             source=MemorySource.MCP,
         )
         memory = mgr.add(data, project="test", agent="filter-test")
+        # M1 (final review): issuance gate — advance to published first.
+        mgr.sqlite.update_status(memory.id, MemoryStatus.PUBLISHED)
 
         # Clear raw_content to simulate legacy memory.
         conn = mgr.sqlite._get_conn()  # test-only access
