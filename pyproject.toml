@@ -137,6 +137,11 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    # ADR-0017 D5 golden evaluation suite (tests/golden/) — deterministic,
+    # part of the default run; deselect with `-m "not golden"`.
+  "golden: D5 golden-set baseline metrics (precision/recall@k, injection-acceptance, A9 delta, ADR-0018 rewrite pair)",
+]
 
 [tool.mypy]
 # Don't pin python_version — let each CI job (3.11/3.12/3.13) use its
