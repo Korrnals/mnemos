@@ -344,8 +344,8 @@ compress, tokens), который очищает сырой контент от 
   Local-first: `MnemosSDK(settings)` строит свой менеджер,
   `MnemosSDK(manager=…)` переиспользует ваш.
 
-Полная документация адаптеров (миграция Hermes, чек-лист приёмки) приходит
-с волной адаптеров.
+Полная документация адаптеров для интеграторов харнессов — раздел
+[Hermes Agent ниже](#hermes-agent): эталонная миграция на контракт.
 
 ---
 
@@ -535,14 +535,15 @@ MCP-сервера в конфигурации клиента. Подключе�
 
 ## Hermes Agent
 
-Mnemos предоставляет нативный плагин `MemoryProvider` для [Hermes Agent](https://hermes-agent.nousresearch.com/) от Nous Research. Плагин подключает Mnemos к модульной системе памяти Hermes через HTTP API.
+Mnemos предоставляет нативный плагин `MemoryProvider` для [Hermes Agent](https://hermes-agent.nousresearch.com/) от Nous Research. После миграции на контракт провайдера ADR-0017 D1 (#125 W5) плагин работает **in-process на контракте**: каждая операция с памятью идёт через `mnemos.adapters.hermes.HermesMemoryAdapter` — фасад `MnemosSDK` плюс хуки жизненного цикла (`pre_llm_call` / `on_session_start` / `post_tool_call`) — вниз к одному `MemoryManager`. Легаси-путь с самодельным HTTP (urllib-клиент, TOTP-логин, circuit breaker, обходной auto-publish) удалён.
 
 ### Установка
 
-1. Запустите сервер Mnemos:
+1. Сделайте пакет `mnemos` импортируемым в Python-окружении Hermes:
    ```bash
-   mnemos serve --host 127.0.0.1 --port 8787 &
+   pip install mnemos
    ```
+   Отдельный процесс `mnemos serve` больше не нужен.
 
 2. Разверните интеграцию:
    ```bash
@@ -554,33 +555,33 @@ Mnemos предоставляет нативный плагин `MemoryProvider`
    ```bash
    hermes memory setup
    ```
-   Выберите "mnemos" из списка провайдеров и настройте базовый URL.
+   Выберите "mnemos" из списка провайдеров и настройте slug'и project/agent и пути к хранилищу.
 
 4. Перезапустите сессию Hermes (`/restart` в гейтвее или перезапуск CLI).
 
+> **Один владелец на хранилище:** плагин встраивает сервер памяти — указывайте `data_dir`/`vault_path`, на которые больше никто не пишет (SQLite single-writer). Чтобы разделить память с `mnemos serve` или другими харнессами, выделяйте каждому свой data dir.
+
 ### Инструменты
 
-Плагин экспонирует все 15 инструментов `mnemos_*` как нативные инструменты Hermes:
+Плагин экспонирует инструменты `mnemos_*` как нативные инструменты Hermes — теперь поверх контрактных глаголов (`MnemosSDK.remember` / `recall`, хуки) вместо сырого HTTP. `mnemos_align_prefix` (P1-5 CacheAligner) остаётся **MCP-only** — выравнивание применяется внутри пайплайна сборки, отдельного глагола менеджера нет.
 
-| Инструмент | HTTP-эндпоинт |
-|------------|---------------|
-| `mnemos_search` | POST /search |
-| `mnemos_add` | POST /memories |
-| `mnemos_recall_context` | POST /context/recall |
-| `mnemos_save_context` | POST /context/save |
-| `mnemos_agent_recall` | GET /recall/agent/{name} |
-| `mnemos_list_recent` | GET /memories |
-| `mnemos_list_tags` | GET /tags |
-| `mnemos_stats` | GET /metrics |
-| `mnemos_auto_collect_status` | GET /auto-collect |
-| `mnemos_ingest_url` | POST /ingest-url |
-| `mnemos_compress` | POST /compress |
-| `mnemos_retrieve` | POST /retrieve |
-| `mnemos_watch_start` | POST /watch/start |
-| `mnemos_watch_stop` | POST /watch/stop |
-| `mnemos_watch_status` | GET /watch/status |
-
-> **Примечание P1-7:** `mnemos_add`, `mnemos_search` и `mnemos_recall_context` принимают опциональные параметры `verbosity` и `effort`, управляющие стилем вывода вызывающей стороны. Hermes-плагин передаёт их прозрачно — изменений плагина не требуется. См. [mcp-tools.md#сокращение-токенов-вывода-p1-7](mcp-tools.md#сокращение-токенов-вывода-p1-7).
+| Инструмент | Поверхность контракта |
+|------------|----------------------|
+| `mnemos_search` | `MnemosSDK.recall` (скан выдачи) |
+| `mnemos_add` | `MnemosSDK.remember` (контракт тегов на канале) |
+| `mnemos_recall_context` | recall чекпоинтов + скан канала |
+| `mnemos_save_context` | `MnemosSDK.remember` (`mnemos:checkpoint`) |
+| `mnemos_agent_recall` | агентский recall + скан канала |
+| `mnemos_list_recent` | `MemoryManager.list_recent` (скан только заголовков) |
+| `mnemos_list_tags` | `MemoryManager.list_tags` |
+| `mnemos_stats` | `MnemosSDK.stats` (срез проекта) |
+| `mnemos_auto_collect_status` | in-process счётчик вызовов (та же форма) |
+| `mnemos_ingest_url` | `MemoryManager.ingest_url` |
+| `mnemos_compress` | хук `post_tool_call` (идентичность N2) |
+| `mnemos_retrieve` | `MemoryManager.retrieve_content` (agent+session) |
+| `mnemos_watch_start` | `MemoryManager.watch_start` |
+| `mnemos_watch_stop` | `MemoryManager.watch_stop` |
+| `mnemos_watch_status` | `MemoryManager.watch_status` |
 
 ### Конфигурация
 
@@ -588,24 +589,29 @@ Mnemos предоставляет нативный плагин `MemoryProvider`
 
 | Ключ | По умолчанию | Описание |
 |------|--------------|----------|
-| `base_url` | `http://127.0.0.1:8787` | Базовый URL HTTP API Mnemos |
-| `api_key` | (пусто) | Bearer-токен, если включена авторизация |
+| `data_dir` | (пусто) | Каталог данных Mnemos (пусто = значение по умолчанию) |
+| `vault_path` | (пусто) | Путь к vault Obsidian (пусто = по умолчанию) |
 | `project` | `hermes` | Slug проекта по умолчанию для контракта тегов |
 | `agent` | `hermes-default` | Slug агента по умолчанию для контракта тегов |
 | `auto_sync` | `true` | Зеркалировать встроенные записи памяти и синхронизировать значимые ходы |
-| `prefetch_limit` | `5` | Максимум результатов в prefetch (перед каждым ходом) |
+| `publish_on_write` | `true` | Сразу публиковать записи (постура без LLM; `false` — когда работает пайплайн знаний) |
 | `sync_interval` | `10` | Синхронизация каждые N ходов |
+| `sync_min_user_chars` | `50` | Порог значимости: символов в сообщении пользователя |
+
+**Breaking относительно легаси-плагина:** ключи `base_url` / `api_key` / `totp_secret` удалены — плагин встраивает сервер в процесс (loopback по построению, ADR-0017 D6; аутентификационного хопа больше нет).
 
 ### Архитектура
 
-Плагин реализует ABC `MemoryProvider` Hermes:
+Плагин реализует ABC `MemoryProvider` Hermes как тонкий шим над `HermesMemoryAdapter`:
 
-- **prefetch()** — гибридный поиск перед каждым ходом → инъекция контекста
-- **sync_turn()** — сохраняет значимые ходы (пользователь > 50 символов или каждый N-й)
-- **on_memory_write()** — зеркалирует записи встроенных MEMORY.md/USER.md в Mnemos
-- **on_session_end()** — извлекает ключевые факты из разговора
-- **on_pre_compress()** — извлекает факты перед сжатием контекста
-- **Circuit breaker** — 5 сбоев → 120 с кулдаун
+- **prefetch()** — хук `pre_llm_call` → `assemble_context` (recall → фильтр → скан секретов → align → бюджет, провенанс на каждом блоке), вне цикла хода
+- **sync_turn()** — `MnemosSDK.remember` (`mnemos:session`) для значимых ходов (пользователь > 50 символов или каждый N-й)
+- **on_memory_write()** — зеркало записей MEMORY.md/USER.md через `MnemosSDK.remember` (`mnemos:learning` / `mnemos:rule`)
+- **on_session_end()** — один итог `mnemos:session` на сессию через `remember`
+- **on_pre_compress()** — мост ADR-0018: отбрасываемый блок репортится через `MnemosSDK.rewrite` (`on_context_rewrite`), оригинал попадает в LTM без потерь
+- **Идентичность** — `project`+`agent` фиксируются при construction (с валидацией контракта тегов заранее), `session` привязывается на сессию Hermes и прошивается в каждый глагол (включая A2-гейт CCR-эмитента и мандат N2 на сжатие)
+
+Приёмка адаптера закреплена in-process тестом `tests/test_hermes_adapter.py` (гейт фазы 1 ADR-0017 — «Hermes e2e на контракте»).
 
 ---
 
