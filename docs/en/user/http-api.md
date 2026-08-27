@@ -622,6 +622,8 @@ returned as-is (not cached). Mirrors the `mnemos_compress` plugin tool.
 | `text` | string | **yes** | — | Content to compress. ≥500 chars to cache. |
 | `profile` | string | no | auto | Filter profile: `log`, `terminal`, `code`, `docs`, `web`, `default`. Auto-detected if omitted. |
 | `project` | string | no | `""` | Project slug to scope the cache entry. |
+| `agent` | string | no | — | **A2 issuer ledger:** caller agent slug, recorded on the cache row as the marker issuer (for strict marker provenance). |
+| `session` | string | no | — | **A2 issuer ledger:** caller session id, stored alongside `agent`. |
 
 **Response 200**
 
@@ -664,6 +666,26 @@ the original is large and only a few lines are relevant. Mirrors the
 | `hash` | string | **yes** | — | SHA-256 hash from a `[compressed: ...]` marker. |
 | `query` | string | no | — | Search query for snippet retrieval. |
 | `snippet_count` | int | no | `5` | Number of snippets when `query` is provided. |
+| `project` | string | no | — | Project slug: scope the lookup to this project's entries — a hash cached under another project is reported as not found. |
+| `validate_marker` | boolean | no | `ccr.validate_markers` | **A2 strict mode:** validate the marker (existence + `original_chars` integrity + issuer provenance) before any content is issued. |
+| `original_chars` | int | no | — | `N` from the `[compressed: <hash> | N→M chars]` marker — enables the integrity check. |
+| `agent` | string | no | — | Caller agent slug — the trusted issuer context for the provenance check. |
+| `session` | string | no | — | Caller session id, paired with `agent` as the trusted issuer context. |
+
+**A2 strict marker validation.** A request is *marker-shaped* when it carries any of `original_chars` / `agent` / `session`. In strict mode a marker-shaped request must pass: (1) **existence** under `(project, hash)` — the `project` scope is required in strict mode; (2) **integrity** — the marker's `N` equals the stored original's character length; (3) **provenance** — the cache row's issuer ledger (recorded at compress time) matches the caller's `(agent, session)` pair (`null` session matches only a `null` issuer session). A failed check returns:
+
+```json
+{
+  "hash": "a1b2c3d4e5f6...",
+  "found": true,
+  "refused": true,
+  "reason": "marker validation failed: provenance: issuer mismatch: ...",
+  "redactions": 0,
+  "redacted_patterns": {}
+}
+```
+
+— no `original`/`snippets` content (fail-closed), and `retrieval_count` is not bumped. Reasons are fixed non-oracle strings — stored lengths and issuer pairs are never echoed. **Hash-only closure (review F2):** in strict mode a hash-only retrieve of an issuer-stamped row is refused with `reason="marker validation required"` (no content); legacy NULL-issuer rows stay redeemable hash-only with a WARNING. Plain hash-only retrieves on knob-off deployments are unaffected. `POST /context/assemble` with `expand_ccr=true` accepts `agent` (paired with `session`) so the expansion runs under the caller's issuer context; without a full identity a strict deployment skips expansion of issuer-stamped markers (the marker stays; the CCR stage stats carry `skipped_refused`). Residual: same-project seeding by a trusted compress caller is accepted (ADR-0018 residual register, single-operator).
 
 **Response 200 — full retrieval (no `query`)**
 

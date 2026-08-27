@@ -865,6 +865,9 @@ class AssembleContextRequest(BaseModel):
     mode: str = "sync"
     expand_ccr: bool = False
     async_handle: str | None = None
+    # A2 review F2 — pairs with session as the issuer context for the
+    # strict-mode CCR expansion gate.
+    agent: str | None = None
 
 
 @app.post("/context/save", status_code=201)
@@ -947,7 +950,11 @@ async def assemble_context(req: AssembleContextRequest) -> dict[str, Any]:
     MANDATORY secret scan → CacheAligner → token budget), provenance on
     every injected block, per-block redaction counts and token stats.
     ``mode='async'`` returns a handle envelope; pass ``async_handle`` on a
-    later call to fetch the stored result.
+    later call to fetch the stored result. ``agent`` (A2 review F2) pairs
+    with ``session`` as the issuer context for the strict-mode CCR
+    expansion gate (``ccr.validate_markers``): without it a strict
+    deployment skips expansion of issuer-stamped markers (the marker
+    stays; legacy NULL-issuer rows still expand).
     """
     _track_http_call()
     mgr = get_manager()
@@ -960,6 +967,7 @@ async def assemble_context(req: AssembleContextRequest) -> dict[str, Any]:
             mode=req.mode,
             expand_ccr=req.expand_ccr,
             async_handle=req.async_handle,
+            agent=req.agent,
         )
     except ValueError as exc:
         # Boundary validation (session/project/mode/budget/async_handle).
@@ -1021,6 +1029,10 @@ class CompressRequest(BaseModel):
     text: str
     profile: str | None = None
     project: str = ""
+    # A2 (ArchCom 2026-08-27) — issuer ledger: caller identity recorded
+    # on the cache row for strict marker provenance.
+    agent: str | None = None
+    session: str | None = None
 
 
 class RetrieveRequest(BaseModel):
@@ -1032,6 +1044,14 @@ class RetrieveRequest(BaseModel):
     # ADR-0018 P1-a: optional project scopes the cache lookup — a hash
     # cached under another project is reported as not found.
     project: str | None = None
+    # A2 (ArchCom 2026-08-27) — strict marker validation: marker metadata
+    # (N from the marker) + caller identity (agent/session). Any of these
+    # present makes the request marker-shaped; with validation on, a
+    # failed check refuses the issuance (no content).
+    validate_marker: bool | None = None
+    original_chars: int | None = None
+    agent: str | None = None
+    session: str | None = None
 
 
 @app.post("/compress")
@@ -1039,11 +1059,19 @@ async def compress_content(req: CompressRequest) -> dict[str, Any]:
     """Compress ``text`` via CCR and cache the original.
 
     Mirrors the ``mnemos_compress`` MCP tool. Returns the CCR result dict
-    (compressed text, hash, sizes, reduction, marker, …).
+    (compressed text, hash, sizes, reduction, marker, …). Optional
+    ``agent``/``session`` record the caller as the cache entry issuer
+    (A2 marker provenance).
     """
     _track_http_call()
     mgr = get_manager()
-    return mgr.compress_content(req.text, profile=req.profile, project=req.project)
+    return mgr.compress_content(
+        req.text,
+        profile=req.profile,
+        project=req.project,
+        agent=req.agent,
+        session=req.session,
+    )
 
 
 @app.post("/retrieve")
@@ -1054,7 +1082,11 @@ async def retrieve_content(req: RetrieveRequest) -> dict[str, Any]:
     secrets (ADR-0018 P0): matched spans are redacted in the response
     (``redactions`` counts them; ``redacted_patterns`` gives per-pattern
     counts); the stored original is never mutated. An optional ``project``
-    scopes the lookup to that project's entries (ADR-0018 P1-a).
+    scopes the lookup to that project's entries (ADR-0018 P1-a). A2 strict
+    marker validation: ``validate_marker`` (or the ``ccr.validate_markers``
+    knob) gates marker-shaped requests (``original_chars``/``agent``/
+    ``session`` present) on existence + integrity + issuer provenance —
+    a failed check returns ``refused=True`` with no content.
     """
     _track_http_call()
     mgr = get_manager()
@@ -1063,6 +1095,10 @@ async def retrieve_content(req: RetrieveRequest) -> dict[str, Any]:
         query=req.query,
         snippet_count=req.snippet_count,
         project=req.project,
+        validate_marker=req.validate_marker,
+        original_chars=req.original_chars,
+        agent=req.agent,
+        session=req.session,
     )
 
 

@@ -314,7 +314,11 @@ def context_rewrite(
         else:
             receipt["supersedes"] = None
         if include_marker:
-            receipt["ccr_marker"] = mgr.compress_content(content, project=project)
+            # A2: the marker is minted in THIS event's issuer context so
+            # strict marker validation can later prove provenance.
+            receipt["ccr_marker"] = mgr.compress_content(
+                content, project=project, agent=agent, session=session
+            )
         logger.info(
             "context_rewrite: DEDUPLICATED event_key=%s… memory=%s project=%s agent=%s",
             event_key[:12],
@@ -432,7 +436,10 @@ def context_rewrite(
     if supersedes is not None:
         receipt["supersedes"] = _link_supersedes(mgr, memory.id, supersedes, project)
     if include_marker:
-        receipt["ccr_marker"] = mgr.compress_content(content, project=project)
+        # A2: issuer = this event's (agent, session) — see the dedup path.
+        receipt["ccr_marker"] = mgr.compress_content(
+            content, project=project, agent=agent, session=session
+        )
 
     logger.info(
         "context_rewrite: stored memory=%s project=%s agent=%s edge=%s",

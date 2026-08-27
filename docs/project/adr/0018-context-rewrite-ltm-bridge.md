@@ -193,6 +193,26 @@ Bullets below update the residual register after the deferrals triage
   cross-project seeding; a trusted harness seeding markers inside its
   OWN project remains possible and is accepted (single-operator
   deployment). Revisit on the first multi-principal trigger.
+  Review-round wording (A2 security gate): with strict mode enabled,
+  marker redemption is adversary-resistant for issuer-stamped rows —
+  refusal reasons are fixed non-oracle strings (no stored lengths or
+  issuer pairs echoed), and a hash-only retrieve of an issuer-stamped
+  row is refused (`marker validation required`), closing the
+  strip-the-args bypass. Legacy NULL-issuer rows are unverifiable by
+  construction: full-shape validation refuses them; hash-only
+  retrieval under strict mode stays ALLOWED with a WARNING (refusing
+  would brick all pre-A2 caches for zero marginal adversary
+  resistance). The same-project seeding residual itself is unchanged.
+  Deliberate breaking change for strict deployments: hash-only
+  retrieves of issuer-stamped rows are refused (manual deployments
+  keep the knob off and the full CCR UX). Review-round register
+  notes: **N2** — identity-less compress mints NULL-issuer rows, so
+  the W3 hook contract must mandate identity threading (`agent` +
+  `session` on every compress call from automation); **N3** — the
+  per-call `validate_marker=false` escape hatch remains
+  caller-controlled (any MCP/REST caller can opt out of strict mode;
+  the `ccr.validate_markers` knob is the deployment-level control);
+  successful retrieve responses never echo the issuer ledger (N1).
 - **B4 — management-plane exclusion: accepted WITH revocation triggers.**
   The Layer-3 hardening exclusion holds only until any of: a second
   principal is enrolled (ADR-0014 token), a non-loopback bind, or the

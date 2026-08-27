@@ -694,6 +694,23 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Project slug to scope the cache entry (optional)",
                     },
+                    "agent": {
+                        "type": "string",
+                        "description": (
+                            "A2 issuer ledger: your agent slug — recorded as "
+                            "the cache entry issuer so strict marker "
+                            "validation can later prove the marker was "
+                            "minted in your context (optional)"
+                        ),
+                    },
+                    "session": {
+                        "type": "string",
+                        "description": (
+                            "A2 issuer ledger: your session id — recorded "
+                            "with the agent slug as the issuer pair "
+                            "(optional)"
+                        ),
+                    },
                 },
                 "required": ["text"],
             },
@@ -708,7 +725,11 @@ async def list_tools() -> list[Tool]:
                 "Issued content is scanned for secrets: matched spans are "
                 "redacted (<REDACTED:<pattern>>) in the response, which reports "
                 "the count via 'redactions' (0 when clean); the stored original "
-                "is preserved unchanged."
+                "is preserved unchanged. A2 strict marker validation: pass "
+                "validate_marker=true with original_chars (N from the marker) "
+                "and your agent/session to require existence + integrity + "
+                "issuer-provenance checks before any content is issued "
+                "(fail-closed refusal otherwise)."
             ),
             inputSchema={
                 "type": "object",
@@ -732,6 +753,34 @@ async def list_tools() -> list[Tool]:
                             "Optional project slug: scope the lookup to this "
                             "project's entries — a hash cached under another "
                             "project is reported as not found"
+                        ),
+                    },
+                    "validate_marker": {
+                        "type": "boolean",
+                        "description": (
+                            "A2 strict mode: validate the marker (existence + "
+                            "original_chars integrity + issuer provenance) "
+                            "before issuing. Defaults to the "
+                            "ccr.validate_markers config knob."
+                        ),
+                    },
+                    "original_chars": {
+                        "type": "integer",
+                        "description": (
+                            "N from the [compressed: <hash> | N→M chars] "
+                            "marker — enables the integrity check"
+                        ),
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": (
+                            "Your agent slug — the trusted issuer context for the provenance check"
+                        ),
+                    },
+                    "session": {
+                        "type": "string",
+                        "description": (
+                            "Your session id — paired with agent as the trusted issuer context"
                         ),
                     },
                 },
@@ -804,6 +853,16 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "Optional file path: contributes recall query terms "
                             "and pins applyTo-scoped rule memories to the top."
+                        ),
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": (
+                            "A2: caller's agent slug — paired with session as "
+                            "the issuer context for the strict-mode CCR marker "
+                            "expansion gate (ccr.validate_markers); without it "
+                            "strict deployments skip expansion of issuer-"
+                            "stamped markers (the marker stays)."
                         ),
                     },
                     "budget": {
@@ -1637,20 +1696,51 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         return mgr.run_pipeline(project=_project, agent=_agent, limit=_limit)
     # ── mnemos_compress (P1-4 CCR) ───────────────────────────────────────────
     if name == "mnemos_compress":
+        # A2 issuer-ledger args: type-guarded at the boundary (the
+        # mnemos_context_rewrite pattern) so a malformed caller gets a
+        # clean error dict instead of an AttributeError deep in the
+        # manager's normalization.
+        cp_agent = args.get("agent")
+        cp_session = args.get("session")
+        for label, value in (("agent", cp_agent), ("session", cp_session)):
+            if value is not None and not isinstance(value, str):
+                return {"error": f"{label} must be a string when provided"}
         return mgr.compress_content(
             args["text"],
             profile=args.get("profile"),
             project=args.get("project", "") or "",
+            agent=cp_agent,
+            session=cp_session,
         )
     # ── mnemos_retrieve (P1-4 CCR) ───────────────────────────────────────────
     if name == "mnemos_retrieve":
         # ADR-0018 P1-a: optional project scopes the cache lookup — a hash
         # cached under another project is reported as not found.
+        # A2: marker metadata (original_chars/agent/session) + strict mode
+        # run the marker-validation gate before any content is issued.
+        # Boundary type guards (mnemos_context_rewrite pattern).
+        rt_agent = args.get("agent")
+        rt_session = args.get("session")
+        rt_chars = args.get("original_chars")
+        for label, value in (("agent", rt_agent), ("session", rt_session)):
+            if value is not None and not isinstance(value, str):
+                return {"error": f"{label} must be a string when provided"}
+        if rt_chars is not None and (not isinstance(rt_chars, int) or isinstance(rt_chars, bool)):
+            return {"error": "original_chars must be an integer when provided"}
+        # Review F3: no bool() coercion — the string "false" (or any
+        # non-bool JSON value) is a boundary error, not a truthy opt-in.
+        validate_marker_arg = args.get("validate_marker")
+        if validate_marker_arg is not None and not isinstance(validate_marker_arg, bool):
+            return {"error": "validate_marker must be a boolean when provided"}
         return mgr.retrieve_content(
             args["hash"],
             query=args.get("query"),
             snippet_count=args.get("snippet_count"),
             project=args.get("project"),
+            validate_marker=validate_marker_arg,
+            original_chars=rt_chars,
+            agent=rt_agent,
+            session=rt_session,
         )
     # ── mnemos_filter (M10) ─────────────────────────────────────────────────
     if name == "mnemos_filter":
@@ -1756,6 +1846,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             # Review F3: without the guard a non-str file reaches the
             # pipeline and dies as a TypeError echoing caller input.
             return {"error": "file must be a string when provided"}
+        asm_agent = args.get("agent")
+        if asm_agent is not None and not isinstance(asm_agent, str):
+            return {"error": "agent must be a string when provided"}
         try:
             return mgr.assemble_context(
                 session=asm_session,
@@ -1765,6 +1858,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
                 mode=str(args.get("mode", "sync")),
                 expand_ccr=bool(args.get("expand_ccr", False)),
                 async_handle=args.get("async_handle"),
+                agent=asm_agent,
             )
         except ValueError as exc:
             # Boundary validation (mode/budget/async_handle incl. the

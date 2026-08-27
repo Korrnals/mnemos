@@ -701,6 +701,8 @@ Content shorter than `min_size_chars` (default 500) is returned as-is — not ca
 | `text` | string | **yes** | — | Content to compress. ≥500 chars to cache. |
 | `profile` | string | no | auto | One of `log`, `terminal`, `code`, `docs`, `web`, `default`. Auto-detected if omitted. |
 | `project` | string | no | `""` | Project slug to scope the cache entry. |
+| `agent` | string | no | — | **A2 issuer ledger:** your agent slug, recorded on the cache row as the issuer so strict marker validation can later prove the marker was minted in your context. |
+| `session` | string | no | — | **A2 issuer ledger:** your session id, stored alongside `agent` as the issuer pair. |
 
 ### Output
 
@@ -723,7 +725,7 @@ Content shorter than `min_size_chars` (default 500) is returned as-is — not ca
 [compressed: <sha-256-hash> | <N>→<M> chars | retrieve via mnemos_retrieve]
 ```
 
-The marker is the only overhead added on top of the filtered content. It is short, parseable, and LLM-friendly. The hash is content-addressed, so re-compressing the same text is a no-op (the cache entry is reused).
+The marker is the only overhead added on top of the filtered content. It is short, parseable, and LLM-friendly. The hash is content-addressed, so re-compressing the same text is a no-op (the cache entry is reused). The issuer pair recorded with `agent`/`session` belongs to the FIRST writer of the `(project, hash)` row — a later session re-compressing identical content receives a marker that strict validation binds to that first issuer (fail-closed; harmless, since the re-compressor already holds the content).
 
 ### Example
 
@@ -747,6 +749,25 @@ Retrieve the original uncompressed content for a CCR marker hash. If `query` is 
 | `hash` | string | **yes** | — | SHA-256 hash from a `[compressed: ...]` marker. |
 | `query` | string | no | — | Search query for snippet retrieval. |
 | `snippet_count` | integer | no | `5` | Number of snippets when `query` is provided. |
+| `project` | string | no | — | Project slug: scope the lookup to this project's entries — a hash cached under another project is reported as not found. |
+| `validate_marker` | boolean | no | `ccr.validate_markers` | **A2 strict mode:** validate the marker before any content is issued. |
+| `original_chars` | integer | no | — | `N` from the `[compressed: <hash> | N→M chars]` marker — enables the integrity check. |
+| `agent` | string | no | — | Your agent slug — the trusted issuer context for the provenance check. |
+| `session` | string | no | — | Your session id, paired with `agent` as the trusted issuer context. |
+
+### A2 strict marker validation
+
+A request is **marker-shaped** when it carries any of `original_chars` / `agent` / `session` — the metadata a harness parses out of a marker plus its own identity. When strict mode is on (`validate_marker=true`, or the `ccr.validate_markers` config knob), a marker-shaped request must pass three checks BEFORE any content is issued (ArchCom 2026-08-27, decision `archcom-2026-08-27-deferrals-triage`):
+
+1. **existence** — the entry must exist under `(project, hash)`; strict validation requires the `project` scope (an unscoped lookup would redeem against the first-stored copy of any project);
+2. **integrity** — the marker's `original_chars` must equal the character length of the stored original;
+3. **provenance** — the row's issuer ledger (recorded at compress time via `agent`/`session`) must match your `(agent, session)` pair: a `null` session matches only a `null` issuer session, never a wildcard.
+
+Any failed check returns the refused shape with `reason="marker validation failed: <check>: <detail>"` and **no content** (fail-closed). Reasons are FIXED non-oracle strings — they never echo the stored original length or the stored issuer pair (a reason leaking those is a two-call oracle that defeats provenance). Rows stored without issuer identity (legacy migrations, identity-less compress) fail full-shape validation with the distinct `unverifiable legacy marker` reason. **Hash-only closure (review F2):** in strict mode a hash-only retrieve of an issuer-stamped row is refused with `reason="marker validation required"` — stripping the optional args cannot bypass the gate; legacy NULL-issuer rows stay redeemable hash-only with a WARNING (unverifiable by construction; refusing would brick pre-A2 caches). Plain hash-only retrieves on knob-off deployments are unaffected. A refused validation does not bump `retrieval_count`.
+
+For `mnemos_assemble_context` with `expand_ccr=true`: pass `agent` alongside `session` so the expansion runs under your issuer context; without a full `(agent, session)` identity a strict deployment SKIPS the expansion of issuer-stamped markers (the marker stays — the model keeps the on-demand handle); legacy NULL-issuer rows still expand. The CCR stage stats carry `skipped_refused` for these.
+
+Residual (accepted, ADR-0018 residual register): a trusted harness with compress access can still seed content inside its own project and redeem the marker from the same identity — single-operator threat model; revisit on the first multi-principal trigger.
 
 ### Output (full retrieval)
 

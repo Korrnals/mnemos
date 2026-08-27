@@ -436,6 +436,14 @@ CREATE TABLE IF NOT EXISTS ccr_cache (
     -- alone would go stale).
     secret_scan_verdict TEXT,
     secret_scan_at      TEXT,
+    -- A2 (ArchCom 2026-08-27) — issuer ledger: the agent/session that
+    -- FIRST stored this (project, hash) row (the UPSERT does not rewrite
+    -- them — first-writer owns, the same rule A1 applied to the PK).
+    -- NULL on rows stored without caller identity (legacy migrations,
+    -- identity-less compress callers): marker provenance for those rows
+    -- is unverifiable and strict-mode validation refuses them.
+    issuer_agent    TEXT,
+    issuer_session  TEXT,
     PRIMARY KEY (project, hash)
 );
 
@@ -535,6 +543,18 @@ _CCR_MIGRATIONS: list[tuple[str, str]] = [
         "secret_scan_at",
         "ALTER TABLE ccr_cache ADD COLUMN secret_scan_at TEXT",
     ),
+    # A2 (ArchCom 2026-08-27) — issuer-ledger columns. Existing rows keep
+    # NULL (provenance unverifiable → strict marker validation refuses
+    # them with the distinct "unverifiable legacy marker" reason). Fresh
+    # DBs get the columns from _DB_SCHEMA.
+    (
+        "issuer_agent",
+        "ALTER TABLE ccr_cache ADD COLUMN issuer_agent TEXT",
+    ),
+    (
+        "issuer_session",
+        "ALTER TABLE ccr_cache ADD COLUMN issuer_session TEXT",
+    ),
 ]
 
 # meta-table flag gating the one-time C10 backfill of the denormalised
@@ -562,7 +582,9 @@ CREATE TABLE ccr_cache_a1_rebuild (
     retrieval_count    INTEGER NOT NULL DEFAULT 0,
     last_retrieved_at  TEXT,
     secret_scan_verdict TEXT,
-    secret_scan_at     TEXT,
+    secret_scan_at      TEXT,
+    issuer_agent        TEXT,
+    issuer_session      TEXT,
     PRIMARY KEY (project, hash)
 )
 """
@@ -753,10 +775,10 @@ class SQLiteStore:
                 + "INSERT INTO ccr_cache_a1_rebuild "  # nosec B608 - static copy stmt
                 "(rowid, hash, original, project, created_at, size_bytes, "
                 " retrieval_count, last_retrieved_at, secret_scan_verdict, "
-                " secret_scan_at) "
+                " secret_scan_at, issuer_agent, issuer_session) "
                 "SELECT rowid, hash, original, project, created_at, size_bytes, "
                 "       retrieval_count, last_retrieved_at, secret_scan_verdict, "
-                "       secret_scan_at "
+                "       secret_scan_at, issuer_agent, issuer_session "
                 "FROM ccr_cache "
                 "WHERE rowid IN (SELECT MIN(rowid) FROM ccr_cache GROUP BY hash);\n"
                 "DROP TABLE ccr_cache;\n"
@@ -1850,6 +1872,8 @@ class SQLiteStore:
         hash: str,
         original: str,
         project: str = "",
+        issuer_agent: str | None = None,
+        issuer_session: str | None = None,
     ) -> int:
         """Insert a CCR cache entry (idempotent on ``(project, hash)``).
 
@@ -1871,12 +1895,26 @@ class SQLiteStore:
         store-time verdict alone would go stale. On 'hit' a WARNING is
         logged with the hash and log-safe per-pattern counts only; raw
         matched values are never logged (hard rule).
+
+        A2 (ArchCom 2026-08-27) — issuer ledger: ``issuer_agent`` /
+        ``issuer_session`` record the caller identity that FIRST stored
+        this ``(project, hash)`` row. The UPSERT does NOT rewrite them
+        on conflict (first-writer owns, mirroring the A1 PK rule): a
+        session re-compressing already-cached identical content receives
+        a marker whose row stays bound to the first issuer — strict-mode
+        provenance then refuses that redemption, which is fail-closed
+        and harmless (the re-compressor already holds the content it
+        passed in). ``None``/empty values normalise to NULL: rows stored
+        without caller identity are unverifiable and strict marker
+        validation refuses them (distinct reason).
         """
         from mnemos.secrets_detector import detect_secrets, findings_by_pattern
 
         conn = self._get_conn()
         now = datetime.now(UTC).isoformat()
         size_bytes = len(original.encode("utf-8"))
+        issuer_agent_n = issuer_agent.strip() or None if issuer_agent else None
+        issuer_session_n = issuer_session.strip() or None if issuer_session else None
         verdict = "unknown"
         try:
             findings = detect_secrets(original)
@@ -1894,12 +1932,22 @@ class SQLiteStore:
         conn.execute(
             "INSERT INTO ccr_cache "
             "(hash, original, project, created_at, size_bytes, retrieval_count, "
-            " secret_scan_verdict, secret_scan_at) "
-            "VALUES (?,?,?,?,?,0,?,?) "
+            " secret_scan_verdict, secret_scan_at, issuer_agent, issuer_session) "
+            "VALUES (?,?,?,?,?,0,?,?,?,?) "
             "ON CONFLICT(project, hash) DO UPDATE SET "
             "  secret_scan_verdict=excluded.secret_scan_verdict, "
             "  secret_scan_at=excluded.secret_scan_at",
-            (hash, original, project, now, size_bytes, verdict, now),
+            (
+                hash,
+                original,
+                project,
+                now,
+                size_bytes,
+                verdict,
+                now,
+                issuer_agent_n,
+                issuer_session_n,
+            ),
         )
         conn.commit()
         row = conn.execute(
@@ -1937,8 +1985,10 @@ class SQLiteStore:
         inflate retrieval stats.
 
         Returns ``{"hash","original","project","created_at","size_bytes",
-        "retrieval_count","secret_scan_verdict","secret_scan_at"}`` or
-        ``None`` if not found / project mismatch.
+        "retrieval_count","secret_scan_verdict","secret_scan_at",
+        "issuer_agent","issuer_session"}`` or ``None`` if not found /
+        project mismatch. The issuer fields are ``None`` for rows stored
+        without caller identity (A2 ledger, see :meth:`ccr_store`).
         """
         conn = self._get_conn()
         sql = "SELECT * FROM ccr_cache WHERE hash=?"
@@ -1970,6 +2020,8 @@ class SQLiteStore:
             "retrieval_count": int(row["retrieval_count"]) + (1 if bump else 0),
             "secret_scan_verdict": row["secret_scan_verdict"],
             "secret_scan_at": row["secret_scan_at"],
+            "issuer_agent": row["issuer_agent"],
+            "issuer_session": row["issuer_session"],
         }
 
     def ccr_touch(self, hash: str, *, project: str | None = None) -> None:

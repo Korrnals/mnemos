@@ -235,6 +235,18 @@ class CCRConfig(BaseModel):
     # WARNING still fires); flip to True on single-project deployments
     # to make the scope check enforceable.
     require_project_match: bool = False
+    # A2 (ArchCom 2026-08-27) — strict marker validation on issuance.
+    # When True, a MARKER-SHAPED retrieve (one carrying original_chars
+    # and/or agent/session identity from a [compressed: ...] marker)
+    # must pass existence (project-scoped, after A1), original_chars
+    # integrity, and provenance (the cache row's issuer ledger must
+    # match the caller's trusted issuer context) BEFORE any content is
+    # issued; a failed check returns refused=True with no content
+    # (fail-closed). Plain hash-only retrieves are unaffected. Default
+    # False until W3 automation ships; flip to True in the automation
+    # config so hooks redeem only markers minted in their own
+    # agent/session context. Per-call ``validate_marker`` overrides.
+    validate_markers: bool = False
     # P1-5/T3: background CCR cleanup interval (seconds). Default 1200s = 20 min.
     # The processor loop runs every `interval_sec` (default 120s); CCR cleanup runs
     # every `ccr_cleanup_interval_sec` to avoid scanning the cache table every cycle.
