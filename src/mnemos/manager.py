@@ -2322,6 +2322,7 @@ class MemoryManager:
         mode: str = "sync",
         expand_ccr: bool = False,
         async_handle: str | None = None,
+        agent: str | None = None,
     ) -> dict[str, Any]:
         """Assemble the model-facing context block (ADR-0017 D1 contract).
 
@@ -2329,8 +2330,10 @@ class MemoryManager:
         fixed pipeline (recall → CCR → filter → scan → align → budget)
         lives in that module; this method keeps the one-core-over-three-
         surfaces pattern (MCP / REST / future SDK all call the manager).
-        Raises ``ValueError`` on invalid ``session`` / ``project`` /
-        ``mode`` / ``budget`` or an unknown ``async_handle``.
+        ``agent`` (A2 review F2) pairs with ``session`` as the issuer
+        context for the strict-mode CCR expansion gate. Raises
+        ``ValueError`` on invalid ``session`` / ``project`` / ``mode`` /
+        ``budget`` or an unknown ``async_handle``.
         """
         from mnemos.assemble import assemble_context as _assemble
 
@@ -2343,6 +2346,7 @@ class MemoryManager:
             mode=mode,
             expand_ccr=expand_ccr,
             async_handle=async_handle,
+            agent=agent,
         )
 
     # ── ADR-0018: on_context_rewrite lifecycle event (#125, Wave 2) ────────
@@ -2469,10 +2473,19 @@ class MemoryManager:
           ``unverifiable legacy marker``; an empty spec fails with
           ``no trusted issuer context``.
 
-        Residual (ADR-0018 residual register, accepted): a trusted
-        harness with compress access can still seed content inside its
-        own project and redeem the marker from the same identity —
-        same-project seeding by a trusted principal; single-operator
+        Residual (ADR-0018 residual register, accepted, A2 review round
+        wording): with strict mode enabled, marker redemption is
+        ADVERSARY-RESISTANT for issuer-stamped rows (post-A2 stores carry
+        the ledger) — refusal reasons are FIXED non-oracle strings (A2
+        review F1: a reason echoing the stored length or issuer pair is a
+        two-call oracle that defeats provenance). Legacy NULL-issuer rows
+        are unverifiable by construction: full-shape validation refuses
+        them, hash-only retrieval under strict mode stays ALLOWED with a
+        WARNING (refusing would brick all pre-A2 caches for zero
+        marginal adversary resistance — see retrieve_content F2). The
+        same-project seeding residual is unchanged: a trusted harness
+        with compress access can still seed content inside its own
+        project and redeem from the same identity; single-operator
         threat model, revisit on the first multi-principal trigger.
 
         Args:
@@ -2481,22 +2494,35 @@ class MemoryManager:
                 (strict validation requires the scope).
             original_chars: N from the marker; ``None`` fails integrity.
             trusted_issuers: Set of ``(agent, session | None)`` pairs
-                allowed to have minted the marker. Agents must be
-                non-empty strings (``ValueError`` otherwise — the
-                caller builds this set from its own identity).
+                allowed to have minted the marker. Components are
+                stripped and empty sessions normalised to ``None``
+                (mirroring the ``ccr_store`` issuer normalisation — A2
+                review F4); agents must be non-empty strings
+                (``ValueError`` otherwise — the caller builds this set
+                from its own identity).
 
         Returns:
             ``{"valid": bool, "reason": str | None, "check": str | None}``
             where ``check`` names the failed dimension (``existence`` /
             ``integrity`` / ``provenance``) for the refusal reason.
+            Reasons are FIXED strings carrying no stored values (F1).
             The read is unbumped (``bump=False``): a failed validation
             must not LRU-pin the entry (P1-b review F4 semantics).
         """
-        for agent_i, _session_i in trusted_issuers:
-            if not agent_i or not agent_i.strip():
+        # F4 — normalise spec components exactly like ccr_store stores
+        # them, so a padded spec matches the stripped ledger row.
+        normalized: set[tuple[str, str | None]] = set()
+        for agent_i, session_i in trusted_issuers:
+            if not isinstance(agent_i, str) or not agent_i.strip():
                 raise ValueError(
                     f"trusted_issuers agents must be non-empty slugs (got {agent_i!r})"
                 )
+            if session_i is not None and not isinstance(session_i, str):
+                raise ValueError(
+                    f"trusted_issuers sessions must be strings or None (got {session_i!r})"
+                )
+            session_n = (session_i.strip() or None) if session_i else None
+            normalized.add((agent_i.strip(), session_n))
 
         def _verdict(valid: bool, check: str | None, reason: str | None) -> dict[str, Any]:
             return {"valid": valid, "reason": reason, "check": check}
@@ -2508,31 +2534,24 @@ class MemoryManager:
         if entry is None:
             return _verdict(False, "existence", f"hash not in cache under project {project!r}")
 
-        # (b) integrity — marker N vs stored character length.
+        # (b) integrity — marker N vs stored character length. F1: the
+        # reason is a FIXED string — echoing marker/stored lengths turns
+        # the refusal into a two-call oracle (read the true N, re-call).
         if original_chars is None:
             return _verdict(False, "integrity", "original_chars not provided by the caller")
-        stored_chars = len(entry["original"])
-        if original_chars != stored_chars:
-            return _verdict(
-                False,
-                "integrity",
-                f"original_chars mismatch: marker={original_chars} stored={stored_chars}",
-            )
+        if original_chars != len(entry["original"]):
+            return _verdict(False, "integrity", "original_chars mismatch")
 
-        # (c) provenance — issuer ledger vs the trusted context.
-        if not trusted_issuers:
+        # (c) provenance — issuer ledger vs the trusted context. F1: the
+        # reason never echoes the stored issuer pair (same oracle class).
+        if not normalized:
             return _verdict(False, "provenance", "no trusted issuer context (agent required)")
         issuer_agent = entry.get("issuer_agent")
         if not issuer_agent:
             return _verdict(False, "provenance", "unverifiable legacy marker")
         issuer_pair = (issuer_agent, entry.get("issuer_session"))
-        if issuer_pair not in trusted_issuers:
-            return _verdict(
-                False,
-                "provenance",
-                f"issuer mismatch: stored=({issuer_agent}, "
-                f"{entry.get('issuer_session')}) not in the trusted issuer context",
-            )
+        if issuer_pair not in normalized:
+            return _verdict(False, "provenance", "issuer mismatch")
         return _verdict(True, None, None)
 
     def scan_issuance(self, text: str, *, context: str) -> IssuanceScan:
@@ -2682,9 +2701,17 @@ class MemoryManager:
         against the caller's own ``(agent, session)`` issuer context —
         and any failed check returns the refused shape with
         ``reason="marker validation failed: <check>: <detail>"`` and NO
-        content (fail-closed). Plain hash-only retrieves are unaffected
-        either way. A refused validation never bumps the retrieval
-        counter (F4 semantics preserved).
+        content (fail-closed; reasons are FIXED non-oracle strings — A2
+        review F1). Review F2 closes the strip-the-args bypass: in
+        strict mode a HASH-ONLY retrieve of an ISSUER-STAMPED row is
+        refused with ``reason="marker validation required"`` (no
+        content); legacy NULL-issuer rows stay redeemable hash-only
+        with a WARNING (unverifiable by construction — refusing would
+        brick pre-A2 caches; the register wording lives in
+        :meth:`validate_marker`). An explicit ``validate_marker=False``
+        disables both gates (operator escape hatch). A refused
+        validation never bumps the retrieval counter (F4 semantics
+        preserved).
 
         ADR-0018 P0 — issuance secret scan. Every retrieval is scanned
         with ``detect_secrets`` (patterns evolve and stored records age,
@@ -2782,6 +2809,41 @@ class MemoryManager:
         )
         if not result.get("found"):
             return result
+
+        # ── A2 review F2: strict-mode hash-only closure ────────────────
+        # Strict deployments are automation contexts by design: an
+        # ISSUER-STAMPED row must be redeemed WITH marker metadata so the
+        # validation gate above actually runs — a hash-only retrieve
+        # would strip the optional args and bypass it. Legacy NULL-issuer
+        # rows stay redeemable (unverifiable by construction; refusing
+        # would brick all pre-A2 caches for zero marginal adversary
+        # resistance) with a WARNING for audit visibility. The explicit
+        # per-call validate_marker=False override disables this gate
+        # together with the rest of strict mode (operator escape hatch).
+        if strict and not marker_shaped:
+            if result.get("issuer_agent"):
+                logger.warning(
+                    "CCR issuance refused (marker validation required): hash=%s "
+                    "project=%s — issuer-stamped entry redeemed without marker "
+                    "metadata; no content issued",
+                    h,
+                    project,
+                )
+                return {
+                    "hash": h,
+                    "found": True,
+                    "refused": True,
+                    "reason": "marker validation required",
+                    "redactions": 0,
+                    "redacted_patterns": {},
+                }
+            logger.warning(
+                "Unvalidated hash-only CCR retrieval of an unverifiable legacy "
+                "entry under strict marker validation (A2 review F2): hash=%s "
+                "project=%s — allowed, issuer ledger is NULL by construction",
+                h,
+                project,
+            )
 
         # A1 (ArchCom 2026-08-27): the entry's own project — under the
         # composite PK the same hash may live in several projects, and

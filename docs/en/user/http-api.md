@@ -685,7 +685,7 @@ the original is large and only a few lines are relevant. Mirrors the
 }
 ```
 
-— no `original`/`snippets` content (fail-closed), and `retrieval_count` is not bumped. Rows stored without issuer identity are refused with the distinct `unverifiable legacy marker` reason. Plain hash-only retrieves are unaffected. Residual: same-project seeding by a trusted compress caller is accepted (ADR-0018 residual register, single-operator).
+— no `original`/`snippets` content (fail-closed), and `retrieval_count` is not bumped. Reasons are fixed non-oracle strings — stored lengths and issuer pairs are never echoed. **Hash-only closure (review F2):** in strict mode a hash-only retrieve of an issuer-stamped row is refused with `reason="marker validation required"` (no content); legacy NULL-issuer rows stay redeemable hash-only with a WARNING. Plain hash-only retrieves on knob-off deployments are unaffected. `POST /context/assemble` with `expand_ccr=true` accepts `agent` (paired with `session`) so the expansion runs under the caller's issuer context; without a full identity a strict deployment skips expansion of issuer-stamped markers (the marker stays; the CCR stage stats carry `skipped_refused`). Residual: same-project seeding by a trusted compress caller is accepted (ADR-0018 residual register, single-operator).
 
 **Response 200 — full retrieval (no `query`)**
 

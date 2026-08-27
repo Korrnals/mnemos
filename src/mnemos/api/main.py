@@ -865,6 +865,9 @@ class AssembleContextRequest(BaseModel):
     mode: str = "sync"
     expand_ccr: bool = False
     async_handle: str | None = None
+    # A2 review F2 — pairs with session as the issuer context for the
+    # strict-mode CCR expansion gate.
+    agent: str | None = None
 
 
 @app.post("/context/save", status_code=201)
@@ -947,7 +950,11 @@ async def assemble_context(req: AssembleContextRequest) -> dict[str, Any]:
     MANDATORY secret scan → CacheAligner → token budget), provenance on
     every injected block, per-block redaction counts and token stats.
     ``mode='async'`` returns a handle envelope; pass ``async_handle`` on a
-    later call to fetch the stored result.
+    later call to fetch the stored result. ``agent`` (A2 review F2) pairs
+    with ``session`` as the issuer context for the strict-mode CCR
+    expansion gate (``ccr.validate_markers``): without it a strict
+    deployment skips expansion of issuer-stamped markers (the marker
+    stays; legacy NULL-issuer rows still expand).
     """
     _track_http_call()
     mgr = get_manager()
@@ -960,6 +967,7 @@ async def assemble_context(req: AssembleContextRequest) -> dict[str, Any]:
             mode=req.mode,
             expand_ccr=req.expand_ccr,
             async_handle=req.async_handle,
+            agent=req.agent,
         )
     except ValueError as exc:
         # Boundary validation (session/project/mode/budget/async_handle).

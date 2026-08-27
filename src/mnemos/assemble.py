@@ -303,6 +303,8 @@ def _ccr_stage(
     project: str,
     budget: int,
     expand: bool,
+    agent: str | None = None,
+    session: str | None = None,
 ) -> dict[str, Any]:
     """Expand inline CCR markers via project-scoped retrieval, budget-aware.
 
@@ -312,11 +314,24 @@ def _ccr_stage(
     is cheap). An expansion is adopted only when the resulting block stays
     within the caller's budget — otherwise the compressed form (with the
     marker intact) is kept so the model retains the on-demand handle.
+
+    A2 review F2 — strict-mode composition: when the caller's identity
+    (``agent`` + ``session``) is available, the marker's metadata and the
+    identity are threaded into ``retrieve_content`` so the strict-mode
+    validation gate runs (knob-off deployments validate nothing, exactly
+    as before). Without identity the expansion issues a plain retrieve:
+    under ``ccr.validate_markers`` an issuer-stamped row is refused
+    (``marker validation required``) and the expansion is SKIPPED — the
+    marker stays in the block, the model keeps the on-demand handle;
+    legacy NULL-issuer rows still expand (WARN-allowed). Refused
+    expansions are counted separately from missing ones
+    (``skipped_refused``).
     """
     markers_found = 0
     expanded = 0
     skipped_missing = 0
     skipped_budget = 0
+    skipped_refused = 0
 
     if expand:
         for cand in candidates:
@@ -324,9 +339,22 @@ def _ccr_stage(
             if marker is None:
                 continue
             markers_found += 1
-            result = mgr.retrieve_content(str(marker["hash"]), project=project)
+            identity_available = bool(agent and agent.strip()) and bool(session and session.strip())
+            if identity_available:
+                result = mgr.retrieve_content(
+                    str(marker["hash"]),
+                    project=project,
+                    original_chars=int(marker["original_chars"]),
+                    agent=agent,
+                    session=session,
+                )
+            else:
+                result = mgr.retrieve_content(str(marker["hash"]), project=project)
             original = result.get("original") if result.get("found") else None
-            if not result.get("found") or result.get("refused") or not isinstance(original, str):
+            if result.get("refused"):
+                skipped_refused += 1
+                continue
+            if not result.get("found") or not isinstance(original, str):
                 skipped_missing += 1
                 continue
             start, end = marker["span"]
@@ -351,6 +379,7 @@ def _ccr_stage(
         "expanded": expanded,
         "skipped_missing": skipped_missing,
         "skipped_budget": skipped_budget,
+        "skipped_refused": skipped_refused,
     }
 
 
@@ -543,6 +572,7 @@ def assemble_context(
     mode: str = "sync",
     expand_ccr: bool = False,
     async_handle: str | None = None,
+    agent: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the model-facing context block (ADR-0017 D1 contract).
 
@@ -563,6 +593,12 @@ def assemble_context(
             async result instead of running a new pipeline. The fetch is
             session-bound (review F1): only the session that created the
             handle may redeem it.
+        agent: A2 review F2 — caller's agent slug. With ``session`` it
+            forms the issuer context threaded into the CCR expansion, so
+            under ``ccr.validate_markers`` only markers minted in the
+            caller's own ``(agent, session)`` context expand; without it
+            a strict deployment skips expansion of issuer-stamped rows
+            (the marker stays; legacy NULL-issuer rows still expand).
 
     Returns:
         The ContextBlock dict: ``text`` (provenance-wrapped blocks joined
@@ -598,7 +634,15 @@ def assemble_context(
     candidates, recall_stats = _recall_stage(
         mgr, project=project, file=file, content_type=content_type
     )
-    ccr_stats = _ccr_stage(mgr, candidates, project=project, budget=budget, expand=expand_ccr)
+    ccr_stats = _ccr_stage(
+        mgr,
+        candidates,
+        project=project,
+        budget=budget,
+        expand=expand_ccr,
+        agent=agent,
+        session=session,
+    )
     filter_stats = _filter_stage(candidates)
     scan_stats = _scan_stage(mgr, candidates)
     align_stats = _align_stage(mgr, candidates)

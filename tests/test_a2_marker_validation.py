@@ -23,6 +23,7 @@ acceptance, not a bug these tests chase.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import tempfile
 from collections.abc import Iterator
@@ -40,6 +41,7 @@ from mnemos.api.main import app, lifespan
 from mnemos.ccr import content_hash, parse_marker
 from mnemos.config import Settings
 from mnemos.manager import MemoryManager
+from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
 from mnemos.storage.sqlite_store import SQLiteStore
 
 PROJECT = "a2-proj"
@@ -367,10 +369,12 @@ def test_strict_mode_refuses_on_each_failure(strict_manager: MemoryManager) -> N
         assert result["found"] is (check != "existence"), label
 
 
-def test_strict_mode_non_marker_retrieve_unaffected(strict_manager: MemoryManager) -> None:
-    """Plain hash-only retrieve bypasses the marker gate entirely."""
-    marker = _mint(strict_manager)
-    result = strict_manager.retrieve_content(marker["hash"], project=PROJECT)
+def test_knob_off_hash_only_retrieve_unaffected(manager: MemoryManager) -> None:
+    """Knob OFF (default deployments): plain hash-only retrieve keeps the
+    full CCR UX — no validation, no F2 closure (review F2 scope: strict
+    deployments are automation contexts by design)."""
+    marker = _mint(manager)
+    result = manager.retrieve_content(marker["hash"], project=PROJECT)
     assert result["found"] is True
     assert result["original"] == CONTENT
     assert result.get("refused") is not True
@@ -646,6 +650,240 @@ def test_rest_knob_on_refuses_marker_shaped(strict_rest_client: TestClient) -> N
     assert body["refused"] is True
     assert "marker validation failed: integrity" in body["reason"]
     assert "original" not in body
+
+
+# ── A2 review round ──────────────────────────────────────────────────────────
+
+
+def test_refusal_reasons_are_non_oracle(manager: MemoryManager) -> None:
+    """F1: refusal reasons are FIXED strings — a reason echoing the
+    stored length or the stored issuer pair is a two-call oracle (read
+    the true values, re-call with them) that defeats provenance."""
+    marker = _mint(manager)
+    stored_len = len(CONTENT)
+
+    integrity = manager.validate_marker(
+        marker["hash"],
+        project=PROJECT,
+        original_chars=stored_len + 7,
+        trusted_issuers={(AGENT, SESSION)},
+    )
+    assert integrity["reason"] == "original_chars mismatch"
+    assert str(stored_len) not in integrity["reason"]
+    assert str(stored_len + 7) not in integrity["reason"]
+
+    provenance = manager.validate_marker(
+        marker["hash"],
+        project=PROJECT,
+        original_chars=marker["original_chars"],
+        trusted_issuers={(AGENT, OTHER_SESSION)},
+    )
+    assert provenance["reason"] == "issuer mismatch"
+    # The STORED issuer pair must not appear (the caller's own values
+    # may — they supplied them).
+    assert AGENT not in provenance["reason"]
+    assert SESSION not in provenance["reason"]
+
+    # Same guarantee through the strict-mode refusal surface.
+    refused = manager.retrieve_content(
+        marker["hash"],
+        project=PROJECT,
+        validate_marker=True,
+        original_chars=stored_len + 7,
+        agent=AGENT,
+        session=SESSION,
+    )
+    assert refused["reason"] == "marker validation failed: integrity: original_chars mismatch"
+    assert str(stored_len) not in refused["reason"]
+
+
+def test_spec_components_normalized(manager: MemoryManager) -> None:
+    """F4: spec components are stripped inside validate_marker,
+    mirroring the ccr_store issuer normalisation."""
+    marker = _mint(manager)
+    verdict = manager.validate_marker(
+        marker["hash"],
+        project=PROJECT,
+        original_chars=marker["original_chars"],
+        trusted_issuers={(f"  {AGENT}  ", f"  {SESSION}  ")},
+    )
+    assert verdict == {"valid": True, "reason": None, "check": None}
+    with pytest.raises(ValueError, match="strings or None"):
+        manager.validate_marker(
+            marker["hash"],
+            project=PROJECT,
+            original_chars=marker["original_chars"],
+            trusted_issuers={(AGENT, 42)},
+        )
+
+
+def test_strict_hash_only_issuer_stamped_refused(strict_manager: MemoryManager) -> None:
+    """F2: stripping the optional args must NOT bypass the gate — a
+    hash-only retrieve of an issuer-stamped row in strict mode is
+    refused with the distinct reason and no content."""
+    marker = _mint(strict_manager)
+    result = strict_manager.retrieve_content(marker["hash"], project=PROJECT)
+    assert result["found"] is True
+    assert result["refused"] is True
+    assert result["reason"] == "marker validation required"
+    assert "original" not in result
+    assert "snippets" not in result
+    # Refusal never bumps (F4 semantics).
+    entry = strict_manager.sqlite.ccr_get(marker["hash"], project=PROJECT, bump=False)
+    assert entry is not None
+    assert entry["retrieval_count"] == 0
+
+
+def test_per_call_strict_hash_only_refused(manager: MemoryManager) -> None:
+    """F2 scope: per-call validate_marker=True triggers the hash-only
+    closure even with the knob OFF."""
+    marker = _mint(manager)
+    result = manager.retrieve_content(marker["hash"], project=PROJECT, validate_marker=True)
+    assert result["refused"] is True
+    assert result["reason"] == "marker validation required"
+    assert "original" not in result
+
+
+def test_per_call_opt_out_disables_hash_only_closure(strict_manager: MemoryManager) -> None:
+    """The explicit validate_marker=False escape hatch disables BOTH
+    strict gates (validation and the F2 closure)."""
+    marker = _mint(strict_manager)
+    result = strict_manager.retrieve_content(marker["hash"], project=PROJECT, validate_marker=False)
+    assert result["found"] is True
+    assert result.get("refused") is not True
+    assert result["original"] == CONTENT
+
+
+def test_strict_hash_only_legacy_allowed_with_warn(
+    strict_manager: MemoryManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F2 legacy line: NULL-issuer rows are unverifiable by construction
+    — hash-only stays ALLOWED under strict mode with a WARNING (refusing
+    would brick all pre-A2 caches for zero marginal adversary
+    resistance)."""
+    stamped = strict_manager.compress_content(CONTENT, project=PROJECT)  # identity-less
+    assert stamped["cached"] is True
+    with caplog.at_level(logging.WARNING, logger="mnemos.manager"):
+        result = strict_manager.retrieve_content(stamped["hash"], project=PROJECT)
+    assert result["found"] is True
+    assert result.get("refused") is not True
+    assert result["original"] == CONTENT
+    assert any(
+        "unverifiable legacy" in rec.message and "A2 review F2" in rec.message
+        for rec in caplog.records
+    )
+
+
+def test_mcp_validate_marker_type_guard(mcp_wired: MemoryManager) -> None:
+    """F3: no bool() coercion — the string "false" (or any non-bool
+    value) is a boundary error, not a truthy strict-mode opt-in."""
+    import asyncio
+
+    bad = asyncio.run(
+        mcp_mod._dispatch("mnemos_retrieve", {"hash": "f" * 64, "validate_marker": "false"})
+    )
+    assert bad == {"error": "validate_marker must be a boolean when provided"}
+    # A real bool passes the guard untouched (None-follows-kob default
+    # preserved: explicit True below).
+    marker = _mint(mcp_wired)
+    refused = asyncio.run(
+        mcp_mod._dispatch(
+            "mnemos_retrieve",
+            {"hash": marker["hash"], "project": PROJECT, "validate_marker": True},
+        )
+    )
+    assert refused["refused"] is True  # F2: hash-only + strict → refused
+    assert refused["reason"] == "marker validation required"
+
+
+def _marker_memory(mgr: MemoryManager, *, agent: str | None, session: str | None) -> str:
+    """Compress CONTENT in the given issuer context and store a published
+    memory carrying the inline marker; return the marker hash."""
+    compressed = mgr.compress_content(CONTENT, project=PROJECT, agent=agent, session=session)
+    assert compressed["cached"] is True
+    mgr.add(
+        MemoryCreate(
+            content=(
+                "Context block summary for the deployment run.\n"
+                f"{compressed['marker']}\n"
+                "(original available via the marker above)"
+            ),
+            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
+            source=MemorySource.MCP,
+            status=MemoryStatus.PUBLISHED,
+        ),
+        project=PROJECT,
+        agent=AGENT,
+    )
+    return str(compressed["hash"])
+
+
+def test_assemble_strict_expands_with_matching_identity(strict_manager: MemoryManager) -> None:
+    """F2 assemble composition: agent+session threaded → the expansion
+    runs under the caller's issuer context and succeeds."""
+    _marker_memory(strict_manager, agent=AGENT, session=SESSION)
+    result = strict_manager.assemble_context(
+        session=SESSION,
+        project=PROJECT,
+        expand_ccr=True,
+        budget=8192,
+        agent=AGENT,
+    )
+    assert result["stats"]["ccr"]["expanded"] == 1
+    assert "Deployment runbook" in result["text"]
+
+
+def test_assemble_strict_skips_without_identity(strict_manager: MemoryManager) -> None:
+    """No full identity → strict deployment SKIPS the expansion of
+    issuer-stamped markers (the marker stays; counted as refused)."""
+    _marker_memory(strict_manager, agent=AGENT, session=SESSION)
+    result = strict_manager.assemble_context(
+        session=SESSION, project=PROJECT, expand_ccr=True, budget=8192
+    )
+    ccr = result["stats"]["ccr"]
+    assert ccr["markers_found"] == 1
+    assert ccr["expanded"] == 0
+    assert ccr["skipped_refused"] == 1
+    assert ccr["skipped_missing"] == 0
+    assert "[compressed:" in result["text"]
+
+
+def test_assemble_strict_wrong_identity_skips(strict_manager: MemoryManager) -> None:
+    """Full but WRONG identity → the validation gate refuses → expansion
+    skipped, marker stays (fail-closed on the automation channel)."""
+    _marker_memory(strict_manager, agent=AGENT, session=SESSION)
+    result = strict_manager.assemble_context(
+        session=OTHER_SESSION,
+        project=PROJECT,
+        expand_ccr=True,
+        budget=8192,
+        agent=AGENT,
+    )
+    ccr = result["stats"]["ccr"]
+    assert ccr["expanded"] == 0
+    assert ccr["skipped_refused"] == 1
+    assert "[compressed:" in result["text"]
+
+
+def test_assemble_strict_legacy_null_expands(strict_manager: MemoryManager) -> None:
+    """Legacy NULL-issuer rows still expand under strict mode even
+    without identity (WARN-allowed line)."""
+    _marker_memory(strict_manager, agent=None, session=None)
+    result = strict_manager.assemble_context(
+        session=SESSION, project=PROJECT, expand_ccr=True, budget=8192
+    )
+    assert result["stats"]["ccr"]["expanded"] == 1
+    assert "Deployment runbook" in result["text"]
+
+
+def test_assemble_knob_off_expands_without_identity(manager: MemoryManager) -> None:
+    """Knob-off deployments: unchanged assemble UX — expansion works
+    without identity (no validation, no closure)."""
+    _marker_memory(manager, agent=AGENT, session=SESSION)
+    result = manager.assemble_context(
+        session=SESSION, project=PROJECT, expand_ccr=True, budget=8192
+    )
+    assert result["stats"]["ccr"]["expanded"] == 1
 
 
 # ── Migration round-trips ────────────────────────────────────────────────────

@@ -222,6 +222,8 @@ def retrieve(
             "project": entry["project"],
             "size_bytes": entry["size_bytes"],
             "retrieval_count": entry["retrieval_count"],
+            "issuer_agent": entry["issuer_agent"],
+            "issuer_session": entry["issuer_session"],
         }
 
     count = snippet_count if snippet_count is not None else config.snippet_count
@@ -233,6 +235,8 @@ def retrieve(
         "project": entry["project"],
         "snippets": snippets,
         "retrieval_count": entry["retrieval_count"],
+        "issuer_agent": entry["issuer_agent"],
+        "issuer_session": entry["issuer_session"],
     }
 
 

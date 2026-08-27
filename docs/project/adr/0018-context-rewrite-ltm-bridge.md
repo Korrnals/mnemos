@@ -193,6 +193,16 @@ Bullets below update the residual register after the deferrals triage
   cross-project seeding; a trusted harness seeding markers inside its
   OWN project remains possible and is accepted (single-operator
   deployment). Revisit on the first multi-principal trigger.
+  Review-round wording (A2 security gate): with strict mode enabled,
+  marker redemption is adversary-resistant for issuer-stamped rows —
+  refusal reasons are fixed non-oracle strings (no stored lengths or
+  issuer pairs echoed), and a hash-only retrieve of an issuer-stamped
+  row is refused (`marker validation required`), closing the
+  strip-the-args bypass. Legacy NULL-issuer rows are unverifiable by
+  construction: full-shape validation refuses them; hash-only
+  retrieval under strict mode stays ALLOWED with a WARNING (refusing
+  would brick all pre-A2 caches for zero marginal adversary
+  resistance). The same-project seeding residual itself is unchanged.
 - **B4 — management-plane exclusion: accepted WITH revocation triggers.**
   The Layer-3 hardening exclusion holds only until any of: a second
   principal is enrolled (ADR-0014 token), a non-loopback bind, or the

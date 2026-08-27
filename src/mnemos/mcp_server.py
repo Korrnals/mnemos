@@ -855,6 +855,16 @@ async def list_tools() -> list[Tool]:
                             "and pins applyTo-scoped rule memories to the top."
                         ),
                     },
+                    "agent": {
+                        "type": "string",
+                        "description": (
+                            "A2: caller's agent slug — paired with session as "
+                            "the issuer context for the strict-mode CCR marker "
+                            "expansion gate (ccr.validate_markers); without it "
+                            "strict deployments skip expansion of issuer-"
+                            "stamped markers (the marker stays)."
+                        ),
+                    },
                     "budget": {
                         "type": "integer",
                         "default": 2048,
@@ -1717,15 +1727,17 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
                 return {"error": f"{label} must be a string when provided"}
         if rt_chars is not None and (not isinstance(rt_chars, int) or isinstance(rt_chars, bool)):
             return {"error": "original_chars must be an integer when provided"}
+        # Review F3: no bool() coercion — the string "false" (or any
+        # non-bool JSON value) is a boundary error, not a truthy opt-in.
         validate_marker_arg = args.get("validate_marker")
+        if validate_marker_arg is not None and not isinstance(validate_marker_arg, bool):
+            return {"error": "validate_marker must be a boolean when provided"}
         return mgr.retrieve_content(
             args["hash"],
             query=args.get("query"),
             snippet_count=args.get("snippet_count"),
             project=args.get("project"),
-            validate_marker=(
-                bool(validate_marker_arg) if validate_marker_arg is not None else None
-            ),
+            validate_marker=validate_marker_arg,
             original_chars=rt_chars,
             agent=rt_agent,
             session=rt_session,
@@ -1834,6 +1846,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             # Review F3: without the guard a non-str file reaches the
             # pipeline and dies as a TypeError echoing caller input.
             return {"error": "file must be a string when provided"}
+        asm_agent = args.get("agent")
+        if asm_agent is not None and not isinstance(asm_agent, str):
+            return {"error": "agent must be a string when provided"}
         try:
             return mgr.assemble_context(
                 session=asm_session,
@@ -1843,6 +1858,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
                 mode=str(args.get("mode", "sync")),
                 expand_ccr=bool(args.get("expand_ccr", False)),
                 async_handle=args.get("async_handle"),
+                agent=asm_agent,
             )
         except ValueError as exc:
             # Boundary validation (mode/budget/async_handle incl. the
