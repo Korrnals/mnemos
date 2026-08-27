@@ -177,6 +177,33 @@ marker-driven automation** (`post_tool_call` autocompression, auto-rehydrate).
   after P0); a malicious harness is not mitigated by this contract
   (single-tenant threat model: the harness is trusted software).
 
+### Residual risks (post-implementation patch, ArchCom 2026-08-27)
+
+Bullets below update the residual register after the deferrals triage
+(decision `archcom-2026-08-27-deferrals-triage`; supersedes queue
+`7114710b` + escalation `eb06d3b5`):
+
+- **B6 — entropy-floor heuristic: accepted by design.** Shannon-entropy
+  ranking is a tier-2 heuristic; primary controls are the unconditional
+  issuance scan + refuse + zero-loss storage. No parameterization without
+  evidence (rejected in committee).
+- **A2 — same-project seeding residual: documented ahead of
+  implementation.** The strong-form marker validation (existence +
+  provenance/issuer-ledger + `original_chars` integrity) closes
+  cross-project seeding; a trusted harness seeding markers inside its
+  OWN project remains possible and is accepted (single-operator
+  deployment). Revisit on the first multi-principal trigger.
+- **B4 — management-plane exclusion: accepted WITH revocation triggers.**
+  The Layer-3 hardening exclusion holds only until any of: a second
+  principal is enrolled (ADR-0014 token), a non-loopback bind, or the
+  first multi-harness adapter. Any trigger revokes the exclusion;
+  execution is P2 with the triggers in place.
+- **C10 — noisy-neighbor: accepted.** The per-project aggregate rewrite
+  ceiling (`context_rewrite_project_rate_limit_per_minute`) bounds
+  fan-out but one busy project can still starve its siblings on a shared
+  node; accepted for single-operator, revisit on the first multi-harness
+  adapter.
+
 ## References
 
 - Architectural Committee decision record: mnemos entry `b1f4c34f`
