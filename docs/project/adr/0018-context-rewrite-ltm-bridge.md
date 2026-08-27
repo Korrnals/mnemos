@@ -203,6 +203,16 @@ Bullets below update the residual register after the deferrals triage
   retrieval under strict mode stays ALLOWED with a WARNING (refusing
   would brick all pre-A2 caches for zero marginal adversary
   resistance). The same-project seeding residual itself is unchanged.
+  Deliberate breaking change for strict deployments: hash-only
+  retrieves of issuer-stamped rows are refused (manual deployments
+  keep the knob off and the full CCR UX). Review-round register
+  notes: **N2** — identity-less compress mints NULL-issuer rows, so
+  the W3 hook contract must mandate identity threading (`agent` +
+  `session` on every compress call from automation); **N3** — the
+  per-call `validate_marker=false` escape hatch remains
+  caller-controlled (any MCP/REST caller can opt out of strict mode;
+  the `ccr.validate_markers` knob is the deployment-level control);
+  successful retrieve responses never echo the issuer ledger (N1).
 - **B4 — management-plane exclusion: accepted WITH revocation triggers.**
   The Layer-3 hardening exclusion holds only until any of: a second
   principal is enrolled (ADR-0014 token), a non-loopback bind, or the

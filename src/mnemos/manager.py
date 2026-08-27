@@ -2711,7 +2711,9 @@ class MemoryManager:
         :meth:`validate_marker`). An explicit ``validate_marker=False``
         disables both gates (operator escape hatch). A refused
         validation never bumps the retrieval counter (F4 semantics
-        preserved).
+        preserved). Review N1: successful responses NEVER echo the
+        issuer ledger — ``issuer_agent``/``issuer_session`` are internal
+        gate data stripped before any success path returns.
 
         ADR-0018 P0 — issuance secret scan. Every retrieval is scanned
         with ``detect_secrets`` (patterns evolve and stored records age,
@@ -2844,6 +2846,14 @@ class MemoryManager:
                 h,
                 project,
             )
+
+        # ── A2 review N1: no issuer echo ───────────────────────────────
+        # The issuer pair is an internal ledger datum (the F2 gate just
+        # consumed it); echoing it in every successful response would
+        # gratuitously disclose session-capability handles on the MCP/REST
+        # surfaces. Strip both keys before any success path returns.
+        result.pop("issuer_agent", None)
+        result.pop("issuer_session", None)
 
         # A1 (ArchCom 2026-08-27): the entry's own project — under the
         # composite PK the same hash may live in several projects, and

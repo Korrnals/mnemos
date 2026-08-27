@@ -323,6 +323,40 @@ def test_strict_mode_valid_marker_issues_content(strict_manager: MemoryManager) 
     assert result["original"] == CONTENT
 
 
+def test_successful_retrieve_never_echoes_issuer(manager: MemoryManager) -> None:
+    """N1: the issuer ledger is internal gate data — issuer_agent/
+    issuer_session must not appear in ANY successful response (full,
+    snippet, strict-validated, or knob-off): echoing them would
+    gratuitously disclose session-capability handles on the MCP/REST
+    surfaces."""
+    marker = _mint(manager)
+
+    full = manager.retrieve_content(marker["hash"], project=PROJECT)
+    assert full["found"] is True
+    assert "issuer_agent" not in full
+    assert "issuer_session" not in full
+
+    snippets = manager.retrieve_content(
+        marker["hash"], project=PROJECT, query="runbook", snippet_count=2
+    )
+    assert snippets["found"] is True
+    assert "issuer_agent" not in snippets
+    assert "issuer_session" not in snippets
+
+    strict = manager.retrieve_content(
+        marker["hash"],
+        project=PROJECT,
+        validate_marker=True,
+        original_chars=marker["original_chars"],
+        agent=AGENT,
+        session=SESSION,
+    )
+    assert strict["found"] is True
+    assert strict.get("refused") is not True
+    assert "issuer_agent" not in strict
+    assert "issuer_session" not in strict
+
+
 def test_strict_mode_refuses_on_each_failure(strict_manager: MemoryManager) -> None:
     """Each failed check → refused shape, reason naming the check, and NO
     content keys in the response (fail-closed)."""
