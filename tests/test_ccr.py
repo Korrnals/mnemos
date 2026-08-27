@@ -281,12 +281,19 @@ class TestProjectScoping:
         assert entry is not None
         assert entry["project"] == "proj-a"
 
-    def test_same_content_different_projects_one_row(self, store, config):
+    def test_same_content_different_projects_two_rows(self, store, config):
         text = _large_log(200)
-        # Same hash → INSERT OR IGNORE keeps the first project
+        # A1 (ArchCom 2026-08-27): composite PK (project, hash) — the same
+        # content cached by two projects is TWO rows (the first-writer-
+        # squatting cross-project DoS edge of the hash-only PK dissolves;
+        # each project redeems its own marker). Pre-A1 this asserted one
+        # row with the first project kept.
         compress(text, store=store, config=config, profile="log", project="proj-a")
         compress(text, store=store, config=config, profile="log", project="proj-b")
-        assert store.ccr_count() == 1
+        assert store.ccr_count() == 2
+        h = content_hash(text)
+        assert store.ccr_get(h, project="proj-a", bump=False) is not None
+        assert store.ccr_get(h, project="proj-b", bump=False) is not None
 
 
 # ── Manager wiring ────────────────────────────────────────────────────────────

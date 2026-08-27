@@ -198,7 +198,16 @@ CREATE TABLE IF NOT EXISTS memories (
     -- state machine in MemoryManager.workflow_set cannot be bypassed.
     workflow_status  TEXT,
     locked_by        TEXT,
-    locked_at        TEXT
+    locked_at        TEXT,
+    -- C10 (ArchCom 2026-08-27): denormalised rewrite-event provenance from
+    -- metadata JSON. rewrite_source = metadata["source"] (the ingestion
+    -- channel discriminator, e.g. 'context-rewrite' — NOT the MemorySource
+    -- enum in the `source` column, which stays 'mcp' for rewrite events);
+    -- rewrite_session = metadata["rewrite_session"]. Derived in save() and
+    -- backfilled by _run_migrations; they exist so the rewrite quota counts
+    -- are index-backed instead of json_extract full-scans.
+    rewrite_source   TEXT,
+    rewrite_session  TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -238,6 +247,10 @@ CREATE INDEX IF NOT EXISTS idx_memories_project  ON memories(project);
 CREATE INDEX IF NOT EXISTS idx_memories_agent    ON memories(agent);
 CREATE INDEX IF NOT EXISTS idx_memories_cluster  ON memories(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
+-- NOTE (C10): idx_memories_project_rewrite_source_created is created in
+-- _run_migrations, NOT here — the rewrite_source/rewrite_session columns
+-- reach legacy DBs via ALTER TABLE in that same routine, and this script
+-- runs BEFORE it (an index over a missing column would abort the connect).
 
 -- mnemos #96: workflow lifecycle audit log. Every state transition is
 -- recorded here (actor, from->to, reason, force_used). The workflow_status /
@@ -343,44 +356,12 @@ CREATE INDEX IF NOT EXISTS idx_turns_session_step ON turns(session_id, step_numb
 CREATE INDEX IF NOT EXISTS idx_turns_message_id   ON turns(message_id);
 CREATE INDEX IF NOT EXISTS idx_turns_created       ON turns(created_at);
 
--- M16: FTS5 for future /v1/search (bonus endpoint, v0.7+)
-CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
-    id UNINDEXED,
-    session_id UNINDEXED,
-    content,
-    summary,
-    tags,
-    from_agent UNINDEXED,
-    to_agent UNINDEXED,
-    content=turns,
-    content_rowid=rowid,
-    tokenize='unicode61'
-);
-
-CREATE TRIGGER IF NOT EXISTS turns_ai AFTER INSERT ON turns BEGIN
-    INSERT INTO turns_fts(rowid, id, session_id, content, summary, tags,
-                          from_agent, to_agent)
-    VALUES (new.rowid, new.id, new.session_id, new.content, new.summary,
-            new.tags, new.from_agent, new.to_agent);
-END;
-
-CREATE TRIGGER IF NOT EXISTS turns_ad AFTER DELETE ON turns BEGIN
-    INSERT INTO turns_fts(turns_fts, rowid, id, session_id, content, summary,
-                          tags, from_agent, to_agent)
-    VALUES ('delete', old.rowid, old.id, old.session_id, old.content,
-            old.summary, old.tags, old.from_agent, old.to_agent);
-END;
-
-CREATE TRIGGER IF NOT EXISTS turns_au AFTER UPDATE ON turns BEGIN
-    INSERT INTO turns_fts(turns_fts, rowid, id, session_id, content, summary,
-                          tags, from_agent, to_agent)
-    VALUES ('delete', old.rowid, old.id, old.session_id, old.content,
-            old.summary, old.tags, old.from_agent, old.to_agent);
-    INSERT INTO turns_fts(rowid, id, session_id, content, summary, tags,
-                          from_agent, to_agent)
-    VALUES (new.rowid, new.id, new.session_id, new.content, new.summary,
-            new.tags, new.from_agent, new.to_agent);
-END;
+-- C8 (ArchCom 2026-08-27): turns_fts + the turns_ai/ad/au triggers were
+-- REMOVED — dead index (zero readers in src) and a second plaintext copy
+-- of every turn at rest plus write amplification on the hot turn path.
+-- Legacy DBs have the table+triggers dropped idempotently in
+-- _run_migrations. Turn-level search is not a feature; the DDL lives in
+-- VCS history if a /v1/search consumer ever materialises.
 
 -- T-AUTH: bearer tokens, session tokens, TOTP challenges (ADR-0014)
 CREATE TABLE IF NOT EXISTS auth_tokens (
@@ -434,8 +415,12 @@ CREATE TABLE IF NOT EXISTS meta (
 -- mnemos_retrieve fetches the original back with zero data loss.
 -- Inspired by headroom's CCR (https://github.com/headroomlabs-ai/headroom),
 -- Apache 2.0 — we integrate into the existing mnemos store (one DB).
+-- A1 (ArchCom 2026-08-27): composite PK (project, hash) — the same content
+-- hash cached by two projects is TWO rows (the first-writer-squatting
+-- cross-project DoS edge of the hash-only PK dissolves). Legacy DBs are
+-- rebuilt onto this shape by _run_migrations (first-writer-wins dedup).
 CREATE TABLE IF NOT EXISTS ccr_cache (
-    hash             TEXT PRIMARY KEY,
+    hash             TEXT NOT NULL,
     original         TEXT NOT NULL,
     project          TEXT NOT NULL DEFAULT '',
     created_at       TEXT NOT NULL,
@@ -450,7 +435,8 @@ CREATE TABLE IF NOT EXISTS ccr_cache (
     -- scanning unconditionally (patterns evolve; a store-time verdict
     -- alone would go stale).
     secret_scan_verdict TEXT,
-    secret_scan_at      TEXT
+    secret_scan_at      TEXT,
+    PRIMARY KEY (project, hash)
 );
 
 CREATE INDEX IF NOT EXISTS idx_ccr_cache_project   ON ccr_cache(project);
@@ -525,6 +511,14 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("workflow_status", "ALTER TABLE memories ADD COLUMN workflow_status TEXT"),
     ("locked_by", "ALTER TABLE memories ADD COLUMN locked_by TEXT"),
     ("locked_at", "ALTER TABLE memories ADD COLUMN locked_at TEXT"),
+    # C10 (ArchCom 2026-08-27) — denormalised rewrite-event provenance
+    # columns (metadata.source / metadata.rewrite_session). Nullable:
+    # non-rewrite memories carry NULL. Existing rows are BACKFILLED once
+    # from the metadata JSON by _run_migrations (meta-table flag
+    # ``schema_backfill_rewrite_cols_v1``); new rows derive the columns in
+    # save(). NOT named `source` — that column is the MemorySource enum.
+    ("rewrite_source", "ALTER TABLE memories ADD COLUMN rewrite_source TEXT"),
+    ("rewrite_session", "ALTER TABLE memories ADD COLUMN rewrite_session TEXT"),
 ]
 
 # ADR-0018 P1-a — scan-at-store verdict columns on ccr_cache. Existing
@@ -543,6 +537,36 @@ _CCR_MIGRATIONS: list[tuple[str, str]] = [
     ),
 ]
 
+# meta-table flag gating the one-time C10 backfill of the denormalised
+# rewrite columns (set inside the same transaction as the backfill).
+_BACKFILL_REWRITE_COLS_FLAG: Final[str] = "schema_backfill_rewrite_cols_v1"
+
+# C8 (ArchCom 2026-08-27) — legacy turn FTS objects dropped idempotently on
+# every connect (IF EXISTS no-ops after the first run).
+_C8_DROP_SQL: Final[tuple[str, ...]] = (
+    "DROP TRIGGER IF EXISTS turns_ai",
+    "DROP TRIGGER IF EXISTS turns_ad",
+    "DROP TRIGGER IF EXISTS turns_au",
+    "DROP TABLE IF EXISTS turns_fts",
+)
+
+# A1 (ArchCom 2026-08-27) — rebuild target for the ccr_cache composite-PK
+# migration. Shape mirrors the ccr_cache DDL in _DB_SCHEMA exactly.
+_CCR_REBUILD_DDL: Final[str] = """
+CREATE TABLE ccr_cache_a1_rebuild (
+    hash               TEXT NOT NULL,
+    original           TEXT NOT NULL,
+    project            TEXT NOT NULL DEFAULT '',
+    created_at         TEXT NOT NULL,
+    size_bytes         INTEGER NOT NULL DEFAULT 0,
+    retrieval_count    INTEGER NOT NULL DEFAULT 0,
+    last_retrieved_at  TEXT,
+    secret_scan_verdict TEXT,
+    secret_scan_at     TEXT,
+    PRIMARY KEY (project, hash)
+)
+"""
+
 
 # ── SQLiteStore ───────────────────────────────────────────────────────────────
 
@@ -555,18 +579,33 @@ class SQLiteStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._cache = _TTLCache()
+        # Serialises CONNECTION BOOTSTRAP (schema script + migrations)
+        # across this store's threads. The per-thread connections
+        # themselves run unlocked as before — only the first connect of
+        # each thread takes the lock. Without it, a manager's background
+        # threads (scanner loop, CCR cleanup) racing the main thread's
+        # first connect interleave multi-statement DDL: the A1 rebuild's
+        # DROP/RENAME can collide with a concurrent fresh-CREATE from
+        # the schema script ("database disk image is malformed" /
+        # "database is locked"). Cross-PROCESS first-connects are
+        # serialized at the SQLite level instead (BEGIN IMMEDIATE +
+        # busy_timeout + IF EXISTS convergence).
+        self._bootstrap_lock = threading.Lock()
 
     def _get_conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
         if conn is None:
-            conn = sqlite3.connect(str(self.db_path), check_same_thread=True)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute("PRAGMA busy_timeout=5000")
-            conn.executescript(_DB_SCHEMA)
-            self._run_migrations(conn)
-            self._local.conn = conn
+            with self._bootstrap_lock:
+                conn = getattr(self._local, "conn", None)
+                if conn is None:
+                    conn = sqlite3.connect(str(self.db_path), check_same_thread=True)
+                    conn.row_factory = sqlite3.Row
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA foreign_keys=ON")
+                    conn.execute("PRAGMA busy_timeout=5000")
+                    conn.executescript(_DB_SCHEMA)
+                    self._run_migrations(conn)
+                    self._local.conn = conn
         return conn
 
     @staticmethod
@@ -575,11 +614,173 @@ class SQLiteStore:
         for col, sql in _MIGRATIONS:
             if col not in existing:
                 conn.execute(sql)
+        # C10 index — created here (not in _DB_SCHEMA) because legacy DBs
+        # gain the rewrite columns from the ALTERs above, while _DB_SCHEMA
+        # runs before this routine on every connect. IF NOT EXISTS no-ops
+        # after the first connect. Backs the per-(project, session) and
+        # per-project rewrite quota counts without json_extract scans.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_project_rewrite_source_created "
+            "ON memories(project, rewrite_source, created_at)"
+        )
         ccr_cols = {row[1] for row in conn.execute("PRAGMA table_info(ccr_cache)").fetchall()}
         for col, sql in _CCR_MIGRATIONS:
             if col not in ccr_cols:
                 conn.execute(sql)
         conn.commit()
+        # ── Schema-поезд (ArchCom 2026-08-27): A1 + C8 + C10 backfill ──
+        SQLiteStore._migrate_c8_drop_turns_fts(conn)
+        SQLiteStore._migrate_c10_backfill_rewrite_cols(conn)
+        SQLiteStore._migrate_a1_ccr_composite_pk(conn)
+
+    @staticmethod
+    def _migrate_c8_drop_turns_fts(conn: sqlite3.Connection) -> None:
+        """C8 — drop the dead ``turns_fts`` index and its three triggers.
+
+        Idempotent (IF EXISTS on every connect): after the first run the
+        statements are no-ops. Turn writes never touched the FTS table
+        directly (only via the triggers), so nothing else changes.
+        """
+        for sql in _C8_DROP_SQL:
+            conn.execute(sql)
+        conn.commit()
+
+    @staticmethod
+    def _migrate_c10_backfill_rewrite_cols(conn: sqlite3.Connection) -> None:
+        """C10 — one-time backfill of ``rewrite_source``/``rewrite_session``.
+
+        Existing rows get the values extracted from the metadata JSON (the
+        pre-C10 write path stored them there only). The meta-table flag is
+        set in the same commit so an interrupted backfill re-runs on the
+        next connect. Rows whose metadata is not valid JSON are skipped
+        defensively (json_extract would raise); ``save()`` re-derives both
+        columns on the next write of such a row anyway.
+
+        CONCURRENT-CONNECT SAFE (review round): ``_run_migrations`` runs on
+        every THREAD-LOCAL connection, and a manager's background threads
+        (scanner loop, CCR cleanup) can open their first connection while
+        the main thread is still inside this routine. Both connections then
+        observe "flag absent" and both run the backfill. The UPDATE is
+        idempotent (converges to the same values) and the flag INSERT is
+        ``INSERT OR IGNORE`` — the losing racer no-ops instead of raising
+        ``UNIQUE constraint failed: meta.key`` (the plain INSERT made
+        random concurrent first-connects crash the store and flaked the
+        REST suite).
+        """
+        flag = conn.execute(
+            "SELECT 1 FROM meta WHERE key = ?", (_BACKFILL_REWRITE_COLS_FLAG,)
+        ).fetchone()
+        if flag is not None:
+            return
+        cur = conn.execute(
+            "UPDATE memories SET "
+            "rewrite_source = json_extract(metadata, '$.source'), "
+            "rewrite_session = json_extract(metadata, '$.rewrite_session') "
+            "WHERE json_valid(metadata) "
+            "AND (json_extract(metadata, '$.source') IS NOT NULL "
+            "     OR json_extract(metadata, '$.rewrite_session') IS NOT NULL)"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value, updated_at) VALUES (?,?,?)",
+            (
+                _BACKFILL_REWRITE_COLS_FLAG,
+                "1",
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        conn.commit()
+        backfilled = int(cur.rowcount or 0)
+        if backfilled:
+            logger.info("C10 backfill: denormalised %d memory rows", backfilled)
+
+    @staticmethod
+    def _migrate_a1_ccr_composite_pk(conn: sqlite3.Connection) -> None:
+        """A1 — rebuild ``ccr_cache`` onto the composite PK ``(project, hash)``.
+
+        Detection is by PK shape (PRAGMA table_info pk positions), so fresh
+        DBs (already created with the composite PK by _DB_SCHEMA) and
+        already-migrated DBs skip this. Legacy hash-PK tables are rebuilt:
+        create the new table, copy FIRST-WRITER-WINS (one row per hash —
+        the lowest rowid, i.e. the earliest stored copy; the cache is
+        derived data and recompressible, so dropped duplicates are
+        acceptable by committee decision), drop the old table, rename.
+        Rowids are preserved through the copy so the external-content
+        ``ccr_cache_fts`` stays addressable; the FTS index is rebuilt
+        afterwards regardless (also repairs any pre-existing desync).
+        ``_DB_SCHEMA`` is re-executed after the rename to restore the
+        ccr_cache indexes and triggers in one place (all IF NOT EXISTS —
+        the rest of the script no-ops).
+
+        Review round — CRASH SAFETY: create+copy+drop+rename run inside
+        ONE explicit transaction (``BEGIN IMMEDIATE … COMMIT`` via
+        executescript; SQLite DDL is transactional). The pre-fix sequence
+        of autocommitted statements had a crash wedge: a process death
+        between CREATE ``ccr_cache_a1_rebuild`` and the RENAME left an
+        orphan rebuild table, and the reopen re-ran the plain CREATE →
+        OperationalError from ``_get_conn`` → the store became PERMANENTLY
+        unopenable. Now a crash before COMMIT rolls back to the intact
+        legacy table (reopen re-runs the migration cleanly), and the
+        leading ``DROP TABLE IF EXISTS`` converges an orphan left by any
+        pre-fix crash. The post-rename schema re-exec and the FTS 'rebuild'
+        stay OUTSIDE the transaction (idempotent, self-healing on the next
+        connect) as before.
+        """
+        info = conn.execute("PRAGMA table_info(ccr_cache)").fetchall()
+        pk_positions = {str(row[1]): int(row[5]) for row in info}
+        already_composite = pk_positions.get("project") == 1 and pk_positions.get("hash") == 2
+        if already_composite or not pk_positions:
+            # Already composite (fresh/migrated) or no ccr_cache table —
+            # nothing to rebuild. Still converge a possible orphan from a
+            # PRE-transactional crash: in the worst window the legacy table
+            # was dropped, the rename never ran, and the schema script has
+            # just recreated an empty composite cache — the half-built
+            # ``ccr_cache_a1_rebuild`` would otherwise linger forever.
+            conn.execute("DROP TABLE IF EXISTS ccr_cache_a1_rebuild")
+            conn.commit()
+            return
+        total = int(conn.execute("SELECT COUNT(*) FROM ccr_cache").fetchone()[0])
+        try:
+            # B608: the script is composed EXCLUSIVELY of static module
+            # constants and literals (transaction keywords + the DDL
+            # constant + a fully-static copy statement) — no user-controlled
+            # fragment ever enters it. One transaction so DDL is atomic.
+            conn.executescript(
+                "BEGIN IMMEDIATE;\n"  # nosec B608 - static literal
+                # Converge an orphaned rebuild table from a pre-fix crash.
+                "DROP TABLE IF EXISTS ccr_cache_a1_rebuild;\n"
+                + _CCR_REBUILD_DDL.rstrip()
+                + ";\n"  # nosec B608 - static literal
+                + "INSERT INTO ccr_cache_a1_rebuild "  # nosec B608 - static copy stmt
+                "(rowid, hash, original, project, created_at, size_bytes, "
+                " retrieval_count, last_retrieved_at, secret_scan_verdict, "
+                " secret_scan_at) "
+                "SELECT rowid, hash, original, project, created_at, size_bytes, "
+                "       retrieval_count, last_retrieved_at, secret_scan_verdict, "
+                "       secret_scan_at "
+                "FROM ccr_cache "
+                "WHERE rowid IN (SELECT MIN(rowid) FROM ccr_cache GROUP BY hash);\n"
+                "DROP TABLE ccr_cache;\n"
+                "ALTER TABLE ccr_cache_a1_rebuild RENAME TO ccr_cache;\n"
+                "COMMIT;"
+            )
+        except Exception:
+            # Roll the half-run script back so the next connect sees the
+            # intact legacy table and re-runs cleanly; re-raise as-is.
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        # Restore indexes + triggers (and re-assert the rest of the schema).
+        conn.executescript(_DB_SCHEMA)
+        # Re-sync the external-content FTS index with the rebuilt table.
+        conn.execute("INSERT INTO ccr_cache_fts(ccr_cache_fts) VALUES('rebuild')")
+        conn.commit()
+        kept = int(conn.execute("SELECT COUNT(*) FROM ccr_cache").fetchone()[0])
+        logger.info(
+            "A1 migration: ccr_cache rebuilt onto composite PK (project, hash): "
+            "%d rows kept, %d duplicate-hash rows dropped (first-writer-wins)",
+            kept,
+            total - kept,
+        )
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)
@@ -659,7 +860,7 @@ class SQLiteStore:
 
     # ── CRUD ──────────────────────────────────────────────────────────────
 
-    def save(self, memory: Memory) -> None:
+    def save(self, memory: Memory, *, trusted_rewrite_provenance: bool = False) -> None:
         """Insert or update a memory, keeping the FTS5 index consistent.
 
         Uses UPDATE for existing rows (fires AFTER UPDATE trigger) and
@@ -667,6 +868,20 @@ class SQLiteStore:
         INSERT OR REPLACE — that fires the INSERT trigger with a new
         rowid while the FTS5 external-content table still references the
         old rowid, causing ``missing row N from content table`` errors.
+
+        C10 review round — TRUSTED GATE on the denormalised rewrite
+        provenance: ``rewrite_source`` / ``rewrite_session`` derive from
+        ``memory.metadata`` ONLY when the trusted rewrite-event path
+        (``context_rewrite`` → ``MemoryManager.add``) passes
+        ``trusted_rewrite_provenance=True``. The generic create paths
+        (REST/MCP/CLI) accept client-controlled ``metadata`` and must
+        never mint rewrite quota counters — planted
+        ``source='context-rewrite'`` + ``rewrite_session`` there would
+        otherwise burn the rewrite channel's per-session and per-project
+        quotas (429 DoS) without ever touching the rewrite API. On the
+        untrusted UPDATE path the two columns are left UNTOUCHED (an
+        edited legitimate event keeps counting; a forged row never had
+        them derived in the first place).
         """
         conn = self._get_conn()
         existing = conn.execute("SELECT 1 FROM memories WHERE id = ?", (memory.id,)).fetchone()
@@ -677,46 +892,105 @@ class SQLiteStore:
         filter_stats_json = (
             json.dumps(memory.filter_stats, ensure_ascii=False) if memory.filter_stats else None
         )
+        # C10 — denormalised rewrite provenance (metadata is the source of
+        # truth; these columns exist purely so the rewrite quota counts are
+        # index-backed). Gated on the trusted caller — see the docstring.
+        # Only non-empty str values are promoted; anything else (missing
+        # key, JSON object, empty string) stores NULL.
+        if trusted_rewrite_provenance:
+            meta_src = memory.metadata.get("source")
+            rewrite_source = meta_src if isinstance(meta_src, str) and meta_src else None
+            meta_sess = memory.metadata.get("rewrite_session")
+            rewrite_session = meta_sess if isinstance(meta_sess, str) and meta_sess else None
+        else:
+            rewrite_source = None
+            rewrite_session = None
         if existing:
-            conn.execute(
-                """UPDATE memories SET
-                   content = ?, title = ?, tags = ?, source = ?, source_url = ?,
-                   memory_type = ?, created_at = ?, updated_at = ?, metadata = ?,
-                   file_path = ?, category = ?, project = ?, agent = ?, status = ?,
-                   quality_score = ?, confidence = ?, source_coverage = ?,
-                   cluster_id = ?, derived_from = ?, embedding_id = ?,
-                   raw_content = ?, clean_content = ?, filter_profile = ?,
-                   filter_stats = ?, filter_version = ?
-                   WHERE id = ?""",
-                (
-                    memory.content,
-                    title,
-                    tags_json,
-                    memory.source.value,
-                    memory.source_url,
-                    memory.memory_type.value,
-                    memory.created_at.isoformat(),
-                    memory.updated_at.isoformat(),
-                    meta_json,
-                    memory.file_path,
-                    memory.category,
-                    memory.project,
-                    memory.agent,
-                    memory.status.value,
-                    memory.quality_score,
-                    memory.confidence,
-                    memory.source_coverage,
-                    memory.cluster_id,
-                    derived_json,
-                    memory.embedding_id,
-                    memory.raw_content,
-                    memory.clean_content,
-                    memory.filter_profile,
-                    filter_stats_json,
-                    memory.filter_version,
-                    memory.id,
-                ),
-            )
+            if trusted_rewrite_provenance:
+                conn.execute(
+                    """UPDATE memories SET
+                       content = ?, title = ?, tags = ?, source = ?, source_url = ?,
+                       memory_type = ?, created_at = ?, updated_at = ?, metadata = ?,
+                       file_path = ?, category = ?, project = ?, agent = ?, status = ?,
+                       quality_score = ?, confidence = ?, source_coverage = ?,
+                       cluster_id = ?, derived_from = ?, embedding_id = ?,
+                       raw_content = ?, clean_content = ?, filter_profile = ?,
+                       filter_stats = ?, filter_version = ?,
+                       rewrite_source = ?, rewrite_session = ?
+                       WHERE id = ?""",
+                    (
+                        memory.content,
+                        title,
+                        tags_json,
+                        memory.source.value,
+                        memory.source_url,
+                        memory.memory_type.value,
+                        memory.created_at.isoformat(),
+                        memory.updated_at.isoformat(),
+                        meta_json,
+                        memory.file_path,
+                        memory.category,
+                        memory.project,
+                        memory.agent,
+                        memory.status.value,
+                        memory.quality_score,
+                        memory.confidence,
+                        memory.source_coverage,
+                        memory.cluster_id,
+                        derived_json,
+                        memory.embedding_id,
+                        memory.raw_content,
+                        memory.clean_content,
+                        memory.filter_profile,
+                        filter_stats_json,
+                        memory.filter_version,
+                        rewrite_source,
+                        rewrite_session,
+                        memory.id,
+                    ),
+                )
+            else:
+                # Untrusted UPDATE: the rewrite columns are NOT in the SET
+                # list — preserved as-is (cannot be forged or erased here).
+                conn.execute(
+                    """UPDATE memories SET
+                       content = ?, title = ?, tags = ?, source = ?, source_url = ?,
+                       memory_type = ?, created_at = ?, updated_at = ?, metadata = ?,
+                       file_path = ?, category = ?, project = ?, agent = ?, status = ?,
+                       quality_score = ?, confidence = ?, source_coverage = ?,
+                       cluster_id = ?, derived_from = ?, embedding_id = ?,
+                       raw_content = ?, clean_content = ?, filter_profile = ?,
+                       filter_stats = ?, filter_version = ?
+                       WHERE id = ?""",
+                    (
+                        memory.content,
+                        title,
+                        tags_json,
+                        memory.source.value,
+                        memory.source_url,
+                        memory.memory_type.value,
+                        memory.created_at.isoformat(),
+                        memory.updated_at.isoformat(),
+                        meta_json,
+                        memory.file_path,
+                        memory.category,
+                        memory.project,
+                        memory.agent,
+                        memory.status.value,
+                        memory.quality_score,
+                        memory.confidence,
+                        memory.source_coverage,
+                        memory.cluster_id,
+                        derived_json,
+                        memory.embedding_id,
+                        memory.raw_content,
+                        memory.clean_content,
+                        memory.filter_profile,
+                        filter_stats_json,
+                        memory.filter_version,
+                        memory.id,
+                    ),
+                )
         else:
             conn.execute(
                 """INSERT INTO memories
@@ -724,8 +998,9 @@ class SQLiteStore:
                     created_at, updated_at, metadata, file_path, category,
                     project, agent, status, quality_score, confidence,
                     source_coverage, cluster_id, derived_from, embedding_id,
-                    raw_content, clean_content, filter_profile, filter_stats, filter_version)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    raw_content, clean_content, filter_profile, filter_stats,
+                    filter_version, rewrite_source, rewrite_session)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     memory.id,
                     memory.content,
@@ -753,6 +1028,9 @@ class SQLiteStore:
                     memory.filter_profile,
                     filter_stats_json,
                     memory.filter_version,
+                    # NULL on the generic path regardless of metadata claims.
+                    rewrite_source,
+                    rewrite_session,
                 ),
             )
         conn.commit()
@@ -1573,11 +1851,15 @@ class SQLiteStore:
         original: str,
         project: str = "",
     ) -> int:
-        """Insert a CCR cache entry (idempotent on hash).
+        """Insert a CCR cache entry (idempotent on ``(project, hash)``).
 
-        Uses an UPSERT so re-compressing the same content is a no-op for
-        the stored row (the original is already cached) while still
-        refreshing the scan verdict. Returns the rowid of the stored (or
+        Uses an UPSERT so re-compressing the same content within the SAME
+        project is a no-op for the stored row (the original is already
+        cached) while still refreshing the scan verdict. A1 (ArchCom
+        2026-08-27): the conflict target is the composite PK — the same
+        hash stored by a DIFFERENT project inserts its own row (the
+        first-writer-squatting cross-project DoS edge of the hash-only
+        PK is dissolved). Returns the rowid of the stored (or
         pre-existing) entry.
 
         ADR-0018 P1-a — scan-at-store verdict: ``detect_secrets`` runs on
@@ -1614,13 +1896,15 @@ class SQLiteStore:
             "(hash, original, project, created_at, size_bytes, retrieval_count, "
             " secret_scan_verdict, secret_scan_at) "
             "VALUES (?,?,?,?,?,0,?,?) "
-            "ON CONFLICT(hash) DO UPDATE SET "
+            "ON CONFLICT(project, hash) DO UPDATE SET "
             "  secret_scan_verdict=excluded.secret_scan_verdict, "
             "  secret_scan_at=excluded.secret_scan_at",
             (hash, original, project, now, size_bytes, verdict, now),
         )
         conn.commit()
-        row = conn.execute("SELECT rowid FROM ccr_cache WHERE hash=?", (hash,)).fetchone()
+        row = conn.execute(
+            "SELECT rowid FROM ccr_cache WHERE hash=? AND project=?", (hash, project)
+        ).fetchone()
         return int(row["rowid"]) if row else 0
 
     def ccr_get(
@@ -1638,7 +1922,11 @@ class SQLiteStore:
         returns ``None`` (cross-session marker redemption is denied,
         fail-closed) and the retrieval counter is NOT bumped. When
         ``project`` is ``None`` the lookup stays unscoped (legacy
-        behavior preserved for callers without project context).
+        behavior preserved for callers without project context); under
+        the A1 composite PK the same hash may exist in several projects,
+        so the unscoped read resolves to the FIRST-STORED copy (lowest
+        rowid / earliest created_at — first-writer-wins, the same rule
+        the A1 migration used to dedup legacy rows).
 
         ADR-0018 P1-b review (F4) — ``bump=False`` skips the
         ``retrieval_count`` / ``last_retrieved_at`` UPDATE (and returns
@@ -1658,15 +1946,19 @@ class SQLiteStore:
         if project:
             sql += " AND project=?"
             params.append(project)
+        else:
+            sql += " ORDER BY created_at ASC, rowid ASC LIMIT 1"
         row = conn.execute(sql, params).fetchone()
         if row is None:
             return None
         if bump:
             now = datetime.now(UTC).isoformat()
+            # Bump exactly the row that was read (its own project — the
+            # filter param may be None while the row is project-scoped).
             conn.execute(
                 "UPDATE ccr_cache SET retrieval_count=retrieval_count+1, "
-                "last_retrieved_at=? WHERE hash=?",
-                (now, hash),
+                "last_retrieved_at=? WHERE hash=? AND project=?",
+                (now, hash, row["project"]),
             )
             conn.commit()
         return {
@@ -1680,7 +1972,7 @@ class SQLiteStore:
             "secret_scan_at": row["secret_scan_at"],
         }
 
-    def ccr_touch(self, hash: str) -> None:
+    def ccr_touch(self, hash: str, *, project: str | None = None) -> None:
         """Bump a CCR entry's retrieval counter (ADR-0018 P1-b review F4).
 
         Companion to ``ccr_get(bump=False)``: the issuance layer calls
@@ -1688,13 +1980,24 @@ class SQLiteStore:
         issuances leave ``retrieval_count`` / ``last_retrieved_at``
         untouched. Updating a hash that no longer exists (evicted between
         the read and the decision) is a no-op.
+
+        A1: with the composite PK the same hash may exist in several
+        projects — pass the ``project`` of the row that was actually
+        issued (``MemoryManager.retrieve_content`` passes the entry's
+        own project). ``project=None`` is the legacy global form and
+        bumps EVERY copy of the hash (they hold identical content; the
+        counter is LRU metadata, not a per-project fact).
         """
         conn = self._get_conn()
-        conn.execute(
+        sql = (
             "UPDATE ccr_cache SET retrieval_count=retrieval_count+1, "
-            "last_retrieved_at=? WHERE hash=?",
-            (datetime.now(UTC).isoformat(), hash),
+            "last_retrieved_at=? WHERE hash=?"
         )
+        params: list[Any] = [datetime.now(UTC).isoformat(), hash]
+        if project is not None:
+            sql += " AND project=?"
+            params.append(project)
+        conn.execute(sql, params)
         conn.commit()
 
     def ccr_count(self) -> int:
@@ -1718,7 +2021,10 @@ class SQLiteStore:
         """Evict least-retrieved entries until count <= max_entries.
 
         Ties on retrieval_count break by created_at (oldest first).
-        Returns count evicted.
+        Returns count evicted. A1: eviction is per-ROW (rowid-based) —
+        under the composite PK the same hash may exist in several
+        projects and evicting "the hash" would delete every copy at
+        once; exactly ``excess`` rows are removed.
         """
         conn = self._get_conn()
         total = self.ccr_count()
@@ -1726,8 +2032,8 @@ class SQLiteStore:
             return 0
         excess = total - max_entries
         cur = conn.execute(
-            "DELETE FROM ccr_cache WHERE hash IN ("
-            "  SELECT hash FROM ccr_cache "
+            "DELETE FROM ccr_cache WHERE rowid IN ("
+            "  SELECT rowid FROM ccr_cache "
             "  ORDER BY retrieval_count ASC, created_at ASC "
             "  LIMIT ?"
             ")",
@@ -1758,6 +2064,13 @@ class SQLiteStore:
         channel from leaking other projects' entries when a caller
         invokes search directly.
 
+        A1 — the FTS leg joins the content table and resolves to ONE
+        copy of the hash: the caller's project when scoped, otherwise
+        the first-stored copy (all copies of a hash hold identical
+        content — content addressing — but WITHOUT this restriction the
+        N project copies would each emit the same snippet and flood the
+        limit).
+
         The snippet highlight markers are the module-level
         ``FTS_SNIPPET_*`` constants (single source of truth): the
         issuance-side scanner (ADR-0018 P1-b m2) strips exactly these
@@ -1773,21 +2086,31 @@ class SQLiteStore:
             if owner is None:
                 return []
         fts_query = self._build_fts_query(query)
+        sql = (
+            "SELECT snippet(ccr_cache_fts, 1, ?, ?, ?, 32) AS snip, "
+            "f.rank AS rank "
+            "FROM ccr_cache_fts f JOIN ccr_cache c ON c.rowid = f.rowid "
+            "WHERE f.ccr_cache_fts MATCH ? AND f.hash=? "
+        )
+        params: list[Any] = [
+            FTS_SNIPPET_START_MARK,
+            FTS_SNIPPET_END_MARK,
+            FTS_SNIPPET_ELLIPSIS,
+            fts_query,
+            hash,
+        ]
+        if project:
+            sql += "AND c.project = ? "
+            params.append(project)
+        else:
+            # Unscoped: first-stored copy only (identical content across
+            # copies; one copy keeps snippets unique under the composite PK).
+            sql += "AND c.rowid = (SELECT MIN(rowid) FROM ccr_cache WHERE hash=?) "
+            params.append(hash)
+        sql += "ORDER BY f.rank LIMIT ?"
+        params.append(limit)
         try:
-            rows = conn.execute(
-                "SELECT snippet(ccr_cache_fts, 1, ?, ?, ?, 32) AS snip, "
-                "rank AS rank "
-                "FROM ccr_cache_fts WHERE ccr_cache_fts MATCH ? AND hash=? "
-                "ORDER BY rank LIMIT ?",
-                (
-                    FTS_SNIPPET_START_MARK,
-                    FTS_SNIPPET_END_MARK,
-                    FTS_SNIPPET_ELLIPSIS,
-                    fts_query,
-                    hash,
-                    limit,
-                ),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         except sqlite3.OperationalError as exc:
             if "missing row" in str(exc) or "content table" in str(exc):
                 logger.warning("ccr_cache_fts corrupted, skipping search: %s", exc)
@@ -1888,15 +2211,48 @@ class SQLiteStore:
         mirrors the #96 guardrail-5 pattern). Counts rows in ``memories``,
         i.e. stored events only: a deduplicated re-delivery performs no
         write and therefore consumes no quota. ``session=None`` matches
-        rows stored without a session (null-safe ``IS`` comparison —
-        ``json_extract`` yields NULL for a missing key).
+        rows stored without a session (null-safe ``IS`` comparison).
+        C10 (ArchCom 2026-08-27): filters on the denormalised
+        ``rewrite_source`` / ``rewrite_session`` columns (maintained by
+        ``save()`` and the one-time backfill) so the count is served by
+        ``idx_memories_project_rewrite_source_created`` instead of a
+        ``json_extract`` full scan per call.
         """
+        from mnemos.context_rewrite import SOURCE_CONTEXT_REWRITE
+
         conn = self._get_conn()
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM memories "
-            "WHERE project = ? AND created_at >= ? "
-            "AND json_extract(metadata, '$.source') = 'context-rewrite' "
-            "AND json_extract(metadata, '$.rewrite_session') IS ?",
-            (project, since_iso, session),
+            "WHERE project = ? AND created_at >= ? AND rewrite_source = ? "
+            "AND rewrite_session IS ?",
+            (project, since_iso, SOURCE_CONTEXT_REWRITE, session),
         ).fetchone()
         return int(row["n"]) if row else 0
+
+    def count_recent_context_rewrites_by_project(
+        self, project: str, since_iso: str
+    ) -> tuple[int, int]:
+        """Return ``(rows, distinct_sessions)`` for rewrite events in a project.
+
+        C10 (ArchCom 2026-08-27) — backs the SECONDARY per-project
+        aggregate write quota: the row count trips the ceiling, the
+        distinct-session count is the noisy-neighbor signal carried in
+        the log line and the 429 message (one session burning the whole
+        project budget vs many sessions). NULL-session events count as
+        rows AND as one session bucket (``COALESCE`` — session slugs are
+        validated non-empty, so ``''`` cannot collide with a real one).
+        Index-backed via ``idx_memories_project_rewrite_source_created``.
+        """
+        from mnemos.context_rewrite import SOURCE_CONTEXT_REWRITE
+
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, "
+            "COUNT(DISTINCT COALESCE(rewrite_session, '')) AS s "
+            "FROM memories "
+            "WHERE project = ? AND created_at >= ? AND rewrite_source = ?",
+            (project, since_iso, SOURCE_CONTEXT_REWRITE),
+        ).fetchone()
+        if row is None:  # pragma: no cover — aggregate always returns a row
+            return 0, 0
+        return int(row["n"]), int(row["s"])

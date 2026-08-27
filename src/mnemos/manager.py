@@ -276,6 +276,7 @@ class MemoryManager:
         *,
         project: str = "",
         agent: str = "",
+        trusted_rewrite_provenance: bool = False,
     ) -> Memory:
         """Create a new memory entry.
 
@@ -290,6 +291,14 @@ class MemoryManager:
         Idempotent: a re-add with the same secret does not duplicate the
         tag (the check is "already present → skip"). Only pattern names
         and counts are logged; raw matched values never enter the log.
+
+        ``trusted_rewrite_provenance`` (C10 review round) is set ONLY by
+        the rewrite-event path (``context_rewrite``): it lets
+        ``SQLiteStore.save`` derive the denormalised
+        ``rewrite_source``/``rewrite_session`` quota columns from
+        ``data.metadata``. The generic create surfaces (REST/MCP/CLI)
+        keep the default ``False`` — client-controlled metadata must
+        never mint rewrite quota counters.
         """
         # ── Layer 1: write-path secrets scanner ───────────────────────────
         # Run before Memory construction so the tag is part of the persisted
@@ -339,8 +348,9 @@ class MemoryManager:
         except Exception as exc:
             logger.warning("Vault write failed (non-fatal): %s", exc)
 
-        # Persist to SQLite
-        self.sqlite.save(memory)
+        # Persist to SQLite (trusted_rewrite_provenance gates the C10
+        # rewrite-column derivation — see the add docstring).
+        self.sqlite.save(memory, trusted_rewrite_provenance=trusted_rewrite_provenance)
 
         # M10: auto-filter on ingest if enabled. Non-fatal: on failure the
         # memory is still saved with raw content (clean_content stays None).
@@ -2599,13 +2609,18 @@ class MemoryManager:
         if not result.get("found"):
             return result
 
+        # A1 (ArchCom 2026-08-27): the entry's own project — under the
+        # composite PK the same hash may live in several projects, and
+        # the bump must hit exactly the row that was issued. Computed
+        # BEFORE _mark_issued is first called.
+        entry_project = str(result.get("project") or "")
+
         def _mark_issued() -> None:
             """Bump the counter post-decision (F4) and reflect it in result."""
-            self.sqlite.ccr_touch(h)
+            self.sqlite.ccr_touch(h, project=entry_project)
             result["retrieval_count"] = int(result["retrieval_count"]) + 1
 
         # ── CWE-668 ergonomics: unscoped retrieval of a scoped row ────
-        entry_project = str(result.get("project") or "")
         if not project and entry_project:
             if self.settings.ccr.require_project_match:
                 logger.warning(

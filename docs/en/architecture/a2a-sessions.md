@@ -286,13 +286,18 @@ not an error.
 
 Mnemos uses the same SQLite file as the rest of the project. WAL mode is
 enabled, so the A2A store and the main memory store can both read while
-one of them writes. Three new tables live alongside the existing ones:
+one of them writes. Two new tables live alongside the existing ones:
 
 ```sql
 CREATE TABLE sessions ( ... );     -- one row per conversation
 CREATE TABLE turns    ( ... );     -- one row per turn; UNIQUE(message_id)
-CREATE VIRTUAL TABLE turns_fts USING fts5(...);  -- for future /v1/search
 ```
+
+(The `turns_fts` FTS5 shadow and its `turns_ai`/`turns_ad`/`turns_au`
+triggers were REMOVED — C8, ArchCom 2026-08-27: a dead index with zero
+readers, a second plaintext copy of every turn at rest, and write
+amplification on the turn path. Turn-level search is not a feature; the
+DDL is recoverable from VCS history on demand.)
 
 A2A tables live under the same WAL group as the memories tables, so a
 single `journal_mode=WAL` pragma covers both.
@@ -396,7 +401,8 @@ manual migration step is required: the schema is `CREATE TABLE IF NOT
 EXISTS …` and is applied automatically the first time the main
 `SQLiteStore` opens the database (which happens on FastAPI startup).
 
-The `turns_fts` virtual table is created eagerly even though no endpoint
-queries it yet — the bonus `/v1/search` endpoint (planned for v0.7)
-will use it. Keeping the FTS index in sync is done by triggers
-(`turns_ai`, `turns_ad`, `turns_au`) installed alongside the table.
+The `turns_fts` virtual table used to be created eagerly even though no
+endpoint queried it; it was removed (C8, ArchCom 2026-08-27 — dead index,
+second plaintext copy at rest, write amplification). Legacy databases
+have the table and its triggers dropped idempotently on the first
+`SQLiteStore` connect after the upgrade.

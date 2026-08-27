@@ -294,8 +294,9 @@ class SessionStore:
             summary = extract_summary(payload.content)
             key_decisions = extract_key_decisions(payload.content)
 
-            # 4. Insert the turn.  The FTS index is kept in sync by the
-            # ``turns_ai`` trigger installed in the schema.
+            # 4. Insert the turn. No FTS shadow anymore — C8 (ArchCom
+            # 2026-08-27) removed turns_fts + the turns_ai/ad/au triggers
+            # (dead index, second plaintext copy at rest).
             row_id = uuid.uuid4().hex
             now = datetime.now(UTC).isoformat()
             conn.execute(

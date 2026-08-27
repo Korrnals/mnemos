@@ -44,15 +44,24 @@ Event semantics (ADR-0018 §"on_context_rewrite", verbatim requirements):
 Write-surface guardrails (#125 W2 security review, finding 1 — these are
 preconditions for the W3 automation slice):
 
-* **Rate limit** — ``mnemos.context_rewrite_rate_limit_per_minute``
-  (default 30, 0 disables) counts STORED events per ``(project, session)``
-  in a one-minute window (the #96 guardrail-5 SQL pattern over
-  ``memories``). Deliberately counts writes, not deliveries: a
-  deduplicated re-delivery performs no write and consumes no quota, so
-  at-least-once retry storms stay harmless. Over-limit raises
-  :class:`ContextRewriteRateLimitError` — a backpressure signal, NOT a
-  validation failure (REST maps it to 429, MCP to a clean error dict;
-  ``ValueError`` remains 422/``{"error": …}``).
+* **Rate limit** — two-level (C10, ArchCom 2026-08-27). PRIMARY:
+  ``mnemos.context_rewrite_rate_limit_per_minute`` (default 30, 0 disables)
+  counts STORED events per ``(project, session)`` in a one-minute window
+  (the #96 guardrail-5 SQL pattern over ``memories``). SECONDARY:
+  ``mnemos.context_rewrite_project_rate_limit_per_minute`` (default 300,
+  0 disables) caps the per-project AGGREGATE — total stored events across
+  all sessions of the project per minute, with the distinct-session count
+  reported in the 429 message as the noisy-neighbor signal. Both count
+  writes, not deliveries: a deduplicated re-delivery performs no write
+  and consumes no quota, so at-least-once retry storms stay harmless.
+  NULL-session events form their own bucket under both knobs. Over-limit
+  raises :class:`ContextRewriteRateLimitError` — a backpressure signal,
+  NOT a validation failure (REST maps it to 429, MCP to a clean error
+  dict; ``ValueError`` remains 422/``{"error": …}``). Residual risk
+  (ADR-0018-accepted): the aggregate ceiling introduces a noisy-neighbor
+  channel — one busy project can starve its siblings on a shared node;
+  accepted for the single-operator deployment, revisit on the first
+  multi-harness adapter.
 * **Size caps** — ``mnemos.context_rewrite_max_content_chars`` (default
   1 MiB in chars) and ``mnemos.context_rewrite_max_diff_chars`` (default
   256 KiB in chars) reject oversized payloads at the boundary before
@@ -268,7 +277,8 @@ def context_rewrite(
             found in the caller's project (existence and cross-project
             cases share one message — no global existence oracle).
         ContextRewriteRateLimitError: The per-(project, session) stored-event
-            quota is exhausted (W2 review F1; REST → 429).
+            quota or the per-project aggregate ceiling is exhausted (W2
+            review F1 + C10; REST → 429).
     """
     mnemos_cfg = mgr.settings.mnemos
     _validate(
@@ -317,9 +327,9 @@ def context_rewrite(
     # ── Write quota (W2 review F1): STORED events per (project, session) ──
     # Runs only on the write path — a deduplicated delivery (above) never
     # reaches this check, so retry storms stay harmless by construction.
+    minute_ago = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
     limit = mnemos_cfg.context_rewrite_rate_limit_per_minute
     if limit > 0:
-        minute_ago = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
         recent = mgr.sqlite.count_recent_context_rewrites(project, session, minute_ago)
         if recent >= limit:
             logger.warning(
@@ -336,6 +346,39 @@ def context_rewrite(
                 f"project={project!r} session={session!r} in the last minute "
                 f"(limit: {limit}/min). Wait or raise "
                 f"mnemos.context_rewrite_rate_limit_per_minute."
+            )
+
+    # ── C10 (ArchCom 2026-08-27): SECONDARY per-project aggregate ceiling ──
+    # Total stored events across ALL sessions of the project in the last
+    # minute. Closes the fan-out gap of the primary limiter (N sessions x
+    # full per-session budget = N x budget rows from one caller identity)
+    # while the residual noisy-neighbor risk — one busy project starving
+    # its siblings on a shared node — is ADR-0018-accepted (single-
+    # operator). The distinct-session count is the noisy-neighbor signal
+    # carried in the log line and the 429 message. NULL-session events
+    # count as rows and as their own session bucket. Same 429 shape.
+    project_limit = mnemos_cfg.context_rewrite_project_rate_limit_per_minute
+    if project_limit > 0:
+        project_rows, project_sessions = mgr.sqlite.count_recent_context_rewrites_by_project(
+            project, minute_ago
+        )
+        if project_rows >= project_limit:
+            logger.warning(
+                "context_rewrite: PROJECT RATE LIMITED project=%s agent=%s "
+                "rows=%d sessions=%d limit=%d/min (noisy-neighbor guard) — "
+                "content never logged",
+                project,
+                agent,
+                project_rows,
+                project_sessions,
+                project_limit,
+            )
+            raise ContextRewriteRateLimitError(
+                f"context rewrite project rate limit exceeded: {project_rows} "
+                f"stored events across {project_sessions} session(s) for "
+                f"project={project!r} in the last minute "
+                f"(limit: {project_limit}/min). Wait or raise "
+                f"mnemos.context_rewrite_project_rate_limit_per_minute."
             )
 
     # ── Pre-flight the supersedes target (clean error before any write) ──
@@ -369,6 +412,11 @@ def context_rewrite(
         MemoryCreate(content=content, tags=tags, source=MemorySource.MCP, metadata=metadata),
         project=project,
         agent=agent,
+        # Trusted caller: ONLY this path may derive the denormalised
+        # rewrite quota columns from metadata (C10 review round — generic
+        # create surfaces never derive them, so planted client metadata
+        # cannot mint quota counters).
+        trusted_rewrite_provenance=True,
     )
 
     receipt = {
