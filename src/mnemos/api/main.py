@@ -695,15 +695,32 @@ async def discard_dlq(dlq_id: str) -> dict[str, str]:
 
 @app.post("/filter/{memory_id}")
 async def apply_filter(memory_id: str, data: FilterRequest) -> dict[str, Any]:
-    """Run the 5-stage context filter on a memory's raw_content."""
+    """Run the 5-stage context filter on a memory's raw_content.
+
+    M1 (final review): issuance-gated twin — only `published`/`processed`
+    memories are filterable into context (raw/archived refuse fail-closed),
+    an optional caller `project` scope fails closed on mismatch, and the
+    echoed `clean_content` is secret-scanned (refuse mode returns 403 with
+    no content).
+    """
     mgr = get_manager()
-    result = mgr.apply_context_filter(
+    result = mgr.issue_context_filter(
         memory_id,
         profile=data.profile,
         budget=data.budget,
+        project=data.project,
+        channel="api:/filter",
     )
     if result["status"] == "error":
-        raise HTTPException(status_code=404, detail=result["error"])
+        status_by_reason = {
+            "not_found": 404,
+            "no_content": 422,
+            "status_gate": 422,
+            "project_scope": 403,
+            "refused": 403,
+        }
+        code = status_by_reason.get(str(result.get("reason")), 404)
+        raise HTTPException(status_code=code, detail=result["error"])
     return result
 
 

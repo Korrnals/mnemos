@@ -207,7 +207,14 @@ CREATE TABLE IF NOT EXISTS memories (
     -- backfilled by _run_migrations; they exist so the rewrite quota counts
     -- are index-backed instead of json_extract full-scans.
     rewrite_source   TEXT,
-    rewrite_session  TEXT
+    rewrite_session  TEXT,
+    -- m3 (final review, same C10 pattern): rewrite_event_key =
+    -- metadata["rewrite_event_key"] (the content-addressed idempotency key
+    -- minted by the trusted context_rewrite path). Derived in save() under
+    -- trusted_rewrite_provenance ONLY and backfilled once by
+    -- _run_migrations; backs the dedupe lookup index instead of a
+    -- json_extract full-scan per delivery.
+    rewrite_event_key TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -527,6 +534,14 @@ _MIGRATIONS: list[tuple[str, str]] = [
     # save(). NOT named `source` — that column is the MemorySource enum.
     ("rewrite_source", "ALTER TABLE memories ADD COLUMN rewrite_source TEXT"),
     ("rewrite_session", "ALTER TABLE memories ADD COLUMN rewrite_session TEXT"),
+    # m3 (final review) — denormalised rewrite-event idempotency key
+    # (metadata.rewrite_event_key). Nullable: only trusted-path rewrite
+    # events carry it. Existing rows are BACKFILLED once from the metadata
+    # JSON by _migrate_m3_backfill_rewrite_event_key (meta-table flag
+    # ``schema_backfill_rewrite_event_key_v1``), gated on the trusted-path
+    # provenance (metadata.source = 'context-rewrite') so planted client
+    # metadata is never promoted into the dedupe index.
+    ("rewrite_event_key", "ALTER TABLE memories ADD COLUMN rewrite_event_key TEXT"),
 ]
 
 # ADR-0018 P1-a — scan-at-store verdict columns on ccr_cache. Existing
@@ -560,6 +575,10 @@ _CCR_MIGRATIONS: list[tuple[str, str]] = [
 # meta-table flag gating the one-time C10 backfill of the denormalised
 # rewrite columns (set inside the same transaction as the backfill).
 _BACKFILL_REWRITE_COLS_FLAG: Final[str] = "schema_backfill_rewrite_cols_v1"
+
+# m3 (final review) — meta-table flag gating the one-time backfill of the
+# denormalised rewrite_event_key column (same transaction as the backfill).
+_BACKFILL_REWRITE_EVENT_KEY_FLAG: Final[str] = "schema_backfill_rewrite_event_key_v1"
 
 # C8 (ArchCom 2026-08-27) — legacy turn FTS objects dropped idempotently on
 # every connect (IF EXISTS no-ops after the first run).
@@ -645,6 +664,15 @@ class SQLiteStore:
             "CREATE INDEX IF NOT EXISTS idx_memories_project_rewrite_source_created "
             "ON memories(project, rewrite_source, created_at)"
         )
+        # m3 index — same placement reasoning as the C10 index above: legacy
+        # DBs gain the column from the ALTER in this routine, which runs
+        # AFTER _DB_SCHEMA. Backs the rewrite-event dedupe lookup
+        # (get_memory_id_by_rewrite_event_key) without json_extract scans;
+        # (rewrite_event_key, created_at) lets the ORDER BY walk the index.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_rewrite_event_key_created "
+            "ON memories(rewrite_event_key, created_at)"
+        )
         ccr_cols = {row[1] for row in conn.execute("PRAGMA table_info(ccr_cache)").fetchall()}
         for col, sql in _CCR_MIGRATIONS:
             if col not in ccr_cols:
@@ -654,6 +682,8 @@ class SQLiteStore:
         SQLiteStore._migrate_c8_drop_turns_fts(conn)
         SQLiteStore._migrate_c10_backfill_rewrite_cols(conn)
         SQLiteStore._migrate_a1_ccr_composite_pk(conn)
+        # ── Final review m3: rewrite_event_key backfill ──
+        SQLiteStore._migrate_m3_backfill_rewrite_event_key(conn)
 
     @staticmethod
     def _migrate_c8_drop_turns_fts(conn: sqlite3.Connection) -> None:
@@ -714,6 +744,49 @@ class SQLiteStore:
         backfilled = int(cur.rowcount or 0)
         if backfilled:
             logger.info("C10 backfill: denormalised %d memory rows", backfilled)
+
+    @staticmethod
+    def _migrate_m3_backfill_rewrite_event_key(conn: sqlite3.Connection) -> None:
+        """m3 (final review) — one-time backfill of ``rewrite_event_key``.
+
+        Existing rows written by the trusted ``context_rewrite`` path
+        (``metadata.source = 'context-rewrite'`` — the only writer of the
+        key pre-m3) get the value promoted from the metadata JSON into the
+        indexed column. The provenance gate is load-bearing: generic create
+        surfaces accept client-controlled metadata, and a planted
+        ``rewrite_event_key`` there must NOT enter the dedupe index (it
+        would shadow future legitimate events as "already delivered").
+        Rows with invalid JSON metadata are skipped defensively. The
+        meta-table flag is set in the same commit so an interrupted
+        backfill re-runs on the next connect; concurrent first-connects
+        converge (idempotent UPDATE + ``INSERT OR IGNORE`` flag — same
+        reasoning as the C10 backfill above).
+        """
+        flag = conn.execute(
+            "SELECT 1 FROM meta WHERE key = ?", (_BACKFILL_REWRITE_EVENT_KEY_FLAG,)
+        ).fetchone()
+        if flag is not None:
+            return
+        cur = conn.execute(
+            "UPDATE memories SET "
+            "rewrite_event_key = json_extract(metadata, '$.rewrite_event_key') "
+            "WHERE rewrite_event_key IS NULL "
+            "AND json_valid(metadata) "
+            "AND json_extract(metadata, '$.source') = 'context-rewrite' "
+            "AND json_extract(metadata, '$.rewrite_event_key') IS NOT NULL"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value, updated_at) VALUES (?,?,?)",
+            (
+                _BACKFILL_REWRITE_EVENT_KEY_FLAG,
+                "1",
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        conn.commit()
+        backfilled = int(cur.rowcount or 0)
+        if backfilled:
+            logger.info("m3 backfill: indexed rewrite_event_key on %d memory rows", backfilled)
 
     @staticmethod
     def _migrate_a1_ccr_composite_pk(conn: sqlite3.Connection) -> None:
@@ -904,6 +977,11 @@ class SQLiteStore:
         untrusted UPDATE path the two columns are left UNTOUCHED (an
         edited legitimate event keeps counting; a forged row never had
         them derived in the first place).
+
+        m3 (final review) — ``rewrite_event_key`` joins the same trusted
+        gate: the column backs the event-dedupe lookup index, and a key
+        planted through client metadata would shadow future legitimate
+        events as "already delivered" (silent write suppression).
         """
         conn = self._get_conn()
         existing = conn.execute("SELECT 1 FROM memories WHERE id = ?", (memory.id,)).fetchone()
@@ -919,14 +997,20 @@ class SQLiteStore:
         # index-backed). Gated on the trusted caller — see the docstring.
         # Only non-empty str values are promoted; anything else (missing
         # key, JSON object, empty string) stores NULL.
+        # m3 (final review) — rewrite_event_key joins the same trusted
+        # derivation: the dedupe lookup index must never see a key planted
+        # through client-controlled metadata.
         if trusted_rewrite_provenance:
             meta_src = memory.metadata.get("source")
             rewrite_source = meta_src if isinstance(meta_src, str) and meta_src else None
             meta_sess = memory.metadata.get("rewrite_session")
             rewrite_session = meta_sess if isinstance(meta_sess, str) and meta_sess else None
+            meta_key = memory.metadata.get("rewrite_event_key")
+            rewrite_event_key = meta_key if isinstance(meta_key, str) and meta_key else None
         else:
             rewrite_source = None
             rewrite_session = None
+            rewrite_event_key = None
         if existing:
             if trusted_rewrite_provenance:
                 conn.execute(
@@ -938,7 +1022,7 @@ class SQLiteStore:
                        cluster_id = ?, derived_from = ?, embedding_id = ?,
                        raw_content = ?, clean_content = ?, filter_profile = ?,
                        filter_stats = ?, filter_version = ?,
-                       rewrite_source = ?, rewrite_session = ?
+                       rewrite_source = ?, rewrite_session = ?, rewrite_event_key = ?
                        WHERE id = ?""",
                     (
                         memory.content,
@@ -968,6 +1052,7 @@ class SQLiteStore:
                         memory.filter_version,
                         rewrite_source,
                         rewrite_session,
+                        rewrite_event_key,
                         memory.id,
                     ),
                 )
@@ -1021,8 +1106,9 @@ class SQLiteStore:
                     project, agent, status, quality_score, confidence,
                     source_coverage, cluster_id, derived_from, embedding_id,
                     raw_content, clean_content, filter_profile, filter_stats,
-                    filter_version, rewrite_source, rewrite_session)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    filter_version, rewrite_source, rewrite_session,
+                    rewrite_event_key)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     memory.id,
                     memory.content,
@@ -1053,6 +1139,7 @@ class SQLiteStore:
                     # NULL on the generic path regardless of metadata claims.
                     rewrite_source,
                     rewrite_session,
+                    rewrite_event_key,
                 ),
             )
         conn.commit()
@@ -2235,21 +2322,27 @@ class SQLiteStore:
         return [dict(r) for r in rows]
 
     def get_memory_id_by_rewrite_event_key(self, event_key: str) -> str | None:
-        """Return the memory id carrying ``metadata.rewrite_event_key``.
+        """Return the memory id carrying ``rewrite_event_key``.
 
         Idempotency lookup for the ``on_context_rewrite`` event (ADR-0018,
         mnemos #125 Wave 2): the event handler computes a content-addressed
         key and consults this BEFORE any write, so a re-delivered event
         performs no duplicate writes. Deliberately a specific method, not a
-        generic metadata query — JSON extraction is unindexed and the
-        surface stays minimal (same philosophy as ``_EDGE_KINDS``).
-        Returns the EARLIEST match (creation order) or ``None``.
+        generic metadata query — the surface stays minimal (same philosophy
+        as ``_EDGE_KINDS``).
+
+        m3 (final review): reads the denormalised ``rewrite_event_key``
+        column (index ``idx_memories_rewrite_event_key_created``) instead of
+        a full-scan ``json_extract`` per delivery — the exact pattern C10
+        eliminated for the quota count. The column is derived in ``save()``
+        ONLY under ``trusted_rewrite_provenance`` and backfilled once from
+        trusted-path rows, so a key planted through client metadata can
+        never be found here. Returns the EARLIEST match (creation order)
+        or ``None``.
         """
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT id FROM memories "
-            "WHERE json_extract(metadata, '$.rewrite_event_key') = ? "
-            "ORDER BY created_at ASC LIMIT 1",
+            "SELECT id FROM memories WHERE rewrite_event_key = ? ORDER BY created_at ASC LIMIT 1",
             (event_key,),
         ).fetchone()
         return str(row["id"]) if row is not None else None

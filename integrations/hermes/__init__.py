@@ -777,7 +777,17 @@ class MnemosMemoryProvider(MemoryProvider):
                 project=adapter.project,
                 agent=adapter.agent,
             )
-            return json.dumps({"id": memory.id, "title": memory.auto_title(), "url": args["url"]})
+            # m2 (final review): auto_title() derives from the fetched page
+            # content — scan the echoed title at issuance; refuse mode drops
+            # it (error shape, no echo), mirroring mnemos_filter channels.
+            title_scan = mgr.scan_issuance_item(
+                None, title=memory.auto_title(), context=f"hermes:mnemos_ingest_url:{memory.id}"
+            )
+            if title_scan.refused:
+                return json.dumps({"error": f"issuance refused: {title_scan.reason}"})
+            return json.dumps(
+                {"id": memory.id, "title": title_scan.title, "url": args["url"]}
+            )
 
         if tool_name == "mnemos_watch_start":
             paths = args.get("paths") or []

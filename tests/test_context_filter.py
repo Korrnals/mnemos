@@ -354,6 +354,7 @@ class TestMcpFilterTool:
         from unittest.mock import patch
 
         from mnemos.mcp_server import _dispatch
+        from mnemos.models import MemoryStatus
 
         data = MemoryCreate(
             content="line 1\nline 1\nline 2",
@@ -361,6 +362,9 @@ class TestMcpFilterTool:
             source=MemorySource.MCP,
         )
         memory = mgr.add(data, project="test", agent="filter-test")
+        # M1 (final review): mnemos_filter is issuance-gated — raw memories
+        # are not filterable into context, so advance to published first.
+        mgr.sqlite.update_status(memory.id, MemoryStatus.PUBLISHED)
         # Reset clean_content to simulate unfiltered memory
         mgr.sqlite.update_fields(memory.id, clean_content=None)
         memory = mgr.get(memory.id)
@@ -382,6 +386,7 @@ class TestMcpFilterTool:
         from unittest.mock import patch
 
         from mnemos.mcp_server import _dispatch
+        from mnemos.models import MemoryStatus
 
         data = MemoryCreate(
             content="word " * 500,
@@ -389,6 +394,7 @@ class TestMcpFilterTool:
             source=MemorySource.MCP,
         )
         memory = mgr.add(data, project="test", agent="filter-test")
+        mgr.sqlite.update_status(memory.id, MemoryStatus.PUBLISHED)
 
         with patch("mnemos.mcp_server.get_manager", return_value=mgr):
             result = await _dispatch(
