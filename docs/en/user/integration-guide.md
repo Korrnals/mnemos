@@ -334,8 +334,8 @@ Mnemos ships two dedicated surfaces for harness/automation integrations
   write. Local-first: `MnemosSDK(settings)` builds its own manager,
   `MnemosSDK(manager=…)` reuses yours.
 
-The full adapter documentation (Hermes migration, acceptance checklist)
-lands with the adapter wave.
+The full adapter documentation for harness integrators is the [Hermes Agent
+section below](#hermes-agent) — the reference migration onto the contract.
 
 ---
 
@@ -523,14 +523,15 @@ the `mnemos-tag-contract` skill, and the `mnemos-memory` prompt mode.
 
 ## Hermes Agent
 
-Mnemos provides a native `MemoryProvider` plugin for [Hermes Agent](https://hermes-agent.nousresearch.com/) by Nous Research. The plugin connects Mnemos to Hermes' pluggable memory system via the HTTP API.
+Mnemos provides a native `MemoryProvider` plugin for [Hermes Agent](https://hermes-agent.nousresearch.com/) by Nous Research. Since the ADR-0017 D1 migration (#125 W5) the plugin runs **in-process on the provider contract**: every memory operation routes through `mnemos.adapters.hermes.HermesMemoryAdapter` — the `MnemosSDK` facade plus the lifecycle hooks (`pre_llm_call` / `on_session_start` / `post_tool_call`) — down to one `MemoryManager`. The legacy bespoke HTTP path (urllib client, TOTP login flow, circuit breaker, auto-publish bypass) is gone.
 
 ### Installation
 
-1. Start Mnemos server:
+1. Make the `mnemos` package importable in the Hermes Python environment:
    ```bash
-   mnemos serve --host 127.0.0.1 --port 8787 &
+   pip install mnemos
    ```
+   No separate `mnemos serve` process is needed anymore.
 
 2. Deploy the integration:
    ```bash
@@ -542,33 +543,33 @@ Mnemos provides a native `MemoryProvider` plugin for [Hermes Agent](https://herm
    ```bash
    hermes memory setup
    ```
-   Select "mnemos" from the provider list and configure the base URL.
+   Select "mnemos" from the provider list and configure the project/agent slugs and store paths.
 
 4. Restart your Hermes session (`/restart` in gateway, or relaunch CLI).
 
+> **One owner per store:** the plugin embeds the memory server — point `data_dir`/`vault_path` at a store no other process writes (SQLite single-writer). To share a store with `mnemos serve` or other harnesses, give each its own data dir.
+
 ### Tools
 
-The plugin exposes the `mnemos_*` tools as native Hermes tools. All tools with an HTTP endpoint are mirrored below; `mnemos_align_prefix` (P1-5 CacheAligner) is **MCP-only** — no HTTP endpoint yet — so it is available to MCP clients (VS Code Copilot, Hermes plugin over MCP) but not via the HTTP table.
+The plugin exposes the `mnemos_*` tools as native Hermes tools, now backed by the contract verbs (`MnemosSDK.remember` / `recall`, the hooks) instead of raw HTTP. `mnemos_align_prefix` (P1-5 CacheAligner) remains **MCP-only** — the assembly pipeline applies alignment internally, but there is no standalone manager verb.
 
-| Tool | HTTP endpoint |
-|------|--------------|
-| `mnemos_search` | POST /search |
-| `mnemos_add` | POST /memories |
-| `mnemos_recall_context` | POST /context/recall |
-| `mnemos_save_context` | POST /context/save |
-| `mnemos_agent_recall` | GET /recall/agent/{name} |
-| `mnemos_list_recent` | GET /memories |
-| `mnemos_list_tags` | GET /tags |
-| `mnemos_stats` | GET /metrics |
-| `mnemos_auto_collect_status` | GET /auto-collect |
-| `mnemos_ingest_url` | POST /ingest-url |
-| `mnemos_compress` | POST /compress |
-| `mnemos_retrieve` | POST /retrieve |
-| `mnemos_watch_start` | POST /watch/start |
-| `mnemos_watch_stop` | POST /watch/stop |
-| `mnemos_watch_status` | GET /watch/status |
-
-> **P1-7 note:** `mnemos_add`, `mnemos_search`, and `mnemos_recall_context` accept optional `verbosity` and `effort` parameters that steer the caller's output style. They are passed through transparently by the Hermes plugin — no plugin changes required. See [mcp-tools.md#output-token-reduction-p1-7](mcp-tools.md#output-token-reduction-p1-7).
+| Tool | Contract surface |
+|------|------------------|
+| `mnemos_search` | `MnemosSDK.recall` (issuance-scanned) |
+| `mnemos_add` | `MnemosSDK.remember` (tag contract at the channel) |
+| `mnemos_recall_context` | checkpoint recall + channel scan |
+| `mnemos_save_context` | `MnemosSDK.remember` (`mnemos:checkpoint`) |
+| `mnemos_agent_recall` | agent-scoped recall + channel scan |
+| `mnemos_list_recent` | `MemoryManager.list_recent` (title-only scan) |
+| `mnemos_list_tags` | `MemoryManager.list_tags` |
+| `mnemos_stats` | `MnemosSDK.stats` (project slice) |
+| `mnemos_auto_collect_status` | in-process call counter (same shape) |
+| `mnemos_ingest_url` | `MemoryManager.ingest_url` |
+| `mnemos_compress` | `post_tool_call` hook (N2 identity threaded) |
+| `mnemos_retrieve` | `MemoryManager.retrieve_content` (agent+session) |
+| `mnemos_watch_start` | `MemoryManager.watch_start` |
+| `mnemos_watch_stop` | `MemoryManager.watch_stop` |
+| `mnemos_watch_status` | `MemoryManager.watch_status` |
 
 ### Configuration
 
@@ -576,24 +577,29 @@ Config is stored in `~/.hermes/config.yaml` under `memory.mnemos`:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `base_url` | `http://127.0.0.1:8787` | Mnemos HTTP API base URL |
-| `api_key` | (empty) | Bearer token if auth enabled |
+| `data_dir` | (empty) | Mnemos data dir (empty = mnemos default) |
+| `vault_path` | (empty) | Obsidian vault path (empty = mnemos default) |
 | `project` | `hermes` | Default project slug for tag contract |
 | `agent` | `hermes-default` | Default agent slug for tag contract |
 | `auto_sync` | `true` | Mirror built-in memory writes and sync significant turns |
-| `prefetch_limit` | `5` | Max results in prefetch (before each turn) |
+| `publish_on_write` | `true` | Promote writes to `published` immediately — the LLM-less posture; set `false` when the knowledge pipeline runs |
 | `sync_interval` | `10` | Sync every Nth turn |
+| `sync_min_user_chars` | `50` | Significance threshold: user-message characters |
+
+**Breaking vs the legacy HTTP plugin:** `base_url` / `api_key` / `totp_secret` are gone — the plugin embeds the server in-process (loopback by construction, ADR-0017 D6; no auth hop to survive).
 
 ### Architecture
 
-The plugin implements the Hermes `MemoryProvider` ABC:
+The plugin implements the Hermes `MemoryProvider` ABC as a thin shim over `HermesMemoryAdapter`:
 
-- **prefetch()** — hybrid search before each turn → context injection
-- **sync_turn()** — saves significant turns (user > 50 chars or every Nth)
-- **on_memory_write()** — mirrors built-in MEMORY.md/USER.md writes to Mnemos
-- **on_session_end()** — extracts key facts from the conversation
-- **on_pre_compress()** — extracts facts before context compression
-- **Circuit breaker** — 5 failures → 120s cooldown
+- **prefetch()** — `pre_llm_call` hook → `assemble_context` (recall → filter → secret scan → align → budget, provenance on every block), run off the turn loop
+- **sync_turn()** — `MnemosSDK.remember` (`mnemos:session`) for significant turns (user > 50 chars or every Nth)
+- **on_memory_write()** — `MnemosSDK.remember` mirror of MEMORY.md/USER.md writes (`mnemos:learning` / `mnemos:rule`)
+- **on_session_end()** — one `mnemos:session` summary per session via `remember`
+- **on_pre_compress()** — the ADR-0018 bridge: the to-be-discarded block is reported via `MnemosSDK.rewrite` (`on_context_rewrite`), so the original lands in LTM losslessly
+- **Identity threading** — `project`+`agent` fixed at construction (tag-contract-validated up front), `session` bound per Hermes session and threaded onto every verb (incl. the A2 CCR issuer gate and the N2 compress mandate)
+
+Adapter acceptance is pinned in-process by `tests/test_hermes_adapter.py` (the ADR-0017 Phase 1 gate "Hermes e2e on contract").
 
 ---
 

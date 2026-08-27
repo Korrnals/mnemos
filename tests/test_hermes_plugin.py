@@ -1,4 +1,4 @@
-"""Unit tests for the Hermes MnemosMemoryProvider plugin.
+"""Unit tests for the Hermes MnemosMemoryProvider contract shim (#125 W5).
 
 The plugin at ``integrations/hermes/__init__.py`` imports two Hermes-internal
 modules that are not available in the Mnemos test environment:
@@ -9,20 +9,17 @@ modules that are not available in the Mnemos test environment:
 We install minimal stubs into ``sys.modules`` (mirroring how
 ``conftest.py`` stubs the optional ``mcp`` package) so the plugin can be
 imported and its pure-Python surface tested without a running Hermes
-installation or a running Mnemos server.
+installation. Since the W5 migration the plugin is a THIN shim over
+``mnemos.adapters.hermes.HermesMemoryAdapter``; the adapter's own behavior
+(write-sparing policy, tag contract, scans, hooks) is pinned IN-PROCESS by
+``tests/test_hermes_adapter.py`` — this suite pins the SHIM: registration,
+tool schemas, config surface, lifecycle delegation (via a mocked adapter —
+no manager is constructed here), the harness-never-blocks guard, and
+session rebinding.
 
-Coverage:
-
-  1. ``register()`` exists and ``MnemosMemoryProvider`` is importable.
-  2. ``get_tool_schemas()`` returns exactly 15 schemas.
-  3. Every schema name starts with ``mnemos_``.
-  4. ``_load_config()`` defaults (port 8787, the Mnemos default).
-  5. Circuit breaker opens after 5 failures and closes after cooldown.
-  6. ``is_available()`` returns False when the server is unreachable.
-  7. ``get_config_schema()`` returns 7 fields with the expected keys.
-  8. ``save_config()`` writes to ``memory.mnemos`` (not ``plugins.mnemos``).
-  9. ``sync_turn`` significance filter — only syncs when the user message
-     exceeds 50 chars or on every Nth turn.
+NOTE: the plugin imports ``mnemos.adapters.hermes`` — run the suite with
+the working-tree ``src/`` first on ``sys.path`` (the repo CI layout); the
+``tests/test_hermes_adapter.py`` bootstrap does this for the whole run.
 """
 
 from __future__ import annotations
@@ -31,7 +28,7 @@ import json
 import os
 import sys
 import types
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -41,13 +38,7 @@ import pytest
 
 
 class _StubMemoryProvider:
-    """Minimal stand-in for ``agent.memory_provider.MemoryProvider``.
-
-    The real ABC defines a handful of hooks (prefetch, sync_turn, …) with
-    default no-op implementations. Our stub is a plain base class so the
-    plugin's ``class MnemosMemoryProvider(MemoryProvider)`` declaration
-    succeeds and isinstance/issubclass checks behave.
-    """
+    """Minimal stand-in for ``agent.memory_provider.MemoryProvider``."""
 
 
 def _stub_tool_error(msg: str) -> str:
@@ -56,11 +47,7 @@ def _stub_tool_error(msg: str) -> str:
 
 
 def _install_hermes_stubs() -> None:
-    """Inject ``agent.memory_provider`` and ``tools.registry`` stubs.
-
-    Only installed when the real modules are absent (the guard mirrors
-    conftest.py's ``if "mcp" not in sys.modules`` pattern).
-    """
+    """Inject ``agent.memory_provider`` and ``tools.registry`` stubs."""
     if "agent.memory_provider" not in sys.modules:
         agent_pkg = types.ModuleType("agent")
         agent_pkg.__path__ = []  # mark as package
@@ -80,26 +67,18 @@ def _install_hermes_stubs() -> None:
 
 _install_hermes_stubs()
 
-# Make ``integrations`` importable as a package. The repo root holds the
-# ``integrations/hermes/`` directory; pytest is invoked from the repo root
-# (``testpaths = ["tests"]``) so the cwd is on sys.path, but the
-# ``integrations`` namespace package may not be registered yet.
+# Make ``integrations`` importable as a package (repo root on sys.path).
 _REPO_ROOT = None
 for _p in sys.path:
     if _p and os.path.isdir(os.path.join(_p, "integrations", "hermes")):
         _REPO_ROOT = _p
         break
 if _REPO_ROOT is None:
-    # Fall back to a relative path from this test file.
     _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-# Import the plugin now that the stubs are in place.
-import integrations.hermes as hermes_plugin  # noqa: E402
 from integrations.hermes import (  # noqa: E402
-    _BREAKER_THRESHOLD,
-    _SYNC_MIN_USER_CHARS,
     MnemosMemoryProvider,
     _load_config,
     register,
@@ -113,16 +92,26 @@ from integrations.hermes import (  # noqa: E402
 def _make_provider(**overrides) -> MnemosMemoryProvider:
     """Build a provider with a config dict (skips env/yaml loading)."""
     cfg = {
-        "base_url": "http://127.0.0.1:8787",
-        "api_key": "",
+        "data_dir": "",
+        "vault_path": "",
         "project": "hermes",
         "agent": "hermes-default",
         "auto_sync": True,
-        "prefetch_limit": 5,
+        "publish_on_write": True,
         "sync_interval": 10,
+        "sync_min_user_chars": 50,
     }
     cfg.update(overrides)
     return MnemosMemoryProvider(cfg)
+
+
+def _make_mock_adapter() -> MagicMock:
+    """A mocked adapter standing in for the constructed one."""
+    adapter = MagicMock()
+    adapter.project = "hermes"
+    adapter.agent = "hermes-default"
+    adapter.session = "sess-1"
+    return adapter
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +125,6 @@ class TestPluginImport:
 
     def test_provider_class_exists(self):
         assert MnemosMemoryProvider is not None
-        # It must subclass our stubbed MemoryProvider.
         from agent.memory_provider import MemoryProvider
 
         assert issubclass(MnemosMemoryProvider, MemoryProvider)
@@ -147,15 +135,14 @@ class TestPluginImport:
 
 
 # ---------------------------------------------------------------------------
-# 2. 15 tool schemas
+# 2. 15 tool schemas (model-facing contract unchanged by the migration)
 # ---------------------------------------------------------------------------
 
 
 class TestToolSchemas:
     def test_exactly_15_schemas(self):
         p = _make_provider()
-        schemas = p.get_tool_schemas()
-        assert len(schemas) == 15
+        assert len(p.get_tool_schemas()) == 15
 
     def test_all_names_start_with_mnemos(self):
         p = _make_provider()
@@ -173,43 +160,22 @@ class TestToolSchemas:
             assert "parameters" in s
             assert "type" in s["parameters"]
 
+    def test_legacy_http_config_keys_absent_from_schemas(self):
+        """The migration removed the HTTP transport — no schema may
+        advertise base_url/api_key/totp parameters."""
+        p = _make_provider()
+        for s in p.get_tool_schemas():
+            props = s["parameters"].get("properties", {})
+            assert "base_url" not in props
+            assert "api_key" not in props
+
 
 # ---------------------------------------------------------------------------
-# 4. Config loading defaults
+# 3. Config loading defaults
 # ---------------------------------------------------------------------------
 
 
 class TestConfigLoading:
-    def test_default_base_url_port_8787(self, monkeypatch):
-        """Default base_url must be port 8787, the Mnemos default."""
-        # Clear env overrides so the defaults are exercised.
-        for var in (
-            "MNEMOS_BASE_URL",
-            "MNEMOS_API_KEY",
-            "MNEMOS_PROJECT",
-            "MNEMOS_AGENT",
-            "MNEMOS_AUTO_SYNC",
-            "MNEMOS_PREFETCH_LIMIT",
-            "MNEMOS_SYNC_INTERVAL",
-        ):
-            monkeypatch.delenv(var, raising=False)
-
-        # Prevent _load_config from reading the host Hermes config.yaml
-        # (which may contain a deployed base_url that overrides the default).
-        # _load_config imports load_config/cfg_get lazily from hermes_cli.config,
-        # so we stub the module before it is imported.
-        import sys
-        import types
-
-        stub = types.ModuleType("hermes_cli.config")
-        stub.load_config = lambda *a, **kw: {}
-        stub.cfg_get = lambda *a, **kw: None
-        monkeypatch.setitem(sys.modules, "hermes_cli.config", stub)
-
-        cfg = _load_config()
-        assert cfg["base_url"] == "http://127.0.0.1:8787"
-        assert ":8000" not in cfg["base_url"]
-
     def test_default_project_and_agent(self, monkeypatch):
         for var in ("MNEMOS_PROJECT", "MNEMOS_AGENT"):
             monkeypatch.delenv(var, raising=False)
@@ -222,105 +188,56 @@ class TestConfigLoading:
         cfg = _load_config()
         assert cfg["sync_interval"] == 10
 
+    def test_default_store_paths_empty(self, monkeypatch):
+        """Empty data_dir/vault_path = mnemos defaults (no HTTP base_url)."""
+        for var in ("MNEMOS_DATA_DIR", "MNEMOS_VAULT__VAULT_PATH"):
+            monkeypatch.delenv(var, raising=False)
+        cfg = _load_config()
+        assert cfg["data_dir"] == ""
+        assert cfg["vault_path"] == ""
+        assert "base_url" not in cfg
+        assert "api_key" not in cfg
 
-# ---------------------------------------------------------------------------
-# 5. Circuit breaker
-# ---------------------------------------------------------------------------
-
-
-class TestCircuitBreaker:
-    def test_breaker_opens_after_threshold(self):
-        """After _BREAKER_THRESHOLD failures the breaker is open."""
-        p = _make_provider()
-        assert p._is_breaker_open() is False
-        for _ in range(_BREAKER_THRESHOLD):
-            p._record_failure()
-        assert p._is_breaker_open() is True
-
-    def test_breaker_closes_after_cooldown(self):
-        """Once the cooldown elapses the breaker resets to closed."""
-        p = _make_provider()
-        for _ in range(_BREAKER_THRESHOLD):
-            p._record_failure()
-        assert p._is_breaker_open() is True
-
-        # Fast-forward past the cooldown.
-        p._breaker_until = 0.0  # simulate elapsed cooldown
-        # _is_breaker_open resets failures when cooldown expired.
-        assert p._is_breaker_open() is False
-        assert p._failures == 0
-
-    def test_record_success_resets_failures(self):
-        p = _make_provider()
-        p._record_failure()
-        p._record_failure()
-        assert p._failures == 2
-        p._record_success()
-        assert p._failures == 0
+    def test_default_publish_on_write_true(self, monkeypatch):
+        monkeypatch.delenv("MNEMOS_PUBLISH_ON_WRITE", raising=False)
+        cfg = _load_config()
+        assert cfg["publish_on_write"] is True
 
 
 # ---------------------------------------------------------------------------
-# 6. is_available
-# ---------------------------------------------------------------------------
-
-
-class TestIsAvailable:
-    def test_returns_false_when_unreachable(self):
-        """is_available() returns False when /health cannot be reached."""
-        p = _make_provider(base_url="http://127.0.0.1:1")  # closed port
-        # Don't actually attempt a socket connection — patch _get_json.
-        with patch.object(hermes_plugin, "_get_json", side_effect=Exception("boom")):
-            assert p.is_available() is False
-
-    def test_returns_true_when_healthy(self):
-        p = _make_provider()
-        with patch.object(hermes_plugin, "_get_json", return_value={"status": "ok"}):
-            assert p.is_available() is True
-
-
-# ---------------------------------------------------------------------------
-# 7. Config schema
+# 4. Config schema (new contract surface)
 # ---------------------------------------------------------------------------
 
 
 class TestConfigSchema:
     def test_eight_fields(self):
         p = _make_provider()
-        schema = p.get_config_schema()
-        assert len(schema) == 8
+        assert len(p.get_config_schema()) == 8
 
     def test_expected_keys(self):
         p = _make_provider()
         keys = {f["key"] for f in p.get_config_schema()}
         assert keys == {
-            "base_url",
-            "api_key",
-            "totp_secret",
+            "data_dir",
+            "vault_path",
             "project",
             "agent",
             "auto_sync",
-            "prefetch_limit",
+            "publish_on_write",
             "sync_interval",
+            "sync_min_user_chars",
         }
 
-    def test_totp_secret_marked_secret(self):
+    def test_no_legacy_http_keys(self):
         p = _make_provider()
-        totp = next(f for f in p.get_config_schema() if f["key"] == "totp_secret")
-        assert totp.get("secret") is True
-
-    def test_base_url_default_is_8787(self):
-        p = _make_provider()
-        base = next(f for f in p.get_config_schema() if f["key"] == "base_url")
-        assert base["default"] == "http://127.0.0.1:8787"
-
-    def test_api_key_marked_secret(self):
-        p = _make_provider()
-        api_key = next(f for f in p.get_config_schema() if f["key"] == "api_key")
-        assert api_key.get("secret") is True
+        keys = {f["key"] for f in p.get_config_schema()}
+        assert "base_url" not in keys
+        assert "api_key" not in keys
+        assert "totp_secret" not in keys
 
 
 # ---------------------------------------------------------------------------
-# 8. save_config writes to memory.mnemos
+# 5. save_config writes to memory.mnemos
 # ---------------------------------------------------------------------------
 
 
@@ -329,9 +246,8 @@ class TestSaveConfig:
         """save_config must write under memory.mnemos, not plugins.mnemos."""
         p = _make_provider()
         hermes_home = str(tmp_path)
-        values = {"base_url": "http://localhost:9000", "project": "test"}
+        values = {"project": "test", "agent": "hermes-main"}
 
-        # yaml is a dependency of the project, but guard just in case.
         try:
             import yaml
         except ImportError:
@@ -346,68 +262,142 @@ class TestSaveConfig:
         assert "memory" in data
         assert "mnemos" in data["memory"]
         assert data["memory"]["mnemos"] == values
-        # Ensure we did NOT write to the legacy plugins.mnemos location.
         assert "plugins" not in data or "mnemos" not in data.get("plugins", {})
 
 
 # ---------------------------------------------------------------------------
-# 9. sync_turn significance filter
+# 6. Lifecycle delegation to the adapter (mocked — no manager here)
 # ---------------------------------------------------------------------------
 
 
-class TestSyncTurnSignificance:
-    def test_short_message_not_synced(self):
-        """A short user message (< 50 chars) on a non-Nth turn is skipped."""
-        p = _make_provider(sync_interval=10)
-        p.initialize("sess-1")
-        with patch.object(hermes_plugin, "_post_json") as mock_post:
-            p.sync_turn("hi", "hello back", session_id="sess-1")
-            # Join any background thread so the mock assertion is reliable.
-            if p._sync_thread:
-                p._sync_thread.join(timeout=2.0)
-            mock_post.assert_not_called()
+class TestLifecycleDelegation:
+    def test_sync_turn_delegates_with_guard(self):
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        p._adapter = adapter
+        p.sync_turn("x" * 200, "y", session_id="sess-1")
+        adapter.sync_turn.assert_called_once_with("x" * 200, "y")
 
-    def test_long_message_synced(self):
-        """A user message > 50 chars triggers a sync."""
-        p = _make_provider(sync_interval=10)
-        p.initialize("sess-1")
-        long_msg = "x" * (_SYNC_MIN_USER_CHARS + 10)
-        with patch.object(hermes_plugin, "_post_json", return_value={"id": "1"}) as mock_post:
-            p.sync_turn(long_msg, "response", session_id="sess-1")
-            if p._sync_thread:
-                p._sync_thread.join(timeout=2.0)
-            mock_post.assert_called_once()
-            body = mock_post.call_args[0][1]
-            assert body["content"].startswith("## User")
+    def test_sync_turn_never_raises(self):
+        """Harness-never-blocks: adapter failures degrade to a log line."""
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        adapter.sync_turn.side_effect = RuntimeError("boom")
+        p._adapter = adapter
+        p.sync_turn("x" * 200, "y", session_id="sess-1")  # must not raise
 
-    def test_nth_turn_synced_even_if_short(self):
-        """Every Nth turn syncs regardless of message length."""
-        p = _make_provider(sync_interval=3)
-        p.initialize("sess-1")
-        with patch.object(hermes_plugin, "_post_json", return_value={"id": "1"}) as mock_post:
-            # Turn 1 — short, not Nth → skipped.
-            p.sync_turn("a", "b", session_id="sess-1")
-            # Turn 2 — short, not Nth → skipped.
-            p.sync_turn("a", "b", session_id="sess-1")
-            # Turn 3 — short, but Nth (3 % 3 == 0) → synced.
-            p.sync_turn("a", "b", session_id="sess-1")
-            if p._sync_thread:
-                p._sync_thread.join(timeout=2.0)
-            assert mock_post.call_count == 1
+    def test_sync_turn_skips_non_primary_context(self):
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        p._adapter = adapter
+        p._agent_context = "cron"
+        p.sync_turn("x" * 200, "y", session_id="sess-1")
+        adapter.sync_turn.assert_not_called()
 
-    def test_auto_sync_disabled_skips(self):
-        """When auto_sync is False, sync_turn never calls the API."""
-        p = _make_provider(auto_sync=False, sync_interval=1)
-        p.initialize("sess-1")
-        with patch.object(hermes_plugin, "_post_json") as mock_post:
-            p.sync_turn("x" * 200, "y", session_id="sess-1")
-            if p._sync_thread:
-                p._sync_thread.join(timeout=2.0)
-            mock_post.assert_not_called()
+    def test_on_memory_write_delegates(self):
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        p._adapter = adapter
+        p.on_memory_write("add", "user", "prefer concise answers")
+        adapter.mirror_memory_write.assert_called_once_with(
+            "add", "user", "prefer concise answers", None
+        )
+
+    def test_on_session_end_delegates(self):
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        p._adapter = adapter
+        messages = [{"role": "user", "content": "x" * 200}]
+        p.on_session_end(messages)
+        adapter.session_end.assert_called_once_with(messages)
+
+    def test_on_pre_compress_reports_rewrite_event(self):
+        """The ADR-0018 bridge: discarded user messages become ONE
+        on_context_rewrite event via the adapter."""
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        p._adapter = adapter
+        messages = [
+            {"role": "user", "content": "decision about the gateway rotation"},
+            {"role": "assistant", "content": "ok"},
+        ]
+        hint = p.on_pre_compress(messages)
+        adapter.report_context_rewrite.assert_called_once()
+        original = adapter.report_context_rewrite.call_args[0][0]
+        assert "gateway rotation" in original
+        assert "Mnemos" in hint
+
+    def test_on_pre_compress_no_user_messages_no_report(self):
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        p._adapter = adapter
+        assert p.on_pre_compress([{"role": "assistant", "content": "only"}]) == ""
+        adapter.report_context_rewrite.assert_not_called()
+
+    def test_queue_prefetch_uses_assemble_context(self):
+        """Prefetch routes through pre_llm_call (assemble_context), and the
+        cached result is served by prefetch() exactly once."""
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        adapter.pre_llm_call.return_value = {
+            "text": "block",
+            "blocks": [{"provenance": "[mnemos:id1]", "content": "excerpt"}],
+        }
+        p._adapter = adapter
+
+        p.queue_prefetch("cert rotation")
+        if p._prefetch_thread:
+            p._prefetch_thread.join(timeout=5.0)
+
+        adapter.pre_llm_call.assert_called_once_with(query="cert rotation")
+        result = p.prefetch("cert rotation")
+        assert "[mnemos:id1]" in result
+        # Served once — the next prefetch drains empty.
+        assert p.prefetch("cert rotation") == ""
 
 
 # ---------------------------------------------------------------------------
-# handle_tool_call dispatch sanity (no real network)
+# 7. Session rebinding
+# ---------------------------------------------------------------------------
+
+
+class TestSessionRebind:
+    def test_initialize_binds_session_and_identity(self):
+        p = _make_provider()
+        p._sdk = MagicMock()  # sdk present → _rebind builds a REAL adapter
+        p.initialize("sess-1", agent_identity="hermes-main")
+        # agent_identity from Hermes overrides the config agent slug.
+        assert p._config["agent"] == "hermes-main"
+        assert p._adapter is not None
+        assert p._adapter.session == "sess-1"
+        assert p._adapter.agent == "hermes-main"
+
+    def test_switch_reset_rebuilds_adapter(self):
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        sdk = MagicMock()
+        p._adapter = adapter
+        p._sdk = sdk
+        p.on_session_switch("sess-2", reset=True)
+        # reset=True rebuilds a fresh adapter over the same SDK (fresh
+        # turn counters) and binds the new session.
+        assert p._adapter is not adapter
+        assert p._adapter.session == "sess-2"
+        assert p._sdk is sdk
+
+    def test_switch_continue_keeps_adapter(self):
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        p._adapter = adapter
+        p._sdk = MagicMock()
+        p.on_session_switch("sess-2", reset=False)
+        # Continuation keeps the adapter (and its counters), rebinds only.
+        assert p._adapter is adapter
+        adapter.bind_session.assert_called_once_with("sess-2")
+
+
+# ---------------------------------------------------------------------------
+# 8. Tool dispatch sanity
 # ---------------------------------------------------------------------------
 
 
@@ -418,13 +408,22 @@ class TestHandleToolCall:
         data = json.loads(result)
         assert "error" in data
 
-    def test_breaker_open_returns_error(self):
+    def test_tool_failure_returns_error_not_exception(self):
+        """A failing tool degrades to a tool_error string, never an
+        exception into the harness."""
         p = _make_provider()
-        for _ in range(_BREAKER_THRESHOLD):
-            p._record_failure()
-        # Force the breaker to stay open.
-        p._breaker_until = float("inf")
+        adapter = _make_mock_adapter()
+        adapter.search.side_effect = RuntimeError("boom")
+        p._adapter = adapter
         result = p.handle_tool_call("mnemos_search", {"query": "x"})
         data = json.loads(result)
         assert "error" in data
-        assert "circuit breaker" in data["error"].lower()
+
+    def test_auto_collect_counter_increments(self):
+        p = _make_provider()
+        adapter = _make_mock_adapter()
+        p._adapter = adapter
+        p.handle_tool_call("mnemos_search", {"query": "x"})
+        result = p.handle_tool_call("mnemos_auto_collect_status", {})
+        data = json.loads(result)
+        assert data["signals"]["call_counter"]["calls_since_save"] >= 1
