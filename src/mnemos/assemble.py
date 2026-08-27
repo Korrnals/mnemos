@@ -230,14 +230,19 @@ def _recall_stage(
     project: str,
     file: str | None,
     content_type: str | None,
+    query: str | None = None,
 ) -> tuple[list[_Candidate], dict[str, Any]]:
     """Hybrid RRF recall (status-gated) + contentType filter + applyTo pinning.
 
-    Derived query: the file stem when ``file`` is given, else the project
-    slug. ``fts_search`` wraps the whole query in one FTS5 phrase, so a
-    multi-term "project stem" join would (almost) never match lexically —
-    a single most-content-likely term is the honest derived query, and
-    the vector leg carries semantic recall in production.
+    Derived query (W1): the file stem when ``file`` is given, else the
+    project slug. ``fts_search`` wraps the whole query in one FTS5
+    phrase, so a multi-term "project stem" join would (almost) never
+    match lexically — a single most-content-likely term is the honest
+    derived query, and the vector leg carries semantic recall in
+    production. W3: an EXPLICIT ``query`` (the ``pre_llm_call`` hook's
+    ``context_hint`` — what the upcoming model call is about) overrides
+    the derived term on both legs; it is one term richer, not a
+    different pipeline.
 
     A9 (ArchCom 2026-08-27): ``MemoryManager.search`` enforces the project
     predicate pre-RRF on both legs (native store filter + authoritative
@@ -246,9 +251,9 @@ def _recall_stage(
     (``stats.recall.project_scoped_out``) was removed: the systemic fix
     supersedes the channel patch.
     """
-    query = Path(file).stem if file else project
+    derived_query = query if query else (Path(file).stem if file else project)
 
-    results = mgr.search(query=query, project=project, limit=RECALL_DEPTH)
+    results = mgr.search(query=derived_query, project=project, limit=RECALL_DEPTH)
 
     fallbacks = [0]
     candidates: list[_Candidate] = []
@@ -278,7 +283,8 @@ def _recall_stage(
         pinned = len(matched)
 
     stats: dict[str, Any] = {
-        "query": query,
+        "query": derived_query,
+        "query_source": "explicit" if query else "derived",
         "candidates": len(results),
         "admissible": len(results),
         "content_type_filtered": type_filtered,
@@ -568,6 +574,7 @@ def assemble_context(
     expand_ccr: bool = False,
     async_handle: str | None = None,
     agent: str | None = None,
+    query: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the model-facing context block (ADR-0017 D1 contract).
 
@@ -581,8 +588,8 @@ def assemble_context(
             applyTo-scoped rule memories to the top of the candidates.
         budget: Token budget for the assembled block (monolithic — see the
             module docstring for the partitioning decision).
-        mode: ``sync`` (default) / ``async`` / ``code`` / ``prose`` — see
-            the module docstring for the two-axis semantics.
+        mode: ``sync`` (default) / ``async`` / ``code`` / ``prose`` — see the
+            module docstring for the two-axis semantics.
         expand_ccr: Enable the optional CCR stage (default off).
         async_handle: When given, fetch (and pop) a previously stored
             async result instead of running a new pipeline. The fetch is
@@ -594,6 +601,13 @@ def assemble_context(
             caller's own ``(agent, session)`` context expand; without it
             a strict deployment skips expansion of issuer-stamped rows
             (the marker stays; legacy NULL-issuer rows still expand).
+        query: W3 — explicit recall query overriding the derived term
+            (file stem / project slug). The ``pre_llm_call`` lifecycle
+            hook threads its ``context_hint`` here: what the upcoming
+            model call is about, so recall finds semantically relevant
+            entries instead of guessing from the slug. Blank strings are
+            rejected at the boundary (pass ``None`` for the derived
+            fallback).
 
     Returns:
         The ContextBlock dict: ``text`` (provenance-wrapped blocks joined
@@ -604,11 +618,13 @@ def assemble_context(
         the next call with ``async_handle``.
 
     Raises:
-        ValueError: Invalid ``session`` / ``project`` / ``mode`` / ``budget``,
-        an unknown ``async_handle``, or an ``async_handle`` owned by a
-        different session (boundary validation).
+        ValueError: Invalid ``session`` / ``project`` / ``mode`` / ``budget``
+        / ``query``, an unknown ``async_handle``, or an ``async_handle``
+        owned by a different session (boundary validation).
     """
     _validate(session, project, budget, mode)
+    if query is not None and not query.strip():
+        raise ValueError("query must be a non-empty string when provided (None = derived)")
 
     if async_handle is not None:
         fetched = _fetch_async_result(mgr, async_handle, session)
@@ -627,7 +643,7 @@ def assemble_context(
 
     # ── Fixed stage order (D1; recorded verbatim in stats) ────────────────
     candidates, recall_stats = _recall_stage(
-        mgr, project=project, file=file, content_type=content_type
+        mgr, project=project, file=file, content_type=content_type, query=query
     )
     ccr_stats = _ccr_stage(
         mgr,

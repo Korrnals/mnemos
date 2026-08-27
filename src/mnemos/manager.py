@@ -17,7 +17,13 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
+
+if TYPE_CHECKING:
+    # Annotation-only (the dataclass fields are lazy strings under
+    # ``from __future__ import annotations``); the scanner is imported
+    # lazily at the call sites to keep the module import light.
+    from mnemos.secrets_detector import SecretFinding
 
 from mnemos import __version__
 from mnemos.config import Settings
@@ -86,18 +92,6 @@ def _lock_is_stale(locked_at_iso: str, threshold_hours: int) -> bool:
     return age > timedelta(hours=threshold_hours)
 
 
-# ADR-0018 P1-b (m2) — artificial insertions FTS5's snippet() places in a
-# snippet: highlight markers around query-matched tokens and the ellipsis
-# between non-contiguous fragments. All three can split a multi-token
-# secret (e.g. a JWT whose payload segment matched the query), so the
-# issuance scan runs on a copy with them removed. Sourced from the
-# store's own FTS_SNIPPET_* constants (single source of truth).
-_SNIPPET_STRIP_MARKS: Final[tuple[str, ...]] = (
-    FTS_SNIPPET_START_MARK,
-    FTS_SNIPPET_END_MARK,
-    FTS_SNIPPET_ELLIPSIS,
-)
-
 # A9 (ArchCom 2026-08-27) — vector-leg over-fetch factor. The store is
 # queried ``limit * 4`` deep so the pre-RRF project/status predicates
 # (which drop candidates at resolve time, BEFORE fusion) still leave
@@ -107,22 +101,6 @@ _SNIPPET_STRIP_MARKS: Final[tuple[str, ...]] = (
 # decision (rejected alternative: post-RRF filter, which silently
 # under-fills the top-N).
 VECTOR_LEG_OVERFETCH_FACTOR: Final[int] = 4
-
-
-def _snippet_scan_text(snippet: str) -> str:
-    """Return a copy of an FTS5 snippet stripped of highlight markers.
-
-    ``ccr_search`` snippets wrap query-matched tokens in ``>>>``/``<<<``
-    and join non-contiguous fragments with ``' ... '``; those insertions
-    break multi-token secret patterns, so ``detect_secrets`` on the raw
-    snippet misses them. The stripped copy is used for DETECTION only —
-    its character offsets do not map back to the marked snippet (every
-    span after the first marker shifts), so callers must not use finding
-    offsets to redact the marked text (see ``retrieve_content``).
-    """
-    for mark in _SNIPPET_STRIP_MARKS:
-        snippet = snippet.replace(mark, "")
-    return snippet
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +140,129 @@ class IssuanceItemScan:
     reason: str | None
     redactions: int
     redacted_patterns: dict[str, int]
+
+
+# B5 tier-2 (ArchCom 2026-08-27, W3) — the FTS5 snippet window is cut
+# around query matches at a 32-token granularity, so a secret straddling
+# the window edge reaches the snippet TRUNCATED and evades detection on
+# the snippet text alone. The offset-mapped scan therefore runs on the
+# ORIGINAL over the localized snippet window ± this character margin:
+# generous by design — a wider margin only finds secrets whose
+# intersection with the window is smaller (only intersections are
+# redacted), while a narrow one re-opens the truncation gap. 64 chars
+# covers the longest detector pattern tails (jwt) at both window edges.
+SNIPPET_SCAN_MARGIN_CHARS: Final[int] = 64
+
+
+@dataclass(frozen=True, slots=True)
+class SnippetScanOutcome:
+    """B5 tier-2 outcome of the offset-mapped scan for ONE snippet.
+
+    * ``clean`` — no finding intersects the localized snippet window:
+      the marked snippet is issued UNCHANGED (highlight marks intact).
+    * ``redacted`` (``clean=False``, ``localizable=True``) — at least
+      one finding intersects the window: ``text`` is the redacted
+      snippet (mark-stripped fragments joined by the FTS ellipsis —
+      highlight marks do not survive redaction, presentation-only
+      loss), ``findings`` are the intersecting findings only.
+    * fallback (``localizable=False``) — the snippet could not be
+      uniquely localized in the original (or the original was absent):
+      the caller must fall back to the tier-1 behavior and withhold the
+      whole snippet (``<REDACTED:snippet>``); offsets are unmappable,
+      so the snippet cannot be proven secret-free.
+    """
+
+    clean: bool
+    localizable: bool
+    text: str
+    findings: tuple[SecretFinding, ...]
+
+
+def _offset_mapped_snippet_scan(marked_snippet: str, original: str | None) -> SnippetScanOutcome:
+    """B5 tier-2 — scan the ORIGINAL over the localized snippet window.
+
+    Localization reuses the W1 CCR-stage approach (``ccr.parse_marker``
+    span semantics): exact-substring localization of the snippet's
+    fragment texts inside the original. FTS5's ``snippet()`` emits
+    verbatim slices of the original joined by the ellipsis constant
+    with query-matched tokens wrapped in highlight marks, so after
+    removing ONLY the two highlight marks the ellipsis-split fragments
+    are exact substrings (NOTE: unlike ``_snippet_scan_text``, the
+    ellipsis is NOT stripped here — it is the fragment separator, and
+    flattening it would fuse non-contiguous fragments into a text that
+    never occurs in the original). Each fragment must localize UNIQUELY
+    (exactly one occurrence in the original) — a repeated fragment is
+    ambiguous, its offsets are unmappable, and the snippet falls back
+    to tier-1 withholding (fail-closed, same shape as the m2
+    marker-split case).
+
+    The scan window is ``min(fragment start) - margin`` …
+    ``max(fragment end) + margin`` clamped to the original; the scan and
+    the intersection test run in WINDOW coordinates (fragment spans
+    shifted by ``-window_start``), so the detector's own finding objects
+    are reused verbatim — no offset reconstruction. Only findings
+    INTERSECTING a fragment span are redacted (a finding fully inside
+    the margin but outside the window is not echoed by the snippet) —
+    the intersection is what the snippet actually shows.
+    """
+    from mnemos.secrets_detector import detect_secrets
+
+    fallback = SnippetScanOutcome(clean=False, localizable=False, text="", findings=())
+    if original is None:
+        return fallback
+
+    stripped = marked_snippet.replace(FTS_SNIPPET_START_MARK, "").replace(FTS_SNIPPET_END_MARK, "")
+    fragments = [f for f in stripped.split(FTS_SNIPPET_ELLIPSIS) if f]
+    if not fragments:
+        return fallback
+
+    spans: list[tuple[int, int]] = []
+    for fragment in fragments:
+        start = original.find(fragment)
+        if start < 0 or original.find(fragment, start + 1) >= 0:
+            return fallback
+        spans.append((start, start + len(fragment)))
+
+    window_start = max(0, min(s for s, _ in spans) - SNIPPET_SCAN_MARGIN_CHARS)
+    window_end = min(len(original), max(e for _, e in spans) + SNIPPET_SCAN_MARGIN_CHARS)
+    window_spans = [(fs - window_start, fe - window_start) for fs, fe in spans]
+    findings = detect_secrets(original[window_start:window_end])
+
+    intersecting = [
+        f for f in findings if any(f.start < we and f.end > ws for ws, we in window_spans)
+    ]
+    if not intersecting:
+        clean_outcome = SnippetScanOutcome(
+            clean=True, localizable=True, text=marked_snippet, findings=()
+        )
+        return clean_outcome
+
+    # Redact each fragment's intersecting sub-spans in place. Findings
+    # from detect_secrets are disjoint and start-sorted; intersections
+    # clamp to the fragment bounds (a straddling secret is redacted only
+    # in the portion the snippet actually shows).
+    redacted_parts: list[str] = []
+    for fragment, (ws, we) in zip(fragments, window_spans, strict=True):
+        pieces: list[str] = []
+        cursor = 0
+        for finding in intersecting:
+            if finding.start >= we or finding.end <= ws:
+                continue
+            isect_start = max(finding.start, ws) - ws
+            isect_end = min(finding.end, we) - ws
+            pieces.append(fragment[cursor:isect_start])
+            pieces.append(f"<REDACTED:{finding.pattern_name}>")
+            cursor = max(cursor, isect_end)
+        pieces.append(fragment[cursor:])
+        redacted_parts.append("".join(pieces))
+
+    redacted = SnippetScanOutcome(
+        clean=False,
+        localizable=True,
+        text=FTS_SNIPPET_ELLIPSIS.join(redacted_parts),
+        findings=tuple(intersecting),
+    )
+    return redacted
 
 
 class MemoryManager:
@@ -1550,9 +1651,7 @@ class MemoryManager:
             "requests_total": int(self._search_stats["requests_total"]),
             # A9: searches that ran in the explicit global mode
             # (``project=None``) — cross-project by definition.
-            "cross_project_requests_total": int(
-                self._search_stats["cross_project_requests_total"]
-            ),
+            "cross_project_requests_total": int(self._search_stats["cross_project_requests_total"]),
             "avg_latency_ms": avg_latency_ms,
             "avg_results": avg_results,
         }
@@ -2382,6 +2481,7 @@ class MemoryManager:
         expand_ccr: bool = False,
         async_handle: str | None = None,
         agent: str | None = None,
+        query: str | None = None,
     ) -> dict[str, Any]:
         """Assemble the model-facing context block (ADR-0017 D1 contract).
 
@@ -2390,9 +2490,11 @@ class MemoryManager:
         lives in that module; this method keeps the one-core-over-three-
         surfaces pattern (MCP / REST / future SDK all call the manager).
         ``agent`` (A2 review F2) pairs with ``session`` as the issuer
-        context for the strict-mode CCR expansion gate. Raises
-        ``ValueError`` on invalid ``session`` / ``project`` / ``mode`` /
-        ``budget`` or an unknown ``async_handle``.
+        context for the strict-mode CCR expansion gate. ``query`` (W3)
+        overrides the derived recall term — the ``pre_llm_call`` hook's
+        ``context_hint``. Raises ``ValueError`` on invalid ``session`` /
+        ``project`` / ``mode`` / ``budget`` / ``query`` or an unknown
+        ``async_handle``.
         """
         from mnemos.assemble import assemble_context as _assemble
 
@@ -2406,6 +2508,7 @@ class MemoryManager:
             expand_ccr=expand_ccr,
             async_handle=async_handle,
             agent=agent,
+            query=query,
         )
 
     # ── ADR-0018: on_context_rewrite lifecycle event (#125, Wave 2) ────────
@@ -2807,18 +2910,30 @@ class MemoryManager:
           denied instead (``refused=True``, ``reason`` names the scope
           requirement).
         * m2 — FTS5 snippets are scanned on a marker-stripped copy
-          (highlight markers split multi-token secrets); on a hit the
-          WHOLE snippet is withheld (``<REDACTED:snippet>``) because
+          (highlight markers split multi-token secrets); when the
+          snippet cannot be mapped onto the original, the WHOLE
+          snippet is withheld (``<REDACTED:snippet>``) because
           stripped-copy offsets do not map back to the marked snippet.
         * B5 tier-1 (ArchCom 2026-08-27) — verdict-gated snippet refusal:
           entries whose scan-at-store verdict is ``'hit'`` refuse the
           snippet mode entirely (``reason="snippet mode unavailable for
           entries with detected secrets"``, no snippets emitted, no
           retrieval-counter bump) — snippet windows cannot be proven
-          secret-free without the tier-2 offset mapping (W3). NULL /
+          secret-free without the tier-2 offset mapping. NULL /
           'unknown' / 'clean' rows snippet as before; the full-original
           retrieve of a hit row stays available and is redacted
           span-wise by the P0 scan below.
+        * B5 tier-2 (W3) — offset-mapped snippet scan for NULL /
+          'unknown' / 'clean' rows: the snippet's ellipsis-split
+          fragments are localized in the cached original (W1 CCR-stage
+          exact-substring localization; each fragment must be UNIQUE),
+          the original is scanned over the localized window ±
+          ``SNIPPET_SCAN_MARGIN_CHARS``, and every finding INTERSECTING
+          the window is redacted span-wise in the emitted snippet —
+          closing the window-truncation fragment (a secret cut by the
+          32-token FTS5 window edge evades snippet-text detection but
+          not the original-window scan). A non-localizable snippet
+          falls back to the tier-1 m2 withholding above (fail-closed).
         * m5 — a scanner exception maps to the refused shape with
           ``reason="scanner error"`` (fail-closed, observable) instead
           of propagating as a 500 / MCP error.
@@ -2828,10 +2943,7 @@ class MemoryManager:
           longer inflate ``retrieval_count`` or LRU-pin the entry.
         """
         from mnemos.ccr import retrieve
-        from mnemos.secrets_detector import (
-            detect_secrets,
-            findings_by_pattern,
-        )
+        from mnemos.secrets_detector import findings_by_pattern
 
         # ── A2 (ArchCom 2026-08-27): strict marker validation gate ──────
         # Fail-closed BEFORE any content is read for issuance: a failed
@@ -2994,21 +3106,44 @@ class MemoryManager:
                     "redacted_patterns": {},
                 }
             result.pop("secret_scan_verdict", None)
+            # B5 tier-2 (W3): the cached original for the offset-mapped
+            # scan. INTERNAL datum from ccr.retrieve — popped here, never
+            # echoed in the response (the snippet channel issues snippets,
+            # not originals).
+            cached_original = result.pop("original", None)
+            original_for_scan = cached_original if isinstance(cached_original, str) else None
             redactions = 0
             pattern_counts: dict[str, int] = {}
+            # W3 review F5: localization failures are counted separately
+            # so a refuse-mode refusal names its TRUE cause — "we could
+            # not prove this snippet safe" (ambiguous offsets) is not
+            # "we detected a secret", and conflating them misleads
+            # forensics.
+            localization_failures = 0
             try:
                 for snippet in result["snippets"]:
                     text = str(snippet.get("snippet", ""))
-                    # m2: detect on a marker-stripped copy — the raw
-                    # marked snippet can split a multi-token secret.
-                    findings = detect_secrets(_snippet_scan_text(text))
-                    if not findings:
+                    # B5 tier-2: localize the snippet's fragments in the
+                    # cached original and scan the ORIGINAL over the
+                    # localized window ± margin — snippet-text detection
+                    # alone misses secrets truncated at the 32-token FTS5
+                    # window edge. Non-localizable snippets (absent or
+                    # ambiguous fragments) fall back to the tier-1 m2
+                    # behavior: the whole snippet is withheld
+                    # (<REDACTED:snippet>) — offsets are unmappable, so
+                    # the snippet cannot be proven secret-free.
+                    outcome = _offset_mapped_snippet_scan(text, original_for_scan)
+                    if outcome.clean:
                         continue
-                    # Offsets in the stripped copy do not map back to the
-                    # marked snippet, so the whole snippet is withheld.
-                    snippet["snippet"] = "<REDACTED:snippet>"
-                    redactions += len(findings)
-                    for name, count in findings_by_pattern(findings).items():
+                    if not outcome.localizable:
+                        snippet["snippet"] = "<REDACTED:snippet>"
+                        redactions += 1
+                        localization_failures += 1
+                        pattern_counts["snippet"] = pattern_counts.get("snippet", 0) + 1
+                        continue
+                    snippet["snippet"] = outcome.text
+                    redactions += len(outcome.findings)
+                    for name, count in findings_by_pattern(list(outcome.findings)).items():
                         pattern_counts[name] = pattern_counts.get(name, 0) + count
             except Exception as exc:
                 # m5: fail-closed — never issue unscanned snippets.
@@ -3026,16 +3161,35 @@ class MemoryManager:
                     "redacted_patterns": {},
                 }
             if redactions and self.settings.ccr.retrieve_refuse_on_secret:
+                # W3 review F5: distinct, honest reason per cause. A
+                # localization failure withheld snippets that could not
+                # be PROVEN secret-free (nothing was detected); that is
+                # a different incident from a detection and the refusal
+                # forensics must not claim a detection that did not
+                # happen. When BOTH occurred, the detection — the more
+                # severe, actionable cause — names the refusal. Both
+                # remain fail-closed refusals with no content and no
+                # bump.
+                detected = redactions - localization_failures
+                refusal_reason = (
+                    "secret detected in retrieved snippets"
+                    if detected > 0
+                    else "snippet localization failed (ambiguous) — refusing under refuse-mode"
+                )
                 logger.warning(
-                    "CCR issuance refused (secret in snippets): hash=%s redactions=%d",
+                    "CCR issuance refused (%s): hash=%s redactions=%d "
+                    "detected=%d localization_failures=%d",
+                    refusal_reason,
                     h,
                     redactions,
+                    detected,
+                    localization_failures,
                 )
                 return {
                     "hash": h,
                     "found": True,
                     "refused": True,
-                    "reason": "secret detected in retrieved snippets",
+                    "reason": refusal_reason,
                     "redactions": redactions,
                     "redacted_patterns": pattern_counts,
                 }

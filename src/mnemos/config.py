@@ -253,6 +253,34 @@ class CCRConfig(BaseModel):
     ccr_cleanup_interval_sec: int = Field(default=1200, ge=60, le=86400)
 
 
+class HooksConfig(BaseModel):
+    """ADR-0017 D1 lifecycle hooks (mnemos #125, Wave 3).
+
+    The hooks themselves (``pre_llm_call`` / ``on_session_start`` /
+    ``post_tool_call``) are stateless thin wrappers over the manager's
+    existing recall / assemble / compress paths — exposing them adds no
+    capability the MCP/REST surfaces do not already have, so there is no
+    master ``enabled`` switch (tool-surface exposure is a server concern,
+    not per-hook config). The ONLY behavior knob is autocompression,
+    which turns ``post_tool_call`` from a no-op envelope into a
+    side-effecting CCR write.
+    """
+
+    # post_tool_call autocompression (ADR-0018 Phase 1): compress the
+    # tool output via CCR and return the marker to substitute. Default
+    # False — a side-effecting write is opt-in; automation deployments
+    # (the W3+ harness configs) enable it. The per-call ``auto_compress``
+    # argument overrides per invocation.
+    auto_compress: bool = False
+    # W3 review F3 — hard cap on ``post_tool_call`` ``output_text`` (in
+    # characters, enforced at the hook boundary BEFORE any write: an
+    # oversized payload is rejected with ValueError → 422 / MCP error
+    # dict, nothing reaches ccr_store/FTS). Default matches the
+    # ``mnemos.context_rewrite_max_content_chars`` caps convention
+    # (1 MiB in chars). 0 disables the cap.
+    max_output_chars: int = Field(default=1_048_576, ge=0, le=100_000_000)
+
+
 class CacheAlignerConfig(BaseModel):
     """P1-5 — CacheAligner prefix stabilization.
 
@@ -507,6 +535,7 @@ class Settings(BaseSettings):
     automation: AutomationConfig = AutomationConfig()
     runtime: RuntimeConfig = RuntimeConfig()
     ccr: CCRConfig = CCRConfig()
+    hooks: HooksConfig = HooksConfig()
     cache_aligner: CacheAlignerConfig = CacheAlignerConfig()
     output_style: OutputStyleConfig = OutputStyleConfig()
     federation: FederationConfig = FederationConfig()

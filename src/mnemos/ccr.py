@@ -259,6 +259,13 @@ def retrieve(
         "secret_scan_verdict": entry["secret_scan_verdict"],
         "issuer_agent": entry["issuer_agent"],
         "issuer_session": entry["issuer_session"],
+        # B5 tier-2 (W3): INTERNAL datum — the cached original the
+        # issuance layer localizes snippet fragments against for the
+        # offset-mapped scan (``MemoryManager.retrieve_content``). Popped
+        # by the issuance layer before the response returns; it NEVER
+        # crosses the MCP/REST boundary and is not part of the wire
+        # contract of this function's callers.
+        "original": entry["original"],
     }
 
 

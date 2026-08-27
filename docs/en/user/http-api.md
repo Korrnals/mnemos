@@ -601,6 +601,61 @@ Full field-by-field documentation: [`mcp-tools.md` → `mnemos_context_rewrite`]
 
 ---
 
+## Lifecycle hooks (ADR-0017 D1 / ADR-0018, #125 Wave 3)
+
+One parametric route over the three lifecycle hooks — the REST twin of the
+grouped `mnemos_hooks` MCP tool (both call the same `dispatch_hook` router).
+Identity (`session`, `project`, `agent`) is mandatory on every call; for
+`post_tool_call` it is the A2 register N2 mandate — the compress call always
+threads the caller's `(agent, session)` onto the cache row so strict marker
+validation can later prove provenance.
+
+### `POST /hooks/{action}` — run one lifecycle hook
+
+`action` ∈ `pre_llm_call` | `on_session_start` | `post_tool_call` (unknown →
+404). Per-action fields are validated by the hooks boundary (`ValueError` →
+422): `context_hint`/`file`/`budget` for `pre_llm_call`, `limit` for
+`on_session_start`, `tool_name`/`output_text`/`auto_compress`/`profile` for
+`post_tool_call`. `output_text` is capped at `hooks.max_output_chars`
+(default 1,048,576 chars, the context-rewrite caps convention; `0` disables)
+— an over-cap payload is rejected 422 BEFORE any write.
+
+**Request body**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `session` | string | **yes** | — | Caller session id. |
+| `project` | string | **yes** | — | Project slug. |
+| `agent` | string | **yes** | — | Caller agent slug (issuer identity). |
+| `context_hint` | string | no | — | `pre_llm_call`: explicit recall query (what the model call is about). |
+| `file` | string | no | — | `pre_llm_call`: optional file path. |
+| `budget` | integer | no | `2048` | `pre_llm_call`: token budget. |
+| `limit` | integer | no | `5` | `on_session_start`: checkpoint count. |
+| `tool_name` | string | `post_tool_call` | — | The tool that produced the output. |
+| `output_text` | string | `post_tool_call` | — | The raw tool output to compress. |
+| `auto_compress` | boolean | no | knob | `post_tool_call`: per-call override of `hooks.auto_compress` (default `false`). |
+| `profile` | string | no | auto | `post_tool_call`: filter profile hint. |
+
+**Example**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/hooks/post_tool_call \
+  -H "Content-Type: application/json" \
+  -d '{"session": "sess-42", "project": "mnemos", "agent": "zcode",
+       "tool_name": "bash", "output_text": "<60+ lines of build log>",
+       "auto_compress": true}'
+```
+
+Responses per action: `pre_llm_call` → the assembled ContextBlock (same shape
+as `POST /context/assemble`, sync delivery pinned); `on_session_start` →
+`{checkpoints: [{id, content, created_at, redactions, …}], redactions}`
+(content issuance-scanned on this channel); `post_tool_call` → the CCR
+envelope with `compressed_text`/`marker` to substitute (or the off-envelope
+`{auto_compress: false, compressed: false}` when not enabled). Full
+field-by-field documentation: [`mcp-tools.md` → `mnemos_hooks`](mcp-tools.md#mnemos_hooks).
+
+---
+
 ## Reversible compression (CCR)
 
 These endpoints implement **Compress-Cache-Retrieve (CCR)** — zero-data-loss

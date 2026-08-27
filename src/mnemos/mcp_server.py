@@ -21,6 +21,7 @@ from mcp.types import TextContent, Tool
 
 from mnemos.config import load_settings
 from mnemos.context_rewrite import ContextRewriteRateLimitError
+from mnemos.hooks import HOOK_ACTIONS, dispatch_hook
 from mnemos.models import (
     AgentRecallQuery,
     MemoryCreate,
@@ -975,6 +976,103 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="mnemos_hooks",
+            description=(
+                "ADR-0017 D1 / ADR-0018 lifecycle hooks — the automation "
+                "integration points, grouped behind action:enum (mnemos #97 "
+                "pattern). action='pre_llm_call': assemble the context block "
+                "to INJECT before a model call (sync delivery; "
+                "context_hint = what the call is about, used as the recall "
+                "query; the ADR-0018 entry invariant — secret scan, "
+                "provenance, status gate — runs inside the assemble "
+                "pipeline). action='on_session_start': recall recent "
+                "checkpoints for session bootstrap (content scanned at "
+                "issuance on this channel). action='post_tool_call': the "
+                "autocompression entry point — when auto_compress resolves "
+                "true (per-call argument, else the hooks.auto_compress "
+                "config knob, default false), the tool output is compressed "
+                "via CCR and the marker-headed compressed_text is returned "
+                "for the caller to SUBSTITUTE in its window. IDENTITY "
+                "MANDATE (A2 register N2): session+project+agent are "
+                "required on every call — post_tool_call compression always "
+                "threads (agent, session) onto the cache row so strict "
+                "marker validation can later prove provenance; "
+                "identity-less compression would mint unverifiable rows."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["pre_llm_call", "on_session_start", "post_tool_call"],
+                        "description": (
+                            "pre_llm_call: assemble the pre-model-call "
+                            "injection block. on_session_start: recall "
+                            "recent checkpoints. post_tool_call: compress "
+                            "tool output (autocompression, opt-in)."
+                        ),
+                    },
+                    "session": {"type": "string", "description": "Caller session id."},
+                    "project": {"type": "string", "description": "Project slug."},
+                    "agent": {
+                        "type": "string",
+                        "description": "Caller agent slug (issuer identity).",
+                    },
+                    "context_hint": {
+                        "type": "string",
+                        "description": (
+                            "pre_llm_call only: what the upcoming model call "
+                            "is about — used as the recall query instead of "
+                            "the derived project/file term."
+                        ),
+                    },
+                    "file": {
+                        "type": "string",
+                        "description": (
+                            "pre_llm_call only: optional file path (recall "
+                            "terms + applyTo rule pinning)."
+                        ),
+                    },
+                    "budget": {
+                        "type": "integer",
+                        "default": 2048,
+                        "description": "pre_llm_call only: token budget.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "on_session_start only: checkpoint count.",
+                    },
+                    "tool_name": {
+                        "type": "string",
+                        "description": "post_tool_call only: the tool that ran.",
+                    },
+                    "output_text": {
+                        "type": "string",
+                        "description": (
+                            "post_tool_call only: the raw tool output to "
+                            "compress."
+                        ),
+                    },
+                    "auto_compress": {
+                        "type": "boolean",
+                        "description": (
+                            "post_tool_call only: per-call override of the "
+                            "hooks.auto_compress knob."
+                        ),
+                    },
+                    "profile": {
+                        "type": "string",
+                        "description": (
+                            "post_tool_call only: optional filter profile "
+                            "hint for the compression."
+                        ),
+                    },
+                },
+                "required": ["action", "session", "project", "agent"],
+            },
+        ),
+        Tool(
             name="mnemos_export",
             description=(
                 "Export memories to a file (JSON or SQLite snapshot). Writes the "
@@ -1902,6 +2000,64 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             # Boundary validation + size caps + tag-contract violations
             # (strict mode) + supersedes not found in project — clean
             # error dict, no trace echo.
+            return {"error": str(exc)}
+
+    # ── mnemos_hooks (ADR-0017 D1 / ADR-0018 lifecycle hooks, #125 W3) ─────
+    if name == "mnemos_hooks":
+        # Boundary type guards (mnemos_context_rewrite pattern) so a
+        # malformed caller gets a clean error dict instead of an
+        # exception deep in the hooks. No bool() coercion — auto_compress
+        # must be an actual bool, a truthy string is a boundary error.
+        hk_action = args.get("action")
+        if not isinstance(hk_action, str) or hk_action not in HOOK_ACTIONS:
+            valid = ", ".join(HOOK_ACTIONS)
+            return {"error": f"action must be one of: {valid}"}
+        hk_session = args.get("session")
+        if not isinstance(hk_session, str) or not hk_session.strip():
+            return {"error": "session is required and must be a non-empty string"}
+        hk_project = args.get("project")
+        if not isinstance(hk_project, str) or not hk_project.strip():
+            return {"error": "project is required and must be a non-empty string"}
+        hk_agent = args.get("agent")
+        if not isinstance(hk_agent, str) or not hk_agent.strip():
+            return {"error": "agent is required and must be a non-empty string"}
+        hk_optional_strs = (
+            ("context_hint", args.get("context_hint")),
+            ("file", args.get("file")),
+            ("tool_name", args.get("tool_name")),
+            ("output_text", args.get("output_text")),
+            ("profile", args.get("profile")),
+        )
+        for label, value in hk_optional_strs:
+            if value is not None and not isinstance(value, str):
+                return {"error": f"{label} must be a string when provided"}
+        hk_budget = args.get("budget", 2048)
+        if not isinstance(hk_budget, int) or isinstance(hk_budget, bool):
+            return {"error": "budget must be an integer when provided"}
+        hk_limit = args.get("limit", 5)
+        if not isinstance(hk_limit, int) or isinstance(hk_limit, bool):
+            return {"error": "limit must be an integer when provided"}
+        hk_auto = args.get("auto_compress")
+        if hk_auto is not None and not isinstance(hk_auto, bool):
+            return {"error": "auto_compress must be a boolean when provided"}
+        try:
+            return dispatch_hook(
+                mgr,
+                action=hk_action,
+                session=hk_session,
+                project=hk_project,
+                agent=hk_agent,
+                context_hint=args.get("context_hint"),
+                file=args.get("file"),
+                budget=hk_budget,
+                limit=hk_limit,
+                tool_name=args.get("tool_name"),
+                output_text=args.get("output_text"),
+                auto_compress=hk_auto,
+                profile=args.get("profile"),
+            )
+        except ValueError as exc:
+            # Boundary + per-hook validation — clean error dict.
             return {"error": str(exc)}
 
     # ── mnemos_export (#84 federation export) ──────────────────────────────

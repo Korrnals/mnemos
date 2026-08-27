@@ -49,6 +49,7 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — relocate dynamic content for prefix cache stability | no |
 | [`mnemos_assemble_context`](#mnemos_assemble_context) *(#125)* | ADR-0017 D1 — assemble the pre-LLM-call context block (recall → CCR → filter → scan → align → budget) | no |
 | [`mnemos_context_rewrite`](#mnemos_context_rewrite) *(#125)* | ADR-0018 — `on_context_rewrite` lifecycle event: report a context rewrite, the original lands in LTM (idempotent, version-less) | no |
+| [`mnemos_hooks`](#mnemos_hooks) *(#125)* | ADR-0017 D1 / ADR-0018 lifecycle hooks — grouped `action:enum` tool: `pre_llm_call` / `on_session_start` / `post_tool_call` (autocompression, opt-in) | no |
 | [`mnemos_export`](#mnemos_export) | Export memories to a file (JSON or SQLite snapshot) | no |
 | [`mnemos_import`](#mnemos_import) | Import memories from an export file (merge or restore) | no |
 | [`mnemos_stats`](#mnemos_stats) | Health counters and key paths | no |
@@ -1121,6 +1122,52 @@ Semantics (ADR-0018, verbatim):
 - REST twin: `POST /context/rewrite` (same manager path) — [http-api.md](http-api.md)
 - Rationale: ADR-0018 (§"on_context_rewrite": lifecycle event, not a versioned primitive)
 - Rehydrate channels: [`mnemos_retrieve`](#mnemos_retrieve) / [`mnemos_assemble_context`](#mnemos_assemble_context); marker via [`mnemos_compress`](#mnemos_compress)
+
+---
+
+## `mnemos_hooks`
+
+**Lifecycle hooks (ADR-0017 D1 / ADR-0018, mnemos #125 Wave 3)** — the automation integration points, grouped behind `action:enum` (the mnemos #97 grouped-tool pattern). Three actions, one tool:
+
+- **`pre_llm_call`** — assemble the context block to **inject before a model call** (thin wrapper over `mnemos_assemble_context`, delivery pinned to sync). `context_hint` (what the upcoming call is about) is used as the recall query instead of the derived project/file term. The ADR-0018 entry invariant — secret scan, provenance, status gate — runs inside the assemble pipeline; the hook adds nothing to it.
+- **`on_session_start`** — recall recent checkpoints for session bootstrap (thin wrapper over the recall path; the echoed content is scanned at issuance on this channel, mirroring `mnemos_recall_context`).
+- **`post_tool_call`** — the **autocompression entry point** (ADR-0018): when `auto_compress` resolves true (per-call argument, else the `hooks.auto_compress` config knob, default `false`), the tool output is compressed via CCR and the marker-headed `compressed_text` is returned — the caller **substitutes** it for the raw output in its window. Off by default: the envelope says so and nothing is written.
+
+**Identity mandate (A2 register N2, loudly):** `session` + `project` + `agent` are required on EVERY call. For `post_tool_call` this is a security requirement, not ergonomics — the compress call always threads the caller's `(agent, session)` onto the cache row (the A2 issuer ledger), so strict marker validation (`ccr.validate_markers`) can later prove the marker was minted in the redeemer's own context. Identity-less compression would mint NULL-issuer rows that strict validation refuses to redeem — the hook has no identity-less mode.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `action` | string | **yes** | — | `pre_llm_call` / `on_session_start` / `post_tool_call`. |
+| `session` | string | **yes** | — | Caller session id. |
+| `project` | string | **yes** | — | Project slug. |
+| `agent` | string | **yes** | — | Caller agent slug (issuer identity). |
+| `context_hint` | string | no | — | `pre_llm_call`: what the upcoming model call is about — the explicit recall query. |
+| `file` | string | no | — | `pre_llm_call`: optional file path (recall terms + applyTo rule pinning). |
+| `budget` | integer | no | `2048` | `pre_llm_call`: token budget. |
+| `limit` | integer | no | `5` | `on_session_start`: checkpoint count. |
+| `tool_name` | string | `post_tool_call` | — | The tool that produced the output. |
+| `output_text` | string | `post_tool_call` | — | The raw tool output to compress. |
+| `auto_compress` | boolean | no | knob | `post_tool_call`: per-call override of `hooks.auto_compress`. |
+| `profile` | string | no | auto | `post_tool_call`: filter profile hint for the compression. |
+
+### Output
+
+`pre_llm_call` returns the full `mnemos_assemble_context` result plus `hook`/`injection` keys (inject `text` before the model call). `on_session_start` returns `{hook, session, project, agent, checkpoints: [{id, content, created_at, redactions, redacted_patterns?}], redactions}` — checkpoint content is issuance-scanned; refuse mode drops the checkpoint. `post_tool_call` with autocompression on returns the CCR envelope (`ccr`, `compressed_text`, `marker`, `compressed`, `action: "substitute …"`); with it off, `{auto_compress: false, compressed: false, note}` and no write.
+
+### Notes
+
+- **Config** — two knobs: `hooks.auto_compress` (default `false`) and `hooks.max_output_chars` (default 1,048,576 chars — `post_tool_call` rejects an oversized `output_text` at the boundary BEFORE any write, mirroring the context-rewrite caps convention; `0` disables). The read-only hooks need no enablement; they expose no capability the server surfaces do not already have.
+- **Sync only (this wave)** — ADR-0017 D1 names sync/async hook modes; async delivery waits for a consumer that needs it. Harnesses needing `async`/`code`/`prose` assembly modes call `mnemos_assemble_context` directly.
+- **Memory capture is explicit** — `post_tool_call` does not silently store tool outputs as memories; use `MnemosSDK.remember` (or `mnemos_add`/REST) when a result is worth keeping.
+- **Errors** — boundary violations return `{"error": …}` (REST twin answers 422; unknown action is 404 there). An over-cap `output_text` is a boundary violation: `{"error": "output_text exceeds hooks.max_output_chars (N > M)"}`, nothing written.
+
+### Related
+
+- REST twin: `POST /hooks/{action}` — [http-api.md](http-api.md)
+- Programmatic surface: `MnemosSDK` ([integration-guide.md](integration-guide.md))
+- Rationale: ADR-0017 D1 (lifecycle integration), ADR-0018 (post_tool_call autocompression, residual register N2)
 
 ---
 

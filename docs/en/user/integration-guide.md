@@ -306,6 +306,39 @@ configuration, see [context-filter.md](context-filter.md).
 
 ---
 
+## Hooks & SDK for automation
+
+Mnemos ships two dedicated surfaces for harness/automation integrations
+(ADR-0017 D1 / ADR-0018, mnemos #125 Wave 3):
+
+- **Lifecycle hooks** — the grouped `mnemos_hooks` MCP tool and the REST
+  twin `POST /hooks/{action}` with three actions: `pre_llm_call`
+  (assemble the context block to inject before a model call — pass
+  `context_hint` = what the call is about), `on_session_start` (recall
+  recent checkpoints), and `post_tool_call` (autocompression: with
+  `hooks.auto_compress: true` in the config — or a per-call
+  `auto_compress: true` — the tool output is compressed via CCR and the
+  marker-headed `compressed_text` is returned to substitute in your
+  window). Identity (`session`/`project`/`agent`) is required on every
+  hook call. Full reference: [mcp-tools.md → `mnemos_hooks`](mcp-tools.md#mnemos_hooks)
+  / [http-api.md → Lifecycle hooks](http-api.md).
+- **`MnemosSDK`** (`from mnemos.sdk import MnemosSDK`) — the thin typed
+  Python facade over `MemoryManager` for in-process adapters:
+  `remember` / `recall` / `forget` / `stats` / `assemble_context` /
+  `rewrite`. The domain logic lives in the manager paths (the same
+  scans, gates and idempotency the MCP/REST surfaces apply); the two
+  channel-boundary duties are the facade's own, mirroring every other
+  surfaced channel: `recall` scans every echoed item at issuance
+  (content + title, per-item redactions, refuse-mode drop) and
+  `remember` validates caller tags against the tag contract before any
+  write. Local-first: `MnemosSDK(settings)` builds its own manager,
+  `MnemosSDK(manager=…)` reuses yours.
+
+The full adapter documentation (Hermes migration, acceptance checklist)
+lands with the adapter wave.
+
+---
+
 ## `mnemos integration setup` — default flow
 
 By default, `mnemos integration setup` now **prompts for agent wiring**
