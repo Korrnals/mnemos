@@ -46,10 +46,26 @@ import mnemos.mcp_server as mcp_mod
 from mnemos.api import main as api_main
 from mnemos.api.main import app, lifespan
 from mnemos.config import Settings
-from mnemos.manager import MemoryManager, _snippet_scan_text
+from mnemos.manager import MemoryManager
 from mnemos.mcp_server import _dispatch
 from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
 from mnemos.secrets_detector import detect_secrets, redact_content
+from mnemos.storage.sqlite_store import (
+    FTS_SNIPPET_ELLIPSIS,
+    FTS_SNIPPET_END_MARK,
+    FTS_SNIPPET_START_MARK,
+)
+
+
+def _snippet_scan_text(snippet: str) -> str:
+    """Test-local copy of the m2 strip helper (removed from production by
+    the B5 tier-2 offset-mapped scan, which localizes fragments instead
+    of scanning a flattened copy). Keeps the fixture assertions below
+    readable: highlight marks AND the ellipsis removed, like the tier-1
+    detection copy was."""
+    for mark in (FTS_SNIPPET_START_MARK, FTS_SNIPPET_END_MARK, FTS_SNIPPET_ELLIPSIS):
+        snippet = snippet.replace(mark, "")
+    return snippet
 
 # ── Fake (EXAMPLE-style) secrets from the detector's own regexes ──────────────
 
@@ -373,10 +389,15 @@ class TestSnippetMarkerSplit:
         findings = detect_secrets(stripped)
         assert [f.pattern_name for f in findings] == ["jwt"]
 
-    def test_marker_split_jwt_snippet_withheld(self, manager):
-        """Query matches the JWT payload token; FTS5 markers split the JWT so
-        the raw marked snippet evades detect_secrets — the whole snippet must
-        be withheld (offsets in the stripped copy are unmappable)."""
+    def test_marker_split_jwt_snippet_redacted_via_original(self, manager):
+        """Query matches the JWT payload token; FTS5 markers split the JWT
+        so the raw marked snippet evades detect_secrets. B5 tier-2 (W3):
+        the snippet's fragments localize in the cached original, the
+        original-window scan finds the whole JWT, and the INTERSECTING
+        span is redacted in the emitted snippet — span-wise redaction
+        replaces the tier-1 whole-snippet withholding for localizable
+        snippets (the withholding survives as the non-localizable
+        fallback, covered in test_b5_tier2_snippet_scan.py)."""
         text = _cacheable_secret_log(FAKE_JWT)
         h = manager.compress_content(text, profile="log", project="m2")["hash"]
         # B5 tier-1: hit rows refuse snippet mode; the marker-split
@@ -395,7 +416,7 @@ class TestSnippetMarkerSplit:
             for segment in FAKE_JWT.split("."):
                 assert segment not in body
                 assert segment not in stripped
-        assert any(s["snippet"] == "<REDACTED:snippet>" for s in snippets)
+        assert any("<REDACTED:jwt>" in s["snippet"] for s in snippets)
         assert result["redactions"] >= 1
         assert result["redacted_patterns"] == {"jwt": 1}
 
