@@ -49,6 +49,7 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — перенос динамического контента для стабильности prefix cache | нет |
 | [`mnemos_assemble_context`](#mnemos_assemble_context) *(#125)* | ADR-0017 D1 — сборка контекстного блока перед вызовом LLM (recall → CCR → filter → scan → align → budget) | нет |
 | [`mnemos_context_rewrite`](#mnemos_context_rewrite) *(#125)* | ADR-0018 — событие жизненного цикла `on_context_rewrite`: сообщить о перезаписи контекста, оригинал уходит в LTM (идемпотентно, без версий) | нет |
+| [`mnemos_hooks`](#mnemos_hooks) *(#125)* | Хуки жизненного цикла ADR-0017 D1 / ADR-0018 — групповой инструмент `action:enum`: `pre_llm_call` / `on_session_start` / `post_tool_call` (автосжатие, opt-in) | нет |
 | [`mnemos_export`](#mnemos_export) | Экспорт записей в файл (JSON или SQLite-снимок) | нет |
 | [`mnemos_import`](#mnemos_import) | Импорт записей из файла экспорта (merge или restore) | нет |
 | [`mnemos_stats`](#mnemos_stats) | Счётчики состояния и ключевые пути | нет |
@@ -1121,6 +1122,52 @@ output_style:
 - REST-близнец: `POST /context/rewrite` (тот же путь менеджера) — [http-api.md](http-api.md)
 - Обоснование: ADR-0018 (§"on_context_rewrite": событие жизненного цикла, а не версионируемый примитив)
 - Каналы rehydrate: [`mnemos_retrieve`](#mnemos_retrieve) / [`mnemos_assemble_context`](#mnemos_assemble_context); маркер через [`mnemos_compress`](#mnemos_compress)
+
+---
+
+## `mnemos_hooks`
+
+**Хуки жизненного цикла (ADR-0017 D1 / ADR-0018, mnemos #125 Wave 3)** — точки интеграции для автоматизации, сгруппированные за `action:enum` (групповой паттерн mnemos #97). Три действия, один инструмент:
+
+- **`pre_llm_call`** — собрать контекстный блок для **инъекции перед вызовом модели** (тонкая обёртка над `mnemos_assemble_context`, доставка синхронная). `context_hint` (о чём предстоящий вызов) используется как явный recall-запрос вместо производного термина проект/файл. Инвариант входа ADR-0018 — скан секретов, провенанс, гейт статуса — выполняется внутри конвейера сборки; хук ничего к нему не добавляет.
+- **`on_session_start`** — вспомнить недавние чекпоинты для бутстрапа сессии (тонкая обёртка над recall-путём; эхо-контент сканируется на выдаче в самом этом канале, как в `mnemos_recall_context`).
+- **`post_tool_call`** — **точка входа автосжатия** (ADR-0018): когда `auto_compress` разрешается в true (аргумент вызова, иначе ручка `hooks.auto_compress`, по умолчанию `false`), вывод инструмента сжимается через CCR и возвращается `compressed_text` с маркером в голове — вызывающий **подставляет** его вместо сырого вывода в своём окне. По умолчанию выключено: конверт сообщает об этом и ничего не пишет.
+
+**Мандат идентичности (реестр A2, N2, громко):** `session` + `project` + `agent` обязательны на КАЖДОМ вызове. Для `post_tool_call` это требование безопасности, а не эргономика — вызов compress всегда протаскивает `(agent, session)` вызывающего в строку кэша (реестр эмитентов A2), чтобы строгая валидация маркеров (`ccr.validate_markers`) могла позже доказать, что маркер отчеканен в собственном контексте погашающего. Сжатие без идентичности чеканит NULL-issuer строки, которые строгая валидация отказывается погашать, — у хука нет режима без идентичности.
+
+### Входные параметры
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|----------|
+| `action` | string | **да** | — | `pre_llm_call` / `on_session_start` / `post_tool_call`. |
+| `session` | string | **да** | — | Идентификатор сессии вызывающего. |
+| `project` | string | **да** | — | Slug проекта. |
+| `agent` | string | **да** | — | Slug агента вызывающего (идентичность эмитента). |
+| `context_hint` | string | нет | — | `pre_llm_call`: о чём предстоящий вызов модели — явный recall-запрос. |
+| `file` | string | нет | — | `pre_llm_call`: опциональный путь к файлу (термины recall + закрепление applyTo-правил). |
+| `budget` | integer | нет | `2048` | `pre_llm_call`: бюджет токенов. |
+| `limit` | integer | нет | `5` | `on_session_start`: количество чекпоинтов. |
+| `tool_name` | string | `post_tool_call` | — | Инструмент, породивший вывод. |
+| `output_text` | string | `post_tool_call` | — | Сырой вывод инструмента для сжатия. |
+| `auto_compress` | boolean | нет | ручка | `post_tool_call`: точечное переопределение `hooks.auto_compress`. |
+| `profile` | string | нет | авто | `post_tool_call`: подсказка профиля фильтра для сжатия. |
+
+### Возвращаемое значение
+
+`pre_llm_call` возвращает полный результат `mnemos_assemble_context` плюс ключи `hook`/`injection` (инъецируйте `text` перед вызовом модели). `on_session_start` возвращает `{hook, session, project, agent, checkpoints: [{id, content, created_at, redactions, redacted_patterns?}], redactions}` — контент чекпоинтов сканируется на выдаче; refuse-режим отбрасывает чекпоинт. `post_tool_call` с включённым автосжатием возвращает конверт CCR (`ccr`, `compressed_text`, `marker`, `compressed`, `action: "substitute …"`); при выключенном — `{auto_compress: false, compressed: false, note}` без записи.
+
+### Замечания
+
+- **Конфигурация** — одна ручка: `hooks.auto_compress` (по умолчанию `false`). Read-only хуки не требуют включения: они не открывают никаких возможностей, которых не дают поверхности сервера.
+- **Только sync (эта волна)** — ADR-0017 D1 называет режимы sync/async; асинхронная доставка ждёт потребителя, которому она нужна. Харнессы, которым нужны режимы `async`/`code`/`prose`, вызывают `mnemos_assemble_context` напрямую.
+- **Сохранение в память — явно** — `post_tool_call` молча не складывает выводы инструментов в память; используйте `MnemosSDK.remember` (или `mnemos_add`/REST), когда результат стоит сохранения.
+- **Ошибки** — нарушения границы возвращают `{"error": …}` (REST-близнец отвечает 422; неизвестное действие там — 404).
+
+### Связанное
+
+- REST-близнец: `POST /hooks/{action}` — [http-api.md](http-api.md)
+- Программная поверхность: `MnemosSDK` ([integration-guide.md](integration-guide.md))
+- Обоснование: ADR-0017 D1 (интеграция жизненного цикла), ADR-0018 (автосжатие post_tool_call, реестр остаточных рисков N2)
 
 ---
 

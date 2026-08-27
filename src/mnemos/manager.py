@@ -2489,6 +2489,7 @@ class MemoryManager:
         expand_ccr: bool = False,
         async_handle: str | None = None,
         agent: str | None = None,
+        query: str | None = None,
     ) -> dict[str, Any]:
         """Assemble the model-facing context block (ADR-0017 D1 contract).
 
@@ -2497,9 +2498,11 @@ class MemoryManager:
         lives in that module; this method keeps the one-core-over-three-
         surfaces pattern (MCP / REST / future SDK all call the manager).
         ``agent`` (A2 review F2) pairs with ``session`` as the issuer
-        context for the strict-mode CCR expansion gate. Raises
-        ``ValueError`` on invalid ``session`` / ``project`` / ``mode`` /
-        ``budget`` or an unknown ``async_handle``.
+        context for the strict-mode CCR expansion gate. ``query`` (W3)
+        overrides the derived recall term — the ``pre_llm_call`` hook's
+        ``context_hint``. Raises ``ValueError`` on invalid ``session`` /
+        ``project`` / ``mode`` / ``budget`` / ``query`` or an unknown
+        ``async_handle``.
         """
         from mnemos.assemble import assemble_context as _assemble
 
@@ -2513,6 +2516,7 @@ class MemoryManager:
             expand_ccr=expand_ccr,
             async_handle=async_handle,
             agent=agent,
+            query=query,
         )
 
     # ── ADR-0018: on_context_rewrite lifecycle event (#125, Wave 2) ────────

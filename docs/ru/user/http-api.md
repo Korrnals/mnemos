@@ -602,6 +602,59 @@ curl -s -X POST http://127.0.0.1:8000/context/rewrite \
 
 ---
 
+## Хуки жизненного цикла (ADR-0017 D1 / ADR-0018, #125 Wave 3)
+
+Один параметрический маршрут на три хука жизненного цикла — REST-близнец
+группового MCP-инструмента `mnemos_hooks` (оба идут через один и тот же
+роутер `dispatch_hook`). Идентичность (`session`, `project`, `agent`)
+обязательна на каждом вызове; для `post_tool_call` это мандат реестра A2 N2 —
+вызов compress всегда протаскивает `(agent, session)` вызывающего в строку
+кэша, чтобы строгая валидация маркеров могла позже доказать провенанс.
+
+### `POST /hooks/{action}` — выполнить один хук
+
+`action` ∈ `pre_llm_call` | `on_session_start` | `post_tool_call` (неизвестное →
+404). Поля конкретного действия валидируются границей хуков (`ValueError` →
+422): `context_hint`/`file`/`budget` для `pre_llm_call`, `limit` для
+`on_session_start`, `tool_name`/`output_text`/`auto_compress`/`profile` для
+`post_tool_call`.
+
+**Тело запроса**
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|-------------|----------|
+| `session` | string | **да** | — | Идентификатор сессии вызывающего. |
+| `project` | string | **да** | — | Slug проекта. |
+| `agent` | string | **да** | — | Slug агента вызывающего (идентичность эмитента). |
+| `context_hint` | string | нет | — | `pre_llm_call`: явный recall-запрос (о чём вызов модели). |
+| `file` | string | нет | — | `pre_llm_call`: опциональный путь к файлу. |
+| `budget` | integer | нет | `2048` | `pre_llm_call`: бюджет токенов. |
+| `limit` | integer | нет | `5` | `on_session_start`: количество чекпоинтов. |
+| `tool_name` | string | `post_tool_call` | — | Инструмент, породивший вывод. |
+| `output_text` | string | `post_tool_call` | — | Сырой вывод инструмента для сжатия. |
+| `auto_compress` | boolean | нет | ручка | `post_tool_call`: точечное переопределение `hooks.auto_compress` (по умолчанию `false`). |
+| `profile` | string | нет | авто | `post_tool_call`: подсказка профиля фильтра. |
+
+**Пример**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/hooks/post_tool_call \
+  -H "Content-Type: application/json" \
+  -d '{"session": "sess-42", "project": "mnemos", "agent": "zcode",
+       "tool_name": "bash", "output_text": "<60+ строк build-лога>",
+       "auto_compress": true}'
+```
+
+Ответы по действиям: `pre_llm_call` → собранный ContextBlock (та же форма,
+что `POST /context/assemble`, доставка строго синхронная); `on_session_start`
+→ `{checkpoints: [{id, content, created_at, redactions, …}], redactions}`
+(контент сканируется на выдаче в самом канале); `post_tool_call` → конверт CCR
+с `compressed_text`/`marker` для подстановки (или выключенный конверт
+`{auto_compress: false, compressed: false}`). Полная документация по полям:
+[`mcp-tools.md` → `mnemos_hooks`](mcp-tools.md#mnemos_hooks).
+
+---
+
 ## Обратимое сжатие (CCR)
 
 Эти эндпоинты реализуют **Compress-Cache-Retrieve (CCR)** — сжатие без потери

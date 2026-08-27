@@ -34,6 +34,7 @@ from mnemos.api.middleware import AuthMiddleware
 from mnemos.api.rate_limit import limiter
 from mnemos.config import ApiConfig, Settings, load_settings
 from mnemos.context_rewrite import ContextRewriteRateLimitError
+from mnemos.hooks import HOOK_ACTIONS, dispatch_hook
 from mnemos.manager import MemoryManager
 from mnemos.models import (
     AgentRecallQuery,
@@ -1026,6 +1027,74 @@ async def context_rewrite(req: ContextRewriteRequest) -> dict[str, Any]:
     except ValueError as exc:
         # Boundary validation + size caps + tag-contract violations
         # (strict mode) + supersedes not found in this project.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ── Lifecycle hooks (ADR-0017 D1 / ADR-0018, #125 Wave 3) ─────────────────────
+
+
+class HooksRequest(BaseModel):
+    """Request body for POST /hooks/{action} — mirrors ``mnemos_hooks``.
+
+    One shared body for the three actions (they share the mandatory
+    session/project/agent identity spine); per-action fields are
+    validated by the hooks module, so an irrelevant field for the
+    requested action is simply ignored. ``ValueError`` from the hooks
+    boundary maps to HTTP 422.
+    """
+
+    session: str
+    project: str
+    agent: str
+    # pre_llm_call
+    context_hint: str | None = None
+    file: str | None = None
+    budget: int = Field(default=2048, ge=1, le=1_000_000)
+    # on_session_start
+    limit: int = Field(default=5, ge=1, le=100)
+    # post_tool_call
+    tool_name: str | None = None
+    output_text: str | None = None
+    auto_compress: bool | None = None
+    profile: str | None = None
+
+
+@app.post("/hooks/{action}")
+async def run_hook(action: str, req: HooksRequest) -> dict[str, Any]:
+    """Run one lifecycle hook (ADR-0017 D1 / ADR-0018, #125 Wave 3).
+
+    Mirrors the ``mnemos_hooks`` MCP tool over the same manager path via
+    the shared ``dispatch_hook`` router: ``pre_llm_call`` (assemble the
+    pre-model-call injection block, sync), ``on_session_start`` (recall
+    recent checkpoints, scanned at issuance on this channel),
+    ``post_tool_call`` (autocompression entry point — identity mandate
+    A2 N2: the compress call always threads the caller's agent+session
+    onto the cache row). Unknown action → 404 (resource-shaped path
+    segment); hook boundary violations → 422.
+    """
+    _track_http_call()
+    mgr = get_manager()
+    if action not in HOOK_ACTIONS:
+        valid = ", ".join(HOOK_ACTIONS)
+        raise HTTPException(status_code=404, detail=f"unknown hook action; valid: {valid}")
+    try:
+        return dispatch_hook(
+            mgr,
+            action=action,
+            session=req.session,
+            project=req.project,
+            agent=req.agent,
+            context_hint=req.context_hint,
+            file=req.file,
+            budget=req.budget,
+            limit=req.limit,
+            tool_name=req.tool_name,
+            output_text=req.output_text,
+            auto_compress=req.auto_compress,
+            profile=req.profile,
+        )
+    except ValueError as exc:
+        # Per-hook boundary validation (identity, per-action args).
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
