@@ -260,7 +260,7 @@ The same `MemoryManager` powers all three interfaces. Pick the one that fits you
 | Surface | Use it when… | Reference |
 |---------|--------------|-----------|
 | **CLI** — `mnemos …` | You live in a shell, want fast ad-hoc add / search, or are scripting cron jobs | [cli-reference.md](docs/en/user/cli-reference.md) |
-| **HTTP** — `mnemos serve` | You have a non-MCP client — a web dashboard, a mobile app, a CI runner, or **Hermes Agent** via its MemoryProvider plugin | [http-api.md](docs/en/user/http-api.md) |
+| **HTTP** — `mnemos serve` | You have a non-MCP client — a web dashboard, a mobile app, a CI runner | [http-api.md](docs/en/user/http-api.md) |
 | **MCP** — `mnemos mcp-server` | You are VS Code Copilot or any MCP-aware agent — the path Copilot agents take | [mcp-tools.md](docs/en/user/mcp-tools.md) |
 
 The MCP surface also exposes the **A2A Sessions API** (M16) — a persistent backend for multi-step agent
@@ -300,6 +300,7 @@ gods' benefit. They were for the songs.
 | [container-deployment.md](docs/en/admin/runbooks/container-deployment.md) | Build, push, compose, podman, Kubernetes, quadlet |
 | [adr/](docs/project/adr/) | Architectural decision records — the *why* behind the design |
 | [milestones.md](docs/project/milestones.md) | Milestone ledger with status legend |
+| [reports/](docs/project/reports/) | Phase completion reports — final report per completed roadmap phase |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes — Keep a Changelog format |
 
 ---
@@ -322,6 +323,8 @@ pick the strongest one your harness supports:
 
 - **[Hermes Agent](https://hermes-agent.nousresearch.com/)** — native `MemoryProvider` plugin
   (`integrations/hermes/`): automatic prefetch, sync-turn, built-in memory mirroring.
+  Since plugin **3.0.0** (ADR-0017 D1) the plugin runs **in-process** — it needs `pip install mnemos`
+  in the Hermes Python environment, and the legacy `base_url` / `api_key` / `totp_secret` config keys are gone.
   See the [integration guide](docs/en/user/integration-guide.md#hermes-agent).
 - **Native targets** — `mnemos integration setup --target <name>` deploys the
   behavioral pack and registers the MCP server in one pass. See the

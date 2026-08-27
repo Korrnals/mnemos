@@ -138,6 +138,7 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 
 - [Architecture Decision Records](../project/adr/README.md) — 14 ADRs covering the M1 → M16 evolution.
 - [Milestones](../project/milestones.md) — milestone ledger with status legend.
+- [Phase completion reports](../project/reports/) — final reports per completed roadmap phase (Phase 0–1: PR #135–#157).
 - [Code Review 2026-06](../project/code-review-2026-06.md) — final code review findings and fixes.
 - [Sessions](../project/sessions/) — orchestration session documents.
 
