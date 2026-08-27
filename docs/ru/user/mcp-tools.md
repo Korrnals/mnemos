@@ -1036,7 +1036,7 @@ output_style:
   "stats": {
     "stages": ["recall", "ccr", "filter", "scan", "align", "budget"],
     "recall": {"query": "my-project", "candidates": 3, "admissible": 3,
-                "project_scoped_out": 0, "content_type_filtered": 0,
+                "content_type_filtered": 0,
                 "content_type_fallbacks": 1, "applyto_pinned": 0},
     "ccr": {"enabled": false, "markers_found": 0, "expanded": 0,
              "skipped_missing": 0, "skipped_budget": 0},

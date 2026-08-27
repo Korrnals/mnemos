@@ -296,6 +296,15 @@ def _prometheus_text(mgr: MemoryManager) -> str:
     lines.append("# HELP mnemos_search_requests_total Total search requests since restart")
     lines.append("# TYPE mnemos_search_requests_total counter")
     lines.append(f"mnemos_search_requests_total {search['requests_total']}")
+    lines.append(
+        "# HELP mnemos_search_cross_project_requests_total "
+        "Search requests in the explicit global (cross-project) mode since restart"
+    )
+    lines.append("# TYPE mnemos_search_cross_project_requests_total counter")
+    lines.append(
+        "mnemos_search_cross_project_requests_total "
+        f"{search['cross_project_requests_total']}"
+    )
     lines.append("# HELP mnemos_search_avg_latency_ms Average search latency in ms")
     lines.append("# TYPE mnemos_search_avg_latency_ms gauge")
     lines.append(f"mnemos_search_avg_latency_ms {search['avg_latency_ms']}")

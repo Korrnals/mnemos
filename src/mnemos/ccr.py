@@ -105,8 +105,19 @@ def compress(
     Returns:
         Dict with ``compressed_text``, ``hash``, ``original_size``,
         ``compressed_size``, ``reduction_pct``, ``marker``, ``cached``,
-        ``profile``. For content below ``min_size_chars`` the text is
-        returned as-is with ``cached=False`` and ``reduction_pct=0``.
+        ``profile``, ``dropped_items``. For content below
+        ``min_size_chars`` the text is returned as-is with
+        ``cached=False`` and ``reduction_pct=0``.
+
+        C7 (ArchCom 2026-08-27) — ``dropped_items`` is the OUT-of-band
+        drop accounting: the number of JSON-array items removed by the
+        filter's statistical sampling, computed from the sampler's own
+        accounting at compress time (mirrors the P1-b per-item
+        ``redactions`` pattern). The in-band
+        ``{"_compressed_marker": true, "dropped": N}`` object inside
+        ``compressed_text`` is HUMAN-READABLE LEGACY ONLY — it lives in
+        caller-rewritable content, is spoofable, and is never parsed
+        back for decisions (source parser inventory at landing: none).
     """
     original_size = len(text)
 
@@ -121,6 +132,7 @@ def compress(
             "marker": "",
             "cached": False,
             "profile": "skipped",
+            "dropped_items": 0,
         }
 
     # 1. Compress via the existing filter pipeline.
@@ -130,6 +142,10 @@ def compress(
         budget=config.filter_budget,
     )
     compressed_body = filtered["clean_content"]
+
+    # C7: out-of-band drop accounting — read from the sampler stats the
+    # run just produced, never parsed back out of the compressed content.
+    dropped_items = int(filtered["stats"].get("compress", {}).get("json_items_dropped", 0))
 
     # 2. Cache the original (content-addressed, idempotent) with the A2
     #    issuer ledger (first writer owns the row's issuer columns).
@@ -166,6 +182,7 @@ def compress(
         "marker": marker,
         "cached": True,
         "profile": filtered["profile"],
+        "dropped_items": dropped_items,
     }
 
 
@@ -235,6 +252,11 @@ def retrieve(
         "project": entry["project"],
         "snippets": snippets,
         "retrieval_count": entry["retrieval_count"],
+        # B5 tier-1 (ArchCom 2026-08-27): the scan-at-store verdict feeds
+        # the issuance gate in ``MemoryManager.retrieve_content`` (snippet
+        # mode is refused for 'hit' rows). Consumed there; never echoed in
+        # successful responses (popped after the gate).
+        "secret_scan_verdict": entry["secret_scan_verdict"],
         "issuer_agent": entry["issuer_agent"],
         "issuer_session": entry["issuer_session"],
     }

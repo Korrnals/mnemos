@@ -228,6 +228,11 @@ class TestPrometheusMetrics:
         assert "mnemos_memories_by_project" in text
         assert "mnemos_pipeline_processed_total" in text
         assert "mnemos_search_requests_total" in text
+        # A9 (ArchCom 2026-08-27): the explicit global-mode counter is
+        # exported next to the search total, same exposition format.
+        assert "# HELP mnemos_search_cross_project_requests_total" in text
+        assert "# TYPE mnemos_search_cross_project_requests_total counter" in text
+        assert "mnemos_search_cross_project_requests_total 0" in text
         assert "mnemos_vectors_indexed_total" in text
         assert "mnemos_sessions_total" in text
 

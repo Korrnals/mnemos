@@ -183,6 +183,19 @@ def _cacheable_secret_log(secret: str) -> str:
     lines.append(f"2026-08-26T10:01:00Z CONFIG the unobtanium service uses key {secret}")
     lines.append("2026-08-26T10:01:01Z INFO shutdown complete")
     return "\n".join(lines)
+def _as_legacy_unscanned(mgr: MemoryManager, h: str) -> None:
+    """Rewrite a row's scan verdict to NULL (pre-P1-a legacy cache row).
+
+    B5 tier-1 (ArchCom 2026-08-27): rows whose verdict is ``'hit'`` REFUSE
+    snippet mode outright, so the snippet-path semantics pinned here are
+    only reachable on rows the store did not verdict — legacy NULL rows.
+    This helper simulates exactly that population; the hit-row refusal
+    itself is covered in ``tests/test_b5_verdict_snippet_refusal.py``.
+    """
+    conn = mgr.sqlite._get_conn()
+    conn.execute("UPDATE ccr_cache SET secret_scan_verdict=NULL WHERE hash=?", (h,))
+    conn.commit()
+
 
 
 # ── M1: MCP mnemos_search ─────────────────────────────────────────────────────
@@ -366,6 +379,9 @@ class TestSnippetMarkerSplit:
         be withheld (offsets in the stripped copy are unmappable)."""
         text = _cacheable_secret_log(FAKE_JWT)
         h = manager.compress_content(text, profile="log", project="m2")["hash"]
+        # B5 tier-1: hit rows refuse snippet mode; the marker-split
+        # semantics live on the legacy unscanned population.
+        _as_legacy_unscanned(manager, h)
 
         result = manager.retrieve_content(h, query="eyJfakePayloadXYZ")
 
@@ -453,6 +469,10 @@ class TestScannerExceptionRefusedShape:
     def test_snippet_path_returns_refused_scanner_error(self, manager, monkeypatch):
         text = _cacheable_secret_log(FAKE_AWS_KEY)
         h = manager.compress_content(text, profile="log")["hash"]
+        # B5 tier-1: a hit row would refuse at the verdict gate BEFORE the
+        # scanner runs; the m5 scanner-error shape is only reachable on the
+        # legacy unscanned population.
+        _as_legacy_unscanned(manager, h)
         self._break_detector(monkeypatch)
 
         result = manager.retrieve_content(h, query="unobtanium")

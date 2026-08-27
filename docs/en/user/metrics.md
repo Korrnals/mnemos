@@ -61,6 +61,7 @@ dashboard.
   },
   "search": {
     "requests_total": 87,
+    "cross_project_requests_total": 3,
     "avg_latency_ms": 12.4,
     "avg_results": 5.2
   },
@@ -81,14 +82,20 @@ dashboard.
 | `volume` | `memories_total`, `by_status`, `by_project`, `by_agent`, `by_type` | SQLite aggregates |
 | `filter` | `auto_filter`, `filtered_total`, `unfiltered_total`, `avg_reduction_pct`, `by_profile` | Context Filter stats |
 | `pipeline` | `processed_total`, `failed_total`, `dlq_depth`, `last_run` | Status counts + DLQ |
-| `search` | `requests_total`, `avg_latency_ms`, `avg_results` | In-memory instrumentation |
+| `search` | `requests_total`, `cross_project_requests_total`, `avg_latency_ms`, `avg_results` | In-memory instrumentation |
 | `vectors` | `indexed_total` | Vector store count |
 | `sessions` | `active` (updated within 24h), `total` | Sessions table |
 
 > **Search instrumentation is in-memory.** The `requests_total`,
-> `avg_latency_ms`, and `avg_results` counters reset on every server
-> restart. This is an accepted trade-off for the dashboard — for
-> persistent metrics, scrape `GET /api/v1/metrics` with Prometheus.
+> `cross_project_requests_total`, `avg_latency_ms`, and `avg_results`
+> counters reset on every server restart. This is an accepted trade-off
+> for the dashboard — for persistent metrics, scrape
+> `GET /api/v1/metrics` with Prometheus.
+>
+> **`cross_project_requests_total`** (ArchCom 2026-08-27, A9): searches
+> that ran in the explicit global mode (`project` not passed / empty) —
+> cross-project by definition. Every project-scoped search stays out of
+> this counter.
 
 ---
 

@@ -61,6 +61,7 @@ Mnemos предоставляет три метрических эндпоинт
   },
   "search": {
     "requests_total": 87,
+    "cross_project_requests_total": 3,
     "avg_latency_ms": 12.4,
     "avg_results": 5.2
   },
@@ -81,14 +82,20 @@ Mnemos предоставляет три метрических эндпоинт
 | `volume` | `memories_total`, `by_status`, `by_project`, `by_agent`, `by_type` | SQLite-агрегаты |
 | `filter` | `auto_filter`, `filtered_total`, `unfiltered_total`, `avg_reduction_pct`, `by_profile` | Статистика контекстного фильтра |
 | `pipeline` | `processed_total`, `failed_total`, `dlq_depth`, `last_run` | Счётчики статусов + DLQ |
-| `search` | `requests_total`, `avg_latency_ms`, `avg_results` | In-memory инструментирование |
+| `search` | `requests_total`, `cross_project_requests_total`, `avg_latency_ms`, `avg_results` | In-memory инструментирование |
 | `vectors` | `indexed_total` | Счётчик векторного хранилища |
 | `sessions` | `active` (обновлённые за 24ч), `total` | Таблица сессий |
 
 > **Инструментирование поиска — in-memory.** Счётчики `requests_total`,
-> `avg_latency_ms` и `avg_results` сбрасываются при каждом перезапуске
-> сервера. Это принятый компромисс для дашборда — для постоянных метрик
-> скрейпьте `GET /api/v1/metrics` через Prometheus.
+> `cross_project_requests_total`, `avg_latency_ms` и `avg_results`
+> сбрасываются при каждом перезапуске сервера. Это принятый компромисс
+> для дашборда — для постоянных метрик скрейпьте `GET /api/v1/metrics`
+> через Prometheus.
+>
+> **`cross_project_requests_total`** (ArchCom 2026-08-27, A9): поиски,
+> выполненные в явном глобальном режиме (`project` не передан / пустой) —
+> по определению кросс-проектные. Каждый проектно-ограниченный поиск в
+> этот счётчик не попадает.
 
 ---
 

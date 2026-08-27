@@ -119,6 +119,21 @@ def _clean_log() -> str:
     return "\n".join(lines)
 
 
+def _as_legacy_unscanned(mgr: MemoryManager, h: str) -> None:
+    """Rewrite a row's scan verdict to NULL (pre-P1-a legacy cache row).
+
+    B5 tier-1 (ArchCom 2026-08-27): rows whose verdict is ``'hit'`` REFUSE
+    snippet mode outright, so the m2/m5 snippet-path semantics these tests
+    pin (mask / scanner-error) are only reachable on rows the store did
+    not verdict — legacy NULL rows. This helper simulates exactly that
+    population; the hit-row refusal itself is covered in
+    ``tests/test_b5_verdict_snippet_refusal.py``.
+    """
+    conn = mgr.sqlite._get_conn()
+    conn.execute("UPDATE ccr_cache SET secret_scan_verdict=NULL WHERE hash=?", (h,))
+    conn.commit()
+
+
 # ── Fixture sanity ────────────────────────────────────────────────────────────
 
 
@@ -190,6 +205,9 @@ class TestSnippetScan:
     def test_snippets_masked_when_secret_in_window(self, manager):
         text = _secret_log(FAKE_AWS_KEY)
         h = manager.compress_content(text, profile="log")["hash"]
+        # B5 tier-1: hit rows refuse snippet mode; the masking semantics
+        # live on the legacy unscanned population.
+        _as_legacy_unscanned(manager, h)
 
         result = manager.retrieve_content(h, query="unobtanium")
 
@@ -233,6 +251,9 @@ class TestRefuseMode:
     def test_snippets_refused(self, refuse_manager):
         text = _secret_log(FAKE_AWS_KEY)
         h = refuse_manager.compress_content(text, profile="log")["hash"]
+        # B5 tier-1: a hit row refuses snippets even knob-off; the KNOB's
+        # own snippet branch needs the legacy unscanned population.
+        _as_legacy_unscanned(refuse_manager, h)
 
         result = refuse_manager.retrieve_content(h, query="unobtanium")
 
