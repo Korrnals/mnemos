@@ -118,14 +118,53 @@ class VectorStore:
 
     # ── search ────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _metadata_project(raw: Any) -> str | None:
+        """Best-effort read of the row's ``metadata['project']``.
+
+        Every write path stamps ``{"project": ..., "agent": ...}`` into the
+        metadata column. Returns ``None`` for missing/corrupt metadata — a
+        row whose project cannot be attested never matches a scoped search
+        (fail-closed) and is unaffected in global mode.
+        """
+        try:
+            meta: Any = json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(meta, dict):
+            return None
+        value = meta.get("project")
+        return value if isinstance(value, str) else None
+
     def search(
         self,
         query_embedding: list[float],
         limit: int = 20,
+        *,
+        project: str | None = None,
     ) -> list[tuple[str, float]]:
-        """Cosine similarity search. Returns (memory_id, score) sorted descending."""
+        """Cosine similarity search. Returns (memory_id, score) sorted descending.
+
+        A9 (ArchCom 2026-08-27) — project predicate, first-class: when
+        ``project`` is a non-empty slug, only rows whose embedding metadata
+        ``project`` equals it participate in the ranking (the scan filters
+        BEFORE the top-k cut, so foreign rows never enter the candidate set
+        and never consume depth). ``project=None`` (or empty) is the
+        explicit global mode — every row participates, fast path unchanged.
+        The authoritative project lives on the SQLite ``Memory`` and is
+        re-checked by the caller at resolve time (defence in depth against
+        vector-metadata drift).
+        """
         conn = self._conn()
-        rows = conn.execute("SELECT id, vector FROM embeddings").fetchall()
+        rows: list[Any]
+        if project:
+            rows = [
+                (r[0], r[1])
+                for r in conn.execute("SELECT id, vector, metadata FROM embeddings")
+                if self._metadata_project(r[2]) == project
+            ]
+        else:
+            rows = conn.execute("SELECT id, vector FROM embeddings").fetchall()
         if not rows:
             return []
 

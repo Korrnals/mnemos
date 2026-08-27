@@ -301,6 +301,9 @@ def _stage_compress(text: str, profile: str) -> tuple[str, dict[str, Any]]:
                 "json_arrays_sampled": j_stats["arrays_sampled"],
                 "json_items_in": j_stats["items_in"],
                 "json_items_out": j_stats["items_out"],
+                # C7: out-of-band accounting consumed by the issuance
+                # envelope (ccr.compress ``dropped_items``).
+                "json_items_dropped": j_stats["items_dropped"],
             }
 
     # Code boilerplate stripping
@@ -386,6 +389,9 @@ def _compress_json_arrays(text: str) -> tuple[str, dict[str, Any]] | None:
                 "arrays_sampled": 1,
                 "items_in": arr_stats["items_in"],
                 "items_out": arr_stats["items_out"],
+                # C7: authoritative out-of-band drop count (the in-band
+                # ``_compressed_marker`` object is human-readable legacy).
+                "items_dropped": arr_stats["dropped"],
             }
             return _json.dumps(compressed, indent=2, ensure_ascii=False), stats
     except (ValueError, TypeError):
@@ -400,6 +406,7 @@ def _compress_json_arrays(text: str) -> tuple[str, dict[str, Any]] | None:
         "arrays_sampled": 0,
         "items_in": 0,
         "items_out": 0,
+        "items_dropped": 0,
     }
 
     def _replace_array(match: re.Match[str]) -> str:
@@ -417,6 +424,7 @@ def _compress_json_arrays(text: str) -> tuple[str, dict[str, Any]] | None:
         stats_total["arrays_sampled"] += 1
         stats_total["items_in"] += arr_stats["items_in"]
         stats_total["items_out"] += arr_stats["items_out"]
+        stats_total["items_dropped"] += arr_stats["dropped"]
         return _json.dumps(compressed, indent=2, ensure_ascii=False)
 
     result = array_pattern.sub(_replace_array, text)
@@ -447,6 +455,15 @@ def _sample_json_array(arr: list[Any]) -> tuple[list[Any], dict[str, Any]]:
         anomalies = anomalies[:10]
 
     dropped_count = len(middle) - len(anomalies)
+    # C7 (ArchCom 2026-08-27): the in-band marker object below is
+    # HUMAN-READABLE LEGACY ONLY — it lives inside issued content the
+    # caller can rewrite, so it is spoofable and must NEVER be parsed
+    # back for decisions or accounting. The authoritative drop count
+    # travels OUT-of-band: the per-array ``dropped`` figure returned in
+    # stats feeds the issuance envelope (``ccr.compress`` →
+    # ``dropped_items``), mirroring the P1-b per-item ``redactions``
+    # pattern. Source parser inventory at landing: none (grep
+    # ``_compressed_marker`` — producer-only in src).
     result: list[Any] = []
     result.extend(head)
     if anomalies:
@@ -465,6 +482,7 @@ def _sample_json_array(arr: list[Any]) -> tuple[list[Any], dict[str, Any]]:
     return result, {
         "items_in": n,
         "items_out": len(result),
+        "dropped": dropped_count,
     }
 
 

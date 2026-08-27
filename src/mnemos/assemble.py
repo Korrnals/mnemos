@@ -57,17 +57,17 @@ Design decisions (flagged for ArchCom ratification in the #125 report):
   ``detect_profile`` (same canonical function) and counts the fallback in
   ``stats.recall.content_type_fallbacks``.
 
-Reported defects (found by this slice, escalated — NOT worked around
+Reported defects (found by earlier slices, escalated — NOT worked around
 silently):
 
-* ``MemoryManager.search`` passes ``project`` to the FTS leg only; the
-  vector leg (``VectorStore.search``) has no project filter, so a
-  project-scoped search can surface other projects' rows via the vector
-  resolve path. Pre-existing behavior, blast radius = every search
-  caller; fixing it changes shared ranking semantics (D5 baseline
-  implications), so this module enforces project scoping at its own
-  recall boundary (``stats.recall.project_scoped_out``) and the systemic
-  fix goes to the ArchCom queue as its own ticket.
+* ``MemoryManager.search`` passed ``project`` to the FTS leg only; the
+  vector leg had no project filter, so a project-scoped search could
+  surface other projects' rows via the vector resolve path. FIXED by
+  the A9 pre-RRF project predicate (ArchCom 2026-08-27 — native store
+  filter + authoritative resolve-time guard in ``MemoryManager.search``);
+  this module's interim boundary defence
+  (``stats.recall.project_scoped_out``) was removed — the systemic fix
+  supersedes the channel patch.
 
 ``mode`` semantics (single parameter, two axes):
 
@@ -236,15 +236,15 @@ def _recall_stage(
     Derived query: the file stem when ``file`` is given, else the project
     slug. ``fts_search`` wraps the whole query in one FTS5 phrase, so a
     multi-term "project stem" join would (almost) never match lexically —
-    a single most-content-likely term is the honest derived query, and the
-    vector leg carries semantic recall in production.
+    a single most-content-likely term is the honest derived query, and
+    the vector leg carries semantic recall in production.
 
-    Defence at this channel's boundary: candidates whose ``project``
-    differs from the requested one are dropped. The vector leg of
-    ``MemoryManager.search`` is not project-filtered (pre-existing gap —
-    see the module docstring "Reported defects" note), and an assembled
-    block asserting ``project=<slug>`` must never inject another project's
-    entry.
+    A9 (ArchCom 2026-08-27): ``MemoryManager.search`` enforces the project
+    predicate pre-RRF on both legs (native store filter + authoritative
+    resolve-time guard), so results are already project-pure here — the
+    interim boundary drop this channel carried
+    (``stats.recall.project_scoped_out``) was removed: the systemic fix
+    supersedes the channel patch.
     """
     query = Path(file).stem if file else project
 
@@ -253,11 +253,7 @@ def _recall_stage(
     fallbacks = [0]
     candidates: list[_Candidate] = []
     type_filtered = 0
-    scoped_out = 0
     for r in results:
-        if (r.memory.project or "") != project:
-            scoped_out += 1
-            continue
         ct = _content_type_of(r.memory, fallbacks=fallbacks)
         if content_type is not None and ct != content_type:
             type_filtered += 1
@@ -285,7 +281,6 @@ def _recall_stage(
         "query": query,
         "candidates": len(results),
         "admissible": len(results),
-        "project_scoped_out": scoped_out,
         "content_type_filtered": type_filtered,
         "content_type_fallbacks": fallbacks[0],
         "applyto_pinned": pinned,

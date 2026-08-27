@@ -98,6 +98,16 @@ _SNIPPET_STRIP_MARKS: Final[tuple[str, ...]] = (
     FTS_SNIPPET_ELLIPSIS,
 )
 
+# A9 (ArchCom 2026-08-27) — vector-leg over-fetch factor. The store is
+# queried ``limit * 4`` deep so the pre-RRF project/status predicates
+# (which drop candidates at resolve time, BEFORE fusion) still leave
+# enough in-scope survivors to fill the leg's ``limit * 2`` RRF
+# contribution depth. Depth compensation only — not a ranking change;
+# tuning moves to the W4 D5 golden-set baseline per the committee
+# decision (rejected alternative: post-RRF filter, which silently
+# under-fills the top-N).
+VECTOR_LEG_OVERFETCH_FACTOR: Final[int] = 4
+
 
 def _snippet_scan_text(snippet: str) -> str:
     """Return a copy of an FTS5 snippet stripped of highlight markers.
@@ -170,6 +180,7 @@ class MemoryManager:
         # Accepted trade-off for the dashboard: not persisted, no history.
         self._search_stats: dict[str, Any] = {
             "requests_total": 0,
+            "cross_project_requests_total": 0,
             "latency_samples_ms": [],
             "results_counts": [],
         }
@@ -769,6 +780,16 @@ class MemoryManager:
     ) -> list[SearchResult]:
         """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion.
 
+        A9 (ArchCom 2026-08-27) — project scoping is PRE-RRF on BOTH legs:
+        the FTS leg passes ``project`` to ``fts_search`` as before, and the
+        vector leg now applies a native store-level project predicate
+        (embedding metadata) plus an authoritative resolve-time guard on
+        the SQLite ``Memory.project``, both BEFORE fusion — out-of-project
+        rows never surface and never consume RRF rank slots. ``project``
+        of ``None`` (or empty) is the EXPLICIT global mode: the search is
+        cross-project by definition and is counted in
+        ``search_stats()["cross_project_requests_total"]`` for audit.
+
         Status filtering precedence:
           1. Explicit ``status`` — always wins (caller knows what they want).
           2. ``include_raw=True`` — all statuses EXCEPT ``archived`` are
@@ -829,12 +850,57 @@ class MemoryManager:
             fts_pairs = [(m, s) for m, s in fts_pairs if m.status in allowed]
 
         # ── Vector leg ─────────────────────────────────────────────────────
+        # A9 (ArchCom 2026-08-27): pre-RRF project predicate. The store
+        # filters candidates by the embedding metadata's ``project``
+        # (native, pre-top-k — foreign rows never enter the candidate set),
+        # and the resolve loop below re-checks the authoritative SQLite
+        # ``Memory.project`` BEFORE any score is fused, so out-of-project
+        # rows never consume RRF rank slots. ``project=None`` (or empty) is
+        # the explicit global mode. Depth compensation: the 4x over-fetch
+        # keeps the leg's ``limit * 2`` contribution depth fillable after
+        # the predicate drops candidates (VECTOR_LEG_OVERFETCH_FACTOR).
         vector_pairs: list[tuple[str, float]] = []
         try:
             q_emb = self.embedder.embed(query)
-            vector_pairs = self.vectors.search(q_emb, limit=limit * 2)
+            vector_pairs = self.vectors.search(
+                q_emb,
+                limit=limit * VECTOR_LEG_OVERFETCH_FACTOR,
+                project=project,
+            )
         except Exception as exc:
             logger.warning("Vector search failed: %s", exc)
+
+        # A9: resolve + predicate-filter the vector candidates BEFORE the
+        # RRF merge (pre-fusion semantics). The authoritative project check
+        # consults the SQLite row (source of truth), guarding against
+        # vector-metadata drift; status policy mirrors the FTS leg.
+        # Survivors are truncated to the leg's ``limit * 2`` RRF
+        # contribution depth — unchanged fusion semantics, now filled with
+        # in-scope rows instead of being crowded out by foreign ones.
+        id_to_memory: dict[str, Memory] = {m.id: m for m, _ in fts_pairs}
+        vector_resolved: list[tuple[str, float]] = []
+        for mid, vec_score in vector_pairs:
+            fetched: Memory | None = id_to_memory.get(mid)
+            if fetched is None:
+                # SQLite lookups can miss; skip silently if memory was
+                # deleted between vector and SQLite indexes.
+                candidate: Memory | None = self.sqlite.get(mid)
+                if candidate is None:
+                    continue
+                if project and (candidate.project or "") != project:
+                    continue  # A9 authoritative guard (metadata drift)
+                # Filter vector results by the same status policy as the
+                # FTS leg. The vector store only holds published memories
+                # in normal operation, but a non-published memory that
+                # somehow entered the store could surface here.
+                if status is not None and candidate.status != status:
+                    continue
+                if allowed is not None and candidate.status not in allowed:
+                    continue
+                id_to_memory[mid] = candidate
+            vector_resolved.append((mid, vec_score))
+            if len(vector_resolved) >= limit * 2:
+                break
 
         # ── RRF merge ──────────────────────────────────────────────────────
         rrf_k = 60
@@ -843,37 +909,17 @@ class MemoryManager:
         for rank, (mem, _) in enumerate(fts_pairs, start=1):
             scores[mem.id] = scores.get(mem.id, 0.0) + (1 - alpha) / (rrf_k + rank)
 
-        for rank, (mid, _) in enumerate(vector_pairs, start=1):
+        for rank, (mid, _) in enumerate(vector_resolved, start=1):
             scores[mid] = scores.get(mid, 0.0) + alpha / (rrf_k + rank)
 
-        # Resolve ids → Memory objects
-        id_to_memory: dict[str, Memory] = {m.id: m for m, _ in fts_pairs}
-        for mid, _ in vector_pairs:
-            if mid not in id_to_memory:
-                # SQLite lookups can miss; skip silently if memory was
-                # deleted between vector and SQLite indexes.
-                fetched: Memory | None = self.sqlite.get(mid)
-                if fetched is not None:
-                    # Filter vector results by the same status policy as the
-                    # FTS leg. The vector store only holds published memories
-                    # in normal operation, but a non-published memory that
-                    # somehow entered the store could surface here.
-                    if status is not None and fetched.status != status:
-                        continue
-                    if allowed is not None and fetched.status not in allowed:
-                        continue
-                    id_to_memory[mid] = fetched
-
         # Search mode: "hybrid" when the vector leg actually contributed a
-        # result that survived status filtering and is not already covered by
+        # result that survived the predicates and is not already covered by
         # the FTS leg. Vector leg failure (embeddings down) degrades
         # gracefully — RRF still ranks FTS-only results, but callers can see
         # the mode. Tracking contribution (not just raw output) prevents
         # reporting "hybrid" when all vector pairs were filtered out.
         fts_ids = {m.id for m, _ in fts_pairs}
-        vector_contributed = any(
-            mid in id_to_memory and mid not in fts_ids for mid, _ in vector_pairs
-        )
+        vector_contributed = any(mid not in fts_ids for mid, _ in vector_resolved)
         search_type = "hybrid" if vector_contributed else "fts_only"
 
         # Apply tag filter post-hoc
@@ -891,6 +937,13 @@ class MemoryManager:
         latency_ms = (time.monotonic() - _t0) * 1000.0
         with self._search_stats_lock:
             self._search_stats["requests_total"] = int(self._search_stats["requests_total"]) + 1
+            # A9: ``project=None`` (or empty) is the EXPLICIT global mode —
+            # a cross-project search. Surfaced in ``search_stats()`` for
+            # audit (every project-scoped call stays out of this counter).
+            if not project:
+                self._search_stats["cross_project_requests_total"] = (
+                    int(self._search_stats["cross_project_requests_total"]) + 1
+                )
             samples: list[float] = self._search_stats["latency_samples_ms"]
             samples.append(latency_ms)
             # Cap samples to avoid unbounded growth in long-running processes.
@@ -1495,6 +1548,11 @@ class MemoryManager:
         avg_results = round(sum(counts) / len(counts), 2) if counts else 0.0
         return {
             "requests_total": int(self._search_stats["requests_total"]),
+            # A9: searches that ran in the explicit global mode
+            # (``project=None``) — cross-project by definition.
+            "cross_project_requests_total": int(
+                self._search_stats["cross_project_requests_total"]
+            ),
             "avg_latency_ms": avg_latency_ms,
             "avg_results": avg_results,
         }
@@ -1535,6 +1593,7 @@ class MemoryManager:
             },
             "search": {
                 "requests_total": s_stats["requests_total"],
+                "cross_project_requests_total": s_stats["cross_project_requests_total"],
                 "avg_latency_ms": s_stats["avg_latency_ms"],
                 "avg_results": s_stats["avg_results"],
             },
@@ -2423,6 +2482,9 @@ class MemoryManager:
                 "marker": "",
                 "cached": False,
                 "profile": "disabled",
+                # C7: envelope key parity — nothing was sampled, nothing
+                # was dropped (out-of-band accounting, never in-band).
+                "dropped_items": 0,
             }
         return compress(
             text,
@@ -2748,6 +2810,15 @@ class MemoryManager:
           (highlight markers split multi-token secrets); on a hit the
           WHOLE snippet is withheld (``<REDACTED:snippet>``) because
           stripped-copy offsets do not map back to the marked snippet.
+        * B5 tier-1 (ArchCom 2026-08-27) — verdict-gated snippet refusal:
+          entries whose scan-at-store verdict is ``'hit'`` refuse the
+          snippet mode entirely (``reason="snippet mode unavailable for
+          entries with detected secrets"``, no snippets emitted, no
+          retrieval-counter bump) — snippet windows cannot be proven
+          secret-free without the tier-2 offset mapping (W3). NULL /
+          'unknown' / 'clean' rows snippet as before; the full-original
+          retrieve of a hit row stays available and is redacted
+          span-wise by the P0 scan below.
         * m5 — a scanner exception maps to the refused shape with
           ``reason="scanner error"`` (fail-closed, observable) instead
           of propagating as a 500 / MCP error.
@@ -2895,6 +2966,34 @@ class MemoryManager:
 
         # ── Snippet path: scan + redact each snippet in place ───────────
         if "snippets" in result:
+            # B5 tier-1 (ArchCom 2026-08-27): verdict-gated snippet
+            # refusal. The row's scan-at-store verdict is 'hit' → snippet
+            # mode is REFUSED for this entry: FTS5 snippet windows are cut
+            # around query matches with no offset mapping back to the
+            # original (that mapping is tier-2, W3), so a hit row's
+            # snippets cannot be proven secret-free short of withholding
+            # them. NO snippet is emitted; the caller falls back to a
+            # full-original retrieve, which is scanned unconditionally and
+            # redacted span-wise (the full-original path below). NULL /
+            # 'unknown' / 'clean' verdicts are unaffected. The refusal
+            # sits before ``_mark_issued()`` — no retrieval-counter bump
+            # (P1-b review F4 semantics).
+            if result.get("secret_scan_verdict") == "hit":
+                logger.warning(
+                    "CCR snippet mode refused (verdict=hit): hash=%s project=%s "
+                    "— full-original retrieve still available (redacted)",
+                    h,
+                    project,
+                )
+                return {
+                    "hash": h,
+                    "found": True,
+                    "refused": True,
+                    "reason": "snippet mode unavailable for entries with detected secrets",
+                    "redactions": 0,
+                    "redacted_patterns": {},
+                }
+            result.pop("secret_scan_verdict", None)
             redactions = 0
             pattern_counts: dict[str, int] = {}
             try:

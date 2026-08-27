@@ -114,6 +114,20 @@ def _clean_log() -> str:
     """Cacheable content with no secret patterns."""
     lines = [f"2026-08-26T11:00:{i % 60:02d}Z INFO worker finished item {i}" for i in range(30)]
     return "\n".join(lines)
+def _as_legacy_unscanned(mgr: MemoryManager, h: str) -> None:
+    """Rewrite a row's scan verdict to NULL (pre-P1-a legacy cache row).
+
+    B5 tier-1 (ArchCom 2026-08-27): rows whose verdict is ``'hit'`` REFUSE
+    snippet mode outright, so the snippet-path semantics pinned here are
+    only reachable on rows the store did not verdict — legacy NULL rows.
+    This helper simulates exactly that population; the hit-row refusal
+    itself is covered in ``tests/test_b5_verdict_snippet_refusal.py``.
+    """
+    conn = mgr.sqlite._get_conn()
+    conn.execute("UPDATE ccr_cache SET secret_scan_verdict=NULL WHERE hash=?", (h,))
+    conn.commit()
+
+
 
 
 def _make_memory(mid: str, content: str = "hello world") -> Memory:
@@ -329,6 +343,9 @@ class TestProjectScopingManager:
     def test_snippet_retrieval_scoped(self, manager):
         text = _secret_log(FAKE_AWS_KEY)
         h = manager.compress_content(text, profile="log", project="alpha")["hash"]
+        # B5 tier-1: hit rows refuse snippet mode; the scoping semantics
+        # pinned here live on the legacy unscanned population.
+        _as_legacy_unscanned(manager, h)
 
         ok = manager.retrieve_content(h, query="unobtanium", project="alpha")
         assert ok["found"] is True
