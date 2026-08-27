@@ -316,6 +316,8 @@ curl -s "http://127.0.0.1:8000/memories?project=mnemos&limit=10"
 
 RRF fusion of FTS5 and vector legs. Only `published` memories are searched by default.
 
+**Query semantics:** the FTS5 leg treats the WHOLE `query` string as one quoted phrase (adjacent tokens, in order — `_build_fts_query` quotes the entire input). A keyword-set query like `postgres migration` matches only that exact phrase; to find individual keywords, issue separate single-term queries.
+
 **Request body** — see `SearchQuery` in `src/mnemos/models.py`
 
 | Field | Type | Required | Default | Description |
@@ -522,6 +524,7 @@ injected block carries a provenance line
 |-------|------|----------|---------|-------------|
 | `session` | string | **yes** | — | Caller's session identifier (echoed in the result). |
 | `project` | string | **yes** | — | Project slug scoping recall and CCR redemption. |
+| `agent` | string | no | `null` | Caller agent slug — pairs with `session` as the issuer context: with it, CCR marker expansion runs under strict validation; without it a strict deployment skips expansion of issuer-stamped markers (legacy NULL-issuer rows still expand). |
 | `file` | string | no | `null` | File path: recall query terms + applyTo rule pinning. |
 | `budget` | integer | no | `2048` | Token budget (`1..1_000_000`). |
 | `mode` | string | no | `sync` | `sync` / `async` (store + handle) / `code` / `prose` (contentType filter). |
@@ -533,7 +536,10 @@ injected block carries a provenance line
 - `200` — the ContextBlock: `text` (provenance-wrapped blocks), `blocks[]`
   (per-block provenance, redaction counts, token counts), `tokens`
   (`budget`, `estimated`), `stats` (per-stage telemetry incl. the verbatim
-  stage order). For `mode="async"`: a handle envelope only.
+  stage order; `stats.recall.query_source` is `explicit` when a query/
+  `context_hint` drove recall and `derived` otherwise, and
+  `stats.ccr.skipped_refused` counts markers whose strict-mode validation
+  refused the expansion). For `mode="async"`: a handle envelope only.
 - `422` — boundary validation failure (invalid `session`/`project`/`mode`/
   `budget`, unknown `async_handle`, or an `async_handle` owned by a
   different session).
@@ -627,7 +633,7 @@ validation can later prove provenance.
 | `session` | string | **yes** | — | Caller session id. |
 | `project` | string | **yes** | — | Project slug. |
 | `agent` | string | **yes** | — | Caller agent slug (issuer identity). |
-| `context_hint` | string | no | — | `pre_llm_call`: explicit recall query (what the model call is about). |
+| `context_hint` | string | no | — | `pre_llm_call`: explicit recall query (what the model call is about). FTS5 whole-phrase semantics: the hint is matched as ONE quoted phrase (adjacent tokens in order), not a keyword set. |
 | `file` | string | no | — | `pre_llm_call`: optional file path. |
 | `budget` | integer | no | `2048` | `pre_llm_call`: token budget. |
 | `limit` | integer | no | `5` | `on_session_start`: checkpoint count. |
@@ -727,7 +733,7 @@ the original is large and only a few lines are relevant. Mirrors the
 | `agent` | string | no | — | Caller agent slug — the trusted issuer context for the provenance check. |
 | `session` | string | no | — | Caller session id, paired with `agent` as the trusted issuer context. |
 
-**A2 strict marker validation.** A request is *marker-shaped* when it carries any of `original_chars` / `agent` / `session`. In strict mode a marker-shaped request must pass: (1) **existence** under `(project, hash)` — the `project` scope is required in strict mode; (2) **integrity** — the marker's `N` equals the stored original's character length; (3) **provenance** — the cache row's issuer ledger (recorded at compress time) matches the caller's `(agent, session)` pair (`null` session matches only a `null` issuer session). A failed check returns:
+**A2 strict marker validation.** A request is *marker-shaped* when it carries any of `original_chars` / `agent` / `session`. In strict mode a marker-shaped request must pass: (1) **existence** under `(project, hash)` — the `project` scope is REQUIRED in strict mode: `validate_marker=true` (or the knob) without `project` is refused with `reason="marker validation failed: existence: project scope required for marker validation"` and no content; (2) **integrity** — the marker's `N` equals the stored original's character length; (3) **provenance** — the cache row's issuer ledger (recorded at compress time) matches the caller's `(agent, session)` pair (`null` session matches only a `null` issuer session). A failed check returns:
 
 ```json
 {
@@ -1069,6 +1075,12 @@ The DLQ holds tasks the automation layer could not complete (LLM timeout, transi
 
 ### `POST /filter/{memory_id}` — apply the 5-stage context filter
 
+Issuance-gated (final review M1): only `published`/`processed` memories are
+filterable into context (`raw`/`processing`/`archived` → 422), an optional
+caller `project` fails closed on mismatch (→ 403), and the echoed
+`clean_content` is secret-scanned (redacted copy + `redactions` counts;
+refuse mode → 403 with no content).
+
 **Path parameters**
 
 | Name | Type | Description |
@@ -1081,10 +1093,11 @@ The DLQ holds tasks the automation layer could not complete (LLM timeout, transi
 |-------|------|----------|---------|-------------|
 | `profile` | string | no | auto | One of `log`, `terminal`, `code`, `docs`, `web`, `default`. |
 | `budget` | int | no | — | Token / char budget. |
+| `project` | string | no | — | Caller project slug — the memory must belong to it (mismatch → 403). Omit for explicit operator semantics. |
 
-**Response 200** — `FilterResult` (see `manager.apply_context_filter`).
+**Response 200** — `FilterResult` (see `manager.issue_context_filter`; adds `redactions` and, when non-zero, `redacted_patterns`).
 
-**Response 404** — `{"detail": "..."}`
+**Response 404** — `{"detail": "..."}` (memory not found). **422** — status gate. **403** — project mismatch or issuance refusal.
 
 ---
 

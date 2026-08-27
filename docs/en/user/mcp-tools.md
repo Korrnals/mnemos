@@ -118,11 +118,13 @@ Create a new memory entry. The MCP layer enforces the Mnemos tag contract ([M2](
 
 Hybrid search: FTS5 (full-text) + vector + Reciprocal Rank Fusion. Only `published` memories are searched by default.
 
+**Query semantics:** the FTS5 leg treats the WHOLE `query` string as one quoted phrase (adjacent tokens, in order — `_build_fts_query` quotes the entire input). A keyword-set query like `postgres migration` matches only that exact phrase; to find individual keywords, issue separate single-term queries.
+
 ### Input
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `query` | string | **yes** | — | Natural language search string. |
+| `query` | string | **yes** | — | Natural language search string. Matched as ONE whole phrase by the FTS5 leg (see Query semantics above). |
 | `tags` | string[] | no | — | Filter: all of these tags must be present. |
 | `project` | string | no | — | Restrict to a project slug. |
 | `limit` | integer | no | `10` | Max results. |
@@ -760,7 +762,7 @@ Retrieve the original uncompressed content for a CCR marker hash. If `query` is 
 
 A request is **marker-shaped** when it carries any of `original_chars` / `agent` / `session` — the metadata a harness parses out of a marker plus its own identity. When strict mode is on (`validate_marker=true`, or the `ccr.validate_markers` config knob), a marker-shaped request must pass three checks BEFORE any content is issued (ArchCom 2026-08-27, decision `archcom-2026-08-27-deferrals-triage`):
 
-1. **existence** — the entry must exist under `(project, hash)`; strict validation requires the `project` scope (an unscoped lookup would redeem against the first-stored copy of any project);
+1. **existence** — the entry must exist under `(project, hash)`; strict validation REQUIRES the `project` scope: `validate_marker=true` (or the knob) without `project` is refused with `reason="marker validation failed: existence: project scope required for marker validation"` and no content (an unscoped lookup would redeem against the first-stored copy of any project);
 2. **integrity** — the marker's `original_chars` must equal the character length of the stored original;
 3. **provenance** — the row's issuer ledger (recorded at compress time via `agent`/`session`) must match your `(agent, session)` pair: a `null` session matches only a `null` issuer session, never a wildcard.
 
@@ -1000,6 +1002,7 @@ Every injected block carries a provenance line, exact format:
 |-------|------|----------|---------|-------------|
 | `session` | string | **yes** | — | Caller's session identifier (echoed in the result; identifies the assembly, not the memories). |
 | `project` | string | **yes** | — | Project slug scoping recall and CCR redemption. |
+| `agent` | string | no | — | Caller agent slug — pairs with `session` as the issuer context: with it, the CCR expansion stage runs under strict marker validation; without it a strict deployment skips expansion of issuer-stamped markers (the marker stays; legacy NULL-issuer rows still expand). |
 | `file` | string | no | — | File path: contributes the recall query and pins applyTo-matching rule memories to the top. |
 | `budget` | integer | no | `2048` | Token budget for the assembled block. |
 | `mode` | string | no | `sync` | `sync` (default) / `async` (store the result, return a handle) / `code` / `prose` (sync delivery + filter recall candidates by the content type captured at ingest). |
@@ -1036,11 +1039,12 @@ Every injected block carries a provenance line, exact format:
   "tokens": {"budget": 2048, "estimated": 96},
   "stats": {
     "stages": ["recall", "ccr", "filter", "scan", "align", "budget"],
-    "recall": {"query": "my-project", "candidates": 3, "admissible": 3,
+    "recall": {"query": "my-project", "query_source": "derived",
+                "candidates": 3, "admissible": 3,
                 "content_type_filtered": 0,
                 "content_type_fallbacks": 1, "applyto_pinned": 0},
     "ccr": {"enabled": false, "markers_found": 0, "expanded": 0,
-             "skipped_missing": 0, "skipped_budget": 0},
+             "skipped_missing": 0, "skipped_budget": 0, "skipped_refused": 0},
     "filter": {"profiles": {"default": 1, "code": 1}},
     "scan": {"blocks_scanned": 2, "blocks_refused": 0},
     "align": {"blocks_aligned": 1, "moved_chars": 24},
@@ -1143,7 +1147,7 @@ Semantics (ADR-0018, verbatim):
 | `session` | string | **yes** | — | Caller session id. |
 | `project` | string | **yes** | — | Project slug. |
 | `agent` | string | **yes** | — | Caller agent slug (issuer identity). |
-| `context_hint` | string | no | — | `pre_llm_call`: what the upcoming model call is about — the explicit recall query. |
+| `context_hint` | string | no | — | `pre_llm_call`: what the upcoming model call is about — the explicit recall query. FTS5 whole-phrase semantics: the hint is matched as ONE quoted phrase (adjacent tokens in order), not a keyword set. |
 | `file` | string | no | — | `pre_llm_call`: optional file path (recall terms + applyTo rule pinning). |
 | `budget` | integer | no | `2048` | `pre_llm_call`: token budget. |
 | `limit` | integer | no | `5` | `on_session_start`: checkpoint count. |
