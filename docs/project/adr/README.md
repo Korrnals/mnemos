@@ -40,6 +40,11 @@ documented elsewhere, or anything that fits in a code comment.
 | [0011](0011-mypy-strict-is-real-strict.md) | `mypy --strict` is the production-readiness gate, not a check-the-box lint | Accepted | 2026-06-15 |
 | [0012](0012-ipv6-ssrf-gap.md) | Fix IPv6 SSRF gap in `_validate_url` (M15) | Accepted | 2026-06-15 |
 | [0013](0013-production-hardening-m15.md) | M15 production hardening is the gate to declaring v1 "done" | Accepted | 2026-06-15 |
+| [0014](0014-api-auth-threat-model.md) | API authentication & TOTP 2FA — threat model | Accepted | 2026-06-17 |
+| [0016](0016-federation-threat-model.md) | Federation threat model | Accepted | 2026-07-21 |
+| [0017](0017-memory-system-evolution-roadmap.md) | Memory System Evolution Roadmap | Accepted | 2026-08-21 |
+| [0018](0018-context-rewrite-ltm-bridge.md) | Context Rewrite and LTM Bridge | Accepted | 2026-08-22 |
+| [0019](0019-optimistic-publication-async-refinement.md) | Optimistic Publication with Async Refinement | Accepted | 2026-08-29 |
 
 ## Themes
 
