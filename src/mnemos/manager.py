@@ -1104,6 +1104,8 @@ class MemoryManager:
             project=project,
             tags=["mnemos:checkpoint"],
         )
+        # Invariant: archived checkpoints are retired and must not resurface as fresh context.
+        memories = [m for m in memories if m.status != MemoryStatus.ARCHIVED]
         # Sort by recency and trim
         memories.sort(key=lambda m: m.created_at, reverse=True)
         return memories[:limit]

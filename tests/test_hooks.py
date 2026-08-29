@@ -40,7 +40,13 @@ from mnemos.config import Settings
 from mnemos.hooks import dispatch_hook
 from mnemos.manager import MemoryManager
 from mnemos.mcp_server import _dispatch
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus, MemoryType
+from mnemos.models import (
+    MemoryCreate,
+    MemorySource,
+    MemoryStatus,
+    MemoryType,
+    MemoryUpdate,
+)
 
 FAKE_AWS_KEY = "AKIAEXAMPLEABCDEFGH1"
 
@@ -103,9 +109,7 @@ def _add_published(mgr: MemoryManager, content: str) -> str:
 
 
 class TestPreLlmCall:
-    def test_returns_assemble_result_with_hook_envelope(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_returns_assemble_result_with_hook_envelope(self, manager: MemoryManager) -> None:
         _add_published(manager, "pre call body mentioning quokka-hook token")
         result = dispatch_hook(
             manager,
@@ -125,9 +129,7 @@ class TestPreLlmCall:
         for block in result["blocks"]:
             assert block["provenance"].startswith("[mnemos:")
 
-    def test_context_hint_is_the_explicit_recall_query(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_context_hint_is_the_explicit_recall_query(self, manager: MemoryManager) -> None:
         _add_published(manager, "deployment note about quokka-hint rotation")
         result = dispatch_hook(
             manager,
@@ -194,12 +196,8 @@ class TestOnSessionStart:
         assert item["redactions"] == 0
         assert result["redactions"] == 0
 
-    def test_secret_in_checkpoint_redacted_on_this_channel(
-        self, manager: MemoryManager
-    ) -> None:
-        self._checkpoint(
-            manager, f"# checkpoint\napi key {FAKE_AWS_KEY} for the deploy"
-        )
+    def test_secret_in_checkpoint_redacted_on_this_channel(self, manager: MemoryManager) -> None:
+        self._checkpoint(manager, f"# checkpoint\napi key {FAKE_AWS_KEY} for the deploy")
         result = dispatch_hook(
             manager,
             action="on_session_start",
@@ -236,12 +234,49 @@ class TestOnSessionStart:
             )
 
 
+# ── recall_context — archived checkpoint regression ──────────────────────────
+
+
+class TestRecallContextArchivedFilter:
+    """Archived checkpoints must not surface as fresh context.
+
+    ``on_session_start`` is a thin wrapper over ``recall_context``, so this
+    pins the manager-level invariant directly: the no-query freshness leg
+    filters ARCHIVED after ``list_all`` and before the limit trim.
+    """
+
+    def _checkpoint(self, mgr: MemoryManager, content: str) -> str:
+        data = MemoryCreate(
+            content=content,
+            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:checkpoint"],
+            source=MemorySource.MCP,
+            memory_type=MemoryType.SESSION_CONTEXT,
+            status=MemoryStatus.PUBLISHED,
+        )
+        return str(mgr.add(data, project=PROJECT, agent=AGENT).id)
+
+    def test_freshness_leg_skips_archived_checkpoint(self, manager: MemoryManager) -> None:
+        active_a = self._checkpoint(manager, "# checkpoint active quokka-live goals")
+        active_b = self._checkpoint(manager, "# checkpoint active quokka-second goals")
+        archived = self._checkpoint(manager, "# checkpoint archived quokka-stale goals")
+        manager.update(archived, MemoryUpdate(status=MemoryStatus.ARCHIVED))
+
+        # No-query leg: freshness recall returns active checkpoints only.
+        recalled_ids = [str(m.id) for m in manager.recall_context(project=PROJECT, limit=10)]
+        assert active_a in recalled_ids
+        assert active_b in recalled_ids
+        assert archived not in recalled_ids
+
+        # Search over the same project keeps the archived checkpoint hidden too.
+        found_ids = [str(r.memory.id) for r in manager.search("quokka", project=PROJECT, limit=10)]
+        assert archived not in found_ids
+
+
 # ── post_tool_call ───────────────────────────────────────────────────────────
 
 
-TOOL_OUTPUT = (
-    "build log quokka-tool start\n"
-    + "\n".join(f"step {i} compiled module {i} ok" for i in range(60))
+TOOL_OUTPUT = "build log quokka-tool start\n" + "\n".join(
+    f"step {i} compiled module {i} ok" for i in range(60)
 )
 
 
@@ -278,9 +313,7 @@ class TestPostToolCall:
         )
         assert cached == 0, "off hook must not write the cache"
 
-    def test_per_call_auto_compress_threads_identity_n2(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_per_call_auto_compress_threads_identity_n2(self, manager: MemoryManager) -> None:
         result = dispatch_hook(
             manager,
             action="post_tool_call",
@@ -303,9 +336,7 @@ class TestPostToolCall:
         assert row["issuer_agent"] == AGENT
         assert row["issuer_session"] == SESSION
 
-    def test_config_knob_enables_without_per_call_arg(
-        self, auto_manager: MemoryManager
-    ) -> None:
+    def test_config_knob_enables_without_per_call_arg(self, auto_manager: MemoryManager) -> None:
         result = dispatch_hook(
             auto_manager,
             action="post_tool_call",
@@ -430,9 +461,7 @@ class TestMcpHooksTool:
         monkeypatch_manager = mgr
         mcp_mod._manager = monkeypatch_manager
         try:
-            return asyncio.new_event_loop().run_until_complete(
-                _dispatch("mnemos_hooks", args)
-            )
+            return asyncio.new_event_loop().run_until_complete(_dispatch("mnemos_hooks", args))
         finally:
             mcp_mod._manager = None
 
@@ -530,9 +559,7 @@ class TestRestHooksRoute:
         assert resp.status_code == 404
         assert "unknown hook action" in resp.json()["detail"]
 
-    def test_missing_payload_args_is_422_hook_boundary(
-        self, rest_client: TestClient
-    ) -> None:
+    def test_missing_payload_args_is_422_hook_boundary(self, rest_client: TestClient) -> None:
         resp = rest_client.post(
             "/hooks/post_tool_call",
             json={"session": SESSION, "project": PROJECT, "agent": AGENT},
