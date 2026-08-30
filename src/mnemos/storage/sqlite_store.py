@@ -839,16 +839,22 @@ class SQLiteStore:
 
         * **refined** — rows that went through the pipeline:
           ``status='processed'`` (only the quality gate writes that
-          status), or ``status='published'`` WITH lineage
-          (``cluster_id`` non-NULL or non-empty ``derived_from`` — the
-          synthesis worker's fingerprint; ``publish_memory`` itself
-          writes no lineage). ``processed_at = updated_at`` (the best
-          available proxy for the historical swap time).
+          status), or ``status='published'`` WITH synthesis lineage:
+          non-empty ``derived_from`` OR ``source='synthesized'``
+          (``pipeline/synthesize.py`` writes BOTH on its output).
+          ``cluster_id`` is deliberately NOT a lineage signal: the
+          clustering stage writes it on raw members
+          (``pipeline/cluster.py``) and the stuck-rescue path publishes
+          those members WITHOUT synthesis (``run_pipeline`` →
+          ``_promote_single_memory``) — a cluster-id-bearing rescue row
+          is pending, not refined. ``processed_at = updated_at`` (the
+          best available proxy for the historical swap time).
         * **pending** — ``status='published'`` WITHOUT lineage: the
           Hermes bypass heritage (``publish_on_write`` +
-          ``skip_quality_check`` from ``raw``) AND the single-memory
+          ``skip_quality_check`` from ``raw``), the single-memory
           passthrough placeholder promotions (quality_score=0.5, no
-          LLM refinement). Both genuinely lack refinement; the B2
+          LLM refinement), AND the stuck-rescue rows above. All
+          genuinely lack refinement; the B2
           daemon re-refines them. Lineage is the discriminator —
           ``quality_score`` is deliberately NOT used because
           ``MemoryUpdate`` lets clients write it, so it is not a
@@ -874,9 +880,9 @@ class SQLiteStore:
             "WHERE pipeline_state IS NULL "
             "AND (status = 'processed' "
             "     OR (status = 'published' "
-            "         AND (cluster_id IS NOT NULL "
-            "              OR (json_valid(derived_from) "
-            "                  AND json_array_length(derived_from) > 0))))"
+            "         AND ((json_valid(derived_from) "
+            "               AND json_array_length(derived_from) > 0) "
+            "              OR source = 'synthesized')))"
         )
         pending = conn.execute(
             "UPDATE memories SET pipeline_state = 'pending' "
