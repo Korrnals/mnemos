@@ -26,7 +26,9 @@ Structure:
                                         replace-regret-rate floors and
                                         control-channel health.
 
-The measured numbers of THIS commit are recorded in tests/golden/BASELINE.md.
+The measured numbers of THIS commit are recorded in
+benchmarks/baselines/BASELINE.md (generated from s1.json); the corpus
+and harness live in benchmarks/ (ADR-0020 root catalog, BF-1).
 """
 
 from __future__ import annotations
@@ -36,8 +38,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 import pytest
-
-from tests.golden.measure import (
+from benchmarks.stands.s1_quality.harness import (
     K_VALUES,
     RewriteMetrics,
     SearchMetrics,
