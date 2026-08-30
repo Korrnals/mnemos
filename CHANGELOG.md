@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.0.0] - 2026-08-30
+## [2.15.0] - 2026-08-30
 
 MAJOR release — two breaking changes: the Hermes plugin becomes a thin shim over the new in-process adapter `mnemos.adapters.hermes` (plugin `plugin.yaml` → 3.0.0; config keys `base_url`/`api_key`/`totp_secret` removed in favour of the embedded server — see Changed below), and immediate visibility becomes the default (`mnemos.visibility immediate|curated`, ADR-0019 Phase B2b). Ships the ADR-0017 Phase 0–1 waves (zero-config loopback, universal integration targets, MCP presets, `assemble_context` provider contract, lifecycle hooks + `MnemosSDK`, D5 golden-set baseline, Hermes on-contract migration), the ADR-0018 security tracks (issuance secret scan, CCR project scoping, strong-form marker validation, snippet-scan tiers) and the ADR-0020 benchmark framework. Suite: 2181 passed.
 
