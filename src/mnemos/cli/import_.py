@@ -48,6 +48,9 @@ from mnemos.cli.export import (
     parse_json_export,
     restore_sqlite_snapshot,
 )
+from mnemos.danger_detectors import (
+    PROMPT_INJECTION_PATTERNS as _PROMPT_INJECTION_PATTERNS,
+)
 from mnemos.models import Memory, MemoryStatus
 
 if TYPE_CHECKING:
@@ -84,20 +87,11 @@ MAX_TITLE_LEN: int = 256
 #: ranges is rejected). Stored as a frozenset for O(1) lookup.
 _ALLOWED_CONTROL_CHARS: frozenset[int] = frozenset({ord("\n"), ord("\t")})
 
-#: Prompt-injection patterns. We LOG them at WARNING but do NOT block —
-#: content may legitimately discuss prompt injection (security research,
-#: runbooks, training material). Each entry: (pattern_name, substring).
-#: Matching is case-insensitive substring (not regex) to keep it fast
-#: and avoid ReDoS on untrusted content.
-_PROMPT_INJECTION_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("chatml-im-start", "<|im_start|>"),
-    ("chatml-im-end", "<|im_end|>"),
-    ("llama-inst", "[inst]"),
-    ("llama-inst-close", "[/inst]"),
-    ("ignore-previous", "ignore previous instructions"),
-    ("system-prefix", "system:"),
-    ("eos-token", "</s>"),
-)
+# Prompt-injection patterns: ``_PROMPT_INJECTION_PATTERNS`` (imported
+# above) is the single source of truth shared with the ADR-0019 Phase A
+# publication gate (mnemos.danger_detectors). Here they stay a WARN-only
+# screen — content may legitimately discuss prompt injection (security
+# research, runbooks, training material).
 
 
 # ── Validation report ─────────────────────────────────────────────────────────

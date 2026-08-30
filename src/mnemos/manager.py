@@ -340,7 +340,7 @@ class MemoryManager:
         return self.embedder.embed(self._embedding_text(memory))
 
     @staticmethod
-    def _scan_and_tag(tags: list[str], content: str) -> list[str]:
+    def _scan_and_tag(tags: list[str], content: str) -> tuple[list[str], dict[str, int] | None]:
         """Run the secrets scanner on ``content`` and auto-add no-federate.
 
         Federation defence-in-depth (Layer 1, ArchCom 2026-07-17 §2.2.1):
@@ -360,10 +360,14 @@ class MemoryManager:
             content: text to scan; empty/None → tags returned unchanged.
 
         Returns:
-            The (possibly augmented) tags list.
+            ``(tags, patterns)`` — ``patterns`` is the
+            ``{pattern_name: count}`` mapping of the ingest scan verdict
+            (``{}`` when clean), or ``None`` when the scanner errored
+            (ADR-0019 Phase A ingest audit: scanner status + found
+            patterns, correlated by memory id at the call site).
         """
         if not content:
-            return list(tags)
+            return list(tags), {}
         result = list(tags)
         try:
             from mnemos.models import NO_FEDERATE_TAG
@@ -377,9 +381,10 @@ class MemoryManager:
                     "(patterns: %s) — raw values not logged",
                     findings_by_pattern(findings),
                 )
+            return result, dict(findings_by_pattern(findings))
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("Secrets scanner failed (non-fatal): %s", exc)
-        return result
+            return result, None
 
     # ── CRUD ────────────────────────────────────────────────────────────────
 
@@ -419,7 +424,7 @@ class MemoryManager:
         # a scanner error must NOT block the write — the memory is still
         # saved, just without the no-federate marker (Layer 2 background
         # scanner will catch it later).
-        tags = self._scan_and_tag(list(data.tags), data.content)
+        tags, ingest_patterns = self._scan_and_tag(list(data.tags), data.content)
 
         # ADR-0017 D1 / #125 ArchCom addendum 1 — contentType metadata
         # captured at ingest: detect_profile runs once here and the binary
@@ -464,6 +469,17 @@ class MemoryManager:
         # Persist to SQLite (trusted_rewrite_provenance gates the C10
         # rewrite-column derivation — see the add docstring).
         self.sqlite.save(memory, trusted_rewrite_provenance=trusted_rewrite_provenance)
+
+        # ADR-0019 Phase A ingest audit — one structured verdict per
+        # write, correlated by memory id (correlates with the publish-gate
+        # lines in mnemos.pipeline.publish). Scanner status + found
+        # pattern names/counts only; raw values never enter the log.
+        logger.info(
+            "ingest scan: id=%s scanner=%s patterns=%s — raw values not logged",
+            memory.id[:8],
+            "error" if ingest_patterns is None else "ok",
+            ingest_patterns or {},
+        )
 
         # M10: auto-filter on ingest if enabled. Non-fatal: on failure the
         # memory is still saved with raw content (clean_content stays None).
@@ -522,11 +538,22 @@ class MemoryManager:
         # the path-scoped re-ingest path (.instructions.md edited → update
         # with new content) does not bypass the scanner. Idempotent: if the
         # tag is already present, _scan_and_tag does not duplicate it.
+        scan_patterns: dict[str, int] | None = None
         if "content" in update_kwargs:
-            memory.tags = self._scan_and_tag(memory.tags, memory.content)
+            memory.tags, scan_patterns = self._scan_and_tag(memory.tags, memory.content)
 
         memory.updated_at = datetime.now(UTC)
         self.sqlite.save(memory)
+
+        # ADR-0019 Phase A ingest audit (update path) — same shape as the
+        # add() verdict line, correlated by memory id.
+        if "content" in update_kwargs:
+            logger.info(
+                "ingest scan: id=%s scanner=%s patterns=%s — raw values not logged",
+                memory.id[:8],
+                "error" if scan_patterns is None else "ok",
+                scan_patterns or {},
+            )
 
         # Re-embed if now published
         if memory.status == MemoryStatus.PUBLISHED:

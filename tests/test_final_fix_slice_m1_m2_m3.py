@@ -278,13 +278,14 @@ class TestFilterIssuanceGateRest:
         api_main._manager = None
 
     @staticmethod
-    def _create(client: TestClient, content: str) -> str:
+    def _create(client: TestClient, content: str, *, status: str = "raw") -> str:
         resp = client.post(
             "/memories",
             json={
                 "content": content,
                 "tags": [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
                 "source": "mcp",
+                "status": status,
             },
         )
         assert resp.status_code == 201
@@ -309,8 +310,11 @@ class TestFilterIssuanceGateRest:
         old = api_main._manager
         api_main._manager = mgr
         try:
-            mem_id = self._create(client, f"secret {FAKE_AWS_KEY} rest")
-            client.post(f"/publish/{mem_id}?skip_quality_check=true")
+            # ADR-0019 Phase A: a secret-carrying row can no longer reach
+            # published via the publish endpoint (the danger gate refuses
+            # it), so the published row is planted directly — the filter
+            # issuance gate under test stays exactly the same.
+            mem_id = self._create(client, f"secret {FAKE_AWS_KEY} rest", status="published")
             resp = client.post(f"/filter/{mem_id}", json={})
             assert resp.status_code == 403
             assert "issuance refused" in resp.json()["detail"]
@@ -319,8 +323,10 @@ class TestFilterIssuanceGateRest:
             mgr.close()
 
     def test_published_filter_ok_with_redactions(self, client: TestClient) -> None:
-        mem_id = self._create(client, f"key {FAKE_AWS_KEY} rest")
-        client.post(f"/publish/{mem_id}?skip_quality_check=true")
+        # Published row with a planted fake secret planted directly —
+        # the publish bypass can no longer mint such a row (ADR-0019
+        # Phase A danger gate); the redaction assertions are unchanged.
+        mem_id = self._create(client, f"key {FAKE_AWS_KEY} rest", status="published")
         resp = client.post(f"/filter/{mem_id}", json={"project": PROJECT})
         assert resp.status_code == 200
         data = resp.json()

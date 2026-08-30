@@ -149,6 +149,73 @@ class TestUpdatePathAutoTag:
         assert updated.tags.count("mnemos:no-federate") == 1
 
 
+# ── ADR-0019 Phase A: ingest audit events ─────────────────────────────────────
+
+
+class TestIngestAudit:
+    """One structured verdict per write, correlated by memory id:
+    ``ingest scan: id=… scanner=ok|error patterns={…}`` — pattern names
+    and counts only, raw values never logged."""
+
+    def _audit_lines(self, caplog):
+        return [r for r in caplog.records if "ingest scan" in r.message]
+
+    def test_clean_add_logs_ok_verdict(self, mgr: MemoryManager, caplog) -> None:
+        with caplog.at_level("INFO", logger="mnemos.manager"):
+            mem_id = _add(mgr, "just a normal note about the weather")
+        lines = self._audit_lines(caplog)
+        assert lines, "every write must audit its scan verdict"
+        assert "scanner=ok" in lines[0].message
+        assert "patterns={}" in lines[0].message
+        assert mem_id[:8] in lines[0].message, "audit correlates by memory id"
+
+    def test_secret_add_logs_found_patterns(self, mgr: MemoryManager, caplog) -> None:
+        with caplog.at_level("INFO", logger="mnemos.manager"):
+            mem_id = _add(mgr, f"config has key=AKIA{'T' * 16} for aws")
+        lines = self._audit_lines(caplog)
+        assert lines and "aws-key" in lines[0].message
+        assert mem_id[:8] in lines[0].message
+
+    def test_update_with_content_logs_verdict(self, mgr: MemoryManager, caplog) -> None:
+        mem_id = _add(mgr, "clean content no secrets here")
+        caplog.clear()
+        with caplog.at_level("INFO", logger="mnemos.manager"):
+            mgr.update(mem_id, MemoryUpdate(content="still clean content"))
+        assert self._audit_lines(caplog), "content updates audit their re-scan"
+
+    def test_update_without_content_does_not_audit_rescan(self, mgr: MemoryManager, caplog) -> None:
+        mem_id = _add(mgr, "clean content no secrets here")
+        caplog.clear()
+        with caplog.at_level("INFO", logger="mnemos.manager"):
+            mgr.update(mem_id, MemoryUpdate(quality_score=0.5))
+        assert not self._audit_lines(caplog), "no content → no scan → no verdict line"
+
+    def test_scanner_error_logs_error_verdict_write_survives(
+        self, mgr: MemoryManager, caplog, monkeypatch
+    ) -> None:
+        """Layer 1 stays non-fatal (unchanged): a scanner error never
+        blocks the write — but the audit must record scanner=error."""
+        import mnemos.secrets_detector as sd
+
+        def _boom(content: str):
+            raise RuntimeError("scanner down")
+
+        monkeypatch.setattr(sd, "detect_secrets", _boom)
+        with caplog.at_level("INFO", logger="mnemos.manager"):
+            mem = mgr.add(
+                MemoryCreate(
+                    content="ordinary content during scanner outage",
+                    tags=["project:mnemos", "agent:tech-lead", "mnemos:learning"],
+                    source=MemorySource.CLI,
+                ),
+                project="mnemos",
+                agent="tech-lead",
+            )
+        assert mgr.get(mem.id) is not None, "the write must survive a scanner error"
+        lines = self._audit_lines(caplog)
+        assert lines and "scanner=error" in lines[0].message
+
+
 # ── Tag removal with confirmation ──────────────────────────────────────────────
 
 
