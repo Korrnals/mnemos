@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-31
+
+The publication-engine major: the ADR-0019 optimistic-publication engine is a landmark engine shift and now carries the MAJOR it earns — immediate visibility as the honest server default (`mnemos.visibility immediate|curated`), fail-closed ingest/publish danger gates with audit, the async `pipeline_state` refine engine with transactional swap, reason-neutral retraction, terminal quarantine. Versioning per owner policy v2 (directive `5a5ac447`, superseding the `b0a1cf40` major clause): majors mark engine landmarks, plan completions arrive as minors; the earlier `v3.0.0 → 2.15.0` rollback was SemVer-incorrect (owner concurred) and 2.15.0 stays published as the historical minor. For the detailed engine content records see [2.15.0] below.
+
+### Added
+
+- **Release pipeline integration (#179)** — `Korrnals/release-pipeline` connected in local symlink mode (`scripts/run-release-local.sh`); the standalone local release script is deprecated in its favour. Known open pipeline gates (a full artefact run is currently impossible): #180 (security-red CVE chromadb — owner decision), #181 (format debt), #182 (docker buildx absent), #183 (COSIGN key invalid) — this release therefore follows the tag-only precedent of v2.14.1 / v2.15.0; artefacts resume once the gates close.
+- **Living dev-plan (#187)** — `docs/project/dev-plan.md` (owner-facing progress snapshot, RU) plus the 2.15.0 CHANGELOG backfill (#168): per-wave changelog discipline is now standing practice.
+- **Issue-tracker practice** — the Phase 2 backlog runs in the GitHub tracker with P1/P2/P3 labels; the 2026-08-31 queue-hygiene pass emptied the committee queue. Known: the mcp-SDK bug is tracked in #185.
+
 ## [2.15.0] - 2026-08-30
 
 Minor release per owner directive `b0a1cf40`: the core major bump stays reserved until the ADR-0017 roadmap completes, and the release's one breaking signal lives on the plugin side, not the core — the Hermes plugin becomes a thin shim over the new in-process adapter `mnemos.adapters.hermes` (plugin `plugin.yaml` → 3.0.0; config keys `base_url`/`api_key`/`totp_secret` removed in favour of the embedded server — see Changed below). Immediate visibility becomes the default (`mnemos.visibility immediate|curated`, ADR-0019 Phase B2b). Ships the ADR-0017 Phase 0–1 waves (zero-config loopback, universal integration targets, MCP presets, `assemble_context` provider contract, lifecycle hooks + `MnemosSDK`, D5 golden-set baseline, Hermes on-contract migration), the ADR-0018 security tracks (issuance secret scan, CCR project scoping, strong-form marker validation, snippet-scan tiers), the ADR-0019 optimistic-publication core (Phases A–B: danger detectors, fail-closed ingest/publish gates with audit, the `pipeline_state` refinement engine with transactional swap, immediate visibility + reason-neutral retraction) and the ADR-0020 benchmark framework. Suite: 2181 passed.
