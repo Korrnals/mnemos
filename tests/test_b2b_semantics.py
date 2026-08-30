@@ -13,7 +13,7 @@ Coverage map (one section per B2b deliverable):
   ``status=`` keeps the pre-B2b N1 contract.
 * **Retraction on direct access (§5)** — a quarantined row answers
   direct-id reads (manager.get / REST GET /memories/{id}, the
-  ``include_raw`` drill-down included) with the ``[retracted: <class>,
+  ``include_raw`` drill-down included) with the ``[retracted:
   <iso-ts>]`` render instead of its content; raw_content/clean_content/
   title are withheld, lifecycle metadata stays visible; the CCR
   cached-original channel serves the same render when the payload
