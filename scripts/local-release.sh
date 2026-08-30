@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # local-release.sh — full local release pipeline for mnemos.
 #
+# DEPRECATED (owner directive ecc205fc): superseded by Korrnals/release-pipeline
+# (local symlink mode, connected 2026-08-30). Use instead:
+#   ./scripts/run-release-local.sh --dry-run    # pipeline dry-run
+#   ./scripts/run-release-local.sh              # pipeline release (next version)
+# The pipeline covers everything this script did (verify gates, wheel/sdist,
+# SHA256 + cosign + SBOM layers, Docker image, GitHub Release) plus signing
+# layers this script never had. Kept as fallback until the first pipeline
+# release (2.16.0) ships; Makefile targets local-release* still point here.
+#
 # WHY: GitHub Actions billing-locked (memory ef56d3b5). Tag-triggered
 # release.yml does NOT fire. This script replicates it locally:
 # verify → build wheel/sdist → build container image → push to ghcr.io

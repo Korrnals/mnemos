@@ -1,0 +1,11 @@
+# release-pipeline language override (Korrnals/release-pipeline, connected
+# 2026-08-30, owner directive ecc205fc).
+#
+# mnemos is a Python project (pyproject.toml, hatchling backend). A
+# package.json for the Pi extension experiments also lives in the repo root
+# and trips the pipeline's fail-loud multi-marker detection. This override
+# pins the release language to python.
+#
+# If the Pi extension ever ships as a releaseable npm artefact, switch to:
+#   plugins: [python, node]
+language: python
