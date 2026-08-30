@@ -122,6 +122,30 @@ def is_context_admissible(
     return memory.status in statuses and not is_quarantined(memory)
 
 
+def render_retraction(memory: Memory) -> str:
+    """ADR-0019 §5 (B2b) — the retraction render of a quarantined entry.
+
+    ``[retracted: <iso-ts>]`` replaces the entry CONTENT on
+    direct-access channels (manager/REST get-by-id, the CCR cached
+    original) while the row keeps its identity — retraction is a state
+    of the SAME record, never a separate tombstone row.
+
+    Cause-NEUTRAL by ArchCom amendment (CWE-209): the render carries NO
+    detector class — a content-side reason would be an oracle for
+    iteratively probing which detectors fired. The reason stays
+    available to the operator through the row metadata
+    (``quarantine_reason`` on the direct-access response) and the
+    quarantine audit line; the agent-facing channels never see it.
+    ``<iso-ts>`` is the row's ``updated_at`` (the quarantine transition
+    itself stamps it via ``update_fields``).
+
+    Single construction site: every retraction surface composes THIS
+    render so the format cannot drift between channels.
+    """
+    ts = memory.updated_at.isoformat() if memory.updated_at else "unknown"
+    return f"[retracted: {ts}]"
+
+
 # ── Mnemos Tag Contract (M2) ──────────────────────────────────────────────────────
 
 

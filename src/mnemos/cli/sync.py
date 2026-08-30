@@ -687,13 +687,13 @@ def run_sync_import(
         try:
             mgr.sqlite.save(memory)
             if memory.status == MemoryStatus.PUBLISHED:
+                # ADR-0019 B2b (N1 review #163): the federated re-embed
+                # routes through the SINGLE embedding write point — the
+                # upsert then stamps the content_hash freshness key and
+                # emits the embed_upserted audit event, so the sweeper
+                # can heal this embed like any other.
                 try:
-                    embedding = mgr.embed_for(memory)
-                    mgr.vectors.upsert(
-                        memory.id,
-                        embedding,
-                        {"project": memory.project, "agent": memory.agent},
-                    )
+                    mgr.upsert_embedding(memory)
                 except Exception as exc:  # pragma: no cover — best-effort
                     logger.warning("re-embedding failed for %s: %s", memory.id, exc)
             imported += 1

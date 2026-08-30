@@ -83,19 +83,35 @@ def _add(
     status: MemoryStatus | None = None,
     metadata: dict[str, object] | None = None,
 ):
-    memory = mgr.add(
+    """Status is EXPLICIT at create time (ADR-0019 B2b): a status-less
+    add follows the visibility policy (immediate ⇒ published), while
+    these tests pin per-status issuance-gate behavior."""
+    return mgr.add(
         MemoryCreate(
             content=content,
             tags=[f"project:{project}", f"agent:{AGENT}", "mnemos:learning"],
             source=MemorySource.MCP,
             metadata=metadata or {},
+            **({"status": status} if status is not None else {}),
         ),
         project=project,
         agent=AGENT,
     )
-    if status is not None:
-        mgr.sqlite.update_status(memory.id, status)
-    return memory
+
+
+def _legacy_published(mgr: MemoryManager, content: str) -> str:
+    """Seed a PUBLISHED row whose content carries a secret.
+
+    Since Phase A no LEGAL path can produce this state (the N1 gate
+    refuses dirty publications, zero-loss RAW) — this fixture mimics a
+    pre-Phase-A legacy row via the store-level write, the same
+    convention as the B1 ``no-op flip`` legacy-row fixture. The point
+    under test is the scan-at-issuance behaviour on such a row, not the
+    gate that would have prevented it.
+    """
+    memory = _add(mgr, content)
+    assert mgr.sqlite.update_fields(memory.id, status=MemoryStatus.PUBLISHED)
+    return memory.id
 
 
 # ── M1: issuance gate on mnemos_filter / POST /filter ────────────────────────
@@ -104,7 +120,7 @@ def _add(
 class TestFilterIssuanceGateManager:
     def test_raw_memory_not_filterable_into_context(self, tmp_path: Path) -> None:
         mgr = _manager(_settings(tmp_path))
-        memory = _add(mgr, "plain raw content")
+        memory = _add(mgr, "plain raw content", status=MemoryStatus.RAW)
         assert memory.status == MemoryStatus.RAW
         result = mgr.issue_context_filter(memory.id)
         assert result["status"] == "error"
@@ -137,12 +153,8 @@ class TestFilterIssuanceGateManager:
 
     def test_published_secret_redacted_in_echo(self, tmp_path: Path) -> None:
         mgr = _manager(_settings(tmp_path))
-        memory = _add(
-            mgr,
-            f"deployment notes token {FAKE_AWS_KEY} end",
-            status=MemoryStatus.PUBLISHED,
-        )
-        result = mgr.issue_context_filter(memory.id)
+        memory_id = _legacy_published(mgr, f"deployment notes token {FAKE_AWS_KEY} end")
+        result = mgr.issue_context_filter(memory_id)
         assert result["status"] == "ok"
         assert FAKE_AWS_KEY not in result["clean_content"]
         assert "<REDACTED:aws-key>" in result["clean_content"]
@@ -150,19 +162,15 @@ class TestFilterIssuanceGateManager:
         assert result["redacted_patterns"].get("aws-key") == 1
         # Zero-loss storage: the stored raw content keeps the secret; only
         # the echo is redacted (scan-at-issuance semantics).
-        stored = mgr.get(memory.id)
+        stored = mgr.get(memory_id)
         assert stored is not None
         assert FAKE_AWS_KEY in (stored.raw_content or stored.content)
         mgr.close()
 
     def test_refuse_mode_drops_content(self, tmp_path: Path) -> None:
         mgr = _manager(_settings(tmp_path, retrieve_refuse_on_secret=True))
-        memory = _add(
-            mgr,
-            f"token {FAKE_AWS_KEY} inline",
-            status=MemoryStatus.PUBLISHED,
-        )
-        result = mgr.issue_context_filter(memory.id)
+        memory_id = _legacy_published(mgr, f"token {FAKE_AWS_KEY} inline")
+        result = mgr.issue_context_filter(memory_id)
         assert result["status"] == "error"
         assert result["reason"] == "refused"
         assert "clean_content" not in result
@@ -215,7 +223,7 @@ class TestFilterIssuanceGateMcp:
         from mnemos.mcp_server import _dispatch
 
         mgr = _manager(_settings(tmp_path))
-        memory = _add(mgr, "raw mcp memory")
+        memory = _add(mgr, "raw mcp memory", status=MemoryStatus.RAW)
         with patch("mnemos.mcp_server.get_manager", return_value=mgr):
             result = await _dispatch("mnemos_filter", {"memory_id": memory.id})
         assert result["status"] == "error"
@@ -250,14 +258,10 @@ class TestFilterIssuanceGateMcp:
         from mnemos.mcp_server import _dispatch
 
         mgr = _manager(_settings(tmp_path))
-        memory = _add(
-            mgr,
-            f"creds {FAKE_AWS_KEY} leaked",
-            status=MemoryStatus.PUBLISHED,
-        )
+        memory_id = _legacy_published(mgr, f"creds {FAKE_AWS_KEY} leaked")
         with patch("mnemos.mcp_server.get_manager", return_value=mgr):
-            result = await _dispatch("mnemos_filter", {"memory_id": memory.id})
-        assert result["memory_id"] == memory.id
+            result = await _dispatch("mnemos_filter", {"memory_id": memory_id})
+        assert result["memory_id"] == memory_id
         assert FAKE_AWS_KEY not in result["clean_content"]
         assert "<REDACTED:aws-key>" in result["clean_content"]
         assert result["redactions"] >= 1

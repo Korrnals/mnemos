@@ -99,7 +99,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final
 
-from mnemos.models import MemoryCreate, MemorySource, validate_tag_contract
+from mnemos.models import MemoryCreate, MemorySource, MemoryStatus, validate_tag_contract
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
@@ -413,7 +413,19 @@ def context_rewrite(
         metadata["rewrite_diff_scan_verdict"] = diff_verdict
 
     memory = mgr.add(
-        MemoryCreate(content=content, tags=tags, source=MemorySource.MCP, metadata=metadata),
+        MemoryCreate(
+            content=content,
+            tags=tags,
+            source=MemorySource.MCP,
+            metadata=metadata,
+            # ADR-0018 entry invariant / ADR-0019 B2b: the stored original
+            # ENTERS as raw and reaches context only after the pipeline
+            # advances it — this path deliberately opts out of the
+            # ``mnemos.visibility`` immediate-publish default (a rewrite
+            # archive payload is not agent-authored knowledge to surface
+            # at once). Explicit status keeps the pre-B2b contract.
+            status=MemoryStatus.RAW,
+        ),
         project=project,
         agent=agent,
         # Trusted caller: ONLY this path may derive the denormalised

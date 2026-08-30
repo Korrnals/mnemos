@@ -33,6 +33,13 @@ Outcome lanes (§5):
 The legacy RAW→PROCESSING clustering flow is NOT this queue: NULL
 pipeline_state rows keep their pre-ADR-0019 semantics (Phase D decides
 their retirement).
+
+B2b §2 (curated visibility): both completion points (the swap and the
+honest noop) hand the row to ``MemoryManager._curated_publish`` — in
+``curated`` deployments the row is still RAW there, and the refined
+projection receives its visibility through the same publication gate
+(clean ⇒ PUBLISHED + embed; refusal ⇒ lane-(b) quarantine). Immediate
+deployments skip it (visibility was granted at ingest).
 """
 
 from __future__ import annotations
@@ -43,7 +50,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from mnemos.danger_detectors import detect
-from mnemos.models import PipelineState
+from mnemos.models import MemoryStatus, PipelineState
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
@@ -183,6 +190,11 @@ def refine_single(mgr: MemoryManager, memory_id: str) -> str:
             OUTCOME_REFINED_NOOP,
             attempt,
         )
+        # B2b §2: curated completion of a noop cycle — the (unchanged)
+        # projection still owes its publication verdict; clean ⇒ the row
+        # becomes visible now, refused ⇒ lane-(b) quarantine. Immediate
+        # mode: skipped (the row is already published).
+        mgr._curated_publish(memory_id)
         return OUTCOME_REFINED_NOOP
 
     # ── Lane (b) gate on the PROCESSED projection: a secret/injection ──
@@ -264,11 +276,26 @@ def refine_single(mgr: MemoryManager, memory_id: str) -> str:
             _revision_hash(artifact),
         )
 
+    # ── ADR-0019 B2b §2: curated completion — the swapped projection ──
+    # goes through the SAME publication gate; clean ⇒ PUBLISHED (the
+    # record receives the refined content and its visibility in the same
+    # completion event), refusal ⇒ lane-(b) quarantine per the B2a
+    # convention. Immediate mode: skipped — visibility was granted at
+    # ingest and nothing here may demote it.
+    curated_outcome = mgr._curated_publish(memory_id)
+
     # ── Vector: re-embed AFTER the commit, outside the transaction ────
     # (ADR §Swap: a vector-store outage must not become a SQLite
     # read-path outage; the idempotent sweeper heals a failed upsert).
+    # A curated publication embeds the fresh row itself (one embed per
+    # upsert); an invisible row (RAW — e.g. curated-refused, quarantined
+    # by the gate above) gets NO embed at all.
     swapped = mgr.sqlite.get(memory_id)
-    if swapped is not None:
+    if (
+        swapped is not None
+        and swapped.status == MemoryStatus.PUBLISHED
+        and curated_outcome != "published"
+    ):
         try:
             mgr.upsert_embedding(swapped)
         except Exception as exc:

@@ -80,10 +80,17 @@ def tmp_manager(tmp_settings):
 
 
 def _add_raw(mgr: MemoryManager, content: str, agent: str = "reviewer", project: str = "mnemos"):
-    """Add a raw memory via MemoryManager."""
+    """Add a raw memory via MemoryManager.
+
+    The status is EXPLICIT since ADR-0019 B2b: a status-less add follows
+    the ``mnemos.visibility`` policy (immediate ⇒ published), while these
+    tests exercise the LEGACY RAW→PROCESSING pipeline flow — the explicit
+    RAW keeps that contract pinned.
+    """
     data = MemoryCreate(
         content=content,
         tags=[f"project:{project}", f"agent:{agent}", "mnemos:learning"],
+        status=MemoryStatus.RAW,
     )
     return mgr.add(data, project=project, agent=agent)
 

@@ -478,16 +478,18 @@ def _import_json(
 
 
 def _reembed(mgr: MemoryManager, memory: Memory) -> None:
-    """Re-embed a published memory into the vector store (best-effort)."""
+    """Re-embed a published memory into the vector store (best-effort).
+
+    ADR-0019 B2b (N1 review #163): routes through the SINGLE embedding
+    write point (``MemoryManager.upsert_embedding``) so the upsert
+    stamps the ``content_hash`` freshness key and emits the
+    ``embed_upserted`` audit event — a raw ``vectors.upsert`` here would
+    leave an unhealable, unhashed embed behind.
+    """
     if memory.status != MemoryStatus.PUBLISHED:
         return
     try:
-        embedding = mgr.embedder.embed(mgr._embedding_text(memory))
-        mgr.vectors.upsert(
-            memory.id,
-            embedding,
-            {"project": memory.project, "agent": memory.agent},
-        )
+        mgr.upsert_embedding(memory)
     except Exception as exc:
         # Re-embedding is best-effort; the memory is still persisted.
         logger.warning("re-embedding failed for memory %s: %s", memory.id, exc)
