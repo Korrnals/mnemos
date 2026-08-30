@@ -574,10 +574,12 @@ class TestModeration:
         # moderation's REDACT path in transit, so we disable the
         # auto-tagging here: the record must reach moderation, get its
         # AWS key redacted to ``<REDACTED:aws-key>``, and still ship.
+        # (ADR-0019 Phase A: _scan_and_tag now also returns the scan
+        # verdict for the ingest audit — the stub mirrors the 2-tuple.)
         with patch.object(
             MemoryManager,
             "_scan_and_tag",
-            staticmethod(lambda tags, content: list(tags)),
+            staticmethod(lambda tags, content: (list(tags), {})),
         ):
             _add_memory(
                 manager,
@@ -611,7 +613,7 @@ class TestModeration:
         with patch.object(
             MemoryManager,
             "_scan_and_tag",
-            staticmethod(lambda tags, content: list(tags)),
+            staticmethod(lambda tags, content: (list(tags), {})),
         ):
             _add_memory(
                 manager,
