@@ -303,8 +303,7 @@ def _prometheus_text(mgr: MemoryManager) -> str:
     )
     lines.append("# TYPE mnemos_search_cross_project_requests_total counter")
     lines.append(
-        "mnemos_search_cross_project_requests_total "
-        f"{search['cross_project_requests_total']}"
+        f"mnemos_search_cross_project_requests_total {search['cross_project_requests_total']}"
     )
     lines.append("# HELP mnemos_search_avg_latency_ms Average search latency in ms")
     lines.append("# TYPE mnemos_search_avg_latency_ms gauge")
@@ -518,6 +517,7 @@ async def search(query: SearchQuery) -> list[dict[str, Any]]:
         status=query.status,
         limit=query.limit,
         include_raw=query.include_raw,
+        refined_only=query.refined_only,
     )
     out = []
     for r in results:
@@ -643,6 +643,13 @@ async def publish_memory_endpoint(
     requirement so memories can be published directly from ``raw``
     status without an LLM pipeline. This enables search to work
     immediately in deployments without a configured LLM backend.
+
+    ADR-0019 Phase A danger gate: publication ALWAYS passes the
+    fail-closed danger-detector gate over the served projection and the
+    title (prompt-injection patterns + high-confidence secrets).
+    ``skip_quality_check`` does NOT exempt it — a positive signal or a
+    scanner error refuses the publication (the record stays stored,
+    zero-loss, and invisible); the endpoint then returns 400.
     """
     mgr = get_manager()
     result = mgr.publish(memory_id, skip_quality_check=skip_quality_check)

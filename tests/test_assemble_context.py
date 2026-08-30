@@ -59,7 +59,8 @@ SESSION = "sess-42"
 
 PROVENANCE_RE = re.compile(
     r"^\[mnemos:(?P<id>[0-9a-f-]{36}) project=(?P<project>\S+) "
-    r"status=(?P<status>\S+) retrieved=(?P<iso>\S+)\]$"
+    r"status=(?P<status>\S+)(?: pipeline=(?P<pipeline>\S+))? "
+    r"v=(?P<version>\d+) retrieved=(?P<iso>\S+)\]$"
 )
 
 CODE_CONTENT = (
@@ -158,6 +159,23 @@ def _add(
     return mgr.add(data, project=PROJECT, agent=AGENT)
 
 
+def _add_legacy_published(mgr: MemoryManager, content: str) -> Memory:
+    """Seed a PUBLISHED row that carries a secret — bypassing the N1 gate.
+
+    ADR-0019 N1: a direct-seed ``status=published`` whose content trips
+    the danger detectors is demoted to RAW by ``manager.add`` (the whole
+    point of the gate). The issuance-scan fixtures below need the
+    pre-N1/legacy state — a published row whose content holds a secret
+    (published before the gate existed, or the content was swapped
+    post-publication). The store-level status flip mints exactly that
+    row; the issuance scan under test is unchanged.
+    """
+    memory = _add(mgr, content, status=MemoryStatus.RAW)
+    mgr.sqlite.update_status(memory.id, MemoryStatus.PUBLISHED)
+    memory.status = MemoryStatus.PUBLISHED
+    return memory
+
+
 # ── Pipeline shape ────────────────────────────────────────────────────────────
 
 
@@ -205,6 +223,13 @@ class TestProvenance:
             assert match.group("id") == block["memory_id"]
             assert match.group("project") == PROJECT
             assert match.group("status") == block["status"]
+            # ADR-0019 §4: the bracket string is a projection of the
+            # structured block fields (pipeline_phase / marker_version).
+            assert match.group("version") == str(block["marker_version"])
+            assert (match.group("pipeline") or None) == block["pipeline_phase"]
+            # Direct-seed rows carry no pipeline_state → segment omitted.
+            assert block["pipeline_phase"] is None
+            assert "pipeline=" not in line
             # retrieved=<iso> parses as an ISO-8601 timestamp.
             from datetime import datetime
 
@@ -225,7 +250,7 @@ class TestProvenance:
 
 class TestSecretScan:
     def test_planted_secret_redacted_with_count(self, manager: MemoryManager) -> None:
-        _add(
+        _add_legacy_published(
             manager,
             "Deployment notes for the unobtanium service.\n"
             f"The service authenticates with api key {FAKE_AWS_KEY}\n"
@@ -245,7 +270,7 @@ class TestSecretScan:
         assert FAKE_AWS_KEY in stored.content
 
     def test_refuse_mode_drops_block_fail_closed(self, refuse_manager: MemoryManager) -> None:
-        _add(
+        _add_legacy_published(
             refuse_manager,
             f"unobtanium credentials: {FAKE_AWS_KEY}\nDeployment notes with a planted secret.",
         )

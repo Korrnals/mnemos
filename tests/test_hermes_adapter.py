@@ -305,22 +305,24 @@ class TestIssuanceScan:
     def _plant_secret_row(self, mgr: MemoryManager) -> None:
         """A published row carrying a planted fake secret.
 
-        ADR-0019 Phase A: such a row can no longer arise through the
-        Hermes publish path — the fail-closed danger gate refuses
-        publication of a high-confidence secret (the entry stays stored
-        RAW). It is therefore planted as a direct published write, which
-        is exactly the residual the issuance scan guards (import /
+        ADR-0019 Phase A + N1: such a row can no longer arise through
+        the Hermes publish path NOR a direct-seed create — the
+        fail-closed danger gate refuses publication of a
+        high-confidence secret (the entry stays stored RAW). It is
+        therefore planted with a store-level status flip, which is
+        exactly the residual the issuance scan guards (import /
         migration / direct store writes): the write-path scan tags it
         no-federate but stores it — issuance must redact."""
-        mgr.add(
+        memory = mgr.add(
             MemoryCreate(
                 content=f"deploy note with api key {FAKE_AWS_KEY} inline",
                 tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
-                status=MemoryStatus.PUBLISHED,
+                status=MemoryStatus.RAW,
             ),
             project=PROJECT,
             agent=AGENT,
         )
+        mgr.sqlite.update_status(memory.id, MemoryStatus.PUBLISHED)
 
     def test_search_masks_secret(
         self, adapter: HermesMemoryAdapter, manager: MemoryManager

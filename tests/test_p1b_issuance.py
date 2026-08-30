@@ -67,6 +67,7 @@ def _snippet_scan_text(snippet: str) -> str:
         snippet = snippet.replace(mark, "")
     return snippet
 
+
 # ── Fake (EXAMPLE-style) secrets from the detector's own regexes ──────────────
 
 # aws-key pattern: AKIA + 16 chars of [0-9A-Z] (all-caps body, entropy leg quiet).
@@ -166,6 +167,16 @@ def _add(
     tags: list[str] | None = None,
     title: str | None = None,
 ) -> object:
+    """Seed a PUBLISHED row; gate-demoted seeds are re-flipped at the store.
+
+    ADR-0019 N1: a direct-seed publication whose content trips the
+    danger detectors is demoted to RAW by ``manager.add``. The
+    issuance-scan fixtures in this module pin scan behavior on exactly
+    that residual population (published rows carrying a secret — legacy
+    pre-gate rows / secrets introduced after publication), so a demoted
+    seed is restored with the store-level status flip. Clean content
+    publishes through the gate as before.
+    """
     data = MemoryCreate(
         content=content,
         title=title,
@@ -173,7 +184,11 @@ def _add(
         source=MemorySource.MCP,
         status=MemoryStatus.PUBLISHED,
     )
-    return mgr.add(data, project=PROJECT, agent=AGENT)
+    memory = mgr.add(data, project=PROJECT, agent=AGENT)
+    if memory.status != MemoryStatus.PUBLISHED:
+        mgr.sqlite.update_status(memory.id, MemoryStatus.PUBLISHED)
+        memory.status = MemoryStatus.PUBLISHED
+    return memory
 
 
 def _secret_note(secret: str, marker: str = "unobtanium") -> str:
@@ -199,6 +214,8 @@ def _cacheable_secret_log(secret: str) -> str:
     lines.append(f"2026-08-26T10:01:00Z CONFIG the unobtanium service uses key {secret}")
     lines.append("2026-08-26T10:01:01Z INFO shutdown complete")
     return "\n".join(lines)
+
+
 def _as_legacy_unscanned(mgr: MemoryManager, h: str) -> None:
     """Rewrite a row's scan verdict to NULL (pre-P1-a legacy cache row).
 
@@ -211,7 +228,6 @@ def _as_legacy_unscanned(mgr: MemoryManager, h: str) -> None:
     conn = mgr.sqlite._get_conn()
     conn.execute("UPDATE ccr_cache SET secret_scan_verdict=NULL WHERE hash=?", (h,))
     conn.commit()
-
 
 
 # ── M1: MCP mnemos_search ─────────────────────────────────────────────────────

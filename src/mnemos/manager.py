@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 from mnemos import __version__
 from mnemos.config import Settings
+from mnemos.danger_detectors import detect
 from mnemos.embeddings import EmbeddingProvider, create_embedding_provider
 from mnemos.models import (
     CONTEXT_ADMISSIBLE_STATUSES,
@@ -36,7 +37,10 @@ from mnemos.models import (
     MemorySource,
     MemoryStatus,
     MemoryUpdate,
+    PipelineState,
     SearchResult,
+    is_context_admissible,
+    is_quarantined,
 )
 from mnemos.pipeline import (
     ClusterResult,
@@ -388,6 +392,63 @@ class MemoryManager:
 
     # ── CRUD ────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _publish_gate_verdict(memory: Memory, *, path: str, content: str | None = None) -> bool:
+        """ADR-0019 N1 (review #161 follow-up) — the Phase A danger gate,
+        routed over every DIRECT publication flip.
+
+        The pipeline's own gate lives in
+        :func:`mnemos.pipeline.publish.publish_memory`; this twin covers
+        the paths that reach ``published`` WITHOUT that stage: a
+        direct-seed ``MemoryCreate(status=PUBLISHED)``, status flips via
+        :meth:`update`, and content edits of already-published rows. The
+        gate logic itself is NOT duplicated — the verdict comes from the
+        same :func:`mnemos.danger_detectors.detect` over the served
+        projection and the title, with the same fail-closed contract and
+        the same '``publish gate: …``' audit-line convention (correlated
+        by ``memory_id[:8]``; pattern names and counts only, never raw
+        values).
+
+        Returns ``True`` when the publication is admissible (clean). On
+        refusal the caller keeps the record stored zero-loss — the
+        visibility transition is what gets refused, never the write; no
+        exception propagates (``detect`` returns scanner errors inside
+        its result).
+
+        Args:
+            memory: The candidate snapshot (post-update state).
+            path: Audit discriminator — ``direct-seed`` /
+                ``status-flip`` / ``published-content-edit``.
+            content: Override for the text to scan. The update path
+                passes the NEW content on a content edit — the row's
+                ``clean_content`` is stale at that point (the filter
+                has not re-run), so ``effective_content()`` would scan
+                the OLD projection.
+        """
+        text = content if content is not None else memory.effective_content()
+        detection = detect(text, memory.title)
+        if detection.error is not None:
+            logger.error(
+                "publish gate: %s verdict=refused path=%s reason=scanner-error "
+                "error=%s — record stays stored, publication refused",
+                memory.id[:8],
+                path,
+                detection.error,
+            )
+            return False
+        if detection.positive:
+            logger.warning(
+                "publish gate: %s verdict=refused path=%s reason=danger-detector "
+                "classes=%s patterns=%s — raw values not logged",
+                memory.id[:8],
+                path,
+                sorted({f.detector_class for f in detection.findings}),
+                detection.patterns_by_class(),
+            )
+            return False
+        logger.info("publish gate: %s verdict=pass path=%s", memory.id[:8], path)
+        return True
+
     def add(
         self,
         data: MemoryCreate,
@@ -459,6 +520,17 @@ class MemoryManager:
             agent=agent,
         )
 
+        # ── ADR-0019 N1: direct-seed publication gate ───────────────────
+        # ``MemoryCreate(status=PUBLISHED)`` reaches published without
+        # the pipeline's publish stage, so it routes through the SAME
+        # Phase A danger gate here. Refusal demotes the stored status to
+        # RAW — zero-loss (the content is stored; only the visibility
+        # transition is refused), fail-closed, no exception.
+        if memory.status == MemoryStatus.PUBLISHED and not self._publish_gate_verdict(
+            memory, path="direct-seed"
+        ):
+            memory.status = MemoryStatus.RAW
+
         # Write to Obsidian vault
         try:
             file_path = self.vault.memory_to_file(memory)
@@ -515,6 +587,7 @@ class MemoryManager:
         if not memory:
             return None
 
+        previous_status = memory.status
         update_kwargs: dict[str, Any] = {}
         for field in (
             "content",
@@ -542,8 +615,55 @@ class MemoryManager:
         if "content" in update_kwargs:
             memory.tags, scan_patterns = self._scan_and_tag(memory.tags, memory.content)
 
+        # ── ADR-0019 N1: direct-flip / published-edit publication gate ────
+        # Two direct paths reach ``published`` without the pipeline's
+        # publish stage, both routed through the SAME Phase A danger gate
+        # (no duplicated gate logic — see _publish_gate_verdict):
+        #   (b) an explicit status flip to PUBLISHED — on refusal the
+        #       status simply does not change (stays previous);
+        #   (c) a content or TITLE edit of an ALREADY-published row — on
+        #       refusal the new text is still stored (zero-loss) but the
+        #       status is demoted to RAW: keeping ``published`` would
+        #       republish the refused projection. Titles are part of the
+        #       served projection (markers/echo paths render them) and
+        #       the issuance scan does not screen titles for injections
+        #       — the gate is the only guard there.
+        # A no-op flip (status=PUBLISHED on an already-published row with
+        # no content or title change) does not re-gate: nothing about
+        # the served projection changes.
+        status_flipped = data.status is not None and data.status != previous_status
+        content_changed = "content" in update_kwargs
+        title_changed = "title" in update_kwargs
+        demoted_for_publication = False
+        if memory.status == MemoryStatus.PUBLISHED and (
+            status_flipped or content_changed or title_changed
+        ):
+            path = "status-flip" if status_flipped else "published-content-edit"
+            # On a content edit the NEW content is the projection that
+            # would be served — clean_content is stale until the filter
+            # re-runs, so the gate must not scan the old text. On a
+            # title-only edit effective_content() is the current
+            # projection (content unchanged) and the NEW title is
+            # scanned via the memory snapshot.
+            gate_content = memory.content if content_changed else None
+            if not self._publish_gate_verdict(memory, path=path, content=gate_content):
+                if previous_status == MemoryStatus.PUBLISHED and (content_changed or title_changed):
+                    memory.status = MemoryStatus.RAW
+                    demoted_for_publication = True
+                else:
+                    memory.status = previous_status
+
         memory.updated_at = datetime.now(UTC)
         self.sqlite.save(memory)
+
+        # N1 demotion hygiene: the formerly-published projection's embed
+        # is stale (the row is RAW now). Non-fatal — the resolve-time
+        # status guard already keeps the row out of search results.
+        if demoted_for_publication:
+            try:
+                self.vectors.delete(memory_id)
+            except Exception as exc:
+                logger.warning("Vector delete on publication demotion (non-fatal): %s", exc)
 
         # ADR-0019 Phase A ingest audit (update path) — same shape as the
         # add() verdict line, correlated by memory id.
@@ -905,6 +1025,7 @@ class MemoryManager:
         limit: int = 20,
         hybrid_alpha: float | None = None,
         include_raw: bool = False,
+        refined_only: bool = False,
     ) -> list[SearchResult]:
         """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion.
 
@@ -928,6 +1049,21 @@ class MemoryManager:
              ``published`` and ``processed`` memories surface, preserving the
              documented "Only searches 'published' knowledge units by default"
              contract.
+
+        ADR-0019 §5 — on every status-filtered leg (2 and 3 above) the
+        quarantine predicate composes with the allowed set AND holds
+        absolutely on its own: ``pipeline_state='quarantined'`` rows are
+        excluded from issuance REGARDLESS of status — an EXPLICIT
+        ``status=`` drill-down included (quarantined rows carry
+        status='published', and the external payloads carry no
+        pipeline_state, so the caller could not even detect the
+        contamination). Direct ``get`` by id stays the documented
+        residual access until the B2 retraction render.
+
+        ADR-0019 §4 — ``refined_only=True`` additionally keeps only
+        entries whose served projection is the refined one
+        (``pipeline_state='refined'``); NULL/legacy pipeline_state rows
+        never match. Composable with every status mode above.
         """
         alpha = hybrid_alpha if hybrid_alpha is not None else self.settings.search.hybrid_alpha
         _t0 = time.monotonic()
@@ -975,7 +1111,22 @@ class MemoryManager:
             allowed = None  # explicit status, no post-hoc filter
 
         if allowed is not None:
-            fts_pairs = [(m, s) for m, s in fts_pairs if m.status in allowed]
+            fts_pairs = [(m, s) for m, s in fts_pairs if is_context_admissible(m, statuses=allowed)]
+
+        # ADR-0019 §5 — the quarantine exclusion is ABSOLUTE, not merely
+        # part of the allowed-set composition above: quarantined rows
+        # carry status='published', so an explicit ``status=`` drill-down
+        # (allowed=None, the set filter skipped) would otherwise serve
+        # terminal danger-lane content — and the REST/MCP payloads carry
+        # no pipeline_state, so the caller could not detect it. Direct
+        # ``get`` by id stays the documented residual until B2.
+        fts_pairs = [(m, s) for m, s in fts_pairs if not is_quarantined(m)]
+
+        # ADR-0019 §4 — "refined only" query flag: keep exclusively
+        # refined projections on the FTS leg (applied after the status
+        # gates; NULL/legacy pipeline_state never matches).
+        if refined_only:
+            fts_pairs = [(m, s) for m, s in fts_pairs if m.pipeline_state == PipelineState.REFINED]
 
         # ── Vector leg ─────────────────────────────────────────────────────
         # A9 (ArchCom 2026-08-27): pre-RRF project predicate. The store
@@ -1023,7 +1174,16 @@ class MemoryManager:
                 # somehow entered the store could surface here.
                 if status is not None and candidate.status != status:
                     continue
-                if allowed is not None and candidate.status not in allowed:
+                if allowed is not None and not is_context_admissible(candidate, statuses=allowed):
+                    continue
+                # ADR-0019 §5 — absolute quarantine exclusion (see the
+                # FTS-leg note above): an explicit-status query must not
+                # resurrect the row through a stale embed either.
+                if is_quarantined(candidate):
+                    continue
+                # ADR-0019 §4 — refined_only guards the vector resolve leg
+                # with the same predicate as the FTS leg.
+                if refined_only and candidate.pipeline_state != PipelineState.REFINED:
                     continue
                 id_to_memory[mid] = candidate
             vector_resolved.append((mid, vec_score))
@@ -1105,7 +1265,16 @@ class MemoryManager:
             project=query.project,
             limit=query.limit,
         )
-        return [SearchResult(memory=m, score=1.0, search_type="recency") for m in memories]
+        # ADR-0019 §5 — this is an agent-context issuance path, so the
+        # quarantine exclusion applies here as well: the agent's own
+        # recency feed must not carry terminally quarantined content.
+        # Transparency about its own quarantine stays via direct
+        # get-by-id until the B2 retraction render.
+        return [
+            SearchResult(memory=m, score=1.0, search_type="recency")
+            for m in memories
+            if not is_quarantined(m)
+        ]
 
     def recall_context(
         self, *, project: str, query: str | None = None, limit: int = 5
@@ -1132,7 +1301,13 @@ class MemoryManager:
             tags=["mnemos:checkpoint"],
         )
         # Invariant: archived checkpoints are retired and must not resurface as fresh context.
-        memories = [m for m in memories if m.status != MemoryStatus.ARCHIVED]
+        # ADR-0019 §5 — quarantined entries are excluded here too (the
+        # is_quarantined predicate; the recency leg's status policy is
+        # "everything except archived", so the allowed-set helper does not
+        # apply — the quarantine condition itself must not be copy-pasted).
+        memories = [
+            m for m in memories if m.status != MemoryStatus.ARCHIVED and not is_quarantined(m)
+        ]
         # Sort by recency and trim
         memories.sort(key=lambda m: m.created_at, reverse=True)
         return memories[:limit]
@@ -1149,7 +1324,7 @@ class MemoryManager:
         since: str | None = None,
         until: str | None = None,
     ) -> list[Memory]:
-        return self.sqlite.list_all(
+        memories = self.sqlite.list_all(
             limit=limit,
             offset=offset,
             tags=tags,
@@ -1159,6 +1334,16 @@ class MemoryManager:
             since=since,
             until=until,
         )
+        # ADR-0019 §5 — absolute quarantine exclusion on the listing
+        # surface too (REST GET /memories, MCP mnemos_list_recent): the
+        # explicit-status drill-down must not serve terminal danger-lane
+        # rows here — pipeline_state is not part of the external payload,
+        # so the caller could not detect the contamination. Direct
+        # get-by-id stays the documented residual until the B2 retraction.
+        # Note: post-filtering may under-fill a limit/offset page —
+        # accepted for a rare terminal state (same tradeoff as the
+        # search legs).
+        return [m for m in memories if not is_quarantined(m)]
 
     def list_tags(self) -> dict[str, int]:
         return self.sqlite.get_all_tags()
@@ -1901,7 +2086,10 @@ class MemoryManager:
         * **status gate** — only ``CONTEXT_ADMISSIBLE_STATUSES``
           (``published`` / ``processed``) memories are filterable into
           context; ``raw`` / ``processing`` / ``archived`` refuse
-          (fail-closed) instead of echoing stored raw content.
+          (fail-closed) instead of echoing stored raw content. ADR-0019
+          §5 composes the quarantine exception into the same predicate:
+          ``pipeline_state='quarantined'`` refuses identically
+          (terminal danger-lane state, excluded from issuance).
         * **project scope** — with ``project`` given, the memory must
           belong to it; the error deliberately does not distinguish
           "no such memory" from "another project's memory" (same
@@ -1929,18 +2117,21 @@ class MemoryManager:
                 "error": f"Memory {memory_id} not found",
                 "reason": "not_found",
             }
-        if memory.status not in CONTEXT_ADMISSIBLE_STATUSES:
+        if not is_context_admissible(memory):
             logger.warning(
-                "issue_context_filter: STATUS GATE memory=%s status=%s channel=%s",
+                "issue_context_filter: STATUS GATE memory=%s status=%s "
+                "pipeline_state=%s channel=%s",
                 memory_id,
                 memory.status.value,
+                memory.pipeline_state.value if memory.pipeline_state else None,
                 channel,
             )
             return {
                 "status": "error",
                 "error": (
                     f"Memory {memory_id} not filterable into context "
-                    f"(status={memory.status.value}; requires published/processed)"
+                    f"(status={memory.status.value}; requires published/processed"
+                    f"{' and not quarantined' if is_quarantined(memory) else ''})"
                 ),
                 "reason": "status_gate",
             }

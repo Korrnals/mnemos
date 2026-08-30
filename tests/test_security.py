@@ -278,6 +278,16 @@ class TestSqlInjectionSafe:
             # falling back to save() (INSERT OR REPLACE, FTS5 desync risk).
             "project",
             "agent",
+            # ADR-0019 Phase B (B1) pipeline lifecycle columns — the
+            # ADR's swap mechanics run via the targeted update_fields
+            # path. Store-internal surface only: MemoryCreate/MemoryUpdate
+            # carry none of these fields, so no REST/MCP/CLI caller can
+            # reach them.
+            "pipeline_state",
+            "processed_at",
+            "swap_key",
+            "quarantine_reason",
+            "marker_version",
         }
         assert set(sqlite_store._FIELD_UPDATERS) == expected_keys
         # Every value is a static "col=?" fragment.

@@ -115,6 +115,23 @@ def build_golden_manager(root: Path) -> tuple[MemoryManager, dict[str, str]]:
             status=STATUS_TO_ENUM[entry.status],
         )
         memory = mgr.add(data, project=entry.project, agent=entry.agent)
+        intended = STATUS_TO_ENUM[entry.status]
+        if memory.status != intended:
+            # ADR-0019 N1: a direct-seed publication whose content trips
+            # the danger detectors is demoted to RAW by ``manager.add``.
+            # The corpus's PLANTED entries model the residual-threat
+            # population the issuance scans exist for (secrets introduced
+            # by processing / pre-gate rows), so the harness restores the
+            # intended status at the store level and re-embeds — the
+            # search/ranking semantics the golden baseline pins are
+            # unchanged.
+            mgr.sqlite.update_status(memory.id, intended)
+            mgr.vectors.upsert(
+                memory.id,
+                mgr.embed_for(memory),
+                {"project": memory.project, "agent": memory.agent},
+            )
+            memory.status = intended
         slug_to_id[entry.slug] = memory.id
     return mgr, slug_to_id
 

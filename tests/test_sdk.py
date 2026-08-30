@@ -126,9 +126,7 @@ class TestRemember:
             )
         assert manager.sqlite.count() == before, "rejected tags must not write"
 
-    def test_valid_tags_pass_through(
-        self, sdk: MnemosSDK, manager: MemoryManager
-    ) -> None:
+    def test_valid_tags_pass_through(self, sdk: MnemosSDK, manager: MemoryManager) -> None:
         memory = sdk.remember(
             "note body",
             PROJECT,
@@ -166,12 +164,31 @@ class TestRecallIssuanceScan:
     """F1 (W3 review): the SDK returns SCANNED items, never stored rows."""
 
     def _published_secret_row(self, mgr: MemoryManager) -> None:
-        data = MemoryCreate(
-            content=f"deploy note with api key {FAKE_AWS_KEY} inline",
-            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
-            status=MemoryStatus.PUBLISHED,
+        """A published row carrying a planted fake secret.
+
+        ADR-0019 Phase A + N1: neither the publish stage nor a
+        direct-seed create can mint this row anymore (danger gate), so
+        it is planted with a store-level status flip — the legacy /
+        introduced-by-processing residual the recall issuance scan
+        guards."""
+        memory = mgr.add(
+            MemoryCreate(
+                content=f"deploy note with api key {FAKE_AWS_KEY} inline",
+                tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
+                status=MemoryStatus.RAW,
+            ),
+            project=PROJECT,
+            agent=AGENT,
         )
-        mgr.add(data, project=PROJECT, agent=AGENT)
+        mgr.sqlite.update_status(memory.id, MemoryStatus.PUBLISHED)
+        # Recall in this fixture is vector-driven (the content carries no
+        # "quokka" lexical marker) — restore the embed the store-level
+        # flip skipped, mirroring what add() does for clean publications.
+        mgr.vectors.upsert(
+            memory.id,
+            mgr.embed_for(memory),
+            {"project": memory.project, "agent": memory.agent},
+        )
 
     def test_secret_in_recalled_row_masked_via_sdk(
         self, sdk: MnemosSDK, manager: MemoryManager
@@ -191,9 +208,7 @@ class TestRecallIssuanceScan:
         assert any(i["redactions"] == 2 for i in items)
         assert any(i.get("redacted_patterns") == {"aws-key": 2} for i in items)
 
-    def test_refuse_mode_drops_the_item(
-        self, refuse_manager: MemoryManager
-    ) -> None:
+    def test_refuse_mode_drops_the_item(self, refuse_manager: MemoryManager) -> None:
         sdk = MnemosSDK(manager=refuse_manager)
         self._published_secret_row(refuse_manager)
 
@@ -269,9 +284,7 @@ class TestStats:
 
 
 class TestAssembleContext:
-    def test_delegates_with_passthrough(
-        self, sdk: MnemosSDK, manager: MemoryManager
-    ) -> None:
+    def test_delegates_with_passthrough(self, sdk: MnemosSDK, manager: MemoryManager) -> None:
         memory = sdk.remember("assembled body quokka-asm", PROJECT, AGENT)
         manager.publish(memory.id, skip_quality_check=True)
 
@@ -284,9 +297,7 @@ class TestAssembleContext:
 
         manager.assemble_context = _spy  # type: ignore[method-assign]
 
-        result = sdk.assemble_context(
-            SESSION, PROJECT, query="quokka-asm", budget=512
-        )
+        result = sdk.assemble_context(SESSION, PROJECT, query="quokka-asm", budget=512)
 
         assert result["session"] == SESSION
         assert result["project"] == PROJECT
@@ -304,9 +315,7 @@ class TestAssembleContext:
 
 
 class TestRewrite:
-    def test_delegates_to_context_rewrite(
-        self, sdk: MnemosSDK, manager: MemoryManager
-    ) -> None:
+    def test_delegates_to_context_rewrite(self, sdk: MnemosSDK, manager: MemoryManager) -> None:
         calls: list[dict[str, Any]] = []
         original = manager.context_rewrite
 
@@ -316,9 +325,7 @@ class TestRewrite:
 
         manager.context_rewrite = _spy  # type: ignore[method-assign]
 
-        result = sdk.rewrite(
-            "original block body", PROJECT, AGENT, SESSION, diff="was->becomes"
-        )
+        result = sdk.rewrite("original block body", PROJECT, AGENT, SESSION, diff="was->becomes")
 
         assert result["status"] in ("stored", "deduplicated")
         assert calls == [
