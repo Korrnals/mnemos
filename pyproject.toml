@@ -110,6 +110,14 @@ all = [
 [project.scripts]
 mnemos = "mnemos.cli.main:app"
 
+# Korrnals/release-pipeline symlinks (local pipeline mode) must never enter
+# the sdist: their absolute symlink targets break sdist extraction during
+# `python -m build` (tarfile data filter raises AbsoluteLinkError) and the
+# pipeline itself lives outside this repo. See .pipeline.yaml and
+# scripts/run-release-local.sh.
+[tool.hatch.build.targets.sdist]
+exclude = ["scripts/run-release-local.sh", "scripts/local-ci"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/mnemos"]
 
