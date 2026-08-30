@@ -194,6 +194,30 @@ class VectorStore:
             conn.execute("SELECT 1 FROM embeddings WHERE id=? LIMIT 1", (memory_id,)).fetchone()
         )
 
+    def get_metadata(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetch the stored metadata blob per id (ADR-0019 B2a freshness).
+
+        Returns a dict keyed by id for the ids that HAVE an embedding row;
+        an absent id is simply missing from the result (the sweeper treats
+        absence as stale). Corrupt metadata JSON degrades to ``{}``
+        (best-effort read, mirroring ``_metadata_project``).
+        """
+        if not ids:
+            return {}
+        conn = self._conn()
+        # placeholders is a static join of literal "?" characters; ids are bound
+        # via parameter substitution, so no user input reaches the SQL string.
+        placeholders = ",".join(["?"] * len(ids))
+        sql = "SELECT id, metadata FROM embeddings WHERE id IN (" + placeholders + ")"  # nosec B608
+        out: dict[str, dict[str, Any]] = {}
+        for row in conn.execute(sql, ids).fetchall():
+            try:
+                meta: Any = json.loads(row[1]) if row[1] else {}
+            except (ValueError, TypeError):
+                meta = {}
+            out[str(row[0])] = meta if isinstance(meta, dict) else {}
+        return out
+
     def count(self) -> int:
         # `fetchone()[0]` is `Any` (sqlite3.Row); COUNT(*) is always int.
         row = self._conn().execute("SELECT COUNT(*) FROM embeddings").fetchone()

@@ -9,6 +9,7 @@ Backed by:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import time
@@ -337,11 +338,36 @@ class MemoryManager:
 
         Thin wrapper over :meth:`_embedding_text` + :attr:`embedder` so
         callers (e.g. ``cli.sync.run_sync_import``) do not reach into
-        the private ``_embedding_text`` symbol. A future refactor of
-        the embedding-text shape only needs to update this method, not
+        the private ``_embedding_text`` symbol. A future refactor of the
+        embedding-text shape only needs to update this method, not
         every call site.
         """
         return self.embedder.embed(self._embedding_text(memory))
+
+    # ── ADR-0019 B2a: embed freshness stamping ────────────────────────────
+
+    @staticmethod
+    def _embed_content_hash(text: str) -> str:
+        """Stable hash of the embedding INPUT text (the freshness key).
+
+        Stamped into the vector-store metadata on every upsert and
+        re-derived by :meth:`heal_stale_embeddings` — an embed whose
+        stored hash differs from the hash of the row's current
+        ``_embedding_text`` was cut from other content and is stale.
+        """
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def _vector_metadata(self, memory: Memory) -> dict[str, Any]:
+        """Metadata blob for every vector upsert (project/agent/freshness).
+
+        Single construction site for the embed metadata so the sweeper's
+        freshness key can never drift from what the writers stamp.
+        """
+        return {
+            "project": memory.project,
+            "agent": memory.agent,
+            "content_hash": self._embed_content_hash(self._embedding_text(memory)),
+        }
 
     @staticmethod
     def _scan_and_tag(tags: list[str], content: str) -> tuple[list[str], dict[str, int] | None]:
@@ -679,11 +705,7 @@ class MemoryManager:
         if memory.status == MemoryStatus.PUBLISHED:
             try:
                 emb = self.embedder.embed(self._embedding_text(memory))
-                self.vectors.upsert(
-                    memory.id,
-                    emb,
-                    {"project": memory.project, "agent": memory.agent},
-                )
+                self.vectors.upsert(memory.id, emb, self._vector_metadata(memory))
             except Exception as exc:
                 logger.warning("Re-embed failed: %s", exc)
 
@@ -1955,6 +1977,14 @@ class MemoryManager:
         # vector search is silently unavailable, search degrades to FTS-only.
         degraded = vector_count == 0 and published_count > 0
         queue_depth = int(by_status.get("raw", 0)) + int(by_status.get("processing", 0))
+        # ADR-0019 B2a: the processor now drains TWO queues in parallel —
+        # the legacy RAW→PROCESSING clustering flow AND the async
+        # refinement intake (pending + retry-budgeted failed rows; a
+        # stably-failed row is not queued — it does not cycle forever).
+        # ``queue_depth`` covers both so the loop's depth check and the
+        # dashboards see the whole backlog; the breakdown is separate.
+        pipeline_counts = self.sqlite.count_by_pipeline_state()
+        refine_depth = self.sqlite.count_refine_intake()
         return {
             "status": "ok",
             "version": __version__,
@@ -1977,7 +2007,10 @@ class MemoryManager:
                 "degraded": degraded,
             },
             "processor": {
-                "queue_depth": queue_depth,
+                "queue_depth": queue_depth + refine_depth,
+                "legacy_queue_depth": queue_depth,
+                "refine_queue_depth": refine_depth,
+                "pipeline_states": pipeline_counts,
                 # Pipeline runs record their finish time in the meta table;
                 # None means the pipeline has never run yet.
                 "last_processed_at": self.sqlite.get_meta("pipeline_last_run"),
@@ -2472,6 +2505,135 @@ class MemoryManager:
 
         return publish_memory(self, memory_id, skip_quality_check=skip_quality_check)
 
+    # ── ADR-0019 Phase B2a: async refinement + quarantine ────────────────
+
+    def refine_pending(
+        self,
+        *,
+        project: str | None = None,
+        agent: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Drain the refine intake (§10-B daemon pickup).
+
+        Runs the B2a cycle over rows with ``pipeline_state='pending'``
+        (plus ``failed`` rows with retry budget left): atomic claim →
+        artifact → §6 swap / noop / lane-(a) failure / lane-(b)
+        quarantine. The legacy RAW→PROCESSING clustering queue is a
+        SEPARATE flow (``run_pipeline``) and is untouched here.
+        """
+        from mnemos.pipeline.refine import refine_pending as _refine_pending
+
+        return _refine_pending(self, project=project, agent=agent, limit=limit)
+
+    def quarantine_entry(self, memory_id: str, *, reason: str, source: str = "manual") -> bool:
+        """Lane-(b) quarantine: state+reason only, statuses untouched.
+
+        The row is excluded from every issuance path by the B1
+        ``is_quarantined`` predicate; its vector embed is REMOVED (an
+        excluded row needs no embed, and a stale one must not keep the
+        id warm in the vector leg). Terminal until
+        :meth:`release_quarantine`.
+
+        Returns ``False`` when the row does not exist.
+        """
+        memory = self.sqlite.get(memory_id)
+        if memory is None:
+            return False
+        ok = self.sqlite.update_fields(
+            memory_id, pipeline_state=PipelineState.QUARANTINED, quarantine_reason=reason
+        )
+        if not ok:
+            return False
+        try:
+            self.vectors.delete(memory_id)
+        except Exception as exc:
+            logger.warning(
+                "quarantine: embed removal failed for %s (non-fatal): %s", memory_id[:8], exc
+            )
+        logger.warning(
+            "pipeline: id=%s outcome=quarantined reason=%s source=%s",
+            memory_id[:8],
+            reason,
+            source,
+        )
+        return True
+
+    def release_quarantine(self, memory_id: str, *, source: str = "manual") -> bool:
+        """Manual release of a quarantined row (§5 terminality).
+
+        Returns the row to ``failed`` — NOT to refined/pending: a
+        quarantined projection requires human review, and ``failed`` is
+        the honest "needs a new cycle" resting state (the daemon retries
+        it through the lane-(a) intake with a FRESH retry budget). The
+        quarantine reason is cleared and the transition is audited.
+        Returns ``False`` when the row is missing or not quarantined.
+        """
+        memory = self.sqlite.get(memory_id)
+        if memory is None or memory.pipeline_state != PipelineState.QUARANTINED:
+            return False
+        ok = self.sqlite.update_fields(
+            memory_id, pipeline_state=PipelineState.FAILED, quarantine_reason=None
+        )
+        if not ok:
+            return False
+        self.sqlite.clear_refine_retry(memory_id)
+        logger.warning(
+            "pipeline: id=%s outcome=quarantine-released to=failed source=%s reason_cleared=%s",
+            memory_id[:8],
+            source,
+            memory.quarantine_reason or "none",
+        )
+        return True
+
+    def heal_stale_embeddings(self, *, limit: int = 200) -> dict[str, Any]:
+        """Idempotent sweeper: re-embed ``refined`` rows with stale vectors.
+
+        ADR-0019 §Swap: the vector upsert happens after the swap commit;
+        when it fails (or predates a swap), the embed no longer
+        represents the served projection. Freshness is decided by the
+        ``content_hash`` metadata key stamped on every upsert (see
+        :meth:`_vector_metadata`) — missing embed, missing key or hash
+        mismatch ⇒ re-embed. Quarantined rows are skipped absolutely
+        (they never reach ``refined`` anyway; the guard is defence in
+        depth).
+        """
+        rows = self.sqlite.list_by_pipeline_state(PipelineState.REFINED, limit=limit)
+        checked = 0
+        healed = 0
+        failed = 0
+        skipped_quarantined = 0
+        admissible = [m for m in rows if not is_quarantined(m)]
+        skipped_quarantined = len(rows) - len(admissible)
+        metas = self.vectors.get_metadata([m.id for m in admissible]) if admissible else {}
+        for mem in admissible:
+            checked += 1
+            expected = self._embed_content_hash(self._embedding_text(mem))
+            meta = metas.get(mem.id)
+            if meta is not None and meta.get("content_hash") == expected:
+                continue
+            try:
+                emb = self.embedder.embed(self._embedding_text(mem))
+                self.vectors.upsert(mem.id, emb, self._vector_metadata(mem))
+                healed += 1
+            except Exception as exc:
+                failed += 1
+                logger.warning("heal_stale_embeddings: failed for %s: %s", mem.id[:8], exc)
+        if healed or failed:
+            logger.info(
+                "heal_stale_embeddings: checked=%d healed=%d failed=%d skipped_quarantined=%d",
+                checked,
+                healed,
+                failed,
+                skipped_quarantined,
+            )
+        return {
+            "checked": checked,
+            "healed": healed,
+            "failed": failed,
+            "skipped_quarantined": skipped_quarantined,
+        }
+
     def run_pipeline(
         self,
         *,
@@ -2553,6 +2715,14 @@ class MemoryManager:
         # detect a stuck pipeline (queue growing but last_processed_at stale).
         self.sqlite.set_meta("pipeline_last_run", datetime.now(UTC).isoformat())
 
+        # ── ADR-0019 Phase B2a — the SECOND queue, in parallel to the ───
+        # ── legacy flow above (which is NOT modified): async          ───
+        # ── refinement of pending rows (already-visible entries).     ───
+        # Runs AFTER the publish legs so rows that entered the pipeline
+        # in this very cycle (publication enqueues them) are refined in
+        # the same pass.
+        refine = self.refine_pending(project=project, agent=agent, limit=limit)
+
         return {
             "clusters": len(clusters),
             "synthesized": len(synthesized),
@@ -2561,6 +2731,10 @@ class MemoryManager:
             "single_promoted": single_promoted,
             "stuck_rescued": stuck_rescued,
             "published_ids": [p.memory_id for p in published],
+            "refined": refine["refined"],
+            "refined_noop": refine["refined_noop"],
+            "refine_failed": refine["refine_failed"],
+            "quarantined": refine["quarantined"],
         }
 
     def _promote_single_memory(
@@ -2602,38 +2776,44 @@ class MemoryManager:
         Re-embeds every published memory and upserts into the vector store.
         Used when the embedding pipeline was broken and vectors are missing
         (P0-2 fix). Idempotent: safe to run repeatedly.
+
+        ADR-0019 §5 (B2a): quarantined rows are SKIPPED — they are
+        excluded from every issuance path, so an embed would only keep
+        a terminally-quarantined id warm in the vector leg. Each upsert
+        stamps the ``content_hash`` freshness key the sweeper
+        (:meth:`heal_stale_embeddings`) compares against.
         """
         published = self.sqlite.list_all(
             limit=10000,
             status=MemoryStatus.PUBLISHED,
         )
+        eligible = [m for m in published if not is_quarantined(m)]
+        skipped_quarantined = len(published) - len(eligible)
         indexed = 0
         failed = 0
-        for i in range(0, len(published), batch_size):
-            batch = published[i : i + batch_size]
+        for i in range(0, len(eligible), batch_size):
+            batch = eligible[i : i + batch_size]
             for mem in batch:
                 try:
                     emb = self.embedder.embed(self._embedding_text(mem))
-                    self.vectors.upsert(
-                        mem.id,
-                        emb,
-                        {"project": mem.project, "agent": mem.agent},
-                    )
+                    self.vectors.upsert(mem.id, emb, self._vector_metadata(mem))
                     indexed += 1
                 except Exception as exc:
                     logger.warning("rebuild_vector_index: failed for %s: %s", mem.id[:8], exc)
                     failed += 1
 
         logger.info(
-            "rebuild_vector_index: indexed=%d failed=%d total=%d",
+            "rebuild_vector_index: indexed=%d failed=%d skipped_quarantined=%d total=%d",
             indexed,
             failed,
+            skipped_quarantined,
             len(published),
         )
         return {
             "total": len(published),
             "indexed": indexed,
             "failed": failed,
+            "skipped_quarantined": skipped_quarantined,
         }
 
     # ── Background processor ──────────────────────────────────────────────
@@ -2692,19 +2872,31 @@ class MemoryManager:
         while not self._processor_stop.is_set():
             try:
                 stats = self.stats()
-                queue_depth = stats.get("processor", {}).get("queue_depth", 0)
+                processor_stats = stats.get("processor", {})
+                queue_depth = processor_stats.get("queue_depth", 0)
                 if queue_depth > 0:
                     logger.info(
-                        "Processor: queue_depth=%d, running pipeline (batch=200)",
+                        "Processor: queue_depth=%d (legacy=%d refine=%d), "
+                        "running pipeline (batch=200)",
                         queue_depth,
+                        processor_stats.get("legacy_queue_depth", 0),
+                        processor_stats.get("refine_queue_depth", 0),
                     )
                     result = self.run_pipeline(limit=200)
                     logger.info(
-                        "Processor: cycle done — published=%d single=%d stuck=%d",
+                        "Processor: cycle done — published=%d single=%d stuck=%d "
+                        "refined=%d noop=%d quarantined=%d",
                         result.get("published", 0),
                         result.get("single_promoted", 0),
                         result.get("stuck_rescued", 0),
+                        result.get("refined", 0),
+                        result.get("refined_noop", 0),
+                        result.get("quarantined", 0),
                     )
+                # ADR-0019 §Swap — idempotent heal pass: refined rows whose
+                # embed is stale/missing (a failed post-swap upsert) get
+                # re-embedded; quarantined rows are skipped absolutely.
+                self.heal_stale_embeddings()
                 # CCR cleanup tick — runs on its own interval, not every cycle.
                 self._maybe_run_ccr_cleanup()
             except Exception:

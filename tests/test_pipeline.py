@@ -602,6 +602,12 @@ class TestRunPipeline:
             "single_promoted": 0,
             "stuck_rescued": 0,
             "published_ids": [],
+            # ADR-0019 B2a: the refine leg of the same run reports its
+            # outcome counts (empty pool → all zeros).
+            "refined": 0,
+            "refined_noop": 0,
+            "refine_failed": 0,
+            "quarantined": 0,
         }
 
     def test_pipeline_records_last_run(self, tmp_manager):
