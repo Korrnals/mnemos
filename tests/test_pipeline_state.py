@@ -34,13 +34,26 @@ Coverage map (one section per B1 deliverable):
   screen titles for injections). Refusals are zero-loss (content stored,
   visibility refused/demoted) and audited with the '``publish gate: …``'
   line convention.
+* **B2a — async refinement cycle (§5/§6/§10-B)** — publication enters
+  the pipeline (NULL→pending, failed→pending fresh cycle, refined
+  untouched); the daemon intake picks pending + retry-budgeted failed
+  rows; the §6 swap is one ``update_fields`` transaction on the SAME
+  row (id stable, ``raw_content`` byte-identical, ``clean_content``
+  reset, ``marker_version`` bumped only on a real content change,
+  ``swap_key`` idempotency); the four outcome lanes (refined /
+  refined-noop / failed-with-backoff / quarantined-terminal) and their
+  audit lines; competitive claim CAS; manual quarantine release
+  (manager + REST); the stale-embed sweeper and the quarantine skip in
+  ``rebuild_vector_index``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock
@@ -49,6 +62,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import mnemos.pipeline.refine as refine_mod
 from mnemos.api import main as api_main
 from mnemos.api.main import app, lifespan
 from mnemos.assemble import build_provenance
@@ -65,6 +79,7 @@ from mnemos.models import (
     PipelineState,
     SearchQuery,
 )
+from mnemos.pipeline.refine import refine_single
 
 PROJECT = "b1-proj"
 AGENT = "b1-agent"
@@ -578,6 +593,12 @@ class TestQuarantineExclusion:
             "swap_key",
             "quarantine_reason",
             "marker_version",
+            # B2a review F5: raw_content joined the store-internal
+            # whitelist (§6 zero-loss materialisation at swap time) — it
+            # must stay unreachable from external payloads exactly like
+            # the rest of the lifecycle group. A client-supplied
+            # raw_content would forge the immutable-source invariant.
+            "raw_content",
         )
         for field in lifecycle_fields:
             assert field not in MemoryUpdate.model_fields
@@ -901,3 +922,631 @@ class TestN1UpdateGate:
         assert updated is not None
         assert updated.status == MemoryStatus.PUBLISHED
         assert updated.title == "Clean heading"
+
+
+# ── 6. B2a — pipeline entry at publication (§10-B) ────────────────────────────
+
+
+class TestPublishPipelineEntry:
+    def test_first_publication_enqueues_pending(self, manager: MemoryManager, caplog) -> None:
+        mem = _published(manager, "pipeline entry body about aleph", status=MemoryStatus.RAW)
+        assert manager.sqlite.get(mem.id).pipeline_state is None  # pre-condition
+        with caplog.at_level("INFO", logger="mnemos.pipeline.publish"):
+            result = manager.publish(mem.id, skip_quality_check=True)
+        assert result.published is True
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.PENDING
+        audit = [r for r in caplog.records if "outcome=enqueued" in r.message]
+        assert audit and "from=none" in audit[-1].message
+
+    def test_republish_keeps_refined(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "converged row body about beth")
+        manager.sqlite.update_fields(
+            mem.id, pipeline_state=PipelineState.REFINED, swap_key="key-1", marker_version=4
+        )
+        result = manager.publish(mem.id, skip_quality_check=True)
+        assert result.published is True
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.REFINED
+        assert stored.swap_key == "key-1"
+        assert stored.marker_version == 4
+
+    def test_republish_of_failed_starts_fresh_cycle(self, manager: MemoryManager, caplog) -> None:
+        mem = _published(manager, "failed row body about gimel", status=MemoryStatus.RAW)
+        manager.publish(mem.id, skip_quality_check=True)
+        # Exhaust the retry budget, then manually re-publish.
+        manager.sqlite.record_refine_failure(mem.id, attempt=3, next_retry_at=None)
+        with caplog.at_level("INFO", logger="mnemos.pipeline.publish"):
+            result = manager.publish(mem.id, skip_quality_check=True)
+        assert result.published is True
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.PENDING
+        assert stored.metadata["pipeline_retry_count"] == 0  # fresh cycle
+        audit = [r for r in caplog.records if "outcome=enqueued" in r.message]
+        assert audit and "from=failed" in audit[-1].message
+
+
+# ── 7. B2a — the §6 swap (success with artifact) ──────────────────────────────
+
+
+class TestRefineSwap:
+    def test_full_cycle_pending_to_refined_swap(self, manager: MemoryManager, caplog) -> None:
+        """The ADR-0019 §6 contract: same id, stable rowid, byte-identical
+        raw_content, clean_content reset, marker_version bumped, FTS finds
+        the NEW tokens, vector re-embedded after the commit."""
+        target = _published(manager, "swapped member one zebra unique")
+        mate = _published(manager, "cluster mate two quokka unique")
+        raw_source = "original source payload of member one"
+        manager.sqlite.update_fields(
+            target.id,
+            cluster_id="cl-b2a",
+            raw_content=raw_source,
+            clean_content="stale filtered projection of one",
+        )
+        manager.sqlite.update_fields(mate.id, cluster_id="cl-b2a")
+        _pipeline_state(manager, target.id, PipelineState.PENDING)
+
+        def _rowid(mid: str) -> int:
+            row = (
+                manager.sqlite._get_conn()
+                .execute("SELECT rowid FROM memories WHERE id=?", (mid,))
+                .fetchone()
+            )
+            return int(row[0])
+
+        rowid_before = _rowid(target.id)
+        manager.vectors.delete(target.id)  # embed must come back after the swap
+        fts_before = [m.id for m, _ in manager.sqlite.fts_search("quokka", project=PROJECT)]
+        assert target.id not in fts_before  # new token not indexed yet
+        assert mate.id in fts_before
+
+        with caplog.at_level("INFO", logger="mnemos.pipeline.refine"):
+            summary = manager.refine_pending()
+
+        assert summary["refined"] == 1
+        swapped = manager.sqlite.get(target.id)
+        assert swapped is not None
+        # Identity: same id, same rowid (FTS external-content rowid stable).
+        assert swapped.id == target.id
+        assert _rowid(target.id) == rowid_before
+        # §6 swap semantics.
+        assert swapped.pipeline_state == PipelineState.REFINED
+        assert swapped.processed_at is not None
+        assert swapped.swap_key is not None
+        assert swapped.clean_content is None  # else effective_content() masks the swap
+        assert swapped.marker_version == target.marker_version + 1
+        assert swapped.effective_content() == swapped.content  # the swap is served
+        assert "quokka" in swapped.content  # the artifact carries the mate's text
+        # Zero-loss: raw_content byte-identical, never rewritten.
+        assert swapped.raw_content == raw_source
+        # Status untouched — visibility is owned by MemoryStatus.
+        assert swapped.status == MemoryStatus.PUBLISHED
+        # FTS reindexed the swapped projection: NEW tokens find the row.
+        fts_after = [m.id for m, _ in manager.sqlite.fts_search("quokka", project=PROJECT)]
+        assert target.id in fts_after
+        hits = manager.search("quokka", project=PROJECT)
+        assert target.id in {r.memory.id for r in hits}
+        # Vector re-embedded AFTER the commit, stamped with freshness hash.
+        assert manager.vectors.has(target.id)
+        meta = manager.vectors.get_metadata([target.id])[target.id]
+        assert meta["content_hash"] == manager._embed_content_hash(manager._embedding_text(swapped))
+        audit = [r for r in caplog.records if "outcome=refined" in r.message]
+        assert audit and "attempt=1" in audit[-1].message
+
+    def test_double_swap_noop_by_swap_key(self, manager: MemoryManager, monkeypatch) -> None:
+        target = _published(manager, "idempotency member one sigma unique")
+        mate = _published(manager, "idempotency mate two tau unique")
+        manager.sqlite.update_fields(target.id, cluster_id="cl-idem")
+        manager.sqlite.update_fields(mate.id, cluster_id="cl-idem")
+        _pipeline_state(manager, target.id, PipelineState.PENDING)
+
+        # Spy on the swap writer FROM THE FIRST RUN. §6 atomicity: the
+        # real swap is ONE update_fields call = ONE transaction carrying
+        # content + clean_content reset + lifecycle columns together —
+        # a split write (e.g. clean_content moved to a second call)
+        # would open a window where the swapped content is masked by a
+        # stale clean_content in effective_content().
+        calls: list[dict] = []
+        original = manager.sqlite.update_fields
+
+        def _spy(memory_id: str, **kwargs: object) -> bool:
+            calls.append({"memory_id": memory_id, **kwargs})
+            return original(memory_id, **kwargs)  # type: ignore[arg-type]
+
+        swap_columns = (
+            "content",
+            "clean_content",
+            "pipeline_state",
+            "processed_at",
+            "swap_key",
+            "marker_version",
+        )
+
+        monkeypatch.setattr(manager.sqlite, "update_fields", _spy)
+        try:
+            assert manager.refine_pending()["refined"] == 1
+        finally:
+            monkeypatch.setattr(manager.sqlite, "update_fields", original)
+        first = manager.sqlite.get(target.id)
+        assert first is not None
+
+        # FIRST run — the full swap branch: exactly ONE update_fields
+        # call touching any swap column, and it carries ALL of them.
+        first_swap_calls = [
+            c for c in calls if c["memory_id"] == target.id and any(k in c for k in swap_columns)
+        ]
+        assert len(first_swap_calls) == 1, first_swap_calls
+        for column in swap_columns:
+            assert column in first_swap_calls[0], (
+                f"§6 atomicity broken: {column} missing from the swap transaction"
+            )
+        assert first_swap_calls[0]["content"] != target.content  # a real swap happened
+
+        # Re-enqueue (through the original writer — the spy stays clean)
+        # and re-run with the SAME artifact: the second run must collapse
+        # by swap_key — ONLY the lifecycle columns, never a content
+        # rewrite (which would re-fire the FTS trigger for nothing and
+        # could race a concurrent projection edit).
+        original(target.id, pipeline_state=PipelineState.PENDING)
+        calls.clear()
+        monkeypatch.setattr(manager.sqlite, "update_fields", _spy)
+        try:
+            summary = manager.refine_pending()
+        finally:
+            monkeypatch.setattr(manager.sqlite, "update_fields", original)
+        second = manager.sqlite.get(target.id)
+        assert second is not None
+        assert summary["refined"] == 1
+        swap_writes = [c for c in calls if "swap_key" in c]
+        assert len(swap_writes) == 1
+        assert swap_writes[0]["memory_id"] == target.id
+        assert "content" not in swap_writes[0]  # no rewrite on a swap_key hit
+        assert "clean_content" not in swap_writes[0]
+        assert "marker_version" not in swap_writes[0]
+        assert "raw_content" not in swap_writes[0]
+        # Row-level convergence.
+        assert second.content == first.content
+        assert second.marker_version == first.marker_version  # NOT incremented
+        assert second.swap_key == first.swap_key
+        assert second.raw_content == first.raw_content
+        assert second.pipeline_state == PipelineState.REFINED
+
+    def test_marker_version_not_bumped_when_artifact_equals_projection(
+        self, manager: MemoryManager, monkeypatch
+    ) -> None:
+        """The version guard: marker_version grows ONLY on a REAL content
+        change of the served projection. A re-processing whose artifact
+        equals the currently-served text goes through the swap branch
+        (lifecycle columns + swap_key written) but must NOT bump the
+        version — consumers desync-detect through it, so an idle bump
+        would cry wolf."""
+        mem = _published(manager, "identical artifact body about allegheny")
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        monkeypatch.setattr(
+            refine_mod,
+            "_produce_refined_projection",
+            lambda mgr, memory: memory.effective_content(),  # same text, no improvement
+        )
+        summary = manager.refine_pending()
+        assert summary["refined"] == 1  # the SWAP branch ran (artifact exists)
+        assert summary["refined_noop"] == 0
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.marker_version == mem.marker_version  # NOT bumped
+        assert stored.content == mem.content  # text unchanged
+        assert stored.pipeline_state == PipelineState.REFINED
+        assert stored.swap_key is not None  # swap bookkeeping still written
+        assert stored.clean_content is None
+
+    def test_swap_commit_and_embed_upsert_audit_events(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        """ADR-0019 §Swap audit contract (review F4): the swap commit point
+        emits ``swap_committed`` with the OLD and NEW content revision
+        hashes, and the single embedding write point emits
+        ``embed_upserted`` binding the stamped content_hash to the actual
+        upsert. Hashes only — never raw content."""
+        target = _published(manager, "audit event member one zebra unique")
+        mate = _published(manager, "audit event mate two quokka unique")
+        manager.sqlite.update_fields(target.id, cluster_id="cl-audit")
+        manager.sqlite.update_fields(mate.id, cluster_id="cl-audit")
+        _pipeline_state(manager, target.id, PipelineState.PENDING)
+        seeded = manager.sqlite.get(target.id)
+        assert seeded is not None
+        pre_swap_projection = seeded.effective_content()
+
+        with caplog.at_level("INFO"):
+            summary = manager.refine_pending()
+        assert summary["refined"] == 1
+        swapped = manager.sqlite.get(target.id)
+        assert swapped is not None
+
+        # swap_committed: one event, at the commit, with both revisions.
+        swap_events = [r.getMessage() for r in caplog.records if "swap_committed" in r.message]
+        assert len(swap_events) == 1
+        match = re.search(
+            r"swap_committed: id=(\S+) old_revision=([0-9a-f]{16}) new_revision=([0-9a-f]{16})",
+            swap_events[0],
+        )
+        assert match is not None, swap_events[0]
+        assert match.group(1) == target.id[:8]
+        old_rev, new_rev = match.group(2), match.group(3)
+        assert old_rev != new_rev
+        assert old_rev == hashlib.sha256(pre_swap_projection.encode()).hexdigest()[:16]
+        assert new_rev == hashlib.sha256(swapped.content.encode()).hexdigest()[:16]
+        # Audit carries hashes only — never the raw content.
+        assert pre_swap_projection not in swap_events[0]
+        assert swapped.content[:40] not in swap_events[0]
+
+        # embed_upserted: the content_hash bound to the actual upsert.
+        embed_events = [r.getMessage() for r in caplog.records if "embed_upserted" in r.message]
+        target_events = [m for m in embed_events if f"id={target.id[:8]}" in m]
+        assert len(target_events) == 1, embed_events
+        embed_match = re.search(
+            r"embed_upserted: id=\S+ content_hash=([0-9a-f]{16})", target_events[0]
+        )
+        assert embed_match is not None, target_events[0]
+        assert (
+            embed_match.group(1)
+            == manager.vectors.get_metadata([target.id])[target.id]["content_hash"]
+        )
+        assert embed_match.group(1) == manager._embed_content_hash(manager._embedding_text(swapped))
+
+
+# ── 8. B2a — refined-noop (success without artifact) ──────────────────────────
+
+
+class TestRefineNoop:
+    def test_lone_record_transitions_without_content_mutation(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        mem = _published(manager, "lone record body about psi — nothing to improve")
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        with caplog.at_level("INFO", logger="mnemos.pipeline.refine"):
+            summary = manager.refine_pending()
+        assert summary["refined_noop"] == 1
+        assert summary["refined"] == 0
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.REFINED
+        assert stored.processed_at is not None
+        assert stored.content == mem.content  # untouched — honest "nothing to improve"
+        assert stored.swap_key is None  # no swap was performed
+        assert stored.marker_version == mem.marker_version  # version not grown
+        audit = [r for r in caplog.records if "outcome=refined-noop" in r.message]
+        assert audit and "reason=no-artifact" in audit[-1].message
+
+    def test_cluster_of_invisible_mates_is_noop(self, manager: MemoryManager) -> None:
+        """Cluster members still in the (untouched) legacy flow are not an
+        admissible refinement context — the stub refuses to merge raw
+        members into a visible projection."""
+        mem = _published(manager, "visible member about omega")
+        raw_mate = _published(manager, "raw mate about omega", status=MemoryStatus.RAW)
+        manager.sqlite.update_fields(mem.id, cluster_id="cl-mixed")
+        manager.sqlite.update_fields(raw_mate.id, cluster_id="cl-mixed")
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        summary = manager.refine_pending()
+        assert summary["refined_noop"] == 1
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.content == mem.content
+        assert raw_mate.status == MemoryStatus.RAW  # legacy flow untouched
+
+
+# ── 9. B2a — lane (a): quality/infra failure with bounded retry ───────────────
+
+
+class TestRefineFailedLane:
+    def _failing_producer(self, manager: MemoryManager) -> Memory:
+        mem = _published(manager, "failing lane body about dorian")
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        return mem
+
+    def test_failure_stays_visible_raw_with_backoff_and_audit(
+        self, manager: MemoryManager, monkeypatch, caplog
+    ) -> None:
+        mem = self._failing_producer(manager)
+
+        def _boom(mgr: MemoryManager, memory: Memory) -> str | None:
+            raise RuntimeError("stub outage")
+
+        monkeypatch.setattr(refine_mod, "_produce_refined_projection", _boom)
+        with caplog.at_level("WARNING", logger="mnemos.pipeline.refine"):
+            summary = manager.refine_pending()
+
+        assert summary["refine_failed"] == 1
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.status == MemoryStatus.PUBLISHED  # visible raw
+        assert stored.content == mem.content  # projection untouched
+        assert stored.pipeline_state == PipelineState.FAILED
+        assert stored.metadata["pipeline_retry_count"] == 1
+        # Backoff scheduled in the future → the daemon does not spin.
+        retry_at = datetime.fromisoformat(stored.metadata["pipeline_retry_at"])
+        assert retry_at > datetime(2026, 1, 1, tzinfo=UTC)
+        audit = [r for r in caplog.records if "outcome=failed" in r.message]
+        assert audit and "attempt=1" in audit[-1].message
+        assert manager.sqlite.list_refine_intake() == []  # backoff blocks re-pick
+        assert manager.sqlite.claim_for_refinement(mem.id) is False
+
+    def test_retry_budget_exhausts_to_stable_failure(
+        self, manager: MemoryManager, monkeypatch
+    ) -> None:
+        mem = self._failing_producer(manager)
+
+        def _boom(mgr: MemoryManager, memory: Memory) -> str | None:
+            raise RuntimeError("stub outage")
+
+        monkeypatch.setattr(refine_mod, "_produce_refined_projection", _boom)
+        past = "2000-01-01T00:00:00+00:00"
+        assert manager.refine_pending()["refine_failed"] == 1  # attempt 1
+        for expected_attempt in (2, 3):
+            # Simulate elapsed backoff (tests never sleep).
+            manager.sqlite.record_refine_failure(
+                mem.id, attempt=expected_attempt - 1, next_retry_at=past
+            )
+            summary = manager.refine_pending()
+            assert summary["refine_failed"] == 1
+            stored = manager.sqlite.get(mem.id)
+            assert stored is not None
+            assert stored.metadata["pipeline_retry_count"] == expected_attempt
+
+        stable = manager.sqlite.get(mem.id)
+        assert stable is not None
+        assert stable.metadata["pipeline_retry_at"] == ""  # no retry scheduled
+        # Stable failure never re-enters the queue — even with a past
+        # retry_at the exhausted counter gates the intake.
+        manager.sqlite.record_refine_failure(mem.id, attempt=3, next_retry_at=past)
+        assert manager.sqlite.list_refine_intake() == []
+        assert manager.sqlite.claim_for_refinement(mem.id) is False
+        assert manager.stats()["processor"]["refine_queue_depth"] == 0
+
+
+# ── 10. B2a — lane (b): danger in the PROCESSED projection, terminal ─────────
+
+
+class TestRefineQuarantineLane:
+    def _pending(self, manager: MemoryManager, content: str) -> Memory:
+        mem = _published(manager, content)
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        return mem
+
+    def test_secret_introduced_by_processing_quarantines(
+        self, manager: MemoryManager, monkeypatch, caplog
+    ) -> None:
+        mem = self._pending(manager, "danger lane body about eta")
+        manager.vectors.upsert(mem.id, [0.1] * 384, {"project": PROJECT, "agent": AGENT})
+
+        def _dirty(mgr: MemoryManager, memory: Memory) -> str | None:
+            return f"processed projection carries {FAKE_AWS_KEY} inline"
+
+        monkeypatch.setattr(refine_mod, "_produce_refined_projection", _dirty)
+        with caplog.at_level("WARNING", logger="mnemos.pipeline.refine"):
+            summary = manager.refine_pending()
+
+        assert summary["quarantined"] == 1
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.QUARANTINED
+        assert stored.quarantine_reason == "secret"  # detector class code
+        assert stored.status == MemoryStatus.PUBLISHED  # statuses untouched
+        assert stored.content == mem.content  # the raw projection stays stored
+        assert manager.vectors.has(mem.id) is False  # embed dropped
+        # Excluded from issuance (B1 predicate) on the FTS leg.
+        assert mem.id not in {r.memory.id for r in manager.search("eta", project=PROJECT)}
+        audit = [r for r in caplog.records if "outcome=quarantined" in r.message]
+        assert audit and "reason=secret" in audit[-1].message
+        assert FAKE_AWS_KEY not in audit[-1].message  # raw values never logged
+        # Terminal: the daemon never re-picks the row.
+        assert manager.sqlite.list_refine_intake() == []
+        assert manager.refine_pending()["considered"] == 0
+
+    def test_detector_error_quarantines_fail_closed_not_retry(
+        self, manager: MemoryManager, monkeypatch
+    ) -> None:
+        """§5 ambiguity: a scanner/detector error during processing is a
+        quarantine, NOT a lane-(a) retry — an unreliable scanner must not
+        keep re-serving the row as visible-raw."""
+        mem = self._pending(manager, "ambiguity lane body about theta")
+        monkeypatch.setattr(
+            refine_mod,
+            "_produce_refined_projection",
+            lambda mgr, memory: "clean-looking artifact",
+        )
+        monkeypatch.setattr(
+            refine_mod,
+            "detect",
+            lambda content, title=None: DetectionResult(error="scanner down"),
+        )
+        summary = manager.refine_pending()
+        assert summary["quarantined"] == 1
+        assert summary["refine_failed"] == 0  # not retried
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.QUARANTINED
+        assert stored.quarantine_reason == refine_mod.QUARANTINE_REASON_DETECTOR_ERROR
+        assert stored.metadata.get("pipeline_retry_count") is None  # no retry cycle
+
+    def test_quarantine_entry_drops_embed_and_never_touches_status(
+        self, manager: MemoryManager
+    ) -> None:
+        mem = _published(manager, "manual quarantine body about iota")
+        manager.vectors.upsert(mem.id, [0.1] * 384, {"project": PROJECT, "agent": AGENT})
+        assert manager.quarantine_entry(mem.id, reason="prompt-injection", source="test")
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.QUARANTINED
+        assert stored.quarantine_reason == "prompt-injection"
+        assert stored.status == MemoryStatus.PUBLISHED  # statuses untouched
+        assert manager.vectors.has(mem.id) is False
+        assert manager.quarantine_entry("no-such-id", reason="secret") is False
+
+
+# ── 11. B2a — competitive claim + quarantine release ──────────────────────────
+
+
+class TestClaimAndRelease:
+    def test_second_worker_claim_is_noop(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "claim race body about kappa")
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        assert manager.sqlite.claim_for_refinement(mem.id) is True  # first worker
+        assert manager.sqlite.claim_for_refinement(mem.id) is False  # second: no-op
+        assert refine_single(manager, mem.id) == "lost-race"
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.PROCESSING  # untouched by the loser
+
+    def test_release_quarantine_returns_to_failed_for_new_cycle(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        mem = _published(manager, "release flow body about lambda")
+        _quarantine(manager, mem.id, "secret")
+        # Terminality guard: release is the only exit.
+        with caplog.at_level("WARNING", logger="mnemos.manager"):
+            assert manager.release_quarantine(mem.id) is True
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.FAILED  # not refined/pending
+        assert stored.quarantine_reason is None
+        assert stored.metadata["pipeline_retry_count"] == 0  # fresh cycle
+        audit = [r for r in caplog.records if "outcome=quarantine-released" in r.message]
+        assert audit and "to=failed" in audit[-1].message
+        # The failed row re-enters the daemon queue and completes a cycle.
+        assert manager.sqlite.list_refine_intake()
+        summary = manager.refine_pending()
+        assert summary["considered"] == 1
+        after = manager.sqlite.get(mem.id)
+        assert after is not None
+        assert after.pipeline_state == PipelineState.REFINED
+
+    def test_release_refuses_non_quarantined(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "release refusal body about mu")
+        assert manager.release_quarantine(mem.id) is False
+        assert manager.release_quarantine("no-such-id") is False
+
+    def test_rest_release_endpoint(self, manager: MemoryManager, rest_client: TestClient) -> None:
+        mem = _published(manager, "rest release body about nu")
+        _quarantine(manager, mem.id, "secret")
+        resp = rest_client.post(f"/memories/{mem.id}/quarantine/release")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "released"
+        assert body["pipeline_state"] == "failed"
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.FAILED
+        # Not quarantined anymore → 404 on a second release.
+        assert rest_client.post(f"/memories/{mem.id}/quarantine/release").status_code == 404
+        assert rest_client.post("/memories/no-such-id/quarantine/release").status_code == 404
+
+
+# ── 12. B2a — daemon intake, queue statistics, sweeper, rebuild ───────────────
+
+
+class TestDaemonIntakeAndStats:
+    def test_run_pipeline_drains_both_queues(self, manager: MemoryManager) -> None:
+        raw = _published(manager, "unique standalone passthrough body", status=MemoryStatus.RAW)
+        pending = _published(manager, "pending row awaiting refinement about xi")
+        _pipeline_state(manager, pending.id, PipelineState.PENDING)
+
+        summary = manager.run_pipeline()
+
+        # Legacy flow: the raw row was promoted (and its publication
+        # entered the pipeline in the same cycle).
+        assert summary["single_promoted"] == 1
+        assert manager.sqlite.get(raw.id).status == MemoryStatus.PUBLISHED
+        # Refine queue: the manually-pending row AND the just-published
+        # passthrough row both completed a (noop) cycle.
+        assert summary["refined_noop"] == 2
+        assert summary["refined"] == 0
+        states = manager.sqlite.count_by_pipeline_state()
+        assert states.get("pending", 0) == 0
+        assert manager.stats()["processor"]["queue_depth"] == 0  # both queues empty
+
+    def test_stats_counts_both_queues(self, manager: MemoryManager) -> None:
+        for i in range(2):
+            mem = _published(manager, f"stats probe row {i} about omicron")
+            _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        legacy = _published(manager, "legacy raw probe", status=MemoryStatus.RAW)
+        assert legacy.status == MemoryStatus.RAW
+        stats = manager.stats()["processor"]
+        assert stats["legacy_queue_depth"] == 1
+        assert stats["refine_queue_depth"] == 2
+        assert stats["queue_depth"] == 3  # both queues
+        assert stats["pipeline_states"]["pending"] == 2
+
+    def test_legacy_null_rows_never_enter_refine_intake(self, manager: MemoryManager) -> None:
+        _published(manager, "legacy raw null row", status=MemoryStatus.RAW)
+        _published(manager, "legacy published null row about pi")
+        assert manager.sqlite.list_refine_intake() == []
+        assert manager.stats()["processor"]["refine_queue_depth"] == 0
+
+    def test_stable_failed_row_not_queued(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "stable failed stats probe about rho")
+        manager.sqlite.record_refine_failure(mem.id, attempt=3, next_retry_at=None)
+        stats = manager.stats()["processor"]
+        assert stats["refine_queue_depth"] == 0
+        assert stats["pipeline_states"]["failed"] == 1
+
+
+class TestSweeperAndRebuild:
+    def test_heal_fixes_stale_refined_embed(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "sweeper target body about sigma")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        manager.vectors.upsert(
+            mem.id,
+            [0.3] * 384,
+            {"project": PROJECT, "agent": AGENT, "content_hash": "stale"},
+        )
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 1
+        meta = manager.vectors.get_metadata([mem.id])[mem.id]
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert meta["content_hash"] == manager._embed_content_hash(manager._embedding_text(stored))
+
+    def test_heal_restores_missing_embed_and_skips_fresh(self, manager: MemoryManager) -> None:
+        fresh = _published(manager, "fresh embed row about tau")
+        _pipeline_state(manager, fresh.id, PipelineState.REFINED)
+        # Seed a FRESH embed (correct content_hash) for the fresh row.
+        fresh_row = manager.sqlite.get(fresh.id)
+        assert fresh_row is not None
+        manager.vectors.upsert(fresh.id, [0.1] * 384, manager._vector_metadata(fresh_row))
+        missing = _published(manager, "missing embed row about upsilon")
+        _pipeline_state(manager, missing.id, PipelineState.REFINED)
+        manager.vectors.delete(missing.id)
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 1  # only the missing one
+        assert manager.vectors.has(missing.id)
+
+    def test_heal_never_touches_quarantined(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "quarantined sweeper probe about phi")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        _quarantine(manager, mem.id, "secret")
+        # Simulate drift: a stale embed re-appeared for the quarantined id.
+        manager.vectors.upsert(
+            mem.id, [0.5] * 384, {"project": PROJECT, "agent": AGENT, "content_hash": "stale"}
+        )
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 0
+        assert manager.vectors.get_metadata([mem.id])[mem.id]["content_hash"] == "stale"
+
+    def test_rebuild_vector_index_skips_quarantined(self, manager: MemoryManager) -> None:
+        clean = _published(manager, "rebuild clean row about chi")
+        dirty = _published(manager, "rebuild dirty row about psi")
+        # The daemon-path quarantine (embed dropped with the row excluded).
+        assert manager.quarantine_entry(dirty.id, reason="secret", source="test")
+        assert manager.vectors.has(dirty.id) is False
+        result = manager.rebuild_vector_index()
+        assert result["skipped_quarantined"] == 1
+        assert result["indexed"] == 1
+        assert manager.vectors.has(clean.id)  # re-embedded with freshness stamp
+        meta = manager.vectors.get_metadata([clean.id])[clean.id]
+        stored = manager.sqlite.get(clean.id)
+        assert stored is not None
+        assert meta["content_hash"] == manager._embed_content_hash(manager._embedding_text(stored))
+        # The quarantined row gained no embed from the rebuild.
+        assert manager.vectors.has(dirty.id) is False

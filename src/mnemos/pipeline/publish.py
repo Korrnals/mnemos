@@ -21,7 +21,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from mnemos.danger_detectors import detect
-from mnemos.models import MemoryStatus, PublishResult
+from mnemos.models import MemoryStatus, PipelineState, PublishResult
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
@@ -125,15 +125,30 @@ def publish_memory(
     memory.updated_at = datetime.now(UTC)
     mgr.sqlite.save(memory)
 
-    # Upsert to vector index
+    # ── ADR-0019 Phase B2a: entry into the refinement pipeline ───────
+    # Optimistic publication: the now-visible row joins the async
+    # refinement queue. Existing lifecycle states are NOT clobbered:
+    #   * NULL (first publication of this row) → pending;
+    #   * failed (manual re-publication) → pending, a fresh cycle (the
+    #     retry counter is reset with it);
+    #   * refined/pending/processing → untouched (a re-publication that
+    #     did not change the content keeps a converged row converged).
+    if memory.pipeline_state is None or memory.pipeline_state == PipelineState.FAILED:
+        from_state = memory.pipeline_state.value if memory.pipeline_state else "none"
+        if memory.pipeline_state == PipelineState.FAILED:
+            mgr.sqlite.clear_refine_retry(memory_id)
+        mgr.sqlite.update_fields(memory_id, pipeline_state=PipelineState.PENDING)
+        logger.info(
+            "pipeline: id=%s outcome=enqueued from=%s state=pending",
+            memory_id[:8],
+            from_state,
+        )
+
+    # Upsert to vector index (single embedding write point: stamps the
+    # freshness hash + emits the embed_upserted audit event).
     vector_indexed = False
     try:
-        emb = mgr.embedder.embed(mgr._embedding_text(memory))
-        mgr.vectors.upsert(
-            memory.id,
-            emb,
-            {"project": memory.project, "agent": memory.agent},
-        )
+        mgr.upsert_embedding(memory)
         vector_indexed = True
     except Exception as exc:
         logger.warning("publish: vector upsert failed for %s: %s", memory_id[:8], exc)

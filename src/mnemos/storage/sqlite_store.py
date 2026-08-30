@@ -86,6 +86,12 @@ _FIELD_UPDATERS: dict[str, str] = {
     "swap_key": "swap_key=?",
     "quarantine_reason": "quarantine_reason=?",
     "marker_version": "marker_version=?",
+    # ADR-0019 B2a swap zero-loss: the refine daemon materialises
+    # ``raw_content`` with the pre-swap projection when (and only when)
+    # the column is still NULL — the invariant in models.py is "never
+    # mutated after first write", and the swap's first write is exactly
+    # here. No other caller writes it through this path.
+    "raw_content": "raw_content=?",
 }
 
 # FTS5 query-syntax special chars. Stripping them and wrapping the rest in
@@ -1368,6 +1374,184 @@ class SQLiteStore:
         conn.commit()
         self._invalidate_caches()
         return cur.rowcount > 0
+
+    # ── ADR-0019 Phase B2a: refine intake / claim / retry ────────────────
+    #
+    # The async-refinement daemon's queue lives in the orthogonal
+    # ``pipeline_state`` column. These are the ONLY writers of the
+    # pending→processing→{refined|failed|quarantined} transitions and of
+    # the retry bookkeeping (metadata JSON keys — the schema itself is
+    # closed since B1). SQL is static with bound parameters throughout.
+
+    @staticmethod
+    def _refine_intake_where(max_attempts: int, now_iso: str) -> tuple[str, list[Any]]:
+        """Shared WHERE for the refine intake (SELECT and COUNT).
+
+        A row is intake-eligible when it is ``pending``, OR ``failed``
+        with retry budget left (``pipeline_retry_count`` < max) AND the
+        exponential backoff has elapsed (``pipeline_retry_at`` <= now;
+        the empty sentinel / missing key is always eligible — a fresh
+        cycle after manual release or re-publication). ``processing``
+        rows are owned by a worker (claim CAS), ``refined``/``quarantined``
+        are terminal-adjacent, NULL rows are the untouched legacy flow.
+        """
+        where = (
+            "(pipeline_state = 'pending' "
+            "OR (pipeline_state = 'failed' "
+            "    AND CAST(COALESCE(json_extract(metadata, '$.pipeline_retry_count'), 0) "
+            "        AS INTEGER) < ? "
+            "    AND COALESCE(json_extract(metadata, '$.pipeline_retry_at'), '') <= ?))"
+        )
+        return where, [max_attempts, now_iso]
+
+    def list_refine_intake(
+        self,
+        *,
+        limit: int = 100,
+        project: str | None = None,
+        agent: str | None = None,
+        max_attempts: int = 3,
+        now_iso: str | None = None,
+    ) -> list[Memory]:
+        """Select rows awaiting async refinement (§10 Phase B pickup)."""
+        where, params = self._refine_intake_where(
+            max_attempts, now_iso or datetime.now(UTC).isoformat()
+        )
+        q = f"SELECT * FROM memories WHERE {where}"  # nosec B608 - static fragment
+        if project:
+            q += " AND project=?"
+            params.append(project)
+        if agent:
+            q += " AND agent=?"
+            params.append(agent)
+        q += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        conn = self._get_conn()
+        return [self._row_to_memory(r) for r in conn.execute(q, params).fetchall()]
+
+    def count_refine_intake(self, *, max_attempts: int = 3, now_iso: str | None = None) -> int:
+        """COUNT over the same intake predicate (queue-depth statistics)."""
+        where, params = self._refine_intake_where(
+            max_attempts, now_iso or datetime.now(UTC).isoformat()
+        )
+        row = (
+            self._get_conn()
+            .execute(
+                f"SELECT COUNT(*) FROM memories WHERE {where}",  # nosec B608 - static fragment
+                params,
+            )
+            .fetchone()
+        )
+        return int(row[0]) if row else 0
+
+    def claim_for_refinement(
+        self,
+        memory_id: str,
+        *,
+        max_attempts: int = 3,
+        now_iso: str | None = None,
+    ) -> bool:
+        """Atomic grab: intake-eligible → ``processing`` (compare-and-set).
+
+        The WHERE clause re-checks the FULL intake predicate (not just
+        ``id``), so a concurrent second worker that selected the same row
+        loses the race and gets ``False`` — the existing no-op convention
+        of this store's retry/grab sites. A row already ``processing``,
+        ``refined``, ``quarantined`` or retry-exhausted never matches.
+        """
+        where, params = self._refine_intake_where(
+            max_attempts, now_iso or datetime.now(UTC).isoformat()
+        )
+        conn = self._get_conn()
+        cur = conn.execute(
+            f"UPDATE memories SET pipeline_state='processing' "  # nosec B608 - static
+            f"WHERE id=? AND {where}",
+            [memory_id, *params],
+        )
+        conn.commit()
+        self._invalidate_caches()
+        return cur.rowcount > 0
+
+    def record_refine_failure(
+        self,
+        memory_id: str,
+        *,
+        attempt: int,
+        next_retry_at: str | None,
+    ) -> bool:
+        """Lane-(a) outcome in ONE transaction: ``failed`` + retry bookkeeping.
+
+        The retry counter lives in the metadata JSON (B1 closed the
+        schema — no new column); ``json_set`` updates the keys in place
+        so concurrent metadata writers are merged, not clobbered.
+        ``next_retry_at=None`` means the retry budget is exhausted: the
+        scheduling key is reset to the always-eligible sentinel and only
+        the attempt counter still gates (the intake's ``< max`` check).
+        """
+        conn = self._get_conn()
+        cur = conn.execute(
+            "UPDATE memories SET pipeline_state='failed', "
+            "metadata = json_set(COALESCE(metadata, '{}'), "
+            "    '$.pipeline_retry_count', ?, '$.pipeline_retry_at', ?), "
+            "updated_at=? WHERE id=?",
+            (attempt, next_retry_at or "", datetime.now(UTC).isoformat(), memory_id),
+        )
+        conn.commit()
+        self._invalidate_caches()
+        return cur.rowcount > 0
+
+    def clear_refine_retry(self, memory_id: str) -> bool:
+        """Reset the retry bookkeeping for a fresh cycle.
+
+        Writers: the publish entry point (manual re-publication of a
+        ``failed`` row starts a new cycle) and ``release_quarantine`` (a
+        human reviewed the row — it must not inherit the exhausted
+        counter of the pre-quarantine cycles).
+        """
+        conn = self._get_conn()
+        cur = conn.execute(
+            "UPDATE memories SET metadata = json_set(COALESCE(metadata, '{}'), "
+            "'$.pipeline_retry_count', 0, '$.pipeline_retry_at', ''), updated_at=? "
+            "WHERE id=?",
+            (datetime.now(UTC).isoformat(), memory_id),
+        )
+        conn.commit()
+        self._invalidate_caches()
+        return cur.rowcount > 0
+
+    def list_by_pipeline_state(
+        self,
+        pipeline_state: PipelineState,
+        *,
+        limit: int = 100,
+        project: str | None = None,
+        agent: str | None = None,
+    ) -> list[Memory]:
+        """Select rows by the orthogonal lifecycle state (sweeper/stats)."""
+        q = "SELECT * FROM memories WHERE pipeline_state=?"
+        params: list[Any] = [pipeline_state.value]
+        if project:
+            q += " AND project=?"
+            params.append(project)
+        if agent:
+            q += " AND agent=?"
+            params.append(agent)
+        q += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        conn = self._get_conn()
+        return [self._row_to_memory(r) for r in conn.execute(q, params).fetchall()]
+
+    def count_by_pipeline_state(self) -> dict[str, int]:
+        """COUNT grouped by ``pipeline_state`` (NULL rows keyed as ``legacy``)."""
+        rows = (
+            self._get_conn()
+            .execute(
+                "SELECT COALESCE(pipeline_state, 'legacy') AS s, COUNT(*) AS c "
+                "FROM memories GROUP BY s"
+            )
+            .fetchall()
+        )
+        return {str(r[0]): int(r[1]) for r in rows}
 
     # ── Workflow lifecycle (mnemos #96) ────────────────────────────────────
     #

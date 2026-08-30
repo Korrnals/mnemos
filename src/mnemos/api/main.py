@@ -665,6 +665,25 @@ async def publish_memory_endpoint(
     }
 
 
+@app.post("/memories/{memory_id}/quarantine/release")
+async def release_quarantine_endpoint(memory_id: str) -> dict[str, Any]:
+    """Manually release a quarantined memory (ADR-0019 §5 terminality).
+
+    Quarantine is terminal by design — this is the ONLY way out. The row
+    returns to ``pipeline_state='failed'`` (not refined/pending): a
+    quarantined projection requires review, and ``failed`` is the honest
+    "needs a new cycle" resting state the daemon retries from with a
+    fresh retry budget. 404 when the row is missing or not quarantined.
+    """
+    mgr = get_manager()
+    if not mgr.release_quarantine(memory_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Memory {memory_id} not found or not quarantined",
+        )
+    return {"status": "released", "memory_id": memory_id, "pipeline_state": "failed"}
+
+
 # ── DLQ (M5) ─────────────────────────────────────────────────────────────────
 
 

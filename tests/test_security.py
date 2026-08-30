@@ -288,6 +288,11 @@ class TestSqlInjectionSafe:
             "swap_key",
             "quarantine_reason",
             "marker_version",
+            # ADR-0019 B2a: the refine daemon's §6 swap materialises the
+            # pre-swap projection into raw_content when (and only when)
+            # the column is still NULL — zero-loss demands the source be
+            # preserved before content is replaced on the same row.
+            "raw_content",
         }
         assert set(sqlite_store._FIELD_UPDATERS) == expected_keys
         # Every value is a static "col=?" fragment.
