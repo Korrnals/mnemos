@@ -3,7 +3,7 @@
 **Status:** Accepted (Architectural Committee, 2026-08-30) — parallel
 non-blocking track per owner directive (mnemos `818613c8`); amends ADR-0019 §5
 (retraction render)
-**Amended:** owner directive 2026-08-30 (recorded 2026-08-31) — baseline
+**Amended by:** owner directive 2026-08-30 (recorded 2026-08-31) — baseline
 storage moves from `tests/golden/baselines/` to a root-level `benchmarks/`
 directory with its own nesting, excluded from the wheel; see *Canonical
 baselines and versioning*

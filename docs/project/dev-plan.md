@@ -31,12 +31,12 @@ ADR-0020) и уборка (Фаза D). ИТОГО программа Фазы 2
 
 | Линия | Прогресс | Сделано | Не сделано / дальше |
 | --- | --- | --- | --- |
-| **ADR-0017** — дорожная карта памяти | **100 % Фаз 0–1** | 24 PR [#135–#158](https://github.com/Korrnals/mnemos/pull/158); issues #121/#123/#124/#125/#139/#146 закрыты; сьют 1601 → 2181 тестов; D1 контракт ✅; D6 zero-config ✅ (#136); D5 — рамка метрик готова (ADR-0020) | D2 граф памяти ~10 %: groundwork `memory_edges` (#147) есть; каскад цитирований + CCR-индекс → [#172](https://github.com/Korrnals/mnemos/issues/172); стенды D5 = БФ-волны (#169) |
-| **ADR-0018** — context-rewrite мост | **95 %** | Треки безопасности P0/P1/P2 ✅ (#145/#147/#148/#153); волны W1–W5 ✅ | Мелкие остатки реестра: B4 margin-straddle (мониторится), N3 escape-hatch → [#172–#176](https://github.com/Korrnals/mnemos/issues/172) |
+| **ADR-0017** — дорожная карта памяти | **100 % Фаз 0–1** | 22 PR [#135–#158](https://github.com/Korrnals/mnemos/pull/158) + PR [#121](https://github.com/Korrnals/mnemos/pull/121) (в диапазоне #139/#146 — issues, не PR); issues #123/#124/#125/#139/#146 закрыты; сьют 1601 → 2006 на финале Фаз 0–1 (до 2181 довели волны ADR-0019 2026-08-30); D1 контракт ✅; D6 zero-config ✅ (#136); D5 — рамка метрик готова (ADR-0020) | D2 граф памяти ~10 %: groundwork `memory_edges` (#147) есть; каскад цитирований + CCR-индекс → [#172](https://github.com/Korrnals/mnemos/issues/172); стенды D5 = БФ-волны (#169) |
+| **ADR-0018** — context-rewrite мост | **95 %** | Треки безопасности P0/P1/P2 ✅ (#145/#147/#148/#153); волны W1–W5 ✅ | Мелкие остатки реестра: B5 tier-2 margin-straddle (мониторится; adr/0018:190) и B4 management-plane exclusion (:228) → [#172–#176](https://github.com/Korrnals/mnemos/issues/172); N3 escape-hatch — хвост не заведён, будет отдельная карточка |
 | **ADR-0019** — оптимистичная публикация | **50 %** | Фаза A защита ✅ 100 % ([#161](https://github.com/Korrnals/mnemos/pull/161)); Фаза B ядро ✅ 100 %: B1 [#162](https://github.com/Korrnals/mnemos/pull/162) (2 раунда ревью), B2a движок [#163](https://github.com/Korrnals/mnemos/pull/163), B2b видимость+ретракция [#165](https://github.com/Korrnals/mnemos/pull/165) | Фаза C измерения 0 % → волны ADR-0020 + [#169](https://github.com/Korrnals/mnemos/issues/169); Фаза D уборка 0 % → [#166](https://github.com/Korrnals/mnemos/issues/166) (федерация-гейт) + упразднение Hermes-обхода (избыточен технически — нужна чистка и бэкфилл) |
 | **ADR-0020** — бенчмарки | **20 %** | Рамка + решение комитета ✅ 100 % ([#164](https://github.com/Korrnals/mnemos/pull/164), включая поправку §5 к ADR-0019) | Стенды БФ-1..4 — **0 из 4**; эпик [#169](https://github.com/Korrnals/mnemos/issues/169); корневой каталог `benchmarks/` — директива владельца 2026-08-30 |
-| **Релизная инфраструктура** | конвейер **✅ 100 %** | Подключён Korrnals/release-pipeline ([#179](https://github.com/Korrnals/mnemos/pull/179), dry-run зелёный); релизы v2.14.1 → v2.15.0 | Гэпы конвейера: [#180](https://github.com/Korrnals/mnemos/issues/180) (P1 CVE chromadb — решение владельца), [#182](https://github.com/Korrnals/mnemos/issues/182)/[#183](https://github.com/Korrnals/mnemos/issues/183) (owner-infra), [#184](https://github.com/Korrnals/mnemos/issues/184), pipeline #19/#20. Мажор ядра зарезервирован до завершения роадмапа — политика `b0a1cf40` |
-| **Трекер** | гигиена ✅ | P1 открыто 6 (#166, #168, #169, #170, #171, #185); P2 открыто 11 (#172–#176, #181–#184, #186); P3 — 1 эпик (#177). Очередь комитета вычищена 2026-08-31 | #168 в работе сейчас (этот поезд); наполнение БФ-волн — после #169 |
+| **Релизная инфраструктура** | конвейер **✅ 100 %** | Подключён Korrnals/release-pipeline ([#179](https://github.com/Korrnals/mnemos/pull/179), dry-run зелёный); релизы v2.14.1 → v2.15.0 | Гэпы конвейера: [#180](https://github.com/Korrnals/mnemos/issues/180) (P1 CVE chromadb — решение владельца), [#182](https://github.com/Korrnals/mnemos/issues/182)/[#183](https://github.com/Korrnals/mnemos/issues/183) (owner-infra), [#184](https://github.com/Korrnals/mnemos/issues/184), pipeline #19/#20. Мажор ядра зарезервирован до завершения роадмапа — директива владельца `b0a1cf40` |
+| **Трекер** | гигиена ✅ | P1 открыто 7 (#166, #168, #169, #170, #171, #180, #185); P2 открыто 10 (#172–#176, #181–#183, #186; #184 — приоритет P2 в заголовке карточки, метки нет); P3 — 1 эпик (#177). Очередь комитета вычищена 2026-08-31 | #168 в работе сейчас (этот поезд); наполнение БФ-волн — после #169 |
 
 Чекпоинт-доска (фиксированный формат — приводится в каждом ответе владельцу,
 §7):
@@ -55,10 +55,10 @@ ADR-0020) и уборка (Фаза D). ИТОГО программа Фазы 2
 
 | Дата | Волна | Артефакты |
 | --- | --- | --- |
-| 2026-08-27 | Финал Фаз 0–1 ADR-0017 | PR [#157](https://github.com/Korrnals/mnemos/pull/157), [#158](https://github.com/Korrnals/mnemos/pull/158); итоговый [отчёт](reports/2026-08-27-phase-0-1-final-report.md); сьют 1601 → 2181 |
+| 2026-08-27 | Финал Фаз 0–1 ADR-0017 | PR [#157](https://github.com/Korrnals/mnemos/pull/157), [#158](https://github.com/Korrnals/mnemos/pull/158); итоговый [отчёт](reports/2026-08-27-phase-0-1-final-report.md); сьют 1601 → 2006 |
 | 2026-08-29 | ADR-0019 принят | PR [#159](https://github.com/Korrnals/mnemos/pull/159) (Архком); recall-фикс [#160](https://github.com/Korrnals/mnemos/pull/160) — recency исключает ARCHIVED |
-| 2026-08-30 | Фазы A–B ADR-0019 + ADR-0020 + релиз + конвейер | Phase A [#161](https://github.com/Korrnals/mnemos/pull/161); B1 [#162](https://github.com/Korrnals/mnemos/pull/162) (2 раунда ревью); B2a [#163](https://github.com/Korrnals/mnemos/pull/163) (2 раунда); B2b [#165](https://github.com/Korrnals/mnemos/pull/165) (мутации 3+3+6); ADR-0020 [#164](https://github.com/Korrnals/mnemos/pull/164) (Архком, поправка §5 ADR-0019); issue-практика + ретро-разбор #166–#177; релиз **v2.15.0** (преждевременный v3.0.0 снят — политика `b0a1cf40`); конвейер подключён [#179](https://github.com/Korrnals/mnemos/pull/179) + гэпы #180–#184, pipeline #19/#20; MCP восстановлен, стор объединён; ротация бекапов |
-| 2026-08-31 | Гигиена очереди | Очередь комитета вычищена; заведены [#185](https://github.com/Korrnals/mnemos/issues/185)/[#186](https://github.com/Korrnals/mnemos/issues/186); заведён этот dev-plan (поезд [#168](https://github.com/Korrnals/mnemos/issues/168)) |
+| 2026-08-30 | Фазы A–B ADR-0019 + ADR-0020 + релиз + конвейер | Phase A [#161](https://github.com/Korrnals/mnemos/pull/161); B1 [#162](https://github.com/Korrnals/mnemos/pull/162) (2 раунда ревью); B2a [#163](https://github.com/Korrnals/mnemos/pull/163) (2 раунда); B2b [#165](https://github.com/Korrnals/mnemos/pull/165) (мутации 3+3+6); ADR-0020 [#164](https://github.com/Korrnals/mnemos/pull/164) (Архком, поправка §5 ADR-0019); issue-практика + ретро-разбор #166–#177; релиз **v2.15.0** (преждевременный v3.0.0 снят — директива владельца `b0a1cf40`); конвейер подключён [#179](https://github.com/Korrnals/mnemos/pull/179) + гэпы #180–#184, pipeline #19/#20; MCP восстановлен, стор объединён; ротация бекапов; сьют 2006 → 2181 |
+| 2026-08-31 | Гигиена очереди | Очередь комитета вычищена; [#185](https://github.com/Korrnals/mnemos/issues/185)/[#186](https://github.com/Korrnals/mnemos/issues/186) переоформлены из очереди комитета (карточки от 2026-08-30); заведён этот dev-plan (поезд [#168](https://github.com/Korrnals/mnemos/issues/168)) |
 
 ## 4. DAG ближайших волн
 
@@ -73,7 +73,7 @@ flowchart TD
     BF3["БФ-3 · S3-стенд (long-lived session)"]
     PHD["Фаза D · #166 федерация-гейт<br/>+ Hermes-чистка + бэкфилл"]
     BF4["БФ-4 · полный S2-nightly + отчёты владельцу"]
-    REL{{"Мажорный релиз ядра<br/>(политика b0a1cf40 — после роадмапа)"}}
+    REL{{"Мажорный релиз ядра<br/>(директива владельца b0a1cf40 — после роадмапа)"}}
     SIDE["#181 · style-долг + трекер-гигиена<br/>(параллельно всегда)"]
     PR168 --> BF1
     BF1 --> L170
@@ -105,7 +105,7 @@ flowchart TD
   публикации, потом срезается Hermes-обход (чистка + бэкфилл) под гейтом
   федерации [#166](https://github.com/Korrnals/mnemos/issues/166).
 - **Мажорный релиз ядра** — только после БФ-4 и закрытия роадмапа:
-  политика владельца `b0a1cf40` (v2.15.0 вышел как minor; breaking-сигнал
+  директива владельца `b0a1cf40` (v2.15.0 вышел как minor; breaking-сигнал
   Hermes-плагина живёт на стороне плагина, `plugin.yaml` 3.0.0).
 - **Вне критического пути:** [#181](https://github.com/Korrnals/mnemos/issues/181)
   (style-долг) и трекер-гигиена — постоянный фон, не блокируют волны.
@@ -120,19 +120,23 @@ flowchart TD
 | Приоритет | Карточка | Суть | План |
 | --- | --- | --- | --- |
 | P1 | [#166](https://github.com/Korrnals/mnemos/issues/166) | Федерация-гейт Фазы D + упразднение Hermes-обхода (чистка, бэкфилл) | после БФ-3 (DAG §4) |
-| P1 | [#168](https://github.com/Korrnals/mnemos/issues/168) | Ченджолог 2.15.0 (PR #159–#167), поправка ADR-0020 §4, этот dev-plan | в работе сейчас |
+| P1 | [#168](https://github.com/Korrnals/mnemos/issues/168) | Ченджолог 2.15.0 (PR #159–#165, #167 + issues-практика #166+), поправка ADR-0020 §4, этот dev-plan | в работе сейчас |
 | P1 | [#169](https://github.com/Korrnals/mnemos/issues/169) | Эпик БФ-1..4: стенды S1–S4, каталог `benchmarks/`, базлайны, отчёты | вход — сразу за #168 |
 | P1 | [#170](https://github.com/Korrnals/mnemos/issues/170) | Lease для записей, зависших в `processing` | параллельно после БФ-1 |
 | P1 | [#171](https://github.com/Korrnals/mnemos/issues/171) | PROCESSED ре-гейт | параллельно после БФ-1 |
+| P1 | [#180](https://github.com/Korrnals/mnemos/issues/180) | P1 CVE в chromadb (зависимость) — держит алерт конвейера | ждёт решения владельца (§5.2) |
 | P1 | [#185](https://github.com/Korrnals/mnemos/issues/185) | Порт mcp_server на SDK 2.x + интерим-баунд зависимости | параллельно после БФ-1 |
 | P2 | [#172](https://github.com/Korrnals/mnemos/issues/172) | D2-граф: каскад цитирований + CCR-индекс (хвост линии ADR-0018) | после БФ-волн |
-| P2 | [#173–#176](https://github.com/Korrnals/mnemos/issues/173) | Мелкие остатки реестра ADR-0018 (B4 margin-straddle — мониторится; N3 escape-hatch и др.) | по мере волн |
+| P2 | [#173–#176](https://github.com/Korrnals/mnemos/issues/173) | Мелкие остатки реестра ADR-0018 (B5 tier-2 margin-straddle — мониторится; B4 management-plane exclusion и др.) | по мере волн |
 | P2 | [#181](https://github.com/Korrnals/mnemos/issues/181) | Style-долг (постоянный фон) | параллельно всегда |
 | P2 | [#182](https://github.com/Korrnals/mnemos/issues/182) | Owner-infra: docker+buildx vs контейнерный раннер конвейера | ждёт решения владельца (§5.2) |
 | P2 | [#183](https://github.com/Korrnals/mnemos/issues/183) | Owner-infra: валидный COSIGN_KEY для подписей релизов | ждёт решения владельца (§5.2) |
 | P2 | [#184](https://github.com/Korrnals/mnemos/issues/184) | Гэп релизного конвейера | в очереди конвейера |
-| P2 | [#186](https://github.com/Korrnals/mnemos/issues/186) | Заведён 2026-08-31 при очистке очереди комитета (наполнение — по карточке) | по мере волн |
+| P2 | [#186](https://github.com/Korrnals/mnemos/issues/186) | Переоформлен из очереди комитета 2026-08-30 (наполнение — по карточке) | по мере волн |
 | P3 | [#177](https://github.com/Korrnals/mnemos/issues/177) | Эпик ретро-разбора практики (заведён 2026-08-30 вместе с #166–#176) | вне критического пути |
+
+Незаведённый хвост: N3 (per-call `validate_marker=false` escape-hatch,
+реестр ADR-0018) — карточки в трекере нет; заводится отдельной карточкой.
 
 ### 5.2 Ждут решения владельца
 
