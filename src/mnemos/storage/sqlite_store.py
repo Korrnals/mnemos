@@ -27,6 +27,7 @@ from mnemos.models import (
     MemorySource,
     MemoryStatus,
     MemoryType,
+    PipelineState,
     Project,
     Trace,
 )
@@ -74,6 +75,17 @@ _FIELD_UPDATERS: dict[str, str] = {
     # table — see fix in cli/main.py `tags normalize`).
     "project": "project=?",
     "agent": "agent=?",
+    # ADR-0019 Phase B (B1) — pipeline lifecycle columns. The ADR's swap
+    # mechanics run "via the targeted update_fields path", so the B2
+    # daemon/swap/quarantine transitions need them here. This is a
+    # STORE-INTERNAL surface only: MemoryCreate/MemoryUpdate carry none
+    # of these fields, so no REST/MCP/CLI caller can reach them — the
+    # callers are manager-internal code and the B2 daemon.
+    "pipeline_state": "pipeline_state=?",
+    "processed_at": "processed_at=?",
+    "swap_key": "swap_key=?",
+    "quarantine_reason": "quarantine_reason=?",
+    "marker_version": "marker_version=?",
 }
 
 # FTS5 query-syntax special chars. Stripping them and wrapping the rest in
@@ -214,7 +226,21 @@ CREATE TABLE IF NOT EXISTS memories (
     -- trusted_rewrite_provenance ONLY and backfilled once by
     -- _run_migrations; backs the dedupe lookup index instead of a
     -- json_extract full-scan per delivery.
-    rewrite_event_key TEXT
+    rewrite_event_key TEXT,
+    -- ADR-0019 Phase B (B1) — orthogonal pipeline lifecycle. NULL on
+    -- legacy rows (the B1 backfill classifies PROCESSED/lineage rows
+    -- 'refined', lineage-less PUBLISHED rows 'pending'; RAW/PROCESSING/
+    -- ARCHIVED stay NULL). Written by store-internal paths only (the B2
+    -- daemon / swap / quarantine transitions) — never by generic create
+    -- surfaces.
+    pipeline_state    TEXT,
+    processed_at      TEXT,
+    swap_key          TEXT,
+    quarantine_reason TEXT,
+    -- Provenance marker version (ADR-0019 §4): incremented on every
+    -- served-projection swap so consumers detect projection desync via
+    -- the marker alone. 1 from day one (including backfilled rows).
+    marker_version    INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -542,6 +568,16 @@ _MIGRATIONS: list[tuple[str, str]] = [
     # provenance (metadata.source = 'context-rewrite') so planted client
     # metadata is never promoted into the dedupe index.
     ("rewrite_event_key", "ALTER TABLE memories ADD COLUMN rewrite_event_key TEXT"),
+    # ADR-0019 Phase B (B1) — orthogonal pipeline lifecycle columns +
+    # marker version. ALTER only (instant, metadata-only; rowids and the
+    # external-content FTS table are untouched — no rebuild). Legacy
+    # rows are classified once by _migrate_b1_backfill_pipeline_state;
+    # marker_version backfills to 1 via the column DEFAULT.
+    ("pipeline_state", "ALTER TABLE memories ADD COLUMN pipeline_state TEXT"),
+    ("processed_at", "ALTER TABLE memories ADD COLUMN processed_at TEXT"),
+    ("swap_key", "ALTER TABLE memories ADD COLUMN swap_key TEXT"),
+    ("quarantine_reason", "ALTER TABLE memories ADD COLUMN quarantine_reason TEXT"),
+    ("marker_version", "ALTER TABLE memories ADD COLUMN marker_version INTEGER NOT NULL DEFAULT 1"),
 ]
 
 # ADR-0018 P1-a — scan-at-store verdict columns on ccr_cache. Existing
@@ -579,6 +615,10 @@ _BACKFILL_REWRITE_COLS_FLAG: Final[str] = "schema_backfill_rewrite_cols_v1"
 # m3 (final review) — meta-table flag gating the one-time backfill of the
 # denormalised rewrite_event_key column (same transaction as the backfill).
 _BACKFILL_REWRITE_EVENT_KEY_FLAG: Final[str] = "schema_backfill_rewrite_event_key_v1"
+
+# ADR-0019 Phase B (B1) — meta-table flag gating the one-time backfill of
+# pipeline_state / processed_at (same commit as the backfill).
+_BACKFILL_PIPELINE_STATE_FLAG: Final[str] = "schema_backfill_pipeline_state_v1"
 
 # C8 (ArchCom 2026-08-27) — legacy turn FTS objects dropped idempotently on
 # every connect (IF EXISTS no-ops after the first run).
@@ -684,6 +724,8 @@ class SQLiteStore:
         SQLiteStore._migrate_a1_ccr_composite_pk(conn)
         # ── Final review m3: rewrite_event_key backfill ──
         SQLiteStore._migrate_m3_backfill_rewrite_event_key(conn)
+        # ── ADR-0019 Phase B (B1): pipeline_state backfill ──
+        SQLiteStore._migrate_b1_backfill_pipeline_state(conn)
 
     @staticmethod
     def _migrate_c8_drop_turns_fts(conn: sqlite3.Connection) -> None:
@@ -787,6 +829,76 @@ class SQLiteStore:
         backfilled = int(cur.rowcount or 0)
         if backfilled:
             logger.info("m3 backfill: indexed rewrite_event_key on %d memory rows", backfilled)
+
+    @staticmethod
+    def _migrate_b1_backfill_pipeline_state(conn: sqlite3.Connection) -> None:
+        """ADR-0019 Phase B (B1) — one-time classification of legacy rows.
+
+        Heals the Hermes legacy into the orthogonal ``pipeline_state``
+        column (``MemoryStatus`` itself is untouched):
+
+        * **refined** — rows that went through the pipeline:
+          ``status='processed'`` (only the quality gate writes that
+          status), or ``status='published'`` WITH lineage
+          (``cluster_id`` non-NULL or non-empty ``derived_from`` — the
+          synthesis worker's fingerprint; ``publish_memory`` itself
+          writes no lineage). ``processed_at = updated_at`` (the best
+          available proxy for the historical swap time).
+        * **pending** — ``status='published'`` WITHOUT lineage: the
+          Hermes bypass heritage (``publish_on_write`` +
+          ``skip_quality_check`` from ``raw``) AND the single-memory
+          passthrough placeholder promotions (quality_score=0.5, no
+          LLM refinement). Both genuinely lack refinement; the B2
+          daemon re-refines them. Lineage is the discriminator —
+          ``quality_score`` is deliberately NOT used because
+          ``MemoryUpdate`` lets clients write it, so it is not a
+          provenance signal.
+        * **NULL** — ``raw`` / ``processing`` / ``archived`` rows
+          (legacy semantics, untouched by ADR-0019 B1).
+
+        Idempotent: every UPDATE is guarded by ``pipeline_state IS
+        NULL`` and the meta flag is set in the same commit
+        (``INSERT OR IGNORE`` — concurrent first-connects converge, the
+        same reasoning as the C10 backfill). The UPDATEs fire the
+        ``memories_au`` trigger, which reindexes the SAME rowid in the
+        external-content FTS table — rowids stay stable, no FTS rebuild
+        is needed (verified by the B1 migration tests).
+        """
+        flag = conn.execute(
+            "SELECT 1 FROM meta WHERE key = ?", (_BACKFILL_PIPELINE_STATE_FLAG,)
+        ).fetchone()
+        if flag is not None:
+            return
+        refined = conn.execute(
+            "UPDATE memories SET pipeline_state = 'refined', processed_at = updated_at "
+            "WHERE pipeline_state IS NULL "
+            "AND (status = 'processed' "
+            "     OR (status = 'published' "
+            "         AND (cluster_id IS NOT NULL "
+            "              OR (json_valid(derived_from) "
+            "                  AND json_array_length(derived_from) > 0))))"
+        )
+        pending = conn.execute(
+            "UPDATE memories SET pipeline_state = 'pending' "
+            "WHERE pipeline_state IS NULL AND status = 'published'"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value, updated_at) VALUES (?,?,?)",
+            (
+                _BACKFILL_PIPELINE_STATE_FLAG,
+                "1",
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        conn.commit()
+        n_refined = int(refined.rowcount or 0)
+        n_pending = int(pending.rowcount or 0)
+        if n_refined or n_pending:
+            logger.info(
+                "B1 backfill: pipeline_state classified %d rows as refined, %d as pending",
+                n_refined,
+                n_pending,
+            )
 
     @staticmethod
     def _migrate_a1_ccr_composite_pk(conn: sqlite3.Connection) -> None:
@@ -924,6 +1036,19 @@ class SQLiteStore:
             workflow_status=_get("workflow_status"),
             locked_by=_get("locked_by"),
             locked_at=_get("locked_at"),
+            # ADR-0019 Phase B (B1) — pipeline lifecycle projection.
+            # Strict enum (same contract as status above: values are only
+            # written by the backfill and store-internal paths). NULL on
+            # legacy rows / non-optimistic entries.
+            pipeline_state=(
+                PipelineState(_get("pipeline_state")) if _get("pipeline_state") else None
+            ),
+            processed_at=(
+                datetime.fromisoformat(_get("processed_at")) if _get("processed_at") else None
+            ),
+            swap_key=_get("swap_key"),
+            quarantine_reason=_get("quarantine_reason"),
+            marker_version=int(_get("marker_version", 1) or 1),
         )
 
     def rebuild_fts_index(self) -> int:
@@ -992,6 +1117,13 @@ class SQLiteStore:
         filter_stats_json = (
             json.dumps(memory.filter_stats, ensure_ascii=False) if memory.filter_stats else None
         )
+        # ADR-0019 Phase B (B1) — pipeline lifecycle round-trip. The
+        # generic save() persists whatever the in-memory object carries
+        # (loaded rows keep their state; fresh Memory objects default to
+        # NULL/1). Authoritative lifecycle transitions go through
+        # update_fields instead (see the whitelist note there).
+        pipeline_state_val = memory.pipeline_state.value if memory.pipeline_state else None
+        processed_at_val = memory.processed_at.isoformat() if memory.processed_at else None
         # C10 — denormalised rewrite provenance (metadata is the source of
         # truth; these columns exist purely so the rewrite quota counts are
         # index-backed). Gated on the trusted caller — see the docstring.
@@ -1022,7 +1154,9 @@ class SQLiteStore:
                        cluster_id = ?, derived_from = ?, embedding_id = ?,
                        raw_content = ?, clean_content = ?, filter_profile = ?,
                        filter_stats = ?, filter_version = ?,
-                       rewrite_source = ?, rewrite_session = ?, rewrite_event_key = ?
+                       rewrite_source = ?, rewrite_session = ?, rewrite_event_key = ?,
+                       pipeline_state = ?, processed_at = ?, swap_key = ?,
+                       quarantine_reason = ?, marker_version = ?
                        WHERE id = ?""",
                     (
                         memory.content,
@@ -1053,6 +1187,11 @@ class SQLiteStore:
                         rewrite_source,
                         rewrite_session,
                         rewrite_event_key,
+                        pipeline_state_val,
+                        processed_at_val,
+                        memory.swap_key,
+                        memory.quarantine_reason,
+                        memory.marker_version,
                         memory.id,
                     ),
                 )
@@ -1067,7 +1206,9 @@ class SQLiteStore:
                        quality_score = ?, confidence = ?, source_coverage = ?,
                        cluster_id = ?, derived_from = ?, embedding_id = ?,
                        raw_content = ?, clean_content = ?, filter_profile = ?,
-                       filter_stats = ?, filter_version = ?
+                       filter_stats = ?, filter_version = ?,
+                       pipeline_state = ?, processed_at = ?, swap_key = ?,
+                       quarantine_reason = ?, marker_version = ?
                        WHERE id = ?""",
                     (
                         memory.content,
@@ -1095,6 +1236,11 @@ class SQLiteStore:
                         memory.filter_profile,
                         filter_stats_json,
                         memory.filter_version,
+                        pipeline_state_val,
+                        processed_at_val,
+                        memory.swap_key,
+                        memory.quarantine_reason,
+                        memory.marker_version,
                         memory.id,
                     ),
                 )
@@ -1107,8 +1253,9 @@ class SQLiteStore:
                     source_coverage, cluster_id, derived_from, embedding_id,
                     raw_content, clean_content, filter_profile, filter_stats,
                     filter_version, rewrite_source, rewrite_session,
-                    rewrite_event_key)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    rewrite_event_key, pipeline_state, processed_at, swap_key,
+                    quarantine_reason, marker_version)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     memory.id,
                     memory.content,
@@ -1140,6 +1287,11 @@ class SQLiteStore:
                     rewrite_source,
                     rewrite_session,
                     rewrite_event_key,
+                    pipeline_state_val,
+                    processed_at_val,
+                    memory.swap_key,
+                    memory.quarantine_reason,
+                    memory.marker_version,
                 ),
             )
         conn.commit()

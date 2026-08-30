@@ -46,6 +46,34 @@ class MemoryStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+class PipelineState(StrEnum):
+    """ADR-0019 Phase B — the ORTHOGONAL pipeline lifecycle column.
+
+    Deliberately separate from :class:`MemoryStatus` (the committee
+    rejected new statuses: "cascading edits to every gate, filter,
+    statistic, and client for information one orthogonal field already
+    carries"). Values:
+
+    * ``pending``  — visible entry awaiting async refinement (the B1
+      backfill also lands Hermes-bypass heritage here for re-healing).
+    * ``processing`` — the background daemon owns the entry (B2).
+    * ``refined``  — the served projection was swapped to the refined
+      output; the ``refined_only`` query flag selects exactly these.
+    * ``failed``   — quality/infra lane: entry stays visible raw with
+      retry (B2).
+    * ``quarantined`` — danger lane: terminal, manual release only;
+      excluded from issuance by :func:`is_context_admissible`.
+    * ``None`` (SQL NULL) — legacy rows written before ADR-0019 and
+      entries not part of the optimistic-publication semantics.
+    """
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    REFINED = "refined"
+    FAILED = "failed"
+    QUARANTINED = "quarantined"
+
+
 # ADR-0018 entry invariant — the single status gate every path that
 # surfaces memory-record content into working context must consult.
 # It encodes the documented search default ("only 'published' knowledge
@@ -60,6 +88,38 @@ class MemoryStatus(StrEnum):
 CONTEXT_ADMISSIBLE_STATUSES: frozenset[MemoryStatus] = frozenset(
     {MemoryStatus.PUBLISHED, MemoryStatus.PROCESSED}
 )
+
+
+# ADR-0019 §5 — the quarantine predicate. The single exception the
+# optimistic-publication decision carves into the ADR-0018 invariant:
+# the admissibility set itself is NOT extended, but a row with
+# ``pipeline_state='quarantined'`` (terminal danger-lane state, manual
+# release only) is excluded from issuance regardless of its status.
+# Every path that filters on the allowed status set composes THESE
+# helpers instead of re-deriving the condition — no copy-pasted
+# ``pipeline_state != 'quarantined'`` fragments.
+def is_quarantined(memory: Memory) -> bool:
+    """True when the entry sits in the terminal danger-lane state."""
+    return memory.pipeline_state == PipelineState.QUARANTINED
+
+
+def is_context_admissible(
+    memory: Memory,
+    *,
+    statuses: frozenset[MemoryStatus] | set[MemoryStatus] = CONTEXT_ADMISSIBLE_STATUSES,
+) -> bool:
+    """ADR-0018 status gate + the ADR-0019 §5 quarantine exception.
+
+    Args:
+        memory: The row snapshot under test.
+        statuses: The allowed status set. Defaults to
+            ``CONTEXT_ADMISSIBLE_STATUSES`` (the issuance default).
+            Callers running the documented widenings (``include_raw``
+            search, the recall recency leg's "everything except
+            archived") pass their own set — the quarantine exclusion is
+            part of the predicate itself and always applies.
+    """
+    return memory.status in statuses and not is_quarantined(memory)
 
 
 # ── Mnemos Tag Contract (M2) ──────────────────────────────────────────────────────
@@ -331,6 +391,20 @@ class Memory(BaseModel):
     filter_stats: dict[str, Any] | None = None  # token + dedup reduction stats
     filter_version: str | None = None  # filter pipeline version used
 
+    # ── ADR-0019 Phase B (B1): orthogonal pipeline lifecycle ───────────────
+    # Visibility semantics stay owned by ``status`` (ADR-0018 invariant,
+    # unchanged); this group carries the async-refinement lifecycle.
+    # NOT settable through MemoryCreate/MemoryUpdate — external surfaces
+    # must not forge pipeline provenance. Writers: the schema backfill,
+    # store-internal update_fields callers (the B2 daemon / swap path),
+    # and the N1 demotions (which only ever write RAW-status side
+    # effects, never a pipeline_state).
+    pipeline_state: PipelineState | None = None
+    processed_at: datetime | None = None  # TS of the refined swap (B2)
+    swap_key: str | None = None  # hash(cluster_id, prompt_version, processed_hash)
+    quarantine_reason: str | None = None  # detector class code (lane b)
+    marker_version: int = 1  # provenance marker version, incremented on swap
+
     # ── Workflow lifecycle (mnemos #96) ────────────────────────────────────
     # Read-only projection of the workflow state. Writes go through
     # MemoryManager.workflow_set → SQLiteStore.set_workflow_status so the
@@ -440,6 +514,12 @@ class SearchQuery(BaseModel):
     limit: int = 20
     hybrid_alpha: float | None = None  # override config default
     include_raw: bool = False  # M10: drill-down to raw_content
+    # ADR-0019 §4 — "refined only" query flag: issue only entries whose
+    # served projection is the refined one (``pipeline_state='refined'``).
+    # A query flag, NOT status ontology. NULL/legacy pipeline_state rows
+    # (pre-ADR-0019) never match — federation / multi-principal boundaries
+    # export refined projections only.
+    refined_only: bool = False
 
 
 # ── Per-agent recall (M3) ──────────────────────────────────────────────────────

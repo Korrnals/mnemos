@@ -34,7 +34,10 @@ pre-LLM-call injection.
 Design decisions (flagged for ArchCom ratification in the #125 report):
 
 * **Provenance format** — one prefix line per injected block, exact shape
-  ``[mnemos:<memory-id> project=<slug> status=<status> retrieved=<iso>]``.
+  ``[mnemos:<memory-id> project=<slug> status=<status> pipeline=<phase>
+  v=<n> retrieved=<iso>]`` (ADR-0019 §4 amendment: ``pipeline=`` omitted
+  on NULL/legacy pipeline_state; ``v=`` is the marker version; the
+  legacy ``retrieved`` timestamp stays last).
 * **Provenance vs CacheAligner order** — the aligner relocates ISO
   timestamps to the tail, which would gut the ``retrieved=<iso>`` field of
   a provenance line if alignment ran after wrapping. Blocks are therefore
@@ -159,15 +162,39 @@ class _Candidate:
 # ── Provenance ─────────────────────────────────────────────────────────────────
 
 
-def build_provenance(memory_id: str, project: str, status: str, retrieved_iso: str) -> str:
+def build_provenance(memory: Memory, retrieved_iso: str, *, project: str | None = None) -> str:
     """Build the one-line provenance prefix every injected block carries.
 
-    Exact format (ADR-0017 D1 "injected entries carry provenance"; the
-    shape is this module's contract, tested verbatim):
+    Exact format (ADR-0017 D1 "injected entries carry provenance",
+    amended by ADR-0019 §4; the shape is this module's contract, tested
+    verbatim):
 
-    ``[mnemos:<memory-id> project=<slug> status=<status> retrieved=<iso>]``
+    ``[mnemos:<memory-id> project=<slug> status=<status> pipeline=<phase> v=<n> retrieved=<iso>]``
+
+    The ``pipeline=`` segment renders the row's ``pipeline_state`` and
+    is OMITTED when it is NULL (legacy rows written before ADR-0019
+    Phase B); ``v=`` is ``marker_version`` (1 from day one, incremented
+    on every served-projection swap). The legacy ``retrieved=<iso>``
+    timestamp stays the final segment (ADR-0017 D1 contract; the
+    CacheAligner ordering decision depends on it).
+
+    ADR-0019 anti-TOCTOU: the marker is built from the SAME ``Memory``
+    snapshot the served projection was cut from — never a re-read of
+    the row — so status / pipeline_phase / version cannot desync from
+    the issued content within one assembly. This is the single
+    construction site of the marker (no other module formats it).
     """
-    return f"[mnemos:{memory_id} project={project} status={status} retrieved={retrieved_iso}]"
+    project_slug = memory.project or project or ""
+    segments = [
+        f"[mnemos:{memory.id}",
+        f"project={project_slug}",
+        f"status={memory.status.value}",
+    ]
+    if memory.pipeline_state is not None:
+        segments.append(f"pipeline={memory.pipeline_state.value}")
+    segments.append(f"v={memory.marker_version}")
+    segments.append(f"retrieved={retrieved_iso}")
+    return " ".join(segments) + "]"
 
 
 # ── Validation ─────────────────────────────────────────────────────────────────
@@ -472,9 +499,7 @@ def _budget_stage(
 
     for cand in candidates:
         mem = cand.memory
-        provenance = build_provenance(
-            mem.id, mem.project or project, mem.status.value, retrieved_iso
-        )
+        provenance = build_provenance(mem, retrieved_iso, project=project)
         block_text = f"{provenance}\n{cand.content}"
         tokens = estimate_tokens(block_text)
         if tokens > remaining:
@@ -485,6 +510,11 @@ def _budget_stage(
             "memory_id": mem.id,
             "project": mem.project or project,
             "status": mem.status.value,
+            # ADR-0019 §4 structured marker fields — the bracket string
+            # above is a projection of THESE values, not the source of
+            # truth (None pipeline_phase = legacy row, segment omitted).
+            "pipeline_phase": mem.pipeline_state.value if mem.pipeline_state else None,
+            "marker_version": mem.marker_version,
             "score": cand.score,
             "search_type": cand.search_type,
             "content_type": cand.content_type,

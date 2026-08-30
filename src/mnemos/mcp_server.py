@@ -303,6 +303,15 @@ async def list_tools() -> list[Tool]:
                         ),
                         "default": False,
                     },
+                    "refined_only": {
+                        "type": "boolean",
+                        "description": (
+                            "ADR-0019: only entries whose served projection is "
+                            "the refined one (pipeline_state='refined'); "
+                            "legacy/NULL pipeline_state rows never match."
+                        ),
+                        "default": False,
+                    },
                     "status": {
                         "type": "string",
                         "enum": ["raw", "processing", "processed", "published", "archived"],
@@ -837,7 +846,9 @@ async def list_tools() -> list[Tool]:
                 "counted per block; nothing enters the output unscanned) → "
                 "CacheAligner → token budget. Every injected block carries a "
                 "provenance line "
-                "'[mnemos:<id> project=<slug> status=<status> retrieved=<iso>]'. "
+                "'[mnemos:<id> project=<slug> status=<status> pipeline=<phase> "
+                "v=<n> retrieved=<iso>]' (ADR-0019: pipeline= is omitted on "
+                "legacy NULL pipeline_state; v is the marker version). "
                 "mode: sync (default) / async (store the result, return a "
                 "handle, fetch it on a later call via async_handle) / code / "
                 "prose (filter recall candidates by stored content type). "
@@ -1058,10 +1069,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "output_text": {
                         "type": "string",
-                        "description": (
-                            "post_tool_call only: the raw tool output to "
-                            "compress."
-                        ),
+                        "description": ("post_tool_call only: the raw tool output to compress."),
                     },
                     "auto_compress": {
                         "type": "boolean",
@@ -1073,8 +1081,7 @@ async def list_tools() -> list[Tool]:
                     "profile": {
                         "type": "string",
                         "description": (
-                            "post_tool_call only: optional filter profile "
-                            "hint for the compression."
+                            "post_tool_call only: optional filter profile hint for the compression."
                         ),
                     },
                 },
@@ -1563,6 +1570,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
             limit=args.get("limit", 10),
             include_raw=args.get("include_raw", False),
             status=status,
+            refined_only=args.get("refined_only", False),
         )
         # ADR-0018 P1-b (M1 + review F1/F3): scan-at-issuance — BOTH echoed
         # strings (content and title; auto_title() derives from raw content)

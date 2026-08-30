@@ -310,11 +310,13 @@ class TestFilterIssuanceGateRest:
         old = api_main._manager
         api_main._manager = mgr
         try:
-            # ADR-0019 Phase A: a secret-carrying row can no longer reach
-            # published via the publish endpoint (the danger gate refuses
-            # it), so the published row is planted directly — the filter
-            # issuance gate under test stays exactly the same.
-            mem_id = self._create(client, f"secret {FAKE_AWS_KEY} rest", status="published")
+            # ADR-0019 Phase A + N1: a secret-carrying row can no longer
+            # reach published via the publish endpoint OR a direct-seed
+            # create (both gate it), so the published row is planted with
+            # a store-level status flip — the pre-gate/legacy state. The
+            # filter issuance gate under test stays exactly the same.
+            mem_id = self._create(client, f"secret {FAKE_AWS_KEY} rest")
+            mgr.sqlite.update_status(mem_id, MemoryStatus.PUBLISHED)
             resp = client.post(f"/filter/{mem_id}", json={})
             assert resp.status_code == 403
             assert "issuance refused" in resp.json()["detail"]
@@ -323,10 +325,13 @@ class TestFilterIssuanceGateRest:
             mgr.close()
 
     def test_published_filter_ok_with_redactions(self, client: TestClient) -> None:
-        # Published row with a planted fake secret planted directly —
-        # the publish bypass can no longer mint such a row (ADR-0019
-        # Phase A danger gate); the redaction assertions are unchanged.
-        mem_id = self._create(client, f"key {FAKE_AWS_KEY} rest", status="published")
+        # Published row with a planted fake secret — neither the publish
+        # endpoint nor a direct-seed create can mint such a row anymore
+        # (ADR-0019 Phase A danger gate + N1 direct-seed gate), so the
+        # row is planted with a store-level status flip (the legacy
+        # pre-gate state); the redaction assertions are unchanged.
+        mem_id = self._create(client, f"key {FAKE_AWS_KEY} rest")
+        api_main._manager.sqlite.update_status(mem_id, MemoryStatus.PUBLISHED)
         resp = client.post(f"/filter/{mem_id}", json={"project": PROJECT})
         assert resp.status_code == 200
         data = resp.json()
