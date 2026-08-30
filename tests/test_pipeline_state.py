@@ -49,6 +49,7 @@ Coverage map (one section per B1 deliverable):
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -592,6 +593,12 @@ class TestQuarantineExclusion:
             "swap_key",
             "quarantine_reason",
             "marker_version",
+            # B2a review F5: raw_content joined the store-internal
+            # whitelist (§6 zero-loss materialisation at swap time) — it
+            # must stay unreachable from external payloads exactly like
+            # the rest of the lifecycle group. A client-supplied
+            # raw_content would forge the immutable-source invariant.
+            "raw_content",
         )
         for field in lifecycle_fields:
             assert field not in MemoryUpdate.model_fields
@@ -1035,16 +1042,13 @@ class TestRefineSwap:
         manager.sqlite.update_fields(target.id, cluster_id="cl-idem")
         manager.sqlite.update_fields(mate.id, cluster_id="cl-idem")
         _pipeline_state(manager, target.id, PipelineState.PENDING)
-        assert manager.refine_pending()["refined"] == 1
-        first = manager.sqlite.get(target.id)
-        assert first is not None
 
-        # Re-enqueue and re-run with the SAME artifact. Spy on the swap
-        # writer: the second run must collapse by swap_key — the swap
-        # write carries ONLY the lifecycle columns, never a content
-        # rewrite (which would re-fire the FTS trigger for nothing and
-        # could race a concurrent projection edit).
-        _pipeline_state(manager, target.id, PipelineState.PENDING)
+        # Spy on the swap writer FROM THE FIRST RUN. §6 atomicity: the
+        # real swap is ONE update_fields call = ONE transaction carrying
+        # content + clean_content reset + lifecycle columns together —
+        # a split write (e.g. clean_content moved to a second call)
+        # would open a window where the swapped content is masked by a
+        # stale clean_content in effective_content().
         calls: list[dict] = []
         original = manager.sqlite.update_fields
 
@@ -1052,6 +1056,42 @@ class TestRefineSwap:
             calls.append({"memory_id": memory_id, **kwargs})
             return original(memory_id, **kwargs)  # type: ignore[arg-type]
 
+        swap_columns = (
+            "content",
+            "clean_content",
+            "pipeline_state",
+            "processed_at",
+            "swap_key",
+            "marker_version",
+        )
+
+        monkeypatch.setattr(manager.sqlite, "update_fields", _spy)
+        try:
+            assert manager.refine_pending()["refined"] == 1
+        finally:
+            monkeypatch.setattr(manager.sqlite, "update_fields", original)
+        first = manager.sqlite.get(target.id)
+        assert first is not None
+
+        # FIRST run — the full swap branch: exactly ONE update_fields
+        # call touching any swap column, and it carries ALL of them.
+        first_swap_calls = [
+            c for c in calls if c["memory_id"] == target.id and any(k in c for k in swap_columns)
+        ]
+        assert len(first_swap_calls) == 1, first_swap_calls
+        for column in swap_columns:
+            assert column in first_swap_calls[0], (
+                f"§6 atomicity broken: {column} missing from the swap transaction"
+            )
+        assert first_swap_calls[0]["content"] != target.content  # a real swap happened
+
+        # Re-enqueue (through the original writer — the spy stays clean)
+        # and re-run with the SAME artifact: the second run must collapse
+        # by swap_key — ONLY the lifecycle columns, never a content
+        # rewrite (which would re-fire the FTS trigger for nothing and
+        # could race a concurrent projection edit).
+        original(target.id, pipeline_state=PipelineState.PENDING)
+        calls.clear()
         monkeypatch.setattr(manager.sqlite, "update_fields", _spy)
         try:
             summary = manager.refine_pending()
@@ -1073,6 +1113,87 @@ class TestRefineSwap:
         assert second.swap_key == first.swap_key
         assert second.raw_content == first.raw_content
         assert second.pipeline_state == PipelineState.REFINED
+
+    def test_marker_version_not_bumped_when_artifact_equals_projection(
+        self, manager: MemoryManager, monkeypatch
+    ) -> None:
+        """The version guard: marker_version grows ONLY on a REAL content
+        change of the served projection. A re-processing whose artifact
+        equals the currently-served text goes through the swap branch
+        (lifecycle columns + swap_key written) but must NOT bump the
+        version — consumers desync-detect through it, so an idle bump
+        would cry wolf."""
+        mem = _published(manager, "identical artifact body about allegheny")
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        monkeypatch.setattr(
+            refine_mod,
+            "_produce_refined_projection",
+            lambda mgr, memory: memory.effective_content(),  # same text, no improvement
+        )
+        summary = manager.refine_pending()
+        assert summary["refined"] == 1  # the SWAP branch ran (artifact exists)
+        assert summary["refined_noop"] == 0
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.marker_version == mem.marker_version  # NOT bumped
+        assert stored.content == mem.content  # text unchanged
+        assert stored.pipeline_state == PipelineState.REFINED
+        assert stored.swap_key is not None  # swap bookkeeping still written
+        assert stored.clean_content is None
+
+    def test_swap_commit_and_embed_upsert_audit_events(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        """ADR-0019 §Swap audit contract (review F4): the swap commit point
+        emits ``swap_committed`` with the OLD and NEW content revision
+        hashes, and the single embedding write point emits
+        ``embed_upserted`` binding the stamped content_hash to the actual
+        upsert. Hashes only — never raw content."""
+        target = _published(manager, "audit event member one zebra unique")
+        mate = _published(manager, "audit event mate two quokka unique")
+        manager.sqlite.update_fields(target.id, cluster_id="cl-audit")
+        manager.sqlite.update_fields(mate.id, cluster_id="cl-audit")
+        _pipeline_state(manager, target.id, PipelineState.PENDING)
+        seeded = manager.sqlite.get(target.id)
+        assert seeded is not None
+        pre_swap_projection = seeded.effective_content()
+
+        with caplog.at_level("INFO"):
+            summary = manager.refine_pending()
+        assert summary["refined"] == 1
+        swapped = manager.sqlite.get(target.id)
+        assert swapped is not None
+
+        # swap_committed: one event, at the commit, with both revisions.
+        swap_events = [r.getMessage() for r in caplog.records if "swap_committed" in r.message]
+        assert len(swap_events) == 1
+        match = re.search(
+            r"swap_committed: id=(\S+) old_revision=([0-9a-f]{16}) new_revision=([0-9a-f]{16})",
+            swap_events[0],
+        )
+        assert match is not None, swap_events[0]
+        assert match.group(1) == target.id[:8]
+        old_rev, new_rev = match.group(2), match.group(3)
+        assert old_rev != new_rev
+        assert old_rev == hashlib.sha256(pre_swap_projection.encode()).hexdigest()[:16]
+        assert new_rev == hashlib.sha256(swapped.content.encode()).hexdigest()[:16]
+        # Audit carries hashes only — never the raw content.
+        assert pre_swap_projection not in swap_events[0]
+        assert swapped.content[:40] not in swap_events[0]
+
+        # embed_upserted: the content_hash bound to the actual upsert.
+        embed_events = [r.getMessage() for r in caplog.records if "embed_upserted" in r.message]
+        target_events = [m for m in embed_events if f"id={target.id[:8]}" in m]
+        assert len(target_events) == 1, embed_events
+        embed_match = re.search(
+            r"embed_upserted: id=\S+ content_hash=([0-9a-f]{16})", target_events[0]
+        )
+        assert embed_match is not None, target_events[0]
+        assert (
+            embed_match.group(1)
+            == manager.vectors.get_metadata([target.id])[target.id]["content_hash"]
+        )
+        assert embed_match.group(1) == manager._embed_content_hash(manager._embedding_text(swapped))
 
 
 # ── 8. B2a — refined-noop (success without artifact) ──────────────────────────

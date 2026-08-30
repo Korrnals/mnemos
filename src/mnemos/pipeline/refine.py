@@ -96,6 +96,16 @@ def _retry_backoff_sec(attempt: int) -> int:
     return min(REFINE_BACKOFF_BASE_SEC * (2 ** (attempt - 1)), REFINE_BACKOFF_CAP_SEC)
 
 
+def _revision_hash(text: str) -> str:
+    """Short content revision hash for audit lines (§Swap audit contract).
+
+    ``swap_committed`` carries old/new revision HASHES — never the raw
+    content — so the audit trail stays safe to log while still letting
+    an operator correlate which projection a row served before/after.
+    """
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
 def _produce_refined_projection(mgr: MemoryManager, memory: Memory) -> str | None:
     """Deterministic stub of the refinement synthesis (the artifact seam).
 
@@ -245,6 +255,14 @@ def refine_single(mgr: MemoryManager, memory_id: str) -> str:
         except Exception as exc:  # lane (a): infra error of the swap write
             _record_failure(mgr, memory, attempt, reason=f"swap-error:{type(exc).__name__}")
             return OUTCOME_FAILED
+        # ADR-0019 §Swap audit — swap_committed at the commit point, with
+        # the OLD and NEW content revision hashes (never the content).
+        logger.info(
+            "swap_committed: id=%s old_revision=%s new_revision=%s",
+            memory_id[:8],
+            _revision_hash(memory.effective_content()),
+            _revision_hash(artifact),
+        )
 
     # ── Vector: re-embed AFTER the commit, outside the transaction ────
     # (ADR §Swap: a vector-store outage must not become a SQLite
@@ -252,8 +270,7 @@ def refine_single(mgr: MemoryManager, memory_id: str) -> str:
     swapped = mgr.sqlite.get(memory_id)
     if swapped is not None:
         try:
-            emb = mgr.embedder.embed(mgr._embedding_text(swapped))
-            mgr.vectors.upsert(swapped.id, emb, mgr._vector_metadata(swapped))
+            mgr.upsert_embedding(swapped)
         except Exception as exc:
             logger.warning(
                 "refine: post-swap vector upsert failed for %s (sweeper will heal): %s",

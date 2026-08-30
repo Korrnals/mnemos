@@ -144,15 +144,11 @@ def publish_memory(
             from_state,
         )
 
-    # Upsert to vector index
+    # Upsert to vector index (single embedding write point: stamps the
+    # freshness hash + emits the embed_upserted audit event).
     vector_indexed = False
     try:
-        emb = mgr.embedder.embed(mgr._embedding_text(memory))
-        mgr.vectors.upsert(
-            memory.id,
-            emb,
-            mgr._vector_metadata(memory),
-        )
+        mgr.upsert_embedding(memory)
         vector_indexed = True
     except Exception as exc:
         logger.warning("publish: vector upsert failed for %s: %s", memory_id[:8], exc)

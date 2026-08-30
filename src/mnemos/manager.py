@@ -369,6 +369,26 @@ class MemoryManager:
             "content_hash": self._embed_content_hash(self._embedding_text(memory)),
         }
 
+    def upsert_embedding(self, memory: Memory) -> None:
+        """Embed ``memory`` and upsert it — the SINGLE embedding write point.
+
+        Every path that (re-)embeds a row goes through here (publication,
+        published-edit re-embed, the refine post-swap upsert, the heal
+        sweeper, ``rebuild_vector_index``), so the ADR-0019 §Swap audit
+        event ``embed_upserted`` fires exactly once per actual upsert and
+        binds the stamped ``content_hash`` to that fact. Raises on
+        embedder/vector failure — the caller owns the degradation policy
+        (non-fatal everywhere: the sweeper heals).
+        """
+        emb = self.embedder.embed(self._embedding_text(memory))
+        metadata = self._vector_metadata(memory)
+        self.vectors.upsert(memory.id, emb, metadata)
+        logger.info(
+            "embed_upserted: id=%s content_hash=%s",
+            memory.id[:8],
+            metadata["content_hash"],
+        )
+
     @staticmethod
     def _scan_and_tag(tags: list[str], content: str) -> tuple[list[str], dict[str, int] | None]:
         """Run the secrets scanner on ``content`` and auto-add no-federate.
@@ -593,12 +613,7 @@ class MemoryManager:
         # Only embed + index published memories in the vector store
         if memory.status == MemoryStatus.PUBLISHED:
             try:
-                embedding = self.embedder.embed(self._embedding_text(memory))
-                self.vectors.upsert(
-                    memory.id,
-                    embedding,
-                    {"project": memory.project, "agent": memory.agent},
-                )
+                self.upsert_embedding(memory)
             except Exception as exc:
                 logger.warning("Vector embed failed (non-fatal): %s", exc)
 
@@ -704,8 +719,7 @@ class MemoryManager:
         # Re-embed if now published
         if memory.status == MemoryStatus.PUBLISHED:
             try:
-                emb = self.embedder.embed(self._embedding_text(memory))
-                self.vectors.upsert(memory.id, emb, self._vector_metadata(memory))
+                self.upsert_embedding(memory)
             except Exception as exc:
                 logger.warning("Re-embed failed: %s", exc)
 
@@ -2613,8 +2627,7 @@ class MemoryManager:
             if meta is not None and meta.get("content_hash") == expected:
                 continue
             try:
-                emb = self.embedder.embed(self._embedding_text(mem))
-                self.vectors.upsert(mem.id, emb, self._vector_metadata(mem))
+                self.upsert_embedding(mem)
                 healed += 1
             except Exception as exc:
                 failed += 1
@@ -2795,8 +2808,7 @@ class MemoryManager:
             batch = eligible[i : i + batch_size]
             for mem in batch:
                 try:
-                    emb = self.embedder.embed(self._embedding_text(mem))
-                    self.vectors.upsert(mem.id, emb, self._vector_metadata(mem))
+                    self.upsert_embedding(mem)
                     indexed += 1
                 except Exception as exc:
                     logger.warning("rebuild_vector_index: failed for %s: %s", mem.id[:8], exc)
