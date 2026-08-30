@@ -63,6 +63,7 @@ from mnemos.models import (
     AgentRecallQuery,
     Memory,
     MemorySource,
+    MemoryStatus,
     MemoryType,
     validate_tag_contract,
 )
@@ -289,6 +290,7 @@ class HermesMemoryAdapter:
             memory_type=memory_type,
             source=MemorySource.MANUAL,
             metadata=meta,
+            status=MemoryStatus.RAW,
         )
         return self._maybe_publish(memory)
 
@@ -321,6 +323,7 @@ class HermesMemoryAdapter:
             tags=[f"project:{self._project}", f"agent:{self._agent}", "mnemos:session"],
             memory_type=MemoryType.CONVERSATION,
             source=MemorySource.MANUAL,
+            status=MemoryStatus.RAW,
             metadata={
                 "channel": _CHANNEL,
                 "session_id": self._session,
@@ -360,6 +363,7 @@ class HermesMemoryAdapter:
             tags=[f"project:{self._project}", f"agent:{agent_tag}", f"mnemos:{subtype}"],
             memory_type=MemoryType.FACT,
             source=MemorySource.MANUAL,
+            status=MemoryStatus.RAW,
             metadata={
                 "channel": _CHANNEL,
                 "mirror_of": "hermes-builtin-memory",
@@ -410,6 +414,7 @@ class HermesMemoryAdapter:
             tags=[f"project:{self._project}", f"agent:{self._agent}", "mnemos:session"],
             memory_type=MemoryType.CONVERSATION,
             source=MemorySource.MANUAL,
+            status=MemoryStatus.RAW,
             metadata={
                 "channel": _CHANNEL,
                 "session_id": self._session,
@@ -461,6 +466,7 @@ class HermesMemoryAdapter:
             tags=[f"project:{self._project}", f"agent:{self._agent}", "mnemos:checkpoint"],
             memory_type=MemoryType.SESSION_CONTEXT,
             source=MemorySource.MANUAL,
+            status=MemoryStatus.RAW,
             metadata={"channel": _CHANNEL, "session_id": session},
         )
         logger.info("hermes_adapter.save_checkpoint: project=%s id=%s", self._project, memory.id)

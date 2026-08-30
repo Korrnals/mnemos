@@ -6,7 +6,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 import yaml
 from pydantic import BaseModel, Field, SecretStr
@@ -29,6 +29,21 @@ class MnemosConfig(BaseModel):
     # When True, raw_content is preserved and clean_content is populated;
     # filter failures are non-fatal (memory is still saved with raw content).
     auto_filter: bool = True
+    # ADR-0019 §2 (B2b) — entry visibility policy for records created
+    # WITHOUT an explicit ``status`` (an explicit ``status=`` in
+    # MemoryCreate always keeps the pre-B2b contract and routes through
+    # the N1 direct-seed gate):
+    #   * "immediate" (default, the owner's model) — the content passes
+    #     the fail-closed ingest gate (danger detectors + secret scan,
+    #     the SAME Phase A verdict helper): clean ⇒ stored PUBLISHED with
+    #     ``pipeline_state='pending'`` and findable at once; a refusal or
+    #     a scanner error ⇒ stored RAW, invisible, zero-loss.
+    #   * "curated" — stored RAW with ``pipeline_state='pending'``
+    #     (invisible); visibility is granted only when the refine cycle
+    #     completes and the refined projection passes the publication
+    #     gate (refusal at that point enters the lane-(b) quarantine).
+    # Canonical env override: MNEMOS_MNEMOS__VISIBILITY=curated.
+    visibility: Literal["immediate", "curated"] = "immediate"
     # mnemos #96: workflow lifecycle guardrails. Stale-lock threshold governs
     # how long a lock survives before a different actor can take it over
     # without ``force`` (guardrail 2). Rate limit caps transitions per memory

@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Header, HTTPException, Query, Response, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from slowapi import _rate_limit_exceeded_handler
@@ -47,6 +47,7 @@ from mnemos.models import (
     RuleIngestRequest,
     RuleRemoveRequest,
     SearchQuery,
+    is_quarantined,
     validate_tag_contract,
 )
 from mnemos.sessions import SessionStore
@@ -354,12 +355,46 @@ async def create_memory(data: MemoryCreate) -> Memory:
     return mgr.add(data, project=project, agent=agent)
 
 
+def _operator_context(request: Request) -> bool:
+    """ADR-0019 §5 B2b amendment — is this request an OPERATOR context?
+
+    ``quarantine_reason`` on the direct-access response is operator-only
+    data (the retraction render itself is cause-neutral — CWE-209). The
+    trust decision follows the T-AUTH conventions (ADR-0014):
+
+    * ``api.auth_enabled=False`` (default) — the loopback single-operator
+      deploy: the caller IS the operator, the field stays visible;
+    * ``auth_enabled=True`` — only a request the AuthMiddleware admitted
+      (``request.state.auth_session`` / ``auth_token`` set) is operator
+      context; anything else loses the field (not the response).
+    """
+    api_cfg = getattr(request.app.state, "api_config", None)
+    if api_cfg is None or not getattr(api_cfg, "auth_enabled", False):
+        return True
+    state = getattr(request, "state", None)
+    return (
+        getattr(state, "auth_session", None) is not None
+        or getattr(state, "auth_token", None) is not None
+    )
+
+
 @app.get("/memories/{memory_id}", response_model=Memory)
-async def get_memory(memory_id: str, include_raw: bool = False) -> Memory:
+async def get_memory(memory_id: str, include_raw: bool = False, request: Request = None) -> Memory:
+    """Read one memory by id (direct access).
+
+    ADR-0019 §5 B2b: a quarantined row answers with the cause-neutral
+    retraction render (see ``MemoryManager.get``); ``raw_content`` /
+    ``clean_content`` / ``title`` are withheld on this channel. The
+    ``quarantine_reason`` metadata field is visible only in an operator
+    context (``_operator_context``) — the agent-facing response shape
+    carries the retraction without the detector class.
+    """
     mgr = get_manager()
     memory = mgr.get(memory_id)
     if memory is None:
         raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
+    if is_quarantined(memory) and not _operator_context(request):
+        memory = memory.model_copy(update={"quarantine_reason": None})
     if not include_raw:
         memory = memory.model_copy(update={"raw_content": None})
     return memory

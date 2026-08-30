@@ -30,7 +30,7 @@ from mnemos.cli import _manager as cli_manager_module
 from mnemos.cli.main import app as cli_app
 from mnemos.config import ApiConfig, find_config_file, load_settings
 from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource
+from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
 from mnemos.scanner_runtime import reset_scanner
 
 _VALID_TAGS = ["project:demo", "agent:user", "mnemos:learning"]
@@ -170,6 +170,10 @@ class TestFirstRun:
         The add path must not fail when the embedding provider is
         unavailable (non-fatal), and the search vector leg must degrade to
         FTS-only — the memory is still found via the lexical leg.
+
+        ADR-0019 §2 (B2b): a status-less add now publishes at once
+        (immediate visibility default), so the STRICT search finds it; an
+        EXPLICIT raw memory keeps the pre-B2b invisibility contract.
         """
         mgr = MemoryManager(load_settings())
         try:
@@ -183,18 +187,36 @@ class TestFirstRun:
                 agent="user",
             )
             assert memory.id
+            assert memory.status == MemoryStatus.PUBLISHED
 
-            # Strict default (published/processed only): a raw memory is
-            # intentionally invisible to agents — that contract is unchanged.
+            # Strict default (published/processed only) — the B2b immediate
+            # default makes the clean entry findable at once via the FTS leg
+            # (the vector leg is degraded, non-fatal).
             strict = mgr.search("zero-config loopback")
-            assert strict == []
+            assert len(strict) == 1
+            assert strict[0].memory.id == memory.id
+            assert strict[0].search_type == "fts_only"
 
+            # An EXPLICIT raw memory stays invisible to the strict default
+            # (the pre-B2b contract, preserved for explicit statuses).
+            raw = mgr.add(
+                MemoryCreate(
+                    content="explicit raw body offline probe quokka",
+                    tags=list(_VALID_TAGS),
+                    source=MemorySource.CLI,
+                    status=MemoryStatus.RAW,
+                ),
+                project="demo",
+                agent="user",
+            )
+            assert raw.status == MemoryStatus.RAW
+            assert mgr.search("offline probe quokka") == []
             # include_raw widens to raw+processing+processed+published —
-            # this is what the CLI default now passes, and the memory is
+            # this is what the CLI default passes, and the memory is
             # found via the FTS leg with the vector leg degraded.
-            results = mgr.search("zero-config loopback", include_raw=True)
+            results = mgr.search("offline probe quokka", include_raw=True)
             assert len(results) == 1
-            assert results[0].memory.id == memory.id
+            assert results[0].memory.id == raw.id
             assert results[0].search_type == "fts_only"
         finally:
             mgr.close()
@@ -220,10 +242,30 @@ class TestFirstRun:
         # fragments rather than the full title string.
         assert "hello from" in found.output
         assert "quickstart" in found.output
-        assert "raw" in found.output  # status column shows it is not yet published
+        # ADR-0019 §2 (B2b): the status column shows the immediate default —
+        # a clean status-less add is published (and findable) at once.
+        assert "published" in found.output
 
-        # The escape hatch back to agent-grade strictness still works.
-        strict = runner.invoke(cli_app, ["search", "zero-config quickstart", "--published-only"])
+        # The escape hatch back to agent-grade strictness still excludes
+        # EXPLICIT raw rows (the pre-B2b contract for explicit statuses).
+        mgr = MemoryManager(load_settings())
+        try:
+            mgr.add(
+                MemoryCreate(
+                    content="explicit raw quickstart probe body aardwolf",
+                    tags=list(_VALID_TAGS),
+                    source=MemorySource.CLI,
+                    status=MemoryStatus.RAW,
+                ),
+                project="demo",
+                agent="user",
+            )
+        finally:
+            mgr.close()
+        default_search = runner.invoke(cli_app, ["search", "aardwolf"])
+        assert default_search.exit_code == 0, default_search.output
+        assert "aardwolf" in default_search.output  # CLI default includes raw
+        strict = runner.invoke(cli_app, ["search", "aardwolf", "--published-only"])
         assert strict.exit_code == 0, strict.output
         assert "No results found" in strict.output
 

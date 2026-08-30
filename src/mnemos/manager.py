@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 from mnemos import __version__
 from mnemos.config import Settings
-from mnemos.danger_detectors import detect
+from mnemos.danger_detectors import DetectionResult, detect
 from mnemos.embeddings import EmbeddingProvider, create_embedding_provider
 from mnemos.models import (
     CONTEXT_ADMISSIBLE_STATUSES,
@@ -42,6 +42,7 @@ from mnemos.models import (
     SearchResult,
     is_context_admissible,
     is_quarantined,
+    render_retraction,
 )
 from mnemos.pipeline import (
     ClusterResult,
@@ -64,6 +65,21 @@ logger = logging.getLogger(__name__)
 # Hard cap on redirect hops for per-hop SSRF re-validation (v2 posture).
 # Each hop is validated by _validate_url before the next request is issued.
 _MAX_REDIRECTS: int = 5
+
+# ADR-0019 B2b (review #163 follow-up F7) — INTERNAL lifecycle metadata
+# keys. The store writes them server-side (``json_set`` in
+# ``record_refine_failure`` / ``clear_refine_retry``); an external
+# ``update(metadata=...)`` replaces the dict wholesale, so the manager
+# MERGES these keys back — a caller must never be able to reset a retry
+# counter or forge backoff bookkeeping by rewriting metadata. The set is
+# enumerated (not a ``pipeline_*`` prefix rule) so membership is
+# auditable in one place; a new internal key must be listed here.
+INTERNAL_METADATA_KEYS: frozenset[str] = frozenset(
+    {
+        "pipeline_retry_count",  # lane-(a) attempt counter (refine)
+        "pipeline_retry_at",  # lane-(a) backoff gate (refine)
+    }
+)
 
 
 class _SSRFRejectionError(Exception):
@@ -439,32 +455,25 @@ class MemoryManager:
     # ── CRUD ────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _publish_gate_verdict(memory: Memory, *, path: str, content: str | None = None) -> bool:
-        """ADR-0019 N1 (review #161 follow-up) — the Phase A danger gate,
-        routed over every DIRECT publication flip.
+    def _publish_gate_detection(
+        memory: Memory, *, path: str, content: str | None = None
+    ) -> DetectionResult:
+        """The Phase A danger gate over one candidate projection.
 
-        The pipeline's own gate lives in
-        :func:`mnemos.pipeline.publish.publish_memory`; this twin covers
-        the paths that reach ``published`` WITHOUT that stage: a
-        direct-seed ``MemoryCreate(status=PUBLISHED)``, status flips via
-        :meth:`update`, and content edits of already-published rows. The
-        gate logic itself is NOT duplicated — the verdict comes from the
-        same :func:`mnemos.danger_detectors.detect` over the served
-        projection and the title, with the same fail-closed contract and
-        the same '``publish gate: …``' audit-line convention (correlated
-        by ``memory_id[:8]``; pattern names and counts only, never raw
-        values).
-
-        Returns ``True`` when the publication is admissible (clean). On
-        refusal the caller keeps the record stored zero-loss — the
-        visibility transition is what gets refused, never the write; no
-        exception propagates (``detect`` returns scanner errors inside
-        its result).
+        Runs :func:`mnemos.danger_detectors.detect` over the served
+        projection and the title, emits the structured '``publish gate: …``'
+        audit verdict line (correlated by ``memory_id[:8]``; pattern names
+        and counts only, never raw values) and returns the raw
+        :class:`~mnemos.danger_detectors.DetectionResult` so callers that
+        need the refusal CLASS (the B2b curated publication → lane-(b)
+        quarantine reason) read it from the same single gate point
+        instead of re-running ``detect`` themselves.
 
         Args:
             memory: The candidate snapshot (post-update state).
-            path: Audit discriminator — ``direct-seed`` /
-                ``status-flip`` / ``published-content-edit``.
+            path: Audit discriminator — ``direct-seed`` / ``ingest`` /
+                ``status-flip`` / ``published-content-edit`` /
+                ``curated-publish``.
             content: Override for the text to scan. The update path
                 passes the NEW content on a content edit — the row's
                 ``clean_content`` is stale at that point (the filter
@@ -481,8 +490,7 @@ class MemoryManager:
                 path,
                 detection.error,
             )
-            return False
-        if detection.positive:
+        elif detection.positive:
             logger.warning(
                 "publish gate: %s verdict=refused path=%s reason=danger-detector "
                 "classes=%s patterns=%s — raw values not logged",
@@ -491,9 +499,36 @@ class MemoryManager:
                 sorted({f.detector_class for f in detection.findings}),
                 detection.patterns_by_class(),
             )
-            return False
-        logger.info("publish gate: %s verdict=pass path=%s", memory.id[:8], path)
-        return True
+        else:
+            logger.info("publish gate: %s verdict=pass path=%s", memory.id[:8], path)
+        return detection
+
+    @staticmethod
+    def _publish_gate_verdict(memory: Memory, *, path: str, content: str | None = None) -> bool:
+        """ADR-0019 N1 (review #161 follow-up) — the Phase A danger gate,
+        routed over every DIRECT publication flip.
+
+        The pipeline's own gate lives in
+        :func:`mnemos.pipeline.publish.publish_memory`; this twin covers
+        the paths that reach ``published`` WITHOUT that stage: a
+        direct-seed ``MemoryCreate(status=PUBLISHED)``, status flips via
+        :meth:`update`, content edits of already-published rows, and —
+        since B2b — the ingest-time visibility decision of a
+        status-less ``add`` (§2, ``path=ingest``). The gate logic itself
+        is NOT duplicated — the verdict comes from the same
+        :func:`mnemos.danger_detectors.detect` over the served
+        projection and the title, with the same fail-closed contract and
+        the same '``publish gate: …``' audit-line convention (see
+        :meth:`_publish_gate_detection`).
+
+        Returns ``True`` when the publication is admissible (clean). On
+        refusal the caller keeps the record stored zero-loss — the
+        visibility transition is what gets refused, never the write; no
+        exception propagates (``detect`` returns scanner errors inside
+        its result).
+        """
+        detection = MemoryManager._publish_gate_detection(memory, path=path, content=content)
+        return detection.error is None and not detection.positive
 
     def add(
         self,
@@ -524,6 +559,14 @@ class MemoryManager:
         ``data.metadata``. The generic create surfaces (REST/MCP/CLI)
         keep the default ``False`` — client-controlled metadata must
         never mint rewrite quota counters.
+
+        ADR-0019 §2 (B2b) — for records created WITHOUT an explicit
+        ``status``, the ``mnemos.visibility`` policy decides the initial
+        visibility through the same Phase A gate (see the ingest block
+        below): ``immediate`` publishes clean content at once (refused
+        content is stored RAW, invisible, zero-loss); ``curated`` holds
+        the row RAW+pending until the refine cycle gates the refined
+        projection. An explicit ``status=`` keeps the pre-B2b contract.
         """
         # ── Layer 1: write-path secrets scanner ───────────────────────────
         # Run before Memory construction so the tag is part of the persisted
@@ -566,16 +609,37 @@ class MemoryManager:
             agent=agent,
         )
 
-        # ── ADR-0019 N1: direct-seed publication gate ───────────────────
-        # ``MemoryCreate(status=PUBLISHED)`` reaches published without
-        # the pipeline's publish stage, so it routes through the SAME
-        # Phase A danger gate here. Refusal demotes the stored status to
-        # RAW — zero-loss (the content is stored; only the visibility
-        # transition is refused), fail-closed, no exception.
-        if memory.status == MemoryStatus.PUBLISHED and not self._publish_gate_verdict(
-            memory, path="direct-seed"
-        ):
+        # ── ADR-0019 N1 (explicit flips) + B2b §2 (visibility policy) ────
+        # ONE gate point for every publication decision that happens
+        # outside the pipeline's publish stage (see
+        # _publish_gate_verdict). B2b adds the ingest leg: for records
+        # created WITHOUT an explicit ``status`` the ``mnemos.visibility``
+        # policy owns the initial visibility instead of the silent RAW
+        # default:
+        #   * explicit status=  → the pre-B2b contract is untouched
+        #     (only a clean ``PUBLISHED`` direct-seed stays published;
+        #     refusal demotes to RAW — zero-loss, fail-closed);
+        #   * immediate (default, the owner's model) → the content IS
+        #     the would-be served projection, so the SAME gate runs at
+        #     ``path=ingest``: clean ⇒ PUBLISHED + pipeline_state=pending
+        #     (§2: visible at once, refined asynchronously); refused or
+        #     scanner error ⇒ RAW with pipeline_state=NULL (stored
+        #     zero-loss, invisible, legacy semantics until someone
+        #     re-gates it through a legal path);
+        #   * curated ⇒ RAW + pipeline_state=pending — invisible until
+        #     the refine cycle completes and the publication gate admits
+        #     the refined projection (see _curated_publish).
+        if "status" in (data.model_fields_set or set()):
+            if memory.status == MemoryStatus.PUBLISHED and not self._publish_gate_verdict(
+                memory, path="direct-seed"
+            ):
+                memory.status = MemoryStatus.RAW
+        elif self.settings.mnemos.visibility == "curated":
             memory.status = MemoryStatus.RAW
+            memory.pipeline_state = PipelineState.PENDING
+        elif self._publish_gate_verdict(memory, path="ingest"):
+            memory.status = MemoryStatus.PUBLISHED
+            memory.pipeline_state = PipelineState.PENDING
 
         # Write to Obsidian vault
         try:
@@ -621,7 +685,57 @@ class MemoryManager:
         return memory
 
     def get(self, memory_id: str) -> Memory | None:
-        return self.sqlite.get(memory_id)
+        """Read one memory by id — the DIRECT-ACCESS surface (§5 B2b).
+
+        ADR-0019 §5: a quarantined row answers with the RETRACTION
+        RENDER instead of its content. The returned object is a COPY —
+        the stored row is untouched (zero-loss; the operator-side store
+        read ``sqlite.get`` keeps serving the source to internal
+        maintenance paths). Everything content-like is stripped from the
+        copy (``content`` ← the render, ``clean_content``/``raw_content``
+        → ``None`` — the immutable source must not leave through the
+        ``include_raw`` drill-down either — and ``title`` → ``None``,
+        titles being part of the served projection per the N1 gate
+        rationale). Lifecycle metadata stays visible for forensics:
+        ``id`` / ``status`` / ``pipeline_state`` / ``quarantine_reason``
+        / timestamps. Same-ID semantics: retraction is a state of the
+        same record, never a new tombstone row.
+        """
+        memory = self.sqlite.get(memory_id)
+        if memory is None or not is_quarantined(memory):
+            return memory
+        logger.info(
+            "retraction: id=%s reason=%s channel=get — content withheld",
+            memory.id[:8],
+            memory.quarantine_reason,
+        )
+        return memory.model_copy(
+            update={
+                "content": render_retraction(memory),
+                "clean_content": None,
+                "raw_content": None,
+                "title": None,
+            }
+        )
+
+    def _quarantine_retraction_for(self, payload: str) -> str | None:
+        """§5 B2b — the retraction render when ``payload`` IS a
+        quarantined row's content.
+
+        Used by the CCR retrieve-original channel: the cache is
+        content-addressed (sha256 of the text, no memory-id link), so a
+        cached original that byte-matches a quarantined row's stored
+        content, immutable source or served projection belongs to that
+        row and must not be issued. Returns ``None`` when the payload
+        belongs to no quarantined row.
+        """
+        rows = self.sqlite.list_by_pipeline_state(PipelineState.QUARANTINED, limit=1000)
+        for memory in rows:
+            if payload == memory.content or payload == memory.effective_content():
+                return render_retraction(memory)
+            if memory.raw_content is not None and payload == memory.raw_content:
+                return render_retraction(memory)
+        return None
 
     def update(self, memory_id: str, data: MemoryUpdate) -> Memory | None:
         memory = self.sqlite.get(memory_id)
@@ -629,6 +743,7 @@ class MemoryManager:
             return None
 
         previous_status = memory.status
+        previous_metadata: dict[str, Any] = dict(memory.metadata)
         update_kwargs: dict[str, Any] = {}
         for field in (
             "content",
@@ -646,6 +761,17 @@ class MemoryManager:
             if val is not None:
                 setattr(memory, field, val)
                 update_kwargs[field] = val
+
+        # ── ADR-0019 B2b (review #163 F7): internal lifecycle keys ────
+        # An external ``metadata=`` replaces the dict wholesale; the
+        # server-owned pipeline bookkeeping (retry counter / backoff gate,
+        # see INTERNAL_METADATA_KEYS) is merged back on top so a caller
+        # can neither reset a retry budget nor forge backoff state.
+        if "metadata" in update_kwargs:
+            internal = {
+                k: previous_metadata[k] for k in INTERNAL_METADATA_KEYS if k in previous_metadata
+            }
+            memory.metadata = {**memory.metadata, **internal}
 
         # ── Layer 1: write-path secrets scanner (update path) ──────────────
         # Re-run the scanner when the update payload includes new content so
@@ -693,6 +819,26 @@ class MemoryManager:
                     demoted_for_publication = True
                 else:
                     memory.status = previous_status
+
+        # ── ADR-0019 B2b (review #163 F8): a content edit of a REFINED ──
+        # row invalidates the artifact — the served projection is no
+        # longer the refined output, so the row re-enters the refine
+        # intake (pending). ``swap_key`` is deliberately LEFT in place:
+        # the new cycle recomputes it from the new artifact, and the
+        # stale value is what makes a no-op re-run of the OLD artifact
+        # detectable. Only the CLEAN path requeues — a gate-demoted edit
+        # writes RAW-status side effects only (the B1 invariant: N1
+        # demotions never touch pipeline_state).
+        if (
+            content_changed
+            and memory.pipeline_state == PipelineState.REFINED
+            and not demoted_for_publication
+        ):
+            memory.pipeline_state = PipelineState.PENDING
+            logger.info(
+                "pipeline: id=%s outcome=enqueued from=refined state=pending reason=content-edit",
+                memory.id[:8],
+            )
 
         memory.updated_at = datetime.now(UTC)
         self.sqlite.save(memory)
@@ -2540,6 +2686,60 @@ class MemoryManager:
 
         return _refine_pending(self, project=project, agent=agent, limit=limit)
 
+    def _curated_publish(self, memory_id: str) -> str:
+        """B2b §2 curated completion — visibility through the SAME gate.
+
+        Called by the refine cycle when a curated row reaches its
+        completion point (``refined`` — with a swapped artifact or as an
+        honest noop). In curated mode the row is still RAW (invisible);
+        the refined projection now passes the publication gate:
+
+        * clean → ``PUBLISHED`` + vector upsert: the record receives the
+          refined content and the visibility in the same completion
+          event (§2: "clean → PUBLISHED, the record receives the
+          refined content and visibility simultaneously");
+        * danger signal or scanner error → the lane-(b) quarantine per
+          the B2a convention (terminal, ``quarantine_reason`` carries
+          the detector class codes / ``detector-error``, embed removed,
+          excluded from issuance).
+
+        Non-curated deployments and already-visible rows are a no-op
+        (``skipped``) — in immediate mode visibility was granted at
+        ingest and nothing here may demote it.
+
+        Returns the outcome code: ``published`` / ``quarantined`` /
+        ``skipped``.
+        """
+        if self.settings.mnemos.visibility != "curated":
+            return "skipped"
+        memory = self.sqlite.get(memory_id)
+        if memory is None or memory.status != MemoryStatus.RAW:
+            return "skipped"
+        detection = self._publish_gate_detection(memory, path="curated-publish")
+        if detection.error is not None or detection.positive:
+            from mnemos.pipeline.refine import QUARANTINE_REASON_DETECTOR_ERROR
+
+            reason = (
+                QUARANTINE_REASON_DETECTOR_ERROR
+                if detection.error is not None
+                else ",".join(sorted({f.detector_class for f in detection.findings}))
+            )
+            self.quarantine_entry(memory_id, reason=reason, source="curated-publish")
+            return "quarantined"
+        self.sqlite.update_fields(memory_id, status=MemoryStatus.PUBLISHED)
+        published = self.sqlite.get(memory_id)
+        if published is not None:
+            try:
+                self.upsert_embedding(published)
+            except Exception as exc:
+                logger.warning(
+                    "curated publish: vector upsert failed for %s (sweeper will heal): %s",
+                    memory_id[:8],
+                    exc,
+                )
+        logger.info("pipeline: id=%s outcome=curated-published", memory_id[:8])
+        return "published"
+
     def quarantine_entry(self, memory_id: str, *, reason: str, source: str = "manual") -> bool:
         """Lane-(b) quarantine: state+reason only, statuses untouched.
 
@@ -3517,6 +3717,42 @@ class MemoryManager:
         )
         if not result.get("found"):
             return result
+
+        # ── ADR-0019 §5 (B2b): quarantine retraction on the CCR ────────
+        # channel. The cache is content-addressed (no memory-id link),
+        # so the guard matches the cached payload against the QUARANTINED
+        # rows' stored/served content (the lane-(b) population is small
+        # and terminal by construction; a corpus-scale link would need
+        # an index — deferred with the citation-graph cascade to
+        # ADR-0017 D2). The full original is replaced by the retraction
+        # render; snippet mode refuses outright (no fragment of a
+        # quarantined payload may leak through a window). Neither path
+        # bumps the retrieval counter (F4 semantics — no content issued).
+        original_payload = result.get("original")
+        if isinstance(original_payload, str):
+            retraction = self._quarantine_retraction_for(original_payload)
+            if retraction is not None:
+                logger.warning(
+                    "retraction: hash=%s channel=ccr:retrieve-original — "
+                    "cached original withheld (quarantined source)",
+                    h[:8],
+                )
+                if query is not None:
+                    return {
+                        "hash": h,
+                        "found": True,
+                        "refused": True,
+                        "reason": "quarantined source",
+                        "redactions": 0,
+                        "redacted_patterns": {},
+                    }
+                return {
+                    "hash": h,
+                    "found": True,
+                    "original": retraction,
+                    "retracted": True,
+                    "redactions": 0,
+                }
 
         # ── A2 review F2: strict-mode hash-only closure ────────────────
         # Strict deployments are automation contexts by design: an
