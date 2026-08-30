@@ -3,6 +3,10 @@
 **Status:** Accepted (Architectural Committee, 2026-08-30) — parallel
 non-blocking track per owner directive (mnemos `818613c8`); amends ADR-0019 §5
 (retraction render)
+**Amended:** owner directive 2026-08-30 (recorded 2026-08-31) — baseline
+storage moves from `tests/golden/baselines/` to a root-level `benchmarks/`
+directory with its own nesting, excluded from the wheel; see *Canonical
+baselines and versioning*
 **Deciders:** Tech Lead (chair), Analytics Lead (author), Product Architect,
 Senior System Engineer, Senior QA Engineer, Senior Security Engineer
 **Scope:** stands S1–S4, metric registry by owner family F1–F7 (gate and
@@ -95,12 +99,21 @@ detectors and includes legitimate tech patterns (e.g. `system:` matching
 
 ### Canonical baselines and versioning
 
-`tests/golden/baselines/<stand>.json` is the source of truth (schema:
-`baseline_version`, `stand_version`, `corpus_fingerprint`, `metrics{}`,
-`environment{}`); `BASELINE.md` becomes a generated human-readable summary.
-Metrics are added additively; a format change bumps `baseline_version` with
-a migration link. Stand axes (principals, projects, embedders) are stand
-parameters, not separate branches.
+Benchmark artefacts live under a root-level `benchmarks/` directory (owner
+directive 2026-08-30: benchmarks sit at the project root with their own
+nesting, and the directory is excluded from the wheel):
+`benchmarks/corpus/` (the migrated and extended golden corpus),
+`benchmarks/stands/{s1_quality,s2_timing,s3_session,s4_availability}/`,
+`benchmarks/baselines/`, and `benchmarks/reports/`.
+`benchmarks/baselines/<stand>.json` is the source of truth (schema
+unchanged: `baseline_version`, `stand_version`, `corpus_fingerprint`,
+`metrics{}`, `environment{}`); `BASELINE.md` becomes a generated
+human-readable summary. The original placement
+(`tests/golden/baselines/<stand>.json`) is superseded; S1 stays in the local
+merge gate (`make verify`) unchanged. Metrics are added additively; a format
+change bumps `baseline_version` with a migration link. Stand axes
+(principals, projects, embedders) are stand parameters, not separate
+branches.
 
 ### Re-baseline triggers (event-driven)
 
