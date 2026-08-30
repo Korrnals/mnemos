@@ -4,6 +4,7 @@
 ingest-time invisibility default; conditional: Phase A (danger detectors +
 fail-closed ingest gate) must land before the immediate-visibility semantics
 ships
+**Amended by:** ADR-0020 (2026-08-30) — §5 retraction render is reason-neutral ([retracted: ts]); reason class lives in audit and operator-gated metadata.
 **Deciders:** Tech Lead (chair), Product Architect, Senior Security Engineer,
 Senior System Engineer, Analytics Lead, Senior QA Engineer
 **Scope:** entry visibility semantics, `pipeline_state` lifecycle, provenance
