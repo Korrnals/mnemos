@@ -45,6 +45,7 @@ documented elsewhere, or anything that fits in a code comment.
 | [0017](0017-memory-system-evolution-roadmap.md) | Memory System Evolution Roadmap | Accepted | 2026-08-21 |
 | [0018](0018-context-rewrite-ltm-bridge.md) | Context Rewrite and LTM Bridge | Accepted | 2026-08-22 |
 | [0019](0019-optimistic-publication-async-refinement.md) | Optimistic Publication with Async Refinement | Accepted | 2026-08-29 |
+| [0020](0020-benchmark-framework.md) | Memory Benchmark Framework | Accepted | 2026-08-30 |
 
 ## Themes
 
