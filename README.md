@@ -21,12 +21,36 @@
 </p>
 
 <p align="center">
+  <a href="#-features">Features</a> ·
   <a href="#-quick-start">Quick start</a> ·
   <a href="#-what-mnemos-is">What it is</a> ·
   <a href="#%EF%B8%8F-architecture">Architecture</a> ·
   <a href="#%EF%B8%8F-three-surfaces-one-core">Surfaces</a> ·
   <a href="#-documentation">Docs</a>
 </p>
+
+---
+
+## ✨ Features
+
+One local server — and a connected agent harness gets the full memory stack.
+
+| Area | What you get |
+|------|--------------|
+| **Universal connectivity** | MCP server (26 tools, stdio) + REST API — any MCP-capable harness connects in one line ([tools](docs/en/user/mcp-tools.md) · [HTTP](docs/en/user/http-api.md)) |
+| **Ready integrations** | zcode, the `~/.agents` standard (Claude / Codex / Continue / Qwen and more), pi — via [`mnemos integration`](docs/en/user/integration-guide.md): deploy targets, one-line MCP presets, multi-harness doctor |
+| **Skill pack** | 14+ memory skills deployed into your harnesses |
+| **Flexible memory** | Hybrid search (full-text + vector, rank fusion), [tag contract](docs/en/user/tag-contract.md), per-agent / per-project memory, [context-filter](docs/en/user/context-filter.md) profiles, CCR compression — 70–90% token savings, originals kept |
+| **Context assembly** | `assemble_context`: search → compress → filter → secret scan → cache align → token budget, per-block provenance |
+| **Context bridge** | `on_context_rewrite` — when the harness compacts history, the lossless original stays available on demand |
+| **Lifecycle hooks** | `pre_llm_call` context injection, `on_session_start`, `post_tool_call` auto-compression of tool outputs |
+| **Publication v3.0.0** | Entries visible immediately after save, background refinement with seamless swap, quarantine with neutral retraction |
+| **Self-protection** | Injection / secret detectors on input and publication, every output scanned, full per-entry audit |
+| **Auto-pipeline** | Background processor: clustering, deduplication, quality gate, publication |
+
+Autonomy for an arbitrary harness, LLM-driven enrichment, and package
+publishing (PyPI / npm) are partial — the full, honest map lives in
+[docs/en/features.md](docs/en/features.md).
 
 ---
 
