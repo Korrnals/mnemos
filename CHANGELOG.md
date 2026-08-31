@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-09-01
+
+MINOR — two additive, non-breaking changes: the npm/π distribution channel (new package surface, no core changes) and an integration stamp-placement fix (self-heal after frontmatter). No API breaks; no migration required.
+
+### Added
+
+- **npm/π distribution channel** — `mnemos-pi` package published under three names (`mnemos-pi`, `@korrlabs/mnemospi`, `@korrlabs/mnemos-pi`) via OIDC trusted publishing (no long-lived npm token). `package.json` declares the π extension entry points; `scripts/sync-version.mjs` keeps `package.json` version synced from `pyproject.toml` (single source of truth); `scripts/publish-all.mjs` publishes all three names idempotently; `.github/workflows/publish-npm.yml` triggers on `v*` tags.
+- **LICENSE** — MIT license file added for npm packaging.
+
+### Fixed
+
+- **Integration stamp placement** — the self-heal stamp is now placed after frontmatter in integration templates (`integrations/instructions/*`, `integrations/skills/*`), closing the skill-loading bug where frontmatter parsing broke on stamp-injected files. `src/mnemos/cli/integration.py` refactored for correct stamp insertion; `tests/test_integration.py` extended with coverage for the stamp-after-frontmatter case.
+
 ## [3.0.0] - 2026-08-31
 
 The publication-engine major: the ADR-0019 optimistic-publication engine is a landmark engine shift and now carries the MAJOR it earns — immediate visibility as the honest server default (`mnemos.visibility immediate|curated`), fail-closed ingest/publish danger gates with audit, the async `pipeline_state` refine engine with transactional swap, reason-neutral retraction, terminal quarantine. Versioning per owner policy v2 (directive `5a5ac447`, superseding the `b0a1cf40` major clause): majors mark engine landmarks, plan completions arrive as minors; the earlier `v3.0.0 → 2.15.0` rollback was SemVer-incorrect (owner concurred) and 2.15.0 stays published as the historical minor. For the detailed engine content records see [2.15.0] below.
