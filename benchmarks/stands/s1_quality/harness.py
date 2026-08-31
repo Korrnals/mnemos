@@ -35,18 +35,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
-from mnemos.storage.vector_store import VectorStore
-from tests.golden.corpus import CORPUS, PLANTED_SECRETS, GoldenEntry
-from tests.golden.deterministic_embedder import LexicalHashEmbedder
-from tests.golden.queries import GOLDEN_QUERIES
-from tests.golden.rewrite_scenario import (
+from benchmarks.corpus.corpus import CORPUS, PLANTED_SECRETS, GoldenEntry
+from benchmarks.corpus.deterministic_embedder import LexicalHashEmbedder
+from benchmarks.corpus.queries import GOLDEN_QUERIES
+from benchmarks.corpus.rewrite_scenario import (
     REWRITE_EVENTS,
     _block,
     control_blocks,
 )
+from mnemos.config import Settings
+from mnemos.manager import MemoryManager
+from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
+from mnemos.storage.vector_store import VectorStore
 
 K_VALUES: tuple[int, ...] = (5, 10)
 
@@ -297,7 +297,7 @@ def measure_search(
     label: str,
 ) -> SearchMetrics:
     """Run the golden queries and aggregate one variant's metrics."""
-    from tests.golden.corpus import NON_ADMISSIBLE_SLUGS
+    from benchmarks.corpus.corpus import NON_ADMISSIBLE_SLUGS
 
     measurements = _measure_queries(mgr, slug_to_id)
     metrics = SearchMetrics(label=label)
@@ -371,8 +371,8 @@ def measure_rewrite(mgr: MemoryManager) -> RewriteMetrics:
     every follow-up runs through the real ``retrieve_content`` channel
     (snippet mode for detail needs, full mode for whole needs).
     """
+    from benchmarks.corpus.corpus import PLANTED_SECRETS as SECRETS
     from mnemos.context_rewrite import context_rewrite
-    from tests.golden.corpus import PLANTED_SECRETS as SECRETS
 
     metrics = RewriteMetrics()
     hash_by_slug: dict[str, str] = {}

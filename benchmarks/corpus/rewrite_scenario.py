@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tests.golden.corpus import PLANTED_SECRETS
+from benchmarks.corpus.corpus import PLANTED_SECRETS
 
 
 @dataclass(frozen=True)

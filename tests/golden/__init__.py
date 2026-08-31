@@ -1,9 +1,11 @@
-"""Golden evaluation suite (ADR-0017 D5, #125 Phase 1 Wave 4).
+"""Golden evaluation suite (ADR-0017 D5 + ADR-0020 S1, BF-1).
 
-Deterministic golden-set measurement harness: retrieval quality
-(precision@k / recall@k), injection-acceptance (planted-secret leak rate),
-the A9 vector-leg predicate before/after comparison, and the ADR-0018
-rewrite metric pair (replace-hit-rate / replace-regret-rate).
+The corpus and measurement harness migrated to the root-level
+``benchmarks/`` catalog (owner directive 2026-08-30, ADR-0020 §4):
+``benchmarks/corpus`` and ``benchmarks/stands/s1_quality``. This
+package keeps the pytest surface — the regression tripwires that pin
+the stand's numbers between re-baselines — and the stand runner
+(``make bench-s1``) reuses the same harness for the merge gate.
 
 Run the marked suite:
 

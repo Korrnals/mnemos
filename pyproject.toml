@@ -115,11 +115,15 @@ mnemos = "mnemos.cli.main:app"
 # `python -m build` (tarfile data filter raises AbsoluteLinkError) and the
 # pipeline itself lives outside this repo. See .pipeline.yaml and
 # scripts/run-release-local.sh.
+# benchmarks/ is likewise excluded from BOTH sdist and wheel (ADR-0020 §4,
+# owner directive 2026-08-30): benchmark artefacts are repo-local dev
+# tooling, never shipped artefacts. Same exclude pattern as #179.
 [tool.hatch.build.targets.sdist]
-exclude = ["scripts/run-release-local.sh", "scripts/local-ci"]
+exclude = ["scripts/run-release-local.sh", "scripts/local-ci", "benchmarks"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mnemos"]
+exclude = ["benchmarks"]
 
 # Ship the integration pack (instructions, skills, prompts, targets.yaml) inside
 # the wheel so `mnemos integration setup` works from a pip-installed package,

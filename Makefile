@@ -1,7 +1,10 @@
-.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish
+.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+
+# Interpreter for benchmark stand targets (override: make bench-s1 PYTHON=/usr/bin/python3.12).
+PYTHON ?= python3
 
 help:
 	@echo "Mnemos development commands"
@@ -18,7 +21,9 @@ help:
 	@echo "  make update-chromadb - Try upgrading chromadb and re-run audit"
 	@echo "  make update-deps - Upgrade all deps and re-run audit"
 	@echo "  make coverage   - Run pytest with coverage"
-	@echo "  make verify     - Run all checks (lint + typecheck + security + test + doctor)"
+	@echo "  make bench-s1   - Run the S1 benchmark stand (gate mode, ADR-0020)"
+	@echo "  make bench-s1-record - Re-record the S1 baseline + regenerate BASELINE.md"
+	@echo "  make verify     - Run all checks (lint + typecheck + security + test + bench-s1 + doctor)"
 	@echo "  make doctor     - Run mnemos doctor health checks (config, storage, MCP, integration)"
 	@echo "  make clean      - Remove build artifacts"
 	@echo "  make build-dist - Build wheel + sdist into dist/ (requires: pip install build)"
@@ -69,7 +74,19 @@ coverage:
 check-version:
 	@python -c "from mnemos import __version__; from importlib.metadata import version; v = version('mnemos'); assert __version__ == v, f'mismatch: __init__={__version__}, metadata={v}'; print(f'✓ version {v} consistent')"
 
-verify: format-check lint typecheck test security security-reminder doctor check-version
+# ── Benchmark stands (ADR-0020) ──────────────────────────────────────────────
+# S1 stays in the local merge gate (deterministic corridors + invariants
+# vs benchmarks/baselines/s1.json). Re-record only on an event-driven
+# trigger (corpus ×2, embedder/model change, issuance-path change) — never
+# to make a red gate green.
+
+bench-s1:
+	$(PYTHON) benchmarks/stands/s1_quality/run.py
+
+bench-s1-record:
+	$(PYTHON) benchmarks/stands/s1_quality/run.py --record
+
+verify: format-check lint typecheck test security security-reminder bench-s1 doctor check-version
 	@echo "✅ All verification checks passed"
 
 # doctor gate: fail on actual failures (exit 1), allow warnings (exit 2).
