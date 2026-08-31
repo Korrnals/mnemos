@@ -16,6 +16,17 @@ the canonical baseline JSON and regenerates ``BASELINE.md`` from it
 Deterministic by construction: BLAKE2b lexical embedder, fixed corpus
 order, no wall-clock in any measured value, no RNG, no network. The
 ``created`` field is run metadata, not a metric.
+
+S1m (ADR-0021 NM-0): the SAME deterministic run additionally measures
+the PRODUCTION embedder (the shipped default provider) over the same
+judged corpus — recall/precision@k, MRR, nDCG@k — as its OWN section
+(``s1m``) with a ``model_fingerprint`` field pinning provider + model +
+weights sha256 + opset. The BLAKE2b reference stays the only source for
+the pipeline corridors; the S1m corridor is self-comparison (its own
+baseline - max(0.02; 95% CI)). An embedder change without a same-PR
+``--record`` fails LOUD. If the production provider cannot be built in
+the run environment, S1m reports ``status: "skipped"`` with the reason
+(green by default; red when ``MNEMOS_BENCH_S1M_REQUIRED=1``).
 """
 
 from __future__ import annotations
@@ -46,11 +57,18 @@ from benchmarks.stands.s1_quality.harness import (  # noqa: E402
     K_VALUES,
     _measure_queries,
     assemble_leak_check,
+    build_golden_manager,
     fresh_golden_manager,
     measure_rewrite,
     measure_search,
     overfetch_factor,
     vector_predicate_off,
+)
+from benchmarks.stands.s1_quality.model_contour import (  # noqa: E402
+    build_production_embedder,
+    gate_model_contour,
+    run_model_contour,
+    s1m_required,
 )
 from benchmarks.stands.s1_quality.scenarios import (  # noqa: E402
     check_render_neutrality,
@@ -113,6 +131,50 @@ def _ci95(values: list[float]) -> float:
     return NormalDist().inv_cdf(0.975) * (var**0.5) / n**0.5
 
 
+# ── S1m: the production-embedder contour (ADR-0021 NM-0) ─────────────────────
+
+
+def run_model_leg(root: Path) -> dict[str, Any]:
+    """Run the judged queries through the PRODUCTION embedder.
+
+    Builds a second fresh golden manager — same corpus, same fixed
+    order, same ``_measure_queries`` ranking path — with the production
+    embedder installed instead of the BLAKE2b reference.
+
+    ISOLATION: the leg runs under ``root / "s1m"``, NOT the shared
+    ``root`` — ``golden_settings`` derives ``data_dir`` from the root,
+    so both managers would otherwise share ONE ``vectors.db`` and the
+    256-dim reference vectors would mix with the 384-dim production
+    ones in a single store (``np.stack`` then fails on every vector
+    search and the leg silently degrades to FTS-only — measured,
+    honest-looking, wrong).
+
+    Initialization may download weights (chromadb lazily fetches its
+    ONNX artifact), so EVERY failure inside the leg (import, download,
+    init) converts to the documented SKIP with the concrete reason;
+    the deterministic reference measurement in the same
+    ``run_measurement`` pass is never disturbed.
+
+    Returns the ``s1m`` report section (measured or skipped).
+    """
+    try:
+        embedder = build_production_embedder()
+        # warmup INSIDE the try: chromadb downloads the ONNX artifact on
+        # first embed, and that download must skip too, not crash the run.
+        embedder.embed("mnemos s1m warmup")
+        mgr, slug_to_id = build_golden_manager(root / "s1m", embedder=embedder)
+        try:
+            measurements = _measure_queries(mgr, slug_to_id)
+        finally:
+            mgr.close()
+        ranked = [(m.qid, list(m.result_slugs)) for m in measurements]
+        dimension = getattr(embedder, "dimension", None)
+        return run_model_contour(ranked, dimension=dimension)
+    except Exception as exc:  # provider unavailable → skip, never crash
+        reason = f"{type(exc).__name__}: {exc}"
+        return run_model_contour(None, skip_reason=reason)
+
+
 def _full_hit(measurement: Any, k: int = 10) -> bool:
     """Per-query binary outcome for the McNemar jig: full recall@k."""
     top = set(measurement.result_slugs[:k])
@@ -156,7 +218,14 @@ def _collect_issuance_surfaces(
 
 
 def run_measurement() -> dict[str, Any]:
-    """One complete deterministic S1 pass. Returns the ``metrics`` dict."""
+    """One complete deterministic S1 pass. Returns the ``metrics`` dict.
+
+    The reference contour (BLAKE2b) stays byte-reproducible; the S1m
+    model leg (Phase C) is measured in the SAME pass but reported in
+    its own ``s1m`` section — its numbers never enter the pipeline
+    corridors, and a provider-unavailable environment yields a
+    ``skipped`` section instead of disturbing the reference metrics.
+    """
     with tempfile.TemporaryDirectory(prefix="mnemos-s1-") as tmp:
         root = Path(tmp)
 
@@ -211,6 +280,9 @@ def run_measurement() -> dict[str, Any]:
             refuse.pop("_retraction_renders"),
             refuse.pop("_quarantine_reasons"),
         )
+
+        # ── Phase C: S1m — the production-embedder contour (NM-0) ────
+        s1m = run_model_leg(root)
 
     a9_variants = {}
     for key, m in (
@@ -322,6 +394,7 @@ def run_measurement() -> dict[str, Any]:
         "detector_quarantine_fp": detector_fp,
         "render_neutrality": neutrality,
         "mcnemar_interim": mcnemar,
+        "s1m": s1m,
     }
 
 
@@ -330,6 +403,12 @@ def build_baseline(metrics: dict[str, Any]) -> dict[str, Any]:
         "baseline_version": BASELINE_VERSION,
         "stand_version": STAND_VERSION,
         "corpus_fingerprint": corpus_fingerprint(),
+        # ADR-0021 NM-0: pins the PRODUCTION embedder the s1m section
+        # was measured with. ``None`` = the reference contour only
+        # (BLAKE2b is not a model; a no-provider environment records a
+        # null fingerprint and the gate treats that as the documented
+        # migration, not a hole).
+        "model_fingerprint": (metrics.get("s1m") or {}).get("fingerprint"),
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
         "metrics": metrics,
         "environment": {
@@ -340,7 +419,14 @@ def build_baseline(metrics: dict[str, Any]) -> dict[str, Any]:
 
 
 def gate_check(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
-    """ADR-0020 gate policy for S1: invariants exact, corridors derived."""
+    """ADR-0020 gate policy for S1 + the ADR-0021 NM-0 model contour.
+
+    Pipeline half: invariants exact, corridors derived (BLAKE2b
+    reference — the only source for pipeline corridors). Model half:
+    ``model_fingerprint`` fail-loud (an embedder change without a
+    same-PR re-baseline is RED — the silent-substitution hole NM-0
+    closes) and the S1m self-comparison corridor.
+    """
     failures: list[str] = []
     base_metrics = baseline.get("metrics") or {}
 
@@ -354,6 +440,41 @@ def gate_check(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str, A
             "corpus fingerprint differs from the baseline — re-baseline required "
             "(--record) per ADR-0020 event-driven triggers"
         )
+
+    # ── fail-loud embedder substitution (ADR-0021 NM-0) ──────────────
+    recorded_fp = baseline.get("model_fingerprint") or None
+    live_fp = (current.get("s1m") or {}).get("fingerprint") or None
+    s1m_status = (current.get("s1m") or {}).get("status")
+    if recorded_fp is not None and s1m_status == "measured":
+        from benchmarks.stands.s1_quality.model_contour import fingerprint_equal
+
+        if not fingerprint_equal(recorded_fp, live_fp):
+            from benchmarks.stands.s1_quality.model_contour import (
+                fingerprint_label,
+            )
+
+            failures.append(
+                "production embedder changed "
+                f"(old={fingerprint_label(recorded_fp)} "
+                f"new={fingerprint_label(live_fp)}) — explicit re-baseline "
+                "required (--record), same PR per ADR-0021"
+            )
+    elif recorded_fp is not None and s1m_status != "measured" and s1m_required():
+        # fingerprint pinned, but THIS environment could not measure the
+        # model contour at all while the operator demanded it mandatory —
+        # the gate cannot verify the embedder, so it must not pass silently.
+        failures.append(
+            "s1m skipped while the baseline pins a production fingerprint and "
+            "MNEMOS_BENCH_S1M_REQUIRED is set — the production embedder cannot "
+            "be verified in this environment"
+        )
+    # recorded_fp is None (pre-NM-0 baseline or recorded without the
+    # provider): the documented migration — the next --record pins the
+    # first fingerprint; nothing recorded can silently diverge yet.
+
+    # S1m contour gate (self-comparison; skip semantics decided inside)
+    s1m_gate = gate_model_contour(current.get("s1m") or {}, baseline)
+    failures.extend(s1m_gate.get("failures", []))
 
     for name, entry in current["invariants"].items():
         if not entry["ok"]:
@@ -444,8 +565,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"s1: report → {report_path}", file=sys.stderr)
 
     if verdict["pass"]:
+        s1m = metrics.get("s1m") or {}
         if not args.quiet:
             print("s1: gate PASS — corridors and invariants hold")
+            if s1m.get("status") == "skipped":
+                print(f"s1m: SKIP — {s1m.get('reason')}", file=sys.stderr)
+            elif s1m.get("status") == "measured":
+                m = s1m.get("metrics") or {}
+                print(
+                    "s1m: production embedder measured — "
+                    f"recall@5={m.get('recall_at_5', 0):.4f} "
+                    f"recall@10={m.get('recall_at_10', 0):.4f} "
+                    f"mrr={m.get('mrr', 0):.4f} "
+                    f"ndcg@10={m.get('ndcg_at_10', 0):.4f}"
+                )
         return 0
     for failure in verdict["failures"]:
         print(f"s1: FAIL — {failure}", file=sys.stderr)
