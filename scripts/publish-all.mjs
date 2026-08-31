@@ -37,6 +37,18 @@ const inCI = !!process.env.GITHUB_ACTIONS;
 const provenance = inCI && !dryRun; // --provenance needs OIDC (id-token: write)
 const names = ["mnemos-pi", "@korrlabs/mnemospi", "@korrlabs/mnemos-pi"];
 
+// Auth pre-check: npm session tokens expire after 2h (npm Dec 2025 policy).
+// Fail fast with a clear message instead of 3× confusing E404.
+if (!dryRun && !inCI) {
+  try {
+    const who = execSync("npm whoami", { stdio: "pipe", cwd: root, timeout: 15_000 }).toString().trim();
+    console.log(`✓ npm auth: ${who}`);
+  } catch {
+    console.error("❌ npm auth expired — run `npm login` first, then re-run this script.");
+    process.exit(1);
+  }
+}
+
 const results = []; // {name, status: "published"|"already"|"failed"}
 
 // Idempotency pre-check: is this name@version already on the registry?
