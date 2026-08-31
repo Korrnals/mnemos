@@ -7,7 +7,9 @@
 - **baseline_version:** 1
 - **stand_version:** s1-1
 - **corpus_fingerprint:** `492fb39b2e98d92037438137a08419266946aacf7062ed7370b07f9d3fb41f59`
-- **created:** 2026-08-31T08:24:55+00:00
+- **created:** 2026-08-31T20:41:12+00:00
+- **model_fingerprint (production embedder):** `chromadb all-MiniLM-L6-v2 sha256:4f148ba8ae9c…`
+  - full weights sha256: `4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6`
 - **environment:** python 3.12.3, deterministic_embedder=True (BLAKE2b lexical — pins the retrieval PIPELINE, not MiniLM)
 
 ## 1. Retrieval quality (judged golden queries)
@@ -88,7 +90,23 @@ Delta (current - pre-A9) recall@10: **-0.0071**
 - hits: leg A 46 / leg B 45; discordant b=1, c=2; two-sided sign-test p = **1.0000**
 - interim per ADR-0020 (48 judged queries are underpowered for McNemar); the same jig re-targets raw-vs-refined projections when deterministic refined projections exist
 
-## 10. Gate corridors (derived from THIS baseline)
+## 10. S1m — production-embedder model contour (ADR-0021 NM-0)
+
+- the PRODUCTION embedder over the same judged corpus — self-comparison only, NEVER against the BLAKE2b reference (the reference measures retrieval mechanics, the model semantic quality)
+
+| Metric | Value | 95% CI (half-width) |
+| --- | ---: | ---: |
+| precision@5 | 0.2936 | 0.0393 |
+| precision@10 | 0.1489 | 0.0205 |
+| recall@5 | 0.9787 | 0.0235 |
+| recall@10 | 0.9858 | 0.0194 |
+| mrr | 1.0000 | — |
+| ndcg@5 | 0.9817 | — |
+| ndcg@10 | 0.9852 | — |
+| judged queries | 47 | — |
+- embedder: `chromadb all-MiniLM-L6-v2 sha256:4f148ba8ae9c…`, dim 384, arch x86_64
+
+## 11. Gate corridors (derived from THIS baseline)
 
 | Metric | Corridor |
 | --- | --- |
@@ -100,8 +118,13 @@ Delta (current - pre-A9) recall@10: **-0.0071**
 | replace-regret-rate ≤ | +0.2700 |
 | A9 recall@10 delta ≥ | -0.0200 |
 | invariants | exact (= 1.000 / = 0), never carried over a re-baseline |
+| s1m precision_at_5 ≥ | +0.2543 (baseline 0.2936 - max(0.02; ci 0.0393)) |
+| s1m precision_at_10 ≥ | +0.1284 (baseline 0.1489 - max(0.02; ci 0.0205)) |
+| s1m recall_at_5 ≥ | +0.9552 (baseline 0.9787 - max(0.02; ci 0.0235)) |
+| s1m recall_at_10 ≥ | +0.9658 (baseline 0.9858 - max(0.02; ci 0.0200)) |
+| model_fingerprint | exact match vs this baseline — a mismatch is RED (re-baseline `--record`, same PR, per ADR-0021) |
 
-## 11. Reproducing
+## 12. Reproducing
 
 ```bash
 make bench-s1            # gate mode (corridors + invariants vs this baseline)

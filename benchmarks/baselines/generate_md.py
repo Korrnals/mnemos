@@ -27,6 +27,14 @@ OUTPUT_MD = Path(__file__).resolve().parent / "BASELINE.md"
 #: ADR-0020 corridor rule (mirrors the runner; markdown only reports it).
 CORRIDOR_FLOOR = 0.02
 
+#: S1m corridor metric names (mirror of the model contour; summary only).
+S1M_CORRIDOR_METRICS: tuple[str, ...] = (
+    "precision_at_5",
+    "precision_at_10",
+    "recall_at_5",
+    "recall_at_10",
+)
+
 
 def _fmt(value: Any, digits: int = 4) -> str:
     if isinstance(value, float):
@@ -65,6 +73,21 @@ def render_baseline_md(baseline: dict[str, Any]) -> str:
     add(f"- **stand_version:** {baseline['stand_version']}")
     add(f"- **corpus_fingerprint:** `{baseline['corpus_fingerprint']}`")
     add(f"- **created:** {baseline['created']}")
+    fp_model = baseline.get("model_fingerprint")
+    if fp_model:
+        from benchmarks.stands.s1_quality.model_contour import fingerprint_label
+
+        add(f"- **model_fingerprint (production embedder):** `{fingerprint_label(fp_model)}`")
+        add(
+            "  - full weights sha256: "
+            f"`{fp_model.get('weights_sha256') or 'n/a (no local artifact)'}`"
+        )
+    else:
+        add(
+            "- **model_fingerprint (production embedder):** none — pre-NM-0 "
+            "baseline or recorded without the provider available; the next "
+            "`--record` pins it (ADR-0021 migration)"
+        )
     add(
         f"- **environment:** python {baseline['environment']['python']}, "
         f"deterministic_embedder={baseline['environment']['deterministic_embedder']} "
@@ -199,7 +222,43 @@ def render_baseline_md(baseline: dict[str, Any]) -> str:
     )
     add(f"- {mc['note']}")
     add("")
-    add("## 10. Gate corridors (derived from THIS baseline)")
+    add("## 10. S1m — production-embedder model contour (ADR-0021 NM-0)")
+    add("")
+    s1m = m.get("s1m") or {}
+    if s1m.get("status") != "measured":
+        add(f"- **status:** skipped — {s1m.get('reason') or 'provider unavailable'}")
+        add(
+            "- skipped is GREEN in the default local posture; set "
+            "`MNEMOS_BENCH_S1M_REQUIRED=1` to make it a gate failure (CI)"
+        )
+    else:
+        sm = s1m.get("metrics") or {}
+        add(
+            "- the PRODUCTION embedder over the same judged corpus — "
+            "self-comparison only, NEVER against the BLAKE2b reference "
+            "(the reference measures retrieval mechanics, the model "
+            "semantic quality)"
+        )
+        add("")
+        add("| Metric | Value | 95% CI (half-width) |")
+        add("| --- | ---: | ---: |")
+        for metric in S1M_CORRIDOR_METRICS:
+            metric_ci = (sm.get("ci95") or {}).get(metric, 0.0)
+            add(
+                f"| {metric.replace('_at_', '@')} | {_fmt(sm.get(metric, 0.0))} "
+                f"| {_fmt(metric_ci)} |"
+            )
+        add(f"| mrr | {_fmt(sm.get('mrr', 0.0))} | — |")
+        add(f"| ndcg@5 | {_fmt(sm.get('ndcg_at_5', 0.0))} | — |")
+        add(f"| ndcg@10 | {_fmt(sm.get('ndcg_at_10', 0.0))} | — |")
+        add(f"| judged queries | {sm.get('judged_queries', 0)} | — |")
+        env = s1m.get("environment") or {}
+        add(
+            f"- embedder: `{fingerprint_label(s1m.get('fingerprint'))}`, "
+            f"dim {env.get('dimension')}, arch {env.get('arch')}"
+        )
+    add("")
+    add("## 11. Gate corridors (derived from THIS baseline)")
     add("")
     add("| Metric | Corridor |")
     add("| --- | --- |")
@@ -209,8 +268,26 @@ def render_baseline_md(baseline: dict[str, Any]) -> str:
     add(f"| replace-regret-rate ≤ | {rw['regret_rate'] + CORRIDOR_FLOOR:+.4f} |")
     add(f"| A9 recall@10 delta ≥ | {-CORRIDOR_FLOOR:+.4f} |")
     add("| invariants | exact (= 1.000 / = 0), never carried over a re-baseline |")
+    s1m = m.get("s1m") or {}
+    if s1m.get("status") == "measured":
+        sm = s1m.get("metrics") or {}
+        for metric in S1M_CORRIDOR_METRICS:
+            metric_ci = (sm.get("ci95") or {}).get(metric, 0.0)
+            add(
+                f"| s1m {metric} ≥ | "
+                f"{_corridor(float(sm.get(metric, 0.0)), float(metric_ci))} |"
+            )
+    else:
+        add(
+            "| s1m | skipped (provider unavailable) — green unless "
+            "MNEMOS_BENCH_S1M_REQUIRED=1 |"
+        )
+    add(
+        "| model_fingerprint | exact match vs this baseline — a mismatch is RED "
+        "(re-baseline `--record`, same PR, per ADR-0021) |"
+    )
     add("")
-    add("## 11. Reproducing")
+    add("## 12. Reproducing")
     add("")
     add("```bash")
     add("make bench-s1            # gate mode (corridors + invariants vs this baseline)")

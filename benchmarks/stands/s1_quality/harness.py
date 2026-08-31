@@ -44,6 +44,7 @@ from benchmarks.corpus.rewrite_scenario import (
     control_blocks,
 )
 from mnemos.config import Settings
+from mnemos.embeddings import EmbeddingProvider
 from mnemos.manager import MemoryManager
 from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
 from mnemos.storage.vector_store import VectorStore
@@ -96,15 +97,24 @@ def golden_settings(root: Path) -> Settings:
     return settings
 
 
-def build_golden_manager(root: Path) -> tuple[MemoryManager, dict[str, str]]:
+def build_golden_manager(
+    root: Path, embedder: EmbeddingProvider | None = None
+) -> tuple[MemoryManager, dict[str, str]]:
     """Ingest the golden corpus into a fresh manager.
 
     Returns ``(manager, slug_to_id)``. The deterministic embedder is
     installed BEFORE ingest so published entries embed consistently with
     query-time embeddings.
+
+    ``embedder`` overrides the installed provider (S1m, ADR-0021 NM-0):
+    passing the PRODUCTION embedder runs the same corpus + queries
+    through the real model while keeping this ingest path identical —
+    the model contour reuses the golden machinery instead of growing a
+    parallel one. ``None`` keeps the BLAKE2b reference default.
     """
+    installed = embedder if embedder is not None else LexicalHashEmbedder()
     mgr = MemoryManager(golden_settings(root))
-    mgr._embedder = LexicalHashEmbedder()
+    mgr._embedder = installed
     slug_to_id: dict[str, str] = {}
     for entry in CORPUS:  # fixed corpus order — determinism
         data = MemoryCreate(
@@ -144,9 +154,11 @@ def _entry_tags(entry: GoldenEntry) -> list[str]:
 
 
 @contextlib.contextmanager
-def fresh_golden_manager(root: Path) -> Iterator[tuple[MemoryManager, dict[str, str]]]:
+def fresh_golden_manager(
+    root: Path, embedder: EmbeddingProvider | None = None
+) -> Iterator[tuple[MemoryManager, dict[str, str]]]:
     """Build, yield, close — temp-dir hygiene for the pytest suite."""
-    mgr, slug_to_id = build_golden_manager(root)
+    mgr, slug_to_id = build_golden_manager(root, embedder=embedder)
     try:
         yield mgr, slug_to_id
     finally:

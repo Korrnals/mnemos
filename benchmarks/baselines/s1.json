@@ -2,7 +2,13 @@
   "baseline_version": 1,
   "stand_version": "s1-1",
   "corpus_fingerprint": "492fb39b2e98d92037438137a08419266946aacf7062ed7370b07f9d3fb41f59",
-  "created": "2026-08-31T08:24:55+00:00",
+  "model_fingerprint": {
+    "provider": "chromadb",
+    "model": "all-MiniLM-L6-v2",
+    "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
+    "opset": null
+  },
+  "created": "2026-08-31T20:41:12+00:00",
   "metrics": {
     "retrieval": {
       "precision_at_5": 0.297872,
@@ -213,6 +219,42 @@
       "discordant_c": 2,
       "p_two_sided": 1.0,
       "note": "interim per ADR-0020 (48 judged queries are underpowered for McNemar); the same jig re-targets raw-vs-refined projections when deterministic refined projections exist"
+    },
+    "s1m": {
+      "status": "measured",
+      "reason": null,
+      "required": false,
+      "fingerprint": {
+        "provider": "chromadb",
+        "model": "all-MiniLM-L6-v2",
+        "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
+        "opset": null
+      },
+      "metrics": {
+        "precision_at_5": 0.293617,
+        "precision_at_10": 0.148936,
+        "recall_at_5": 0.978723,
+        "recall_at_10": 0.985816,
+        "mrr": 1.0,
+        "ndcg_at_5": 0.981683,
+        "ndcg_at_10": 0.98524,
+        "ci95": {
+          "precision_at_5": 0.039274,
+          "precision_at_10": 0.02054,
+          "recall_at_5": 0.023547,
+          "recall_at_10": 0.019443
+        },
+        "judged_queries": 47,
+        "dimension": 384
+      },
+      "environment": {
+        "arch": "x86_64",
+        "dimension": 384
+      },
+      "gate": {
+        "pass": true,
+        "failures": []
+      }
     }
   },
   "environment": {
