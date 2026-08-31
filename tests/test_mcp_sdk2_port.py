@@ -28,6 +28,7 @@ from mnemos.cli.doctor import CheckStatus, _check_mcp_transport
 # here is a breaking contract change and must not happen silently.
 EXPECTED_TOOL_COUNT = 26
 
+
 # The conftest installs MagicMock stubs into sys.modules BEFORE any test
 # module runs — including in environments where the real `mcp` package IS
 # installed (nothing imports it before conftest does its check). The stub
@@ -159,9 +160,7 @@ def test_check_mcp_transport_registered_in_doctor_run() -> None:
     assert "_check_mcp_transport" in source
 
 
-def test_doctor_json_includes_mcp_transport(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_doctor_json_includes_mcp_transport(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``mnemos doctor --json`` output carries the MCP transport check row."""
     from typer.testing import CliRunner
 
