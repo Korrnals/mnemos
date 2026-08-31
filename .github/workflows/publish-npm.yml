@@ -1,0 +1,37 @@
+name: publish-npm
+
+# Publishes the mnemos Pi package under three names (mnemos-pi, mnemospi,
+# @korrlabs/mnemos-pi) on every `v*` tag. Uses npm Trusted Publishing (OIDC) —
+# NO NPM_TOKEN secret is stored. Requires a one-time manual first publish of
+# each name + a Trusted Publisher configured per name on npmjs.com:
+#   repository: Korrnals/mnemos
+#   workflow:    publish-npm.yml
+#   environment: npm
+# See scripts/publish-all.mjs for the first-publish + trusted-publisher notes.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # OIDC trusted publishing — no long-lived token.
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Sync package.json version from pyproject.toml
+        run: node scripts/sync-version.mjs
+
+      - name: Publish all three names (OIDC)
+        run: node scripts/publish-all.mjs

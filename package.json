@@ -1,0 +1,59 @@
+{
+  "name": "mnemos-pi",
+  "version": "2.15.0",
+  "description": "Mnemos memory & knowledge server — Pi extension. Spawns `mnemos mcp-server` over stdio and exposes every mnemos_* tool as a native Pi tool, plus the mnemos skill pack.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Korrnals",
+  "homepage": "https://github.com/Korrnals/mnemos",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Korrnals/mnemos.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Korrnals/mnemos/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "mcp",
+    "model-context-protocol",
+    "memory",
+    "mnemos",
+    "ai",
+    "coding-agent",
+    "extension"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "pi": {
+    "extensions": [
+      "./integrations/extensions/mnemos-mcp.ts"
+    ],
+    "skills": [
+      "./integrations/skills"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "files": [
+    "integrations/extensions/",
+    "integrations/skills/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
