@@ -186,10 +186,13 @@ def scenario_supersede_refind(mgr: MemoryManager) -> dict[str, Any]:
 
     The substitution runs through the real ``update`` path (same id,
     Layer-1 scanner re-run included). Two honest observations along the
-    way: (a) right after a content edit the filter projection
-    (``clean_content``) is STALE until the filter re-runs — recorded as
-    an informational flag, a production finding the stand surfaces;
-    (b) the projection is then regenerated the way the pipeline does
+    way: (a) the filter projection freshness right after a content
+    edit — recorded as an informational flag; it observed ``true``
+    until issue #193 (a stale ``clean_content`` kept serving the OLD
+    filtered text) and must observe ``false`` since the fix resets the
+    projection in the same transaction as the content write — the flag
+    is the regression tripwire for that fix; (b) the projection is
+    then regenerated the way the pipeline does
     (``apply_context_filter``) and the embed is healed the way the
     sweeper heals it, after which the new projection serves and the
     old one is gone from the lexical leg (checked with the vector leg

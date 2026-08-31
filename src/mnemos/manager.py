@@ -783,38 +783,51 @@ class MemoryManager:
             memory.tags, scan_patterns = self._scan_and_tag(memory.tags, memory.content)
 
         # ── ADR-0019 N1: direct-flip / published-edit publication gate ────
-        # Two direct paths reach ``published`` without the pipeline's
-        # publish stage, both routed through the SAME Phase A danger gate
-        # (no duplicated gate logic — see _publish_gate_verdict):
-        #   (b) an explicit status flip to PUBLISHED — on refusal the
-        #       status simply does not change (stays previous);
-        #   (c) a content or TITLE edit of an ALREADY-published row — on
-        #       refusal the new text is still stored (zero-loss) but the
-        #       status is demoted to RAW: keeping ``published`` would
-        #       republish the refused projection. Titles are part of the
+        # Direct paths that leave the row CONTEXT-ADMISSIBLE without the
+        # pipeline's publish stage, all routed through the SAME Phase A
+        # danger gate (no duplicated gate logic — see
+        # _publish_gate_verdict):
+        #   (b) an explicit status flip INTO PUBLISHED — on refusal the
+        #       status simply does not change (stays previous). A flip
+        #       into PROCESSED is deliberately NOT this gate's business:
+        #       that transition is the knowledge pipeline's own advance
+        #       (the context-rewrite originals carry redact-at-issuance
+        #       secrets by contract — see the rewrite redemption tests);
+        #   (c) a content or TITLE edit of an ALREADY-admissible row —
+        #       PUBLISHED, and since issue #171 also PROCESSED (the
+        #       other member of CONTEXT_ADMISSIBLE_STATUSES: gating only
+        #       the published half left the processed half editable
+        #       without a re-gate, an asymmetric seam) — on refusal the
+        #       new text is still stored (zero-loss) but the status is
+        #       demoted to RAW: keeping an admissible status would keep
+        #       serving the refused projection. Titles are part of the
         #       served projection (markers/echo paths render them) and
         #       the issuance scan does not screen titles for injections
         #       — the gate is the only guard there.
         # A no-op flip (status=PUBLISHED on an already-published row with
         # no content or title change) does not re-gate: nothing about
-        # the served projection changes.
+        # the served projection changes. Quarantined rows are exempt
+        # (is_context_admissible): they are excluded from every issuance
+        # path anyway and release_quarantine routes the fresh cycle
+        # through the gate.
         status_flipped = data.status is not None and data.status != previous_status
         content_changed = "content" in update_kwargs
         title_changed = "title" in update_kwargs
+        was_admissible = previous_status in CONTEXT_ADMISSIBLE_STATUSES
+        flip_into_published = status_flipped and memory.status == MemoryStatus.PUBLISHED
+        edit_of_admissible = (content_changed or title_changed) and is_context_admissible(memory)
         demoted_for_publication = False
-        if memory.status == MemoryStatus.PUBLISHED and (
-            status_flipped or content_changed or title_changed
-        ):
-            path = "status-flip" if status_flipped else "published-content-edit"
+        if flip_into_published or edit_of_admissible:
+            path = "status-flip" if flip_into_published else "published-content-edit"
             # On a content edit the NEW content is the projection that
-            # would be served — clean_content is stale until the filter
-            # re-runs, so the gate must not scan the old text. On a
+            # would be served — clean_content is reset below before the
+            # save, so the gate must not scan the old text. On a
             # title-only edit effective_content() is the current
             # projection (content unchanged) and the NEW title is
             # scanned via the memory snapshot.
             gate_content = memory.content if content_changed else None
             if not self._publish_gate_verdict(memory, path=path, content=gate_content):
-                if previous_status == MemoryStatus.PUBLISHED and (content_changed or title_changed):
+                if was_admissible and (content_changed or title_changed):
                     memory.status = MemoryStatus.RAW
                     demoted_for_publication = True
                 else:
@@ -823,22 +836,44 @@ class MemoryManager:
         # ── ADR-0019 B2b (review #163 F8): a content edit of a REFINED ──
         # row invalidates the artifact — the served projection is no
         # longer the refined output, so the row re-enters the refine
-        # intake (pending). ``swap_key`` is deliberately LEFT in place:
-        # the new cycle recomputes it from the new artifact, and the
-        # stale value is what makes a no-op re-run of the OLD artifact
-        # detectable. Only the CLEAN path requeues — a gate-demoted edit
-        # writes RAW-status side effects only (the B1 invariant: N1
-        # demotions never touch pipeline_state).
+        # intake (pending). Issue #171 extends the same F8 semantics to
+        # admissible rows with legacy NULL pipeline_state (never
+        # enrolled — e.g. an explicit PROCESSED seed): their projection
+        # is equally stale after an edit; non-admissible rows keep the
+        # B1 backfill decision (raw/processing/archived stay NULL).
+        # ``swap_key`` is deliberately LEFT in place: the new cycle
+        # recomputes it from the new artifact, and the stale value is
+        # what makes a no-op re-run of the OLD artifact detectable.
+        # Only the CLEAN path requeues — a gate-demoted edit writes
+        # RAW-status side effects only (the B1 invariant: N1 demotions
+        # never touch pipeline_state).
         if (
             content_changed
-            and memory.pipeline_state == PipelineState.REFINED
             and not demoted_for_publication
+            and (
+                memory.pipeline_state == PipelineState.REFINED
+                or (memory.pipeline_state is None and is_context_admissible(memory))
+            )
         ):
+            from_state = memory.pipeline_state.value if memory.pipeline_state else "none"
             memory.pipeline_state = PipelineState.PENDING
             logger.info(
-                "pipeline: id=%s outcome=enqueued from=refined state=pending reason=content-edit",
+                "pipeline: id=%s outcome=enqueued from=%s state=pending reason=content-edit",
                 memory.id[:8],
+                from_state,
             )
+
+        # ── Issue #193: a content replace resets the filter projection ──
+        # in the SAME transaction. effective_content() is ``clean_content
+        # or content`` — a stale clean_content would keep serving the
+        # OLD filtered text after the edit (the B2a swap discipline,
+        # applied to the update path). Not re-filtered here on purpose:
+        # apply_context_filter derives from ``raw_content or content``,
+        # so for a row whose immutable source was materialised a re-run
+        # would rebuild the OLD projection through the back door. The
+        # next apply_context_filter / sweeper pass recomputes it.
+        if content_changed:
+            memory.clean_content = None
 
         memory.updated_at = datetime.now(UTC)
         self.sqlite.save(memory)
@@ -2800,6 +2835,48 @@ class MemoryManager:
         )
         return True
 
+    def reclaim_stale_refinements(self, *, limit: int = 100) -> dict[str, Any]:
+        """Issue #170 (ADR-0019 Phase C) — lease-expired ``processing``
+        rows go back to ``pending`` (the idempotent sweeper pass).
+
+        A worker crash between :meth:`refine_single`'s atomic claim and
+        its outcome write strands the claimed rows in ``processing``
+        with no path back into the queue; this pass is that path. Lease
+        expiry is decided on ``updated_at`` against
+        :data:`REFINE_LEASE_TIMEOUT_SEC <mnemos.pipeline.refine.REFINE_LEASE_TIMEOUT_SEC>`
+        (the claim stamps the clock; every outcome write refreshes it),
+        and the store's per-row CAS makes the reclaim safe under two
+        concurrent sweepers — exactly one wins per row. The retry
+        counter is deliberately untouched: a lease expiry is not a
+        lane-(a) failure and must not eat the row's retry budget.
+
+        Audit: one ``pipeline: id=… outcome=lease-reclaimed age=…s``
+        warning per reclaimed row (an expired lease means a worker died
+        mid-flight — an anomaly worth surfacing, not a routine event).
+
+        Returns ``{"reclaimed": n, "reclaimed_ids": […],
+        "lease_timeout_sec": …}``.
+        """
+        from mnemos.pipeline.refine import OUTCOME_LEASE_RECLAIMED, REFINE_LEASE_TIMEOUT_SEC
+
+        now = datetime.now(UTC)
+        reclaimed = self.sqlite.reclaim_stale_processing(
+            lease_timeout_sec=REFINE_LEASE_TIMEOUT_SEC, limit=limit
+        )
+        for memory_id, lease_started_iso in reclaimed:
+            age_sec = int((now - datetime.fromisoformat(lease_started_iso)).total_seconds())
+            logger.warning(
+                "pipeline: id=%s outcome=%s age=%ds",
+                memory_id[:8],
+                OUTCOME_LEASE_RECLAIMED,
+                age_sec,
+            )
+        return {
+            "reclaimed": len(reclaimed),
+            "reclaimed_ids": [memory_id for memory_id, _ in reclaimed],
+            "lease_timeout_sec": REFINE_LEASE_TIMEOUT_SEC,
+        }
+
     def heal_stale_embeddings(self, *, limit: int = 200) -> dict[str, Any]:
         """Idempotent sweeper: re-embed ``refined`` rows with stale vectors.
 
@@ -3105,6 +3182,11 @@ class MemoryManager:
                         result.get("refined_noop", 0),
                         result.get("quarantined", 0),
                     )
+                # Issue #170 (ADR-0019 Phase C) — idempotent lease-reclaim
+                # pass: processing rows whose lease expired (a worker died
+                # between the claim and its outcome write) re-enter the
+                # pending intake.
+                self.reclaim_stale_refinements()
                 # ADR-0019 §Swap — idempotent heal pass: refined rows whose
                 # embed is stale/missing (a failed post-swap upsert) get
                 # re-embedded; quarantined rows are skipped absolutely.

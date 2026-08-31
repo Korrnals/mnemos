@@ -74,11 +74,24 @@ REFINE_BACKOFF_CAP_SEC = 3600
 #: hash and re-swaps rows refined by an older version.
 REFINE_PROCESSING_VERSION = "stub-v1"
 
+#: Issue #170 (ADR-0019 Phase C) — lease timeout of a ``processing``
+#: claim. A worker crash between the CAS claim and the outcome write
+#: strands the row; the sweeper reclaims rows whose ``updated_at`` (the
+#: lease clock, stamped at the claim) is older than this. Single-worker
+#: deployment today: 10 minutes covers any digest run with a wide
+#: margin. Configurable by design — a multi-worker or LLM-backed
+#: producer that can legitimately run longer raises it instead of
+#: relying on the sweeper not firing.
+REFINE_LEASE_TIMEOUT_SEC = 600
+
 #: Outcome codes (audit vocabulary: ``outcome=…``).
 OUTCOME_REFINED = "refined"
 OUTCOME_REFINED_NOOP = "refined-noop"
 OUTCOME_FAILED = "failed"
 OUTCOME_QUARANTINED = "quarantined"
+#: Issue #170 — the sweeper's lease-reclaim audit outcome (see
+#: :meth:`MemoryManager.reclaim_stale_refinements`).
+OUTCOME_LEASE_RECLAIMED = "lease-reclaimed"
 
 #: Quarantine reason for detector/scanner AMBIGUITY (§5: an error of the
 #: detector while scanning the processed projection quarantines

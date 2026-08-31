@@ -45,6 +45,20 @@ Coverage map (one section per B1 deliverable):
   audit lines; competitive claim CAS; manual quarantine release
   (manager + REST); the stale-embed sweeper and the quarantine skip in
   ``rebuild_vector_index``.
+* **Lease/reclaim (issue #170, ADR-0019 Phase C)** — a ``processing``
+  claim stamps the lease clock (``updated_at``); the sweeper's reclaim
+  returns lease-expired rows to ``pending`` through a per-row CAS
+  (fresh claims untouched, double reclaim single-wins, retry counter
+  not consumed) and the reclaimed rows re-enter the intake.
+* **N1 on PROCESSED rows (issue #171)** — content/title edits of
+  PROCESSED rows (the other admissible status) re-enter the same Phase
+  A gate: refusal demotes to RAW without touching ``pipeline_state``
+  (B1 invariant), a clean edit requeues the row to ``pending`` (F8
+  semantics, legacy NULL rows of admissible status included).
+* **Filter projection on edit (issue #193)** — a content replace
+  resets ``clean_content`` in the SAME transaction: the served
+  projection (``effective_content``) is the new content immediately,
+  never the stale pre-edit filter output.
 """
 
 from __future__ import annotations
@@ -52,8 +66,9 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import threading
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock
@@ -1550,3 +1565,273 @@ class TestSweeperAndRebuild:
         assert meta["content_hash"] == manager._embed_content_hash(manager._embedding_text(stored))
         # The quarantined row gained no embed from the rebuild.
         assert manager.vectors.has(dirty.id) is False
+
+
+# ── 13. Lease/reclaim — issue #170 (ADR-0019 Phase C) ─────────────────────────
+
+
+class TestLeaseReclaim:
+    """A worker crash between the claim CAS and the outcome write strands
+    the row in ``processing``; the sweeper's lease-reclaim is the path
+    back into the intake."""
+
+    def _claimed(self, manager: MemoryManager, content: str) -> Memory:
+        """Seed a row and drive it to a live ``processing`` claim."""
+        mem = _published(manager, content)
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        assert manager.sqlite.claim_for_refinement(mem.id)
+        return mem
+
+    @staticmethod
+    def _backdate(mgr: MemoryManager, memory_id: str, seconds: int) -> None:
+        """Rewind the lease clock (``updated_at``) into the past."""
+        past = (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
+        conn = mgr.sqlite._get_conn()
+        conn.execute("UPDATE memories SET updated_at=? WHERE id=?", (past, memory_id))
+        conn.commit()
+
+    def test_stale_processing_row_is_reclaimed_to_pending(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        mem = self._claimed(manager, "stranded lease body about omega")
+        self._backdate(manager, mem.id, seconds=700)  # > REFINE_LEASE_TIMEOUT_SEC
+        with caplog.at_level("WARNING", logger="mnemos.manager"):
+            result = manager.reclaim_stale_refinements()
+        assert result["reclaimed"] == 1
+        assert result["reclaimed_ids"] == [mem.id]
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.PENDING  # back in the intake
+        audit = [r for r in caplog.records if "outcome=lease-reclaimed" in r.message]
+        assert audit and f"id={mem.id[:8]}" in audit[-1].message
+        assert "age=" in audit[-1].message
+
+    def test_fresh_processing_claim_is_not_reclaimed(self, manager: MemoryManager) -> None:
+        mem = self._claimed(manager, "live worker body about alpha")
+        result = manager.reclaim_stale_refinements()
+        assert result["reclaimed"] == 0
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.PROCESSING  # lease still held
+
+    def test_claim_stamps_the_lease_clock(self, manager: MemoryManager) -> None:
+        """A row that queued for a long time must not look expired the
+        moment a worker claims it — the claim restarts the lease."""
+        mem = _published(manager, "long-queued body about beta")
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)
+        self._backdate(manager, mem.id, seconds=700)  # old enqueue timestamp
+        assert manager.sqlite.claim_for_refinement(mem.id)
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.PROCESSING
+        # Freshly claimed despite the old pre-claim timestamp: the claim
+        # stamped updated_at, so the reclaim must leave it alone.
+        assert manager.reclaim_stale_refinements()["reclaimed"] == 0
+
+    def test_double_reclaim_concurrently_single_wins(self, manager: MemoryManager) -> None:
+        mem = self._claimed(manager, "contested lease body about gamma")
+        self._backdate(manager, mem.id, seconds=700)
+        results: list[dict] = []
+        barrier = threading.Barrier(2)
+
+        def _sweep() -> None:
+            barrier.wait()  # both sweepers observe the stale row first
+            results.append(manager.reclaim_stale_refinements())
+
+        threads = [threading.Thread(target=_sweep) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert len(results) == 2
+        assert sum(r["reclaimed"] for r in results) == 1  # exactly one winner
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.PENDING
+
+    def test_sequential_reclaim_is_idempotent(self, manager: MemoryManager) -> None:
+        mem = self._claimed(manager, "idempotent lease body about delta")
+        self._backdate(manager, mem.id, seconds=700)
+        assert manager.reclaim_stale_refinements()["reclaimed"] == 1
+        second = manager.reclaim_stale_refinements()
+        assert second["reclaimed"] == 0  # already pending — CAS misses
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.PENDING
+
+    def test_reclaim_does_not_consume_retry_budget(self, manager: MemoryManager) -> None:
+        mem = self._claimed(manager, "retry-budget lease body about epsilon")
+        # One honest lane-(a) failure already spent attempt 1.
+        manager.sqlite.record_refine_failure(
+            mem.id, attempt=1, next_retry_at=datetime.now(UTC).isoformat()
+        )
+        _pipeline_state(manager, mem.id, PipelineState.PENDING)  # re-enqueue
+        assert manager.sqlite.claim_for_refinement(mem.id)
+        self._backdate(manager, mem.id, seconds=700)
+        manager.reclaim_stale_refinements()
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        # Lease expiry is infrastructure, not a failure: counter unmoved.
+        assert stored.metadata.get("pipeline_retry_count") == 1
+
+    def test_reclaimed_row_reenters_refine_intake(self, manager: MemoryManager) -> None:
+        mem = self._claimed(manager, "requeue target body about zeta")
+        self._backdate(manager, mem.id, seconds=700)
+        manager.reclaim_stale_refinements()
+        intake_ids = {m.id for m in manager.sqlite.list_refine_intake()}
+        assert mem.id in intake_ids
+        outcome = refine_single(manager, mem.id)  # a live worker picks it up again
+        assert outcome == "refined-noop"  # solo row: honest no-artifact completion
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.pipeline_state == PipelineState.REFINED
+
+
+# ── 14. N1 on PROCESSED rows — issue #171 ─────────────────────────────────────
+
+
+class TestN1ProcessedEditGate:
+    """PROCESSED is the other context-admissible status: its content
+    edits re-enter the SAME Phase A gate (the published-path twin was
+    already gated; the processed half was the seam)."""
+
+    def _processed(self, manager: MemoryManager, content: str) -> Memory:
+        return _published(manager, content, status=MemoryStatus.PROCESSED)
+
+    def test_dirty_content_edit_of_processed_demotes_to_raw(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        mem = self._processed(manager, "processed body awaiting a dirty edit")
+        with caplog.at_level("WARNING", logger="mnemos.manager"):
+            updated = manager.update(mem.id, MemoryUpdate(content=f"edited in {FAKE_AWS_KEY}"))
+        assert updated is not None
+        assert updated.status == MemoryStatus.RAW  # demoted out of admissible
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert FAKE_AWS_KEY in stored.content  # zero-loss: content kept
+        audit = [r for r in caplog.records if "publish gate" in r.message]
+        assert audit and "path=published-content-edit" in audit[-1].message
+        assert "verdict=refused" in audit[-1].message
+
+    def test_dirty_edit_demotion_preserves_pipeline_state_b1(self, manager: MemoryManager) -> None:
+        mem = self._processed(manager, "refined processed body about eta")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        updated = manager.update(mem.id, MemoryUpdate(content=f"now carries {FAKE_GITHUB_TOKEN}"))
+        assert updated is not None
+        assert updated.status == MemoryStatus.RAW
+        # B1 invariant: N1 demotions write RAW-status side effects ONLY.
+        assert updated.pipeline_state == PipelineState.REFINED
+
+    def test_clean_content_edit_of_processed_stays_processed_and_requeues(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        mem = self._processed(manager, "processed body before a clean edit")
+        assert manager.sqlite.get(mem.id).pipeline_state is None  # pre-condition: legacy
+        with caplog.at_level("INFO", logger="mnemos.manager"):
+            updated = manager.update(mem.id, MemoryUpdate(content="edited clean body about theta"))
+        assert updated is not None
+        assert updated.status == MemoryStatus.PROCESSED  # status unchanged
+        # F8 semantics: the projection is stale after an edit — re-enter
+        # the refine intake (legacy NULL rows of admissible status too).
+        assert updated.pipeline_state == PipelineState.PENDING
+        audit = [r for r in caplog.records if "outcome=enqueued" in r.message]
+        assert audit and "from=none" in audit[-1].message
+        assert "reason=content-edit" in audit[-1].message
+
+    def test_clean_edit_of_processed_refined_requeues_from_refined(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        mem = self._processed(manager, "refined processed body about iota")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        with caplog.at_level("INFO", logger="mnemos.manager"):
+            updated = manager.update(mem.id, MemoryUpdate(content="edited clean body about iota"))
+        assert updated is not None
+        assert updated.status == MemoryStatus.PROCESSED
+        assert updated.pipeline_state == PipelineState.PENDING
+        audit = [r for r in caplog.records if "outcome=enqueued" in r.message]
+        assert audit and "from=refined" in audit[-1].message
+
+    def test_dirty_flip_from_processed_to_published_refused(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        mem = self._processed(manager, "flip target processed body about kappa")
+        # Store-level bypass plants danger the gate must catch on the flip
+        # (clean_content dropped too — the planted text IS the projection
+        # that would be served).
+        manager.sqlite.update_fields(
+            mem.id, content=f"planted {FAKE_AWS_KEY} body", clean_content=None
+        )
+        with caplog.at_level("WARNING", logger="mnemos.manager"):
+            updated = manager.update(mem.id, MemoryUpdate(status=MemoryStatus.PUBLISHED))
+        assert updated is not None
+        assert updated.status == MemoryStatus.PROCESSED  # stayed previous
+        audit = [r for r in caplog.records if "publish gate" in r.message]
+        assert audit and "path=status-flip" in audit[-1].message
+
+    def test_flip_to_processed_is_not_the_gate_seam(self, manager: MemoryManager) -> None:
+        """Deliberate scoping of the #171 extension: the EDIT branch
+        covers all admissible statuses, the FLIP branch stays
+        PUBLISHED-only. A RAW→PROCESSED advance is the knowledge
+        pipeline's own transition (context-rewrite originals carry
+        redact-at-issuance secrets by contract) — the issuance
+        scan/redaction owns them there, not this gate."""
+        mem = _published(
+            manager, f"rewrite-original body with {FAKE_AWS_KEY} inside", status=MemoryStatus.RAW
+        )
+        updated = manager.update(mem.id, MemoryUpdate(status=MemoryStatus.PROCESSED))
+        assert updated is not None
+        assert updated.status == MemoryStatus.PROCESSED  # advanced, not gated
+
+    def test_swap_key_survives_the_requeue(self, manager: MemoryManager) -> None:
+        mem = self._processed(manager, "swap-key probe body about lambda")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        manager.sqlite.update_fields(mem.id, swap_key="old-artifact-key")
+        updated = manager.update(mem.id, MemoryUpdate(content="edited clean body about lambda"))
+        assert updated is not None
+        # Deliberate F8 decision: the new cycle recomputes swap_key; the
+        # stale value is what makes a no-op re-run of the OLD artifact
+        # detectable.
+        assert updated.swap_key == "old-artifact-key"
+
+
+# ── 15. Filter projection on content edit — issue #193 ────────────────────────
+
+
+class TestUpdateResetsCleanContent:
+    """A content replace resets the filter projection in the SAME
+    transaction (the B2a swap discipline applied to update): the served
+    projection is the new content immediately, never the stale
+    pre-edit filter output."""
+
+    def test_content_edit_resets_clean_content_immediately(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "filtered body before the edit about mu")
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        assert stored.clean_content is not None  # auto_filter ran at ingest
+        updated = manager.update(mem.id, MemoryUpdate(content="replacement body about nu"))
+        assert updated is not None
+        after = manager.sqlite.get(mem.id)
+        assert after is not None
+        assert after.clean_content is None  # stale projection dropped
+        assert after.effective_content() == "replacement body about nu"  # serves the new text
+
+    def test_dirty_edit_also_drops_the_stale_projection(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "filtered body before the dirty edit about xi")
+        updated = manager.update(mem.id, MemoryUpdate(content=f"replacement {FAKE_AWS_KEY} body"))
+        assert updated is not None
+        after = manager.sqlite.get(mem.id)
+        assert after is not None
+        assert after.status == MemoryStatus.RAW  # demoted by the gate…
+        assert after.clean_content is None  # …AND the projection is not stale
+        assert FAKE_AWS_KEY in after.effective_content()  # zero-loss on the served text
+
+    def test_title_only_edit_keeps_clean_content(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "filtered body with a title edit coming about omicron")
+        before = manager.sqlite.get(mem.id)
+        assert before is not None and before.clean_content is not None
+        updated = manager.update(mem.id, MemoryUpdate(title="Clean heading about pi"))
+        assert updated is not None
+        after = manager.sqlite.get(mem.id)
+        assert after is not None
+        assert after.clean_content == before.clean_content  # content unchanged
+        assert after.title == "Clean heading about pi"

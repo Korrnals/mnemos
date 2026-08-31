@@ -6,7 +6,8 @@
 > [ADR-0017](adr/0017-memory-system-evolution-roadmap.md) (дорожная карта памяти),
 > [ADR-0018](adr/0018-context-rewrite-ltm-bridge.md) (context-rewrite мост),
 > [ADR-0019](adr/0019-optimistic-publication-async-refinement.md) (оптимистичная
-> публикация), [ADR-0020](adr/0020-benchmark-framework.md) (бенчмарк-рамка).
+> публикация), [ADR-0020](adr/0020-benchmark-framework.md) (бенчмарк-рамка),
+> [ADR-0021](adr/0021-nano-model-track.md) (nano-model трек).
 > Проценты готовности считает председатель Архкома на срезе; здесь они только
 > фиксируются. Владелец документа — Tech Lead; волна-отчёты публикуются по
 > шаблону §6.
@@ -38,7 +39,7 @@
 | **ADR-0019** — оптимистичная публикация | **50 %** | Фаза A защита ✅ 100 % ([#161](https://github.com/Korrnals/mnemos/pull/161)); Фаза B ядро ✅ 100 %: B1 [#162](https://github.com/Korrnals/mnemos/pull/162) (2 раунда ревью), B2a движок [#163](https://github.com/Korrnals/mnemos/pull/163), B2b видимость+ретракция [#165](https://github.com/Korrnals/mnemos/pull/165) | Фаза C измерения 0 % → волны ADR-0020 + [#169](https://github.com/Korrnals/mnemos/issues/169); Фаза D уборка 0 % → [#166](https://github.com/Korrnals/mnemos/issues/166) (федерация-гейт) + упразднение Hermes-обхода (избыточен технически — нужна чистка и бэкфилл) |
 | **ADR-0020** — бенчмарки | **~35 %** | Рамка + решение комитета ✅ 100 % ([#164](https://github.com/Korrnals/mnemos/pull/164), включая поправку §5 к ADR-0019); БФ-1 ✅: корневой `benchmarks/` (корпус из tests/golden мигрирован, S1-стенд, канонический `baselines/s1.json` + генерируемый BASELINE.md, гейт `make bench-s1` в verify, wheel/sdist-исключение) | Стенды БФ-2..4 — **1 из 4 готов** (S1); эпик [#169](https://github.com/Korrnals/mnemos/issues/169) закрывается волнами БФ-2+ |
 | **Релизная инфраструктура** | конвейер **✅ 100 %** | Подключён Korrnals/release-pipeline ([#179](https://github.com/Korrnals/mnemos/pull/179), dry-run зелёный); релизы v2.14.1 → v2.15.0 → **v3.0.0** (2026-08-31) | Гэпы конвейера: [#180](https://github.com/Korrnals/mnemos/issues/180) (P1 CVE chromadb — решение владельца), [#182](https://github.com/Korrnals/mnemos/issues/182)/[#183](https://github.com/Korrnals/mnemos/issues/183) (owner-infra), [#184](https://github.com/Korrnals/mnemos/issues/184), pipeline #19/#20. Мажор = двигатели-лэндмарки (политика v2, `5a5ac447`): v3.0.0 = publication-engine; доработки — минорами 3.1.0+ |
-| **Трекер** | гигиена ✅ | P1 открыто 7 (#169, #170, #171, #180, #185, #189, #191 — директива владельца: полноценный сервер памяти + доставка; #166 открыт без метки, считался P1; #168 закрыт); P2 открыто 10 (#172–#176, #181–#183, #186, #190; #184 — приоритет P2 в заголовке карточки, метки нет); P3 — 1 эпик (#177). Очередь комитета вычищена 2026-08-31 | БФ-1 сдан — волны БФ-2+ по эпику #169; далее #170/#171/#185 → #189/#191 |
+| **Трекер** | гигиена ✅ | P1 открыто 10 по факту `gh issue list` 2026-08-31: #169, #170, #171, #180, #185, #189, #191, #193, #197 + #166 (открыт без метки, считается P1); #168 закрыт. **Волна P1-фиксов 2026-08-31 закрывает #170/#171/#193** → после мержа P1 открыто 7 (#166, #169, #180, #185, #189, #191, #197). P2 открыто 10 (#172–#176, #181–#183, #186, #190; #184 — приоритет P2 в заголовке карточки, метки нет); P3 — 1 эпик (#177). Очередь комитета вычищена 2026-08-31 | БФ-1 сдан — волны БФ-2+ по эпику #169; далее #185 → #189/#191; **NM-0 (#197, ADR-0021) — после волны P1-фиксов** |
 
 Чекпоинт-доска (фиксированный формат — приводится в каждом ответе владельцу,
 §7):
@@ -62,16 +63,18 @@
 | 2026-08-30 | Фазы A–B ADR-0019 + ADR-0020 + релиз + конвейер | Phase A [#161](https://github.com/Korrnals/mnemos/pull/161); B1 [#162](https://github.com/Korrnals/mnemos/pull/162) (2 раунда ревью); B2a [#163](https://github.com/Korrnals/mnemos/pull/163) (2 раунда); B2b [#165](https://github.com/Korrnals/mnemos/pull/165) (мутации 3+3+6); ADR-0020 [#164](https://github.com/Korrnals/mnemos/pull/164) (Архком, поправка §5 ADR-0019); issue-практика + ретро-разбор #166–#177; релиз **v2.15.0** (преждевременный v3.0.0 снят — директива владельца `b0a1cf40`); конвейер подключён [#179](https://github.com/Korrnals/mnemos/pull/179) + гэпы #180–#184, pipeline #19/#20; MCP восстановлен, стор объединён; ротация бекапов; сьют 2006 → 2181 |
 | 2026-08-31 | Гигиена очереди | Очередь комитета вычищена; [#185](https://github.com/Korrnals/mnemos/issues/185)/[#186](https://github.com/Korrnals/mnemos/issues/186) переоформлены из очереди комитета (карточки от 2026-08-30); заведён этот dev-plan (поезд [#168](https://github.com/Korrnals/mnemos/issues/168)) |
 | 2026-08-31 | БФ-1 (эпик [#169](https://github.com/Korrnals/mnemos/issues/169)) | Корневой каталог `benchmarks/` (директива владельца 2026-08-30): корпус мигрирован из `tests/golden` байт-точно (2 отклонения: импорт-пути пакетов; фикс бага фикстуры `aurora-ci-token-note` — 32-символьный хвост ghp_ против 36 в PLANTED_SECRETS); S1-стенд (`make bench-s1`, гейт в verify) = golden-измерения + сценарии S1–S3 ADR-0019 (карантин/ретракция/подмена) + detector-quarantine-fp (легитимные tech-паттерны в корпусе, 8 записей) + инвариант render-neutrality + interim-McNemar (знаковый тест); канонический `baselines/s1.json` (baseline_version 1, stand_version s1-1, corpus_fingerprint) + генерируемый `BASELINE.md`; wheel/sdist-исключение `benchmarks/` (по образцу #179); smoke-тесты стенда + мутационный тест нейтральности |
+| 2026-08-31 | P1-фиксы [#170](https://github.com/Korrnals/mnemos/issues/170)/[#171](https://github.com/Korrnals/mnemos/issues/171)/[#193](https://github.com/Korrnals/mnemos/issues/193) | **#170** lease/reclaim зависших `processing`: `REFINE_LEASE_TIMEOUT_SEC=600` (claim штампует lease-часы `updated_at`), идемпотентный CAS-reclaim в sweeper-цикле процессора (`WHERE pipeline_state='processing' AND updated_at < cutoff` — двойной воркер/свипер безопасен), аудит `outcome=lease-reclaimed age=…`, retry-бюджет не расходуется. **#171** N1-гейт контентных правок распространён на все admissible-статусы (edit-ветка; flip-ветка осталась PUBLISHED-only — контракт knowledge-pipeline: rewrite-оригиналы редактируются на выдаче): отказ → демоция RAW без касания `pipeline_state` (инвариант B1), чистая правка PROCESSED → `pipeline_state=pending` (F8-семантика, включая legacy-NULL admissible-строки). **#193** `update()` сбрасывает `clean_content` той же транзакцией, что пишет новый контент (B2a swap-дисциплина); served-проекция (`effective_content`) — новый контент немедленно; S1-базлайн перезаписан честно (`filter_projection_stale_after_update` true→false, остальные метрики байт-точно). Сьют 2186 → 2203 (+17: lease-reclaim 7, PROCESSED-гейт 7, сброс проекции 3); мутации 5+2+2 пойманы. NM-трек [#197](https://github.com/Korrnals/mnemos/issues/197)/ADR-0021 внесён в DAG (§4) |
 
 ## 4. DAG ближайших волн
 
 ```mermaid
 flowchart TD
-    PR168["#168 · ченджолог 2.15.0 + ADR-0020 §4<br/>+ dev-plan · в работе"]
+    PR168["#168 · ченджолог 2.15.0 + ADR-0020 §4<br/>+ dev-plan"]
     BF1["#169 · БФ-1 · эпик бенчмарков<br/>benchmarks/ в корне: миграция корпуса<br/>из tests/golden, S1-стенд,<br/>JSON-базлайны + генератор BASELINE.md"]
-    L170["#170 · lease для зависших processing"]
-    L171["#171 · PROCESSED ре-гейт"]
+    P1W["Волна P1-фиксов · #170 lease/reclaim<br/>+ #171 PROCESSED ре-гейт<br/>+ #193 сброс clean_content в update()"]
     L185["#185 · порт mcp_server на SDK 2.x<br/>+ интерим-баунд"]
+    NM0["#197 · NM-0 · model-quality gate S1m<br/>(ADR-0021 nano-model трек:<br/>model_fingerprint + коридоры)"]
+    NM1["#197 · NM-1 · nano-embedder + снятие<br/>chromadb (закрывает класс #180)"]
     BF2["БФ-2 · S4-стенд + S2-smoke в локальном гейте"]
     BF3["БФ-3 · S3-стенд (long-lived session)"]
     PHD["Фаза D · #166 федерация-гейт<br/>+ Hermes-чистка + бэкфилл"]
@@ -79,12 +82,12 @@ flowchart TD
     REL{{"Следующий мажор ядра<br/>(политика v2 5a5ac447: мажор = двигатели-лэндмарки)"}}
     SIDE["#181 · style-долг + трекер-гигиена<br/>(параллельно всегда)"]
     PR168 --> BF1
-    BF1 --> L170
-    BF1 --> L171
+    BF1 --> P1W
     BF1 --> L185
-    L170 --> BF2
-    L171 --> BF2
+    P1W --> NM0
+    P1W --> BF2
     L185 --> BF2
+    NM0 --> NM1
     BF2 --> BF3
     BF3 --> PHD
     PHD --> BF4
@@ -92,8 +95,10 @@ flowchart TD
     classDef done fill:#daf5da,stroke:#3d8b3d
     classDef wip fill:#fff3c4,stroke:#b8860b
     classDef side fill:#eeeeee,stroke:#888888,stroke-dasharray: 4 3
-    class PR168 wip
+    class PR168 done
     class BF1 done
+    class P1W done
+    class NM0 wip
     class SIDE side
 ```
 
@@ -106,11 +111,24 @@ flowchart TD
   `s1.json` + генерируемый `BASELINE.md`, wheel/sdist-исключение. Эпик
   #169 остаётся открытым до БФ-4 (стенды S2–S4).
 - **#170 ∥ #171 ∥ #185** — параллельные лейны после БФ-1; все трое гейтят
-  БФ-2 (зависимости версий/стендов). За ними встают **#189** (реальный
+  БФ-2 (зависимости версий/стендов). **#170/#171 сданы волной P1-фиксов
+  2026-08-31 (вместе с #193 — см. §3)**; из лейнов после БФ-1 остаётся
+  #185. За ними встают **#189** (реальный
   LLM-провайдер в refine-конвейер — «мозг» дообработки, директива
   владельца) и **#191** (эпик доставки: имя PyPI за владельцем —
   рекомендация TL `mnemos-memory-server`; npm = работа pi; релизные
   артефакты с 3.1.0).
+- **#197 / ADR-0021 (NM-трек, инициатива владельца, Архком
+  2026-08-31)** — стейджинг с обязательными гейтами:
+  **NM-0 (model-quality gate S1m) идёт первым, после волны P1-фиксов**
+  — сегодня S1 не гейтит продакшен-эмбеддер (тихая подмена проходит);
+  NM-0 добавляет метрики ранжирования + `model_fingerprint` в базлайны
+  и fail-loud на смене весов без re-baseline в том же PR; **NM-1**
+  (дистилляция nano-эмбеддера + снятие chromadb) закрывает класс
+  [#180](https://github.com/Korrnals/mnemos/issues/180) (−3 CVE,
+  −телеметрия, −150–250 МБ); NM-2 требует S3-стенд (БФ-3); **NM-3
+  (nano-refiner)** — deferred-gated за швом #189, opt-in до
+  превосходства над стабом по коридорам.
 - **Фаза D** идёт после БФ-3: сначала измерения фиксируют поведение
   публикации, потом срезается Hermes-обход (чистка + бэкфилл) под гейтом
   федерации [#166](https://github.com/Korrnals/mnemos/issues/166).
@@ -134,12 +152,14 @@ flowchart TD
 | P1 | [#166](https://github.com/Korrnals/mnemos/issues/166) | Федерация-гейт Фазы D + упразднение Hermes-обхода (чистка, бэкфилл) | после БФ-3 (DAG §4) |
 | P1 | [#168](https://github.com/Korrnals/mnemos/issues/168) | Ченджолог 2.15.0 (PR #159–#165, #167 + issues-практика #166+), поправка ADR-0020 §4, этот dev-plan | в работе сейчас |
 | P1 | [#169](https://github.com/Korrnals/mnemos/issues/169) | Эпик БФ-1..4: стенды S1–S4, каталог `benchmarks/`, базлайны, отчёты | БФ-1 сдан 2026-08-31; эпик держится открытым до БФ-4 |
-| P1 | [#170](https://github.com/Korrnals/mnemos/issues/170) | Lease для записей, зависших в `processing` | параллельно после БФ-1 |
-| P1 | [#171](https://github.com/Korrnals/mnemos/issues/171) | PROCESSED ре-гейт | параллельно после БФ-1 |
+| P1 | [#170](https://github.com/Korrnals/mnemos/issues/170) | Lease для записей, зависших в `processing` | закрывается волной P1-фиксов 2026-08-31: `REFINE_LEASE_TIMEOUT_SEC=600`, claim штампует lease-часы, CAS-reclaim в sweeper (`outcome=lease-reclaimed`), retry-бюджет не расходуется |
+| P1 | [#171](https://github.com/Korrnals/mnemos/issues/171) | PROCESSED ре-гейт | закрывается волной P1-фиксов 2026-08-31: edit-ветка N1 на все admissible-статусы (flip-ветка осталась PUBLISHED-only — контракт knowledge-pipeline); отказ → RAW (B1: `pipeline_state` не трогается), чистая правка → `pending` |
+| P1 | [#193](https://github.com/Korrnals/mnemos/issues/193) | `manager.update` оставляет stale `clean_content` при замене контента — served-проекция отстаёт до перефильтрации (наблюдалось BF-1: `filter_projection_stale_after_update=true`) | закрывается волной P1-фиксов 2026-08-31: сброс `clean_content` той же транзакцией; S1-базлайн перезаписан (флаг true→false, метрики байт-точно) |
 | P1 | [#180](https://github.com/Korrnals/mnemos/issues/180) | P1 CVE в chromadb (зависимость) — держит алерт конвейера | ждёт решения владельца (§5.2) |
 | P1 | [#185](https://github.com/Korrnals/mnemos/issues/185) | Порт mcp_server на SDK 2.x + интерим-баунд зависимости | параллельно после БФ-1 |
 | P1 | [#189](https://github.com/Korrnals/mnemos/issues/189) | Реальный LLM-провайдер в refine-конвейер (сейчас детерминированный стаб-обогащение в `_produce_refined_projection` — единственная точка замены) | после #170/#171 — «мозг» дообработки (директива владельца) |
 | P1 | [#191](https://github.com/Korrnals/mnemos/issues/191) | Эпик доставки: PyPI-публикация (имя за владельцем), npm-пакет = работа pi, релизные артефакты с 3.1.0 | имя PyPI — решение владельца (§5.2); параллельно после #170/#171/#185 |
+| P1 | [#197](https://github.com/Korrnals/mnemos/issues/197) | NM-трек (ADR-0021, инициатива владельца, Архком 2026-08-31, стейджинг): NM-0 model-quality gate → NM-1 nano-эмбеддер + снятие chromadb → NM-3 refiner deferred-gated | NM-0 — после волны P1-фиксов (DAG §4); NM-1 закрывает класс #180 |
 | P2 | [#190](https://github.com/Korrnals/mnemos/issues/190) | Hard hook automation для произвольных харнессов (за пределами instruction-дисциплины) | по мере волн (директива владельца) |
 | P2 | [#172](https://github.com/Korrnals/mnemos/issues/172) | D2-граф: каскад цитирований + CCR-индекс (хвост линии ADR-0018) | после БФ-волн |
 | P2 | [#173–#176](https://github.com/Korrnals/mnemos/issues/173) | Мелкие остатки реестра ADR-0018 (B5 tier-2 margin-straddle — мониторится; B4 management-plane exclusion и др.) | по мере волн |

@@ -139,9 +139,10 @@ def render_baseline_md(baseline: dict[str, Any]) -> str:
         f"{sr['old_projection_gone_from_lexical_leg']}"
     )
     add(
-        f"  - observation (informational, production finding): the filter "
-        f"projection is stale right after a content edit — "
-        f"{sr['filter_projection_stale_after_update']} — until the filter re-runs"
+        f"  - observation (informational): filter projection stale right "
+        f"after a content edit — {sr['filter_projection_stale_after_update']} "
+        f"— false since #193 (the projection is reset in the same "
+        f"transaction as the content write)"
     )
     rr = sc["refuse_render"]
     add(
