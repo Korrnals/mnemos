@@ -250,9 +250,9 @@ async def test_e0_workflow_tool_registered_with_action_enum() -> None:
     names = {t.name for t in tools}
     assert "mnemos_workflow" in names, "mnemos_workflow tool not registered"
     tool = next(t for t in tools if t.name == "mnemos_workflow")
-    action_schema = tool.inputSchema["properties"]["action"]
+    action_schema = tool.input_schema["properties"]["action"]
     assert action_schema["enum"] == ["set", "get", "history"]
-    assert tool.inputSchema["required"] == ["action", "memory_id"]
+    assert tool.input_schema["required"] == ["action", "memory_id"]
 
 
 # ===========================================================================

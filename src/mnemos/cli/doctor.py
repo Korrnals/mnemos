@@ -157,6 +157,74 @@ def _check_vector_store(settings: Any) -> CheckResult:
     )
 
 
+def _check_mcp_transport() -> CheckResult:
+    """Import smoke-check for the MCP transport module (#185, direction C).
+
+    The MCP SDK major bump (1.x → 2.x) removed the 1.x decorator API; a
+    version/SDK mismatch previously killed the stdio transport *silently*
+    (the CLI kept working, so nothing surfaced the breakage). This check
+    imports ``mnemos.mcp_server`` — which exercises the full
+    ``mcp`` SDK import surface — and reports the exact failure with the
+    remediation hint, so a broken transport is loud, not silent.
+    """
+    try:
+        import mnemos.mcp_server
+
+        tools: list[str] = []
+        # Best-effort tool-count probe; failures here fall back to the
+        # plain import result (the tool manifest needs settings/DB access).
+        try:
+            import asyncio
+
+            manifest = asyncio.run(mnemos.mcp_server.list_tools())
+            tools = [t.name for t in manifest]
+        except Exception as exc:  # pragma: no cover — depends on local env
+            logger.debug("doctor tool-manifest probe skipped: %s", exc)
+        sdk = mcp_sdk_version()
+        detail = (
+            f"mnemos.mcp_server imports OK (SDK {sdk})"
+            if not tools
+            else f"mnemos.mcp_server imports OK (SDK {sdk}, {len(tools)} tools listed)"
+        )
+        return CheckResult("MCP transport", CheckStatus.PASS, detail)
+    except ImportError as exc:
+        return CheckResult(
+            "MCP transport",
+            CheckStatus.FAIL,
+            f"MCP transport broken: {exc}; install with the .[mcp] extra "
+            "(pip install mnemos[mcp]) — requires mcp>=2.0,<3.0",
+        )
+    except AttributeError as exc:
+        # Classic 1.x-decorator-on-2.x-SDK (or vice versa) signature break.
+        return CheckResult(
+            "MCP transport",
+            CheckStatus.FAIL,
+            f"MCP transport broken: {exc!r} — the installed mcp SDK version "
+            "does not match mnemos.mcp_server (expects mcp>=2.0,<3.0); "
+            "reinstall with pip install 'mnemos[mcp]'>=2.0 or fix the SDK version",
+        )
+    except Exception as exc:  # doctor reports, doesn't crash
+        return CheckResult(
+            "MCP transport",
+            CheckStatus.FAIL,
+            f"MCP transport broken: unexpected {type(exc).__name__}: {exc}; "
+            "install with the .[mcp] extra (mcp>=2.0,<3.0)",
+        )
+
+
+def mcp_sdk_version() -> str:
+    """Return the installed mcp SDK version, or '?' when not importable."""
+    try:
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _pkg_version
+
+        return _pkg_version("mcp")
+    except PackageNotFoundError:  # pragma: no cover — mcp absent
+        return "not installed"
+    except Exception:  # pragma: no cover — metadata unreadable
+        return "?"
+
+
 def _check_mcp_server() -> CheckResult:
     """Check known harness MCP configs for a `mnemos` entry."""
     candidates = [
@@ -426,7 +494,7 @@ def _run_all_checks() -> list[CheckResult]:
         settings = None
 
     # No-arg checks.
-    for check in (_check_mcp_server, _check_integration, _check_agent_wiring):
+    for check in (_check_mcp_server, _check_integration, _check_agent_wiring, _check_mcp_transport):
         try:
             results.append(check())
         except Exception as exc:  # doctor must never crash

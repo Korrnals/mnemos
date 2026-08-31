@@ -397,9 +397,9 @@ class TestMcpRegistration:
         names = {t.name for t in tools}
         assert "mnemos_workflow" in names
         tool = next(t for t in tools if t.name == "mnemos_workflow")
-        action_schema = tool.inputSchema["properties"]["action"]
+        action_schema = tool.input_schema["properties"]["action"]
         assert action_schema["enum"] == ["set", "get", "history"]
-        assert tool.inputSchema["required"] == ["action", "memory_id"]
+        assert tool.input_schema["required"] == ["action", "memory_id"]
 
 
 class TestMcpDispatch:
