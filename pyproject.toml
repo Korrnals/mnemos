@@ -85,7 +85,11 @@ openvino = [
     "optimum[openvino]>=1.19",
 ]
 mcp = [
-    "mcp[cli]>=1.0",
+    # MCP SDK 2.x (#185): mcp_server.py was ported off the 1.x runtime-decorator
+    # API (@server.list_tools/@server.call_tool) that SDK 2.0 removed. Floor 2.0
+    # so pip consumers can never resolve a 1.x that no longer matches the code;
+    # cap <3.0 against the next decorator/major API break.
+    "mcp[cli]>=2.0,<3.0",
 ]
 pdf = [
     "pymupdf>=1.24",
@@ -166,10 +170,12 @@ ignore_missing_imports = true
 warn_return_any = true
 warn_unused_ignores = true
 
-# The mcp SDK exposes its decorators (Server.list_tools / Server.call_tool) and
-# some call sites without annotations upstream. Relax only the two strict checks
-# they trip, scoped to the thin wrapper module, so the type-check result is the
-# same whether or not the optional `mcp` extra is installed.
+# The mcp SDK exposes some call sites without annotations upstream. Relax only
+# the two strict checks they trip, scoped to the thin wrapper module, so the
+# type-check result is the same whether or not the optional `mcp` extra is
+# installed. (Pre-#185 this covered the untyped 1.x decorators; the 2.x
+# constructor-registration port keeps the override for the remaining untyped
+# call sites in the SDK boundary.)
 [[tool.mypy.overrides]]
 module = "mnemos.mcp_server"
 disallow_untyped_decorators = false

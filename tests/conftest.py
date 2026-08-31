@@ -7,6 +7,10 @@ installed in the standard dev environment). We inject minimal stubs into
 ``sys.modules`` here - before any test file imports ``mnemos.mcp_server`` -
 so that the dispatch / routing tests can run without the real SDK.
 
+The stubs replicate the MCP SDK 2.x contract (#185): ``Server`` registers
+handlers via constructor kwargs (``on_list_tools`` / ``on_call_tool``) and
+the wire types are plain attribute holders.
+
 If the real ``mcp`` package is installed (e.g. via ``pip install -e .[mcp]``)
 the guard ``if "mcp" not in sys.modules`` ensures the stubs are skipped and
 the real implementation is used instead.
@@ -32,27 +36,27 @@ import pytest
 if "mcp" not in sys.modules:
 
     class _Server:
-        """Stub replicating the MCP Server decorator contract.
+        """Stub replicating the MCP SDK 2.x Server constructor contract.
 
-        The decorators ``list_tools()`` and ``call_tool()`` register handlers
-        and return the original function unchanged - which is exactly what the
-        real SDK does.
+        Handlers are registered via the ``on_list_tools`` / ``on_call_tool``
+        constructor kwargs (the 1.x runtime decorators were removed in
+        SDK 2.0 — see #185). The stub keeps the same attribute surface the
+        ported ``mnemos.mcp_server`` module relies on.
         """
 
-        def __init__(self, name: str) -> None:
+        def __init__(
+            self,
+            name: str,
+            *,
+            version: str = "",
+            on_list_tools=None,
+            on_call_tool=None,
+            **_kwargs,
+        ) -> None:
             self.name = name
-
-        def list_tools(self):
-            def _dec(func):
-                return func
-
-            return _dec
-
-        def call_tool(self):
-            def _dec(func):
-                return func
-
-            return _dec
+            self.version = version
+            self.on_list_tools = on_list_tools
+            self.on_call_tool = on_call_tool
 
         def create_initialization_options(self):
             return {}
@@ -65,18 +69,48 @@ if "mcp" not in sys.modules:
             self.text = text
 
     class _Tool:
-        """Stub for mcp.types.Tool - preserves name/description/inputSchema."""
+        """Stub for mcp.types.Tool - preserves name/description/input_schema.
+
+        The SDK 2.x attribute is ``input_schema`` (the wire alias
+        ``inputSchema`` is serialization-only). The stub mirrors that.
+        """
 
         def __init__(
             self,
             *,
             name: str,
             description: str | None = None,
-            inputSchema: dict,  # noqa: N803 - upstream SDK uses camelCase
+            input_schema: dict,  # canonical 2.x name (alias: inputSchema)
         ) -> None:
             self.name = name
             self.description = description
-            self.inputSchema = inputSchema
+            self.input_schema = input_schema
+
+    class _ListToolsResult:
+        """Stub for mcp.types.ListToolsResult."""
+
+        def __init__(self, *, tools: list) -> None:
+            self.tools = tools
+
+    class _CallToolResult:
+        """Stub for mcp.types.CallToolResult."""
+
+        def __init__(self, *, content: list, is_error: bool = False) -> None:
+            self.content = content
+            self.is_error = is_error
+
+    class _CallToolRequestParams:
+        """Stub for mcp.types.CallToolRequestParams."""
+
+        def __init__(self, *, name: str, arguments: dict | None = None) -> None:
+            self.name = name
+            self.arguments = arguments
+
+    class _PaginatedRequestParams:
+        """Stub for mcp.types.PaginatedRequestParams."""
+
+        def __init__(self, *, cursor: str | None = None) -> None:
+            self.cursor = cursor
 
     _mcp_stub = MagicMock()
 
@@ -88,6 +122,10 @@ if "mcp" not in sys.modules:
     _mcp_types_stub = MagicMock()
     _mcp_types_stub.TextContent = _TextContent
     _mcp_types_stub.Tool = _Tool
+    _mcp_types_stub.ListToolsResult = _ListToolsResult
+    _mcp_types_stub.CallToolResult = _CallToolResult
+    _mcp_types_stub.CallToolRequestParams = _CallToolRequestParams
+    _mcp_types_stub.PaginatedRequestParams = _PaginatedRequestParams
 
     sys.modules.update(
         {

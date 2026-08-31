@@ -3,6 +3,16 @@
 Tools: mnemos_add (enforces Mnemos TagContract), mnemos_search, mnemos_recall,
 mnemos_agent_recall (M3), mnemos_auto_collect_status (per-signal compaction
 vector, M7), and others. Auto-collect driven by MNEMOS_AUTO_COLLECT env var.
+
+MCP SDK 2.x port (#185): the 1.x runtime-decorator API
+(``@server.list_tools()`` / ``@server.call_tool()``) was removed in SDK 2.0
+(``Server`` no longer exposes those attributes — pip consumers resolving
+``mcp>=2`` crashed with ``AttributeError`` and the transport died silently).
+The 2.x low-level ``Server`` registers handlers via constructor kwargs
+(``on_list_tools`` / ``on_call_tool``); this module keeps the public handler
+callables (``list_tools`` / ``call_tool``) importable with their pre-port
+signatures for the test suite and thin adapter wrappers that translate
+between the handler contract and the SDK request/response models.
 """
 
 from __future__ import annotations
@@ -17,8 +27,16 @@ from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+    Tool,
+)
 
+from mnemos import __version__
 from mnemos.config import load_settings
 from mnemos.context_rewrite import ContextRewriteRateLimitError
 from mnemos.hooks import HOOK_ACTIONS, dispatch_hook
@@ -33,8 +51,6 @@ from mnemos.models import (
 )
 
 logger = logging.getLogger(__name__)
-
-server = Server("mnemos")
 _manager: Any = None  # MemoryManager — lazy init to avoid import-time side-effects
 
 # ── Auto-collect mode ──────────────────────────────────────────────────────────
@@ -205,14 +221,13 @@ def _steering_suffix(args: dict[str, Any], settings: Any) -> str:
 # ── Tool listing ───────────────────────────────────────────────────────────────
 
 
-# mcp SDK uses runtime decorators (Server.list_tools / Server.call_tool) that
-# are not annotated in the upstream stub. mypy --strict flags them as untyped
-# decorators/calls, but ONLY when the optional `mcp` extra is installed — so an
-# inline `type: ignore[...]` would be "unused" in CI (which type-checks without
-# mcp) and trip `warn_unused_ignores`. The relaxation is therefore scoped to
-# this module via [[tool.mypy.overrides]] in pyproject.toml instead.
-@server.list_tools()
 async def list_tools() -> list[Tool]:
+    """Return the tool manifest (26 tools — stable model-visible contract).
+
+    Pre-2.x this was decorated with ``@server.list_tools()``; the port keeps
+    the callable importable with the same zero-arg signature (the test suite
+    and ``_on_list_tools`` adapter both call it directly).
+    """
     _ac = _auto_collect_state["enabled"]
 
     _recall_desc = (
@@ -277,7 +292,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="mnemos_search",
             description=_search_desc,
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Natural language search query"},
@@ -326,7 +341,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="mnemos_add",
             description=_add_desc,
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "content": {"type": "string", "description": "Text content to remember"},
@@ -364,7 +379,7 @@ async def list_tools() -> list[Tool]:
                 "Issuance-gated: only published/processed memories are filterable into "
                 "context, and the returned clean_content is secret-scanned."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "memory_id": {
@@ -398,7 +413,7 @@ async def list_tools() -> list[Tool]:
                 "Returns the most recent entries for a specific agent, "
                 "optionally scoped to a project and/or a query. (M3)"
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "agent": {
@@ -425,7 +440,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="mnemos_save_context",
             description=_save_desc,
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "project": {
@@ -449,7 +464,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="mnemos_recall_context",
             description=_recall_desc,
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "project": {
@@ -466,7 +481,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="mnemos_list_recent",
             description="List the most recent memory entries.",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "default": 10},
@@ -482,7 +497,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="mnemos_list_tags",
             description="List all tags in the memory with their counts.",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
         Tool(
             name="mnemos_tags_rename",
@@ -492,7 +507,7 @@ async def list_tools() -> list[Tool]:
                 "UPDATE (FTS5 stays consistent), dry_run=true by default, "
                 "idempotent. Use to migrate gcw: → mnemos: tags."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "from_prefix": {
@@ -542,7 +557,7 @@ async def list_tools() -> list[Tool]:
                 "with wildcard=true, prefix-matched) tags; 'add' appends "
                 "tags to memories matching a project/agent filter."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {
@@ -613,7 +628,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="mnemos_ingest_url",
             description="Fetch a web page, extract its content, and save to memory.",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "URL to fetch and ingest"},
@@ -632,7 +647,7 @@ async def list_tools() -> list[Tool]:
                 "Start watching directories for file changes and auto-index into memory. "
                 "Runs in background."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "paths": {
@@ -652,12 +667,12 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="mnemos_watch_stop",
             description="Stop the background file watcher.",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
         Tool(
             name="mnemos_watch_status",
             description="Report background watcher status.",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
         Tool(
             name="mnemos_auto_collect_status",
@@ -665,12 +680,12 @@ async def list_tools() -> list[Tool]:
                 "Report current compaction-detection signal vector. "
                 "Returns per-signal values + composite recommendation. (M7)"
             ),
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
         Tool(
             name="mnemos_stats",
             description="Get Mnemos health statistics and memory counts.",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
         Tool(
             name="mnemos_reprocess",
@@ -679,7 +694,7 @@ async def list_tools() -> list[Tool]:
                 "raw/processing entries into published knowledge. "
                 "Use when mnemos_stats shows a large queue_depth."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "project": {"type": "string"},
@@ -697,7 +712,7 @@ async def list_tools() -> list[Tool]:
                 "mnemos_retrieve to fetch the full original back. 70-90% token "
                 "reduction. Inspired by headroom's CCR (Apache 2.0)."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "text": {
@@ -750,7 +765,7 @@ async def list_tools() -> list[Tool]:
                 "issuer-provenance checks before any content is issued "
                 "(fail-closed refusal otherwise)."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "hash": {
@@ -815,7 +830,7 @@ async def list_tools() -> list[Tool]:
                 "(Anthropic cache_control, OpenAI prefix caching) hit. Inspired "
                 "by headroom's CacheAligner (Apache 2.0). Original implementation."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "text": {
@@ -855,7 +870,7 @@ async def list_tools() -> list[Tool]:
                 "Returns the assembled text, per-block provenance + redaction "
                 "counts, and token stats."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "session": {
@@ -944,7 +959,7 @@ async def list_tools() -> list[Tool]:
                 "get the CCR compress marker for the original to keep in the "
                 "window."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "content": {
@@ -1019,7 +1034,7 @@ async def list_tools() -> list[Tool]:
                 "marker validation can later prove provenance; "
                 "identity-less compression would mint unverifiable rows."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {
@@ -1101,7 +1116,7 @@ async def list_tools() -> list[Tool]:
                 "MNEMOS_EXPORT_PASSPHRASE environment variable — never pass the "
                 "passphrase value in the tool arguments (it would appear in logs)."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "format": {
@@ -1180,7 +1195,7 @@ async def list_tools() -> list[Tool]:
                 "(never the value itself — passing the value in arguments would "
                 "leak it into logs)."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "source_path": {
@@ -1237,7 +1252,7 @@ async def list_tools() -> list[Tool]:
                 "auto-release (>24h), idempotent transitions (no-op on same "
                 "status), force-unlock (requires reason), per-memory rate limit."
             ),
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "action": {
@@ -1300,8 +1315,13 @@ async def list_tools() -> list[Tool]:
 # ── Tool call handler ──────────────────────────────────────────────────────────
 
 
-@server.call_tool()  # see module note on @server.list_tools / pyproject mypy override
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+    """Dispatch a tool call and wrap the result in TextContent.
+
+    Pre-2.x this was decorated with ``@server.call_tool()``; the port keeps
+    the callable importable with the same ``(name, arguments)`` signature
+    (the test suite drives it directly).
+    """
     _track_call(is_save=(name == "mnemos_save_context"))
     reminder = _checkpoint_reminder()
 
@@ -2108,6 +2128,37 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         return _handle_import(mgr, args)
 
     return f"Unknown tool: {name}"
+
+
+# ── MCP SDK 2.x server wiring (#185) ───────────────────────────────────────────
+#
+# SDK 2.x registers handlers as constructor kwargs instead of decorators.
+# The thin adapters below translate between the SDK request/response models
+# and the plain callables above (`list_tools` / `call_tool`), which stay
+# importable with their pre-port signatures.
+
+_CTX_T = Any  # ServerRequestContext — untyped boundary, same as 1.x decorators
+
+
+async def _on_list_tools(ctx: _CTX_T, params: PaginatedRequestParams | None) -> ListToolsResult:
+    """SDK 2.x ``on_list_tools`` handler — wraps :func:`list_tools`."""
+    tools = await list_tools()
+    return ListToolsResult(tools=tools)
+
+
+async def _on_call_tool(ctx: _CTX_T, params: CallToolRequestParams) -> CallToolResult:
+    """SDK 2.x ``on_call_tool`` handler — wraps :func:`call_tool`."""
+    arguments = dict(params.arguments) if params.arguments else {}
+    content: list[Any] = list(await call_tool(params.name, arguments))
+    return CallToolResult(content=content)
+
+
+server = Server(
+    "mnemos",
+    version=__version__,
+    on_list_tools=_on_list_tools,
+    on_call_tool=_on_call_tool,
+)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

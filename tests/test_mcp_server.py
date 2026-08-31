@@ -205,8 +205,8 @@ async def test_list_tools_contract() -> None:
     for tool in tools:
         assert tool.name, f"Tool missing 'name': {tool!r}"
         assert tool.description, f"Tool {tool.name!r} missing 'description'"
-        assert isinstance(tool.inputSchema, dict), (
-            f"Tool {tool.name!r} inputSchema must be a dict, got {type(tool.inputSchema)}"
+        assert isinstance(tool.input_schema, dict), (
+            f"Tool {tool.name!r} inputSchema must be a dict, got {type(tool.input_schema)}"
         )
 
     # Every tool defined in _TOOL_ARGS must appear in list_tools() output

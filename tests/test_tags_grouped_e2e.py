@@ -197,7 +197,7 @@ async def test_e0_both_tools_registered_in_mcp_registry() -> None:
     assert "mnemos_tags_rename" in names, "legacy mnemos_tags_rename alias not registered"
 
     grouped = next(t for t in tools if t.name == "mnemos_tags")
-    action_schema = grouped.inputSchema["properties"]["action"]
+    action_schema = grouped.input_schema["properties"]["action"]
     assert action_schema["enum"] == ["rename", "remove", "add"]
 
 
