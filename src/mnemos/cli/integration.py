@@ -277,9 +277,16 @@ def make_stamp(version: str) -> str:
 def stamp_content(content: str, version: str, *, line_comment: bool = False) -> str:
     """Inject or replace the version stamp in file content.
 
-    The stamp is placed on the first line that is not a shebang (``#!``) or
-    front-matter delimiter (``---``). If a stamp already exists it is
-    replaced in-place so the file does not accumulate duplicates.
+    The stamp is placed on the first line after any shebang (``#!``) or
+    YAML front-matter block (``--- ... ---``). It MUST sit after the
+    front-matter so it never breaks parsers that require the file to
+    start with ``---`` (skill loaders, front-matter extractors).
+
+    If a stamp already exists — wherever it is — it is removed first
+    and re-inserted at the correct position. This self-heals files
+    stamped by older releases that placed the stamp *before* the
+    front-matter delimiter, which broke skill loading (``description
+    is required``) by hiding the front-matter from parsers.
 
     ``line_comment=True`` prefixes the stamp with ``//`` so it stays a valid
     comment in TypeScript/JavaScript artefacts (the Pi MCP bridge) — the
@@ -287,24 +294,18 @@ def stamp_content(content: str, version: str, *, line_comment: bool = False) -> 
     """
     stamp = make_stamp(version)
     prefix = "// " if line_comment else ""
+
+    # Strip every existing stamp line first, wherever it sits. A stamp
+    # before the opening ``---`` is the bug we are healing; a stamp after
+    # front-matter is the correct case we are refreshing. Either way the
+    # canonical position is recomputed below so the result is identical.
     lines = content.splitlines(keepends=True)
+    cleaned = [line for line in lines if not STAMP_PATTERN.search(line)]
 
-    # If a stamp already exists, replace it (idempotent update).
-    if _find_stamp_line(content) is not None:
-        new_lines: list[str] = []
-        replaced = False
-        for line in lines:
-            if not replaced and STAMP_PATTERN.search(line):
-                new_lines.append(prefix + stamp + "\n")
-                replaced = True
-            else:
-                new_lines.append(line)
-        return "".join(new_lines)
-
-    # No existing stamp — insert after any leading shebang/front-matter.
+    # Find the insertion point: after a leading shebang and/or front-matter.
     insert_at = 0
     in_frontmatter = False
-    for i, line in enumerate(lines):
+    for i, line in enumerate(cleaned):
         stripped = line.strip()
         if stripped.startswith("#!"):
             insert_at = i + 1
@@ -322,17 +323,8 @@ def stamp_content(content: str, version: str, *, line_comment: bool = False) -> 
             continue
         break
 
-    lines.insert(insert_at, prefix + stamp + "\n")
-    return "".join(lines)
-
-
-def _find_stamp_line(content: str) -> int | None:
-    """Return the 0-based line index of the stamp, or ``None``."""
-    for i, line in enumerate(content.splitlines()):
-        if STAMP_PATTERN.search(line):
-            return i
-    return None
-
+    cleaned.insert(insert_at, prefix + stamp + "\n")
+    return "".join(cleaned)
 
 def read_stamp(content: str) -> str | None:
     """Extract the version from a stamped file, or ``None`` if unstamped."""

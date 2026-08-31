@@ -1,4 +1,3 @@
-<!-- mnemos-integration: v2.0.0 -->
 ---
 applyTo: '**'
 description: Mnemos memory operations — search before deciding, add when learning, agent-scoped recall

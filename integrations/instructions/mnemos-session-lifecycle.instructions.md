@@ -1,4 +1,3 @@
-<!-- mnemos-integration: v2.0.0 -->
 ---
 applyTo: '**'
 description: Mnemos session lifecycle — recall at start, checkpoint on compaction, save at end

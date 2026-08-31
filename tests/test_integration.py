@@ -198,6 +198,22 @@ class TestStamping:
         assert lines[0] == "#!/bin/bash"
         assert "mnemos-integration" in lines[1]
 
+    def test_stamp_self_heals_stamp_before_frontmatter(self) -> None:
+        """A stamp placed *before* the opening ``---`` (the regression that
+        caused ``description is required``) must be moved after the block."""
+        broken = (
+            "<!-- mnemos-integration: v1.1.0 -->\n"
+            "---\nname: x\ndescription: y\n---\n# body\n"
+        )
+        healed = stamp_content(broken, "1.2.0")
+        assert healed.startswith("---")
+        assert read_stamp(healed) == "1.2.0"
+        assert "v1.1.0" not in healed
+        lines = healed.splitlines()
+        fm_end = next(i for i, line in enumerate(lines) if line.strip() == "---" and i > 0)
+        stamp_idx = next(i for i, line in enumerate(lines) if "mnemos-integration" in line)
+        assert stamp_idx > fm_end
+
 
 # ── Deploy / verify / update / uninstall lifecycle ────────────────────────────
 

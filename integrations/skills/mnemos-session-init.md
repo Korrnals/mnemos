@@ -1,4 +1,3 @@
-<!-- mnemos-integration: v2.0.0 -->
 ---
 name: mnemos-session-init
 description: Recall prior context at session start — restores project state, open questions, and recent decisions before any work begins

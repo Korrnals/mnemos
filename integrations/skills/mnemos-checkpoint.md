@@ -1,4 +1,3 @@
-<!-- mnemos-integration: v2.0.0 -->
 ---
 name: mnemos-checkpoint
 description: Save a compaction-resilient checkpoint mid-session — survives context compression and session restart
