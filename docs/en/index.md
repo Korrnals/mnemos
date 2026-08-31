@@ -64,23 +64,36 @@ After saving, the `mnemos_*` tools appear in the Copilot Chat "tools" picker.
 
 Set `MNEMOS_AUTO_COLLECT=1` in the env block above to make Mnemos prompt your agent to call `mnemos_save_context` after every ~6 tool calls (proactive checkpoint nagging). See [mcp-tools.md#auto-collect-mode](user/mcp-tools.md#auto-collect-mode) for trade-offs.
 
-### 13 MCP tools (`mnemos_` prefix)
+### 26 MCP tools (`mnemos_` prefix)
 
 | Tool | Purpose |
 |------|---------|
-| `mnemos_search` | Hybrid FTS5 + vector search (published memories) |
+| `mnemos_search` | Hybrid FTS5 + vector search with Reciprocal Rank Fusion (published memories by default) |
 | `mnemos_add` | Create a memory — **enforces the Mnemos tag contract** |
-| `mnemos_agent_recall` | Per-agent recall (M3) — filter by agent slug |
+| `mnemos_filter` | Run or refresh the context filter on an existing memory (e.g. with another profile) |
+| `mnemos_agent_recall` | Per-agent recall (M3) — most recent entries for a single agent |
 | `mnemos_save_context` | Persist a session checkpoint |
 | `mnemos_recall_context` | Restore the latest checkpoint for a project |
-| `mnemos_list_recent` | List recent entries |
-| `mnemos_list_tags` | List all tags with counts |
-| `mnemos_ingest_url` | Fetch a web page and save to memory |
-| `mnemos_watch_start` | Start background file watcher |
+| `mnemos_list_recent` | List the most recent memory entries |
+| `mnemos_list_tags` | List all tags with their counts |
+| `mnemos_tags_rename` | Bulk rename a tag prefix across existing memories (dry-run by default) |
+| `mnemos_tags` | Bulk tag operations: rename a prefix, remove or add tags |
+| `mnemos_ingest_url` | Fetch a web page and save it as a memory |
+| `mnemos_watch_start` | Start the background file watcher |
 | `mnemos_watch_stop` | Stop the watcher |
 | `mnemos_watch_status` | Report watcher status |
 | `mnemos_auto_collect_status` | Compaction-detection signal vector (M7) |
 | `mnemos_stats` | Health counters and key paths |
+| `mnemos_reprocess` | Manually run the knowledge pipeline over queued entries |
+| `mnemos_compress` | CCR: compress large content with zero data loss — original cached, marker returned |
+| `mnemos_retrieve` | Fetch the original content back by CCR marker hash |
+| `mnemos_align_prefix` | CacheAligner (P1-5): relocate dynamic content to the tail for KV-cache hits |
+| `mnemos_assemble_context` | Assemble the model-facing context block: search → compress → filter → secret scan → cache align → token budget |
+| `mnemos_context_rewrite` | `on_context_rewrite` (ADR-0018): preserve the lossless original when the harness rewrites its history |
+| `mnemos_hooks` | Lifecycle hooks: `pre_llm_call` / `on_session_start` / `post_tool_call` actions |
+| `mnemos_export` | Export memories to a file on disk |
+| `mnemos_import` | Import memories from an export file |
+| `mnemos_workflow` | Workflow lifecycle state for a memory (open → in-progress → done, blocked / …) |
 
 Full catalogue with input schemas, examples, and HTTP equivalents: **[user/mcp-tools.md](user/mcp-tools.md)**
 
@@ -104,6 +117,7 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 
 ## User docs
 
+- [Feature Map](features.md) — what works out of the box, what is partial, what is planned (v3.0.0).
 - [Getting Started](user/getting-started.md) — install → first memory → first search → MCP / HTTP.
 - [MCP Tools Reference](user/mcp-tools.md) — every `mnemos_*` tool exposed to VS Code Copilot.
 - [HTTP API Reference](user/http-api.md) — every endpoint, request / response shape, error code.
