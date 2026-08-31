@@ -7,7 +7,7 @@
 - **baseline_version:** 1
 - **stand_version:** s1-1
 - **corpus_fingerprint:** `492fb39b2e98d92037438137a08419266946aacf7062ed7370b07f9d3fb41f59`
-- **created:** 2026-08-30T23:47:06+00:00
+- **created:** 2026-08-31T08:24:55+00:00
 - **environment:** python 3.12.3, deterministic_embedder=True (BLAKE2b lexical — pins the retrieval PIPELINE, not MiniLM)
 
 ## 1. Retrieval quality (judged golden queries)
@@ -63,7 +63,7 @@ Delta (current - pre-A9) recall@10: **-0.0071**
 - **supersede-refind** — PASS
 - **refuse-render** — PASS
   - supersede: id unchanged True; served projection regenerated True; old projection gone from the lexical leg True
-  - observation (informational, production finding): the filter projection is stale right after a content edit — True — until the filter re-runs
+  - observation (informational): filter projection stale right after a content edit — False — false since #193 (the projection is reset in the same transaction as the content write)
   - refusal reasons are detector class codes: True (secret, prompt-injection)
   - retraction render format: True; titles withheld: True
   - quarantine exclusion from issuance: True; retrievable by id: True

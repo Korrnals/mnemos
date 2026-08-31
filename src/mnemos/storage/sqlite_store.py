@@ -17,7 +17,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from sys import getsizeof
 from typing import Any, Final, cast
@@ -1458,19 +1458,84 @@ class SQLiteStore:
         loses the race and gets ``False`` — the existing no-op convention
         of this store's retry/grab sites. A row already ``processing``,
         ``refined``, ``quarantined`` or retry-exhausted never matches.
+
+        The claim also stamps ``updated_at`` — this is the LEASE START
+        (issue #170 / ADR-0019 Phase C): a worker that crashes between
+        the claim and its outcome write leaves the row ``processing``
+        with a frozen clock, and the sweeper's reclaim decides expiry
+        purely on ``updated_at``. Without the stamp the clock would run
+        from the LAST pre-claim write (possibly the enqueue itself), and
+        a long-queued row would be reclaimed out from under a live
+        worker.
         """
         where, params = self._refine_intake_where(
             max_attempts, now_iso or datetime.now(UTC).isoformat()
         )
+        now = datetime.now(UTC).isoformat()
         conn = self._get_conn()
         cur = conn.execute(
-            f"UPDATE memories SET pipeline_state='processing' "  # nosec B608 - static
-            f"WHERE id=? AND {where}",
-            [memory_id, *params],
+            f"UPDATE memories SET pipeline_state='processing', updated_at=? "  # nosec B608
+            f"WHERE id=? AND {where}",  # nosec B608 - static fragment
+            [now, memory_id, *params],
         )
         conn.commit()
         self._invalidate_caches()
         return cur.rowcount > 0
+
+    def reclaim_stale_processing(
+        self,
+        *,
+        lease_timeout_sec: int,
+        limit: int = 100,
+        now_iso: str | None = None,
+    ) -> list[tuple[str, str]]:
+        """Issue #170 (ADR-0019 Phase C): lease-expired ``processing`` →
+        ``pending`` (compare-and-set), idempotently and race-safely.
+
+        A worker crash between :meth:`claim_for_refinement` and its
+        outcome write strands the row in ``processing`` forever — this is
+        the reclaim path back into the intake. Lease expiry is decided
+        on ``updated_at`` (stamped at the claim by this store, refreshed
+        by every outcome write):
+
+        * selection — rows still ``processing`` whose ``updated_at`` is
+          older than the cutoff;
+        * per-row CAS — the UPDATE re-checks BOTH ``pipeline_state=
+          'processing'`` AND ``updated_at < cutoff``, so two concurrent
+          sweepers (or a sweeper racing a live worker that just
+          re-touched the row) collapse to exactly ONE winner; the loser's
+          ``rowcount`` is 0 and the row is silently left alone.
+
+        The retry counter in metadata is deliberately NOT touched: a
+        lease expiry is an infrastructure event, not a lane-(a) failure
+        (§5 counting semantics — it must not eat the row's retry budget).
+
+        Returns ``[(id, updated_at_at_reclaim), …]`` for the audit lines
+        (``outcome=lease-reclaimed age=…``) — the pre-reclaim timestamp
+        is what the age is computed from.
+        """
+        now = now_iso or datetime.now(UTC).isoformat()
+        cutoff = (datetime.fromisoformat(now) - timedelta(seconds=lease_timeout_sec)).isoformat()
+        conn = self._get_conn()
+        stale = conn.execute(
+            "SELECT id, updated_at FROM memories "
+            "WHERE pipeline_state='processing' AND updated_at < ? "
+            "ORDER BY updated_at LIMIT ?",
+            (cutoff, limit),
+        ).fetchall()
+        reclaimed: list[tuple[str, str]] = []
+        for row_id, updated_at in stale:
+            cur = conn.execute(
+                "UPDATE memories SET pipeline_state='pending', updated_at=? "
+                "WHERE id=? AND pipeline_state='processing' AND updated_at < ?",
+                (now, row_id, cutoff),
+            )
+            if cur.rowcount:
+                reclaimed.append((row_id, updated_at))
+        conn.commit()
+        if reclaimed:
+            self._invalidate_caches()
+        return reclaimed
 
     def record_refine_failure(
         self,
@@ -2205,8 +2270,6 @@ class SQLiteStore:
         if attempt <= row["max_attempts"]:
             # Exponential backoff with jitter cap
             delay = min(backoff_sec * (2 ** (attempt - 1)), 86400)
-            from datetime import timedelta
-
             next_retry = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
         conn.execute(
             "UPDATE dlq SET attempt_count=?, next_retry_at=?, updated_at=? WHERE id=?",

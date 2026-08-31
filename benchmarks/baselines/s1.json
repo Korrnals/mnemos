@@ -2,7 +2,7 @@
   "baseline_version": 1,
   "stand_version": "s1-1",
   "corpus_fingerprint": "492fb39b2e98d92037438137a08419266946aacf7062ed7370b07f9d3fb41f59",
-  "created": "2026-08-30T23:47:06+00:00",
+  "created": "2026-08-31T08:24:55+00:00",
   "metrics": {
     "retrieval": {
       "precision_at_5": 0.297872,
@@ -129,7 +129,7 @@
         "scenario": "supersede-refind",
         "found_v1_before": true,
         "id_unchanged_by_substitution": true,
-        "filter_projection_stale_after_update": true,
+        "filter_projection_stale_after_update": false,
         "served_projection_regenerated": true,
         "new_projection_findable": true,
         "old_projection_gone_from_lexical_leg": true,
