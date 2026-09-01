@@ -41,7 +41,7 @@ test:
 	pytest tests/ -v --tb=short
 
 lint:
-	ruff check src/ tests/
+	ruff check src/ tests/ benchmarks/
 
 lint-shell:  ## Run shellcheck on all shell scripts
 	shellcheck scripts/*.sh
