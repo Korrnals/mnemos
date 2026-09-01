@@ -529,7 +529,7 @@ Mnemos provides a native `MemoryProvider` plugin for [Hermes Agent](https://herm
 
 1. Make the `mnemos` package importable in the Hermes Python environment:
    ```bash
-   pip install mnemos
+   pip install mnemos-memory-server
    ```
    No separate `mnemos serve` process is needed anymore.
 

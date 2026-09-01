@@ -67,6 +67,14 @@ reads the name from `pyproject.toml` and adapts automatically (wheel
 filename normalization included). Do it BEFORE the first publish;
 afterwards the name is fixed forever.
 
+> **Asset note (2026-09-01):** tag `v3.1.0` was cut with the old name and
+> is NOT re-cut (its npm channel `pi-mnemos@3.1.0` is already published).
+> No wheel asset with the new filename exists for v3.1.0 — the README
+> `<!-- version:pip -->` marker therefore points at the NEXT release
+> (v3.2.0). `scripts/sync-readme-version.sh` keeps the marker correct
+> from that release on; `scripts/install.sh` builds the URL from the
+> normalized filename.
+
 ## Pipeline — `scripts/pypi-publish.sh`
 
 | Mode | What it does |

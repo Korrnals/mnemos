@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# pypi-publish.sh — local PyPI publish pipeline for mnemos.
+# pypi-publish.sh — local PyPI publish pipeline for the mnemos
+# distribution (mnemos-memory-server on PyPI; import package: mnemos).
 #
 # WHY: GitHub Actions is billing-locked (#117) so the release workflow
 # does not fire, and a first PyPI publish is an IRREVERSIBLE owner
@@ -36,8 +37,9 @@
 # branch merged to main, network access to pypi.org for G0 (--publish
 # only), twine check and --full-smoke.
 #
-# First publish + final package name are OWNER decisions (irreversible
-# on PyPI). Name availability matrix + procedure:
+# First publish is an OWNER-executed step (irreversible on PyPI; the
+# distribution name is decided: mnemos-memory-server). Matrix history +
+# procedure:
 #   docs/en/admin/runbooks/pypi-publish.md
 #
 # See: issue #122 (ADR-0017 Phase 0), scripts/local-release.sh (sibling
@@ -317,7 +319,7 @@ if ! $PUBLISH; then
   echo ""
   echo "════════════════════════════════════════════════════════════════"
   echo " HARD STOP — everything prepared, NOTHING uploaded to PyPI."
-  echo " First publish + final package name are OWNER decisions"
+  echo " First publish is an OWNER-executed step (name decided: see pyproject)."
   echo " (PyPI names/versions are immutable — see the runbook):"
   echo "   docs/en/admin/runbooks/pypi-publish.md"
   echo "════════════════════════════════════════════════════════════════"

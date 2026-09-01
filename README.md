@@ -135,7 +135,7 @@ uv pip install -e ".[dev]"
 
 <!-- version:pip -->
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v3.1.0/mnemos_memory_server-3.1.0-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v3.2.0/mnemos_memory_server-3.2.0-py3-none-any.whl
 ```
 <!-- /version:pip -->
 
