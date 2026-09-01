@@ -1,6 +1,6 @@
 # Нано-модель памяти: архитектура, роадмап, чеклисты
 
-Статус: план (TL-авторство, 2026-09-01). Основа: ADR-0021 (+амендмент Delivery 2026-08-31), решение комитета по компрессии (mnemos 4dad7946), NM-0 контур качества (в main, #206). Живой статус — docs/project/dev-plan.md; трекер — эпик #197.
+Статус: план (TL-авторство, 2026-09-01). Основа: ADR-0021 (+амендмент Delivery 2026-08-31), решение комитета по компрессии (mnemos-запись 4dad7946), NM-0 контур качества (в main, #206). Живой статус — docs/project/dev-plan.md; трекер — эпик #197.
 
 ## 1. Цель и рамка
 
@@ -12,7 +12,7 @@
 
 ```mermaid
 flowchart TD
-  subgraph NOW["Сейчас (main 3f21f38)"]
+  subgraph NOW["Сейчас (main 71c4803)"]
     A1["ChromaDefaultProvider<br/>(единственный runtime-импорт chromadb)"] --> E1["EmbeddingProvider шов<br/>embed/embed_batch/dimension"]
     A2["_produce_refined_projection<br/>детерминированная заглушка stub-v1"] --> R1["refine-конвейер ADR-0019<br/>(CAS→swap→карантин)"]
     A3["llm/base.py: LLMProvider.complete()<br/>create_provider = NotImplementedError"]
@@ -20,16 +20,16 @@ flowchart TD
   subgraph TARGET["Целевое (NM-1..NM-3)"]
     B1["NanoProvider (ONNX int8<br/>мультиязычный дистиллят 45-60M<br/>weights_sha256-пин, офлайн)"] --> E1
     B2["LLM-стек веток:<br/>config→providers(Ollama/OpenAI/Anthropic)→<br/>router→RLM→nano (ONNX-genai int4)"] --> R1
-    CH["models-wheel ≤95МБ (primary) /<br/>hash-pinned download (oversize) +<br/>MNEMOS_OFFLINE_MODELS_DIR"]
-    CH -.-> B1
-    CH -.-> B2["NanoRefiner (этап-2)"]
+    CH["модель-канал: main wheel (эмбеддер ≤95МБ) /<br/>models-wheel или hash-pinned download (рефайнер) +<br/>MNEMOS_OFFLINE_MODELS_DIR"]
+    CH -.->|"эмбеддер: main wheel"| B1
+    CH -.->|"рефайнер: ≤95МБ → wheel,<br/>иначе download"| B2
   end
 ```
 
 Швы готовности (проверено по коду):
 - **Эмбеддер-шов чист**: интерфейс `EmbeddingProvider` (embed/embed_batch/dimension) + фабрика `create_embedding_provider`; `ONNXHubProvider` уже умеет onnxruntime+tokenizers+revision-пин (CWE-494/B615), mean-pooling+L2, CPU-потоки через `MNEMOS_ORT_THREADS`.
 - **Refine-шов один**: `_produce_refined_projection` (pipeline/refine.py:129) — единственная точка замены; bump `REFINE_PROCESSING_VERSION` → `swap_key` меняется → корректный пере-свап.
-- **LLM-фундамент уже написан** (открытие фактчека): на GitHub лежит несмерженный стек веток `feat/llm-config → llm-standard-providers (Ollama/OpenAI/Anthropic + рабочая create_provider) → llm-router (routing + MemoryManager.llm) → llm-rlm-adapter (RLMProvider) → synthesize-real-llm (wiring синтеза)` с тестами (тысячи строк). Это готовая база NM-3 — сначала смержить стек, затем NanoRefinerProvider встаёт как ещё один бэкенд роутера.
+- **LLM-фундамент уже написан** (открытие фактчека): локальный стек веток `feat/llm-config → llm-standard-providers (Ollama/OpenAI/Anthropic + рабочая create_provider) → llm-router (routing + MemoryManager.llm) → llm-rlm-adapter (RLMProvider) → synthesize-real-llm (wiring синтеза)` с тестами (тысячи строк) запушен на origin 2026-09-01 (до этого существовал только локально). Это готовая база NM-3 — сначала смержить стек, затем NanoRefinerProvider встаёт как ещё один бэкенд роутера.
 - **Дыры, которые закрывает NM-1**: onnxruntime/tokenizers/huggingface_hub НЕ объявлены в pyproject (транзитивно через chromadb — после выпила обязаны стать прямыми); `MNEMOS_OFFLINE_MODELS_DIR` — только в ADR, кода нет; model_fingerprint для non-chromadb провайдеров — identifier-only (weights_sha256=None) — нужно расширение на NanoProvider (sha256 реального ONNX-файла).
 - **Честное открытие по обучающей машине**: репозиторий mira — Rust-проект виртуализации (virtio-gpu), не ML-стенд; обучающего кода и torch/cuda там нет. Дистилляция требует явного решения о хосте (вопрос владельцу — см. §5.1).
 
@@ -39,12 +39,12 @@ flowchart TD
 |---|---|---|---|
 | **NM-0** | Контур качества моделей | ✅ В main (#206): S1m, model_fingerprint, fail-loud | готово |
 | **NM-1a** | **Инфраструктура обучения**: выбор/подтверждение GPU-хоста; скелет репозитория обучения (или каталог `training/` в mnemos: датасет-преп, скрипт дистилляции, экспорт int8 ONNX, eval-джига); датасет: пары «текст→эмбеддинг-пространство учителя» на memory-shaped RU+EN корпусе (мнезаписи-подобные: заметки/чаты/код-сниппеты), ~100k–1M примеров | Скрипты детерминированы; eval-отчёт против учителя (косинус-сходство, retrieval-proxy) | S |
-| **NM-1b** | **Дистилляция базы**: мультиязычный 6-слойный учитель (paraphrase-multilingual-MiniLM или LaBSE-мини) → студент 45–60M; калибровка int8 (static/PTQ), экспорт ONNX (opset пин), tokenizer | Артефакт ≤60МБ; eval: cos-sim ≥0.95 к учителю на holdout; RU-квоты в датасете | M (GPU-часы) |
-| **NM-1c** | **NanoProvider + выпил хромадб**: провайдер за швом (реализовать weights_sha256 по локальному ONNX-файлу для model_fingerprint); deps: +onnxruntime/tokenizers/huggingface_hub объявить прямо, −chromadb; 26 тест-фикстур `provider: chromadb` → `nano`; model_contour → fingerprint по локальному файлу; docs-свип (41 вхождение) | Сьют зелёный; S1m-коридор нано против эталона (не ниже baseline − max(0.02; 95% ДИ)); оффлайн-гоного-тест; подпись артефакта в release-pipeline | M |
+| **NM-1b** | **Дистилляция базы**: мультиязычный учитель (paraphrase-multilingual-MiniLM-L12 или LaBSE-наследник) → студент 45–60M; калибровка int8 (static/PTQ), экспорт ONNX (opset пин), tokenizer | Артефакт ≤60МБ; eval: provisional cos-sim ≥0.95 к учителю на holdout (порог provisional до первого eval-прогона, пересматривается по директиве «пороги только из измерений»); RU-квота ≥40% provisional (обосновывается составом датасета) | M (GPU-часы) |
+| **NM-1c** | **NanoProvider + выпил хромадб**: провайдер за швом (реализовать weights_sha256 по локальному ONNX-файлу для model_fingerprint); deps: +onnxruntime/tokenizers/huggingface_hub объявить прямо, −chromadb; 22 тест-упоминания `provider: chromadb` → `nano`; model_contour → fingerprint по локальному файлу; docs-свип (~41 вхождение) | Сьют зелёный; S1m-коридор нано против эталона (не ниже baseline − max(0.02; 95% ДИ)); оффлайн-gonogo-тест; подпись артефакта в release-pipeline | M |
 | **NM-1d** | **Re-baseline + дефолт**: перезапись s1.json (model_fingerprint → nano), полный re-embed sweeper, конфиг-дефолт provider=nano, chromadb-значение → миграционное предупреждение | Все S1-инварианты зелёные с нано; dev-plan обновлён | S |
 | **NM-2** | Стенд S3 (долгоживущая сессия, fact-retention) — из плана БФ-3, предусловие NM-3 | По контракту ADR-0020 | M |
 | **NM-3a** | **LLM-стек в main**: ревью+мерж веток feat/llm-* (config→standard-providers→router→RLM→synthesize-wiring) по agent-review протоколу | Полный сьют зелёный; wiring за швом #189 (synthesize), но НЕ в refine | M |
-| **NM-3b** | **NanoRefinerProvider**: ORT-genai int4 (135M старт), поставка (wheel ≤95МБ по замеру mira / lazy download + offline-dir), верификация хеша при каждой загрузке, бюджеты инференса, интеграция в роутер как локальный бэкенд | Модельный артефакт подписан; гоного-тесты (оффлайн/нет исходящих/запись весов) | L |
+| **NM-3b** | **NanoRefinerProvider**: ORT-genai int4 (135M старт), поставка (models-wheel ≤95МБ по фактическому замеру / lazy download + offline-dir; эмбеддер же везёт main wheel по ADR-0021 Stage 1), верификация хеша при каждой загрузке, бюджеты инференса, интеграция в роутер как локальный бэкенд | Модельный артефакт подписан; gonogo-тесты (оффлайн/нет исходящих/запись весов) | L |
 | **NM-3c** | **Коридоры и дефолт**: opt-in → fact-retention@N,k (S3) не падает, replace-regret ≤ baseline, идемпотентность повтора, скан LM-проекции до свапа; сравнение против stub и внешнего LLM (sign-test) | Только после всего — provider по умолчанию; REFINE_PROCESSING_VERSION bump | L |
 | **NM-4** | Реранкер | Not-doing до измеренного потолка recall@k | — |
 
@@ -61,7 +61,7 @@ flowchart TD
 - [ ] Учитель выбран: мультиязычный, 6-слойный класс, Apache-2.0/MIT (кандидаты: paraphrase-multilingual-MiniLM-L12-v2 как учитель; LaBSE-наследники)
 - [ ] Датасет memory-shaped RU+EN собран: из golden-корпуса + синтетика (парафразы, чат-выдержки, код-заголовки); RU-доля ≥40%; дедупликация; лимиты длины 256 токенов
 - [ ] Скрипт дистилляции (студент 45–60M, KD-loss на cos-sim к учителю) + скрипт экспорта int8 ONNX (static shapes, opset пин) + eval-джига (cos-sim к учителю, retrieval-proxy на judged-корпусе)
-- [ ] Eval-отчёт: студен vs учитель vs текущий chromadb-MiniLM — порог перехода: retrieval-proxy не ниже учителя − 2%
+- [ ] Eval-отчёт: студент vs учитель vs текущий chromadb-MiniLM — порог перехода: retrieval-proxy не ниже учителя − 2%
 
 **Интеграция:**
 - [ ] NanoProvider (onnxruntime+tokenizers уже в зависимостях после выпила): weights_sha256 по локальному ONNX, dim probe, MNEMOS_ORT_THREADS
