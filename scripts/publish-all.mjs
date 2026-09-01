@@ -8,7 +8,8 @@
 //   node scripts/publish-all.mjs --dry-run  # npm publish --dry-run for each
 //
 // Names:
-//   mnemos-pi                 — primary (friendly, unscoped)
+//   mnemos-pi                 — primary (unscoped, mnemos naming convention)
+//   pi-mnemos                 — alias (pi-* naming convention, matches pi-subagents/pi-mcp-adapter/etc.)
 //   @korrlabs/mnemospi        — short scoped alias under the korrlabs org
 //   @korrlabs/mnemos-pi        — scoped alias under the korrlabs org
 //
@@ -35,7 +36,7 @@ const pj = JSON.parse(original);
 const dryRun = process.argv.includes("--dry-run");
 const inCI = !!process.env.GITHUB_ACTIONS;
 const provenance = inCI && !dryRun; // --provenance needs OIDC (id-token: write)
-const names = ["mnemos-pi", "@korrlabs/mnemospi", "@korrlabs/mnemos-pi"];
+const names = ["mnemos-pi", "pi-mnemos", "@korrlabs/mnemospi", "@korrlabs/mnemos-pi"];
 
 // Auth pre-check: npm session tokens expire after 2h (npm Dec 2025 policy).
 // Fail fast with a clear message instead of 3× confusing E404.
