@@ -1,0 +1,4 @@
+# training/ run artefacts — never committed.
+logs/
+data/
+runs/

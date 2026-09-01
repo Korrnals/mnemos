@@ -122,12 +122,14 @@ mnemos = "mnemos.cli.main:app"
 # benchmarks/ is likewise excluded from BOTH sdist and wheel (ADR-0020 §4,
 # owner directive 2026-08-30): benchmark artefacts are repo-local dev
 # tooling, never shipped artefacts. Same exclude pattern as #179.
+# training/ is excluded from BOTH sdist and wheel (ADR-0021 anti-scope:
+# training code is separated from the runtime; the runtime never learns).
 [tool.hatch.build.targets.sdist]
-exclude = ["scripts/run-release-local.sh", "scripts/local-ci", "benchmarks"]
+exclude = ["scripts/run-release-local.sh", "scripts/local-ci", "benchmarks", "training"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mnemos"]
-exclude = ["benchmarks"]
+exclude = ["benchmarks", "training"]
 
 # Ship the integration pack (instructions, skills, prompts, targets.yaml) inside
 # the wheel so `mnemos integration setup` works from a pip-installed package,
@@ -149,6 +151,14 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# training/dataset/synthetic_templates.py: RU template strings are
+# intentionally Cyrillic — that IS the synthetic RU corpus content
+# (NM-1a, ADR-0021); RUF001's lookalike warning is noise here.
+# Same for the smoke test that feeds RU strings through detect_lang().
+"training/dataset/synthetic_templates.py" = ["RUF001"]
+"tests/test_training_dataset.py" = ["RUF001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
