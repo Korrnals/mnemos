@@ -8,6 +8,8 @@ Senior Security Engineer, Senior QA Engineer
 removal), nano-refiner behind the #189 seam, model-quality contour S1m with
 `model_fingerprint`, model-artifact security, stages NM-0 – NM-4
 
+**Amended:** 2026-08-31 (committee session on model delivery) — Stage 2 delivery channels resolved: two-transports-one-pin; compression add-ons rejected (see Stage 2 §Delivery).
+
 ## Context
 
 The owner directed (mnemos `515ba813`): an ultra-light model for memory work
@@ -84,12 +86,55 @@ CPU is acceptable; a synchronous path is forbidden. A
 `REFINE_PROCESSING_VERSION` bump changes `swap_key`, so already-refined
 entries re-swap correctly.
 
-The refiner ships in a separate models wheel or as a lazy download with a
-pinned revision hash; `MNEMOS_OFFLINE_MODELS_DIR` supports offline installs
-from a file. It stays **opt-in until its corridors beat both the
-deterministic stub and an external LLM**; only then does it become the
-local default. Prerequisite: the S3 stand (ADR-0020 BF-3) exists — without
-it the stage is not gateable.
+It stays **opt-in until its corridors beat both the deterministic stub and
+an external LLM**; only then does it become the local default.
+Prerequisite: the S3 stand (ADR-0020 BF-3) exists — without it the stage
+is not gateable.
+
+#### Delivery
+
+Two transports, one pin: a single SHA256-pinned signed model entity is
+delivered either as a separate models wheel through the extra
+`mnemos[local-refiner]` — primary for measured artifacts ≤95 MB
+(pip-native atomicity, resume, cache, air-gapped installs via
+`pip install --no-index`; rides the existing release-pipeline signature) —
+or via hash-pinned lazy download, the mandatory oversize channel. The
+weights pin lives in the signed server package: "model update = server
+release" is a feature — SBOM-consistent, package and weights cannot
+desync — and source metadata is never a trust anchor. Sharded wheels are
+rejected: pip cannot assemble shards.
+
+Threshold: the wheel channel requires the measured artifact ≤95 MB
+(onnxruntime-genai int4 135M ≈ 90–120 MB — measure on mira before fixing
+the primary for the start class; 500M always travels via download).
+`MNEMOS_OFFLINE_MODELS_DIR` supports offline installs from a file,
+verified against the same pin.
+
+**Seamless operation clause.** "Works as if uncompressed" is delivered by
+quantization + native mmap — the llama.cpp / onnxruntime external-data
+pattern: full-size file on disk, pages faulted in on touch, zero-copy —
+not by archive add-ons. `model_fingerprint` hashes the extracted weights
+(NM-0), so the ADR-0020 quality contour covers both transports without
+schema changes; `package_sha256` may exist as a separate delivery-pin
+field, never inside the fingerprint. The hash is verified at every weights
+load from cache (streaming, before session creation) — first-run trust is
+insufficient. Cache directory 0700, files 0600. The gonogo test "first
+install without network from the package" is added alongside "inference
+without network".
+
+**Rejected delivery schemes:**
+
+- zstd/xz over quantized weights — ≤15% gain against a CWE-22/409/367
+  surface and RAM peaks.
+- Runtime decompression with custom LRU pages — no production precedent;
+  breaks zero-copy.
+- On-the-fly quantization at first run — not byte-deterministic; breaks
+  the weights pin and the ADR-0020 contract.
+- Sharded wheels — pip cannot assemble shards.
+- Expand-once as a delivery channel — allowed only as an installation
+  step with the 7-test security minimum: zip-slip, bomb cap, atomic
+  rename, verify-then-use, TOCTOU-on-open-fd, 0700/0600, offline
+  extraction.
 
 ### NM-0 — model-quality gate (prerequisite of both stages)
 
@@ -180,6 +225,7 @@ runs parallel to and does not block the P1 queue.
 | Replacing the BLAKE2b S1 reference with a neural embedder | Conflates the reference with the subject under test; the reference measures the pipeline, the production model is measured separately |
 | Marketing framed as "a unique trained model" | The product frame is autonomy, not the model |
 | LLM-as-judge / MTEB as gates | Instability and external dependency; gates run on the owned corpus only |
+| Compression add-ons over quantized weights (zstd/xz, runtime LRU decompression, on-the-fly quantization, sharded wheels, expand-once as a channel) | Rejected by the 2026-08-31 amendment — see Stage 2 §Delivery |
 
 ## References
 
