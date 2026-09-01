@@ -178,4 +178,4 @@ mnemos-train stop   # мягкая остановка на границе эпо
 mnemos-train doctor
 ```
 
-Важно: entry point живёт в editable-установке (training/ исключён из wheel по ADR-0021 — обучение вне рантайма), поэтому `mnemos-train` работает там, где есть репозиторий (хост, toolbox/distrobox-контейнер с примонтированным репо), и не попадает в PyPI-дистрибуцию сервера — это осознанно.
+Важно: `training/` исключён из wheel по ADR-0021 (обучение вне рантайма), поэтому `mnemos-train` работает только там, где есть репозиторий (editable-установка, хост, toolbox/distrobox-контейнер с примонтированным репо). Entry point — обёртка `mnemos.train_entry`, которая при чистой wheel-установке сервера завершается с внятным fail-loud сообщением (код 3), а не ModuleNotFoundError.

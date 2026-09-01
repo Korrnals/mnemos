@@ -124,7 +124,7 @@ all = [
 
 [project.scripts]
 mnemos = "mnemos.cli.main:app"
-mnemos-train = "mnemos.training.train:main"
+mnemos-train = "mnemos.train_entry:main"
 
 # Korrnals/release-pipeline symlinks (local pipeline mode) must never enter
 # the sdist: their absolute symlink targets break sdist extraction during
