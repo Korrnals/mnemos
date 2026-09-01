@@ -162,3 +162,20 @@ manifest `base_teacher`).
   фактическая дистилляция, int8-калибровка, eval-отчёт с порогом
   provisional (cos-sim ≥0.95 к учителю; retrieval-proxy не ниже
   учитель − 2 %) — отложено на прогон у владельца (GPU-хост по §4 плана).
+
+
+## Бинарник `mnemos-train`
+
+После `pip install -e ".[training]"` (editable — репозиторий должен быть на диске) доступна команда `mnemos-train` — та же самая точка входа, что `python training/train.py`:
+
+```bash
+mnemos-train status
+mnemos-train prepare --max-pairs 100000
+mnemos-train train --epochs 3
+mnemos-train snapshot good-checkpoint
+mnemos-train status && mnemos-train export && mnemos-train eval
+mnemos-train stop   # мягкая остановка на границе эпохи
+mnemos-train doctor
+```
+
+Важно: `training/` исключён из wheel по ADR-0021 (обучение вне рантайма), поэтому `mnemos-train` работает только там, где есть репозиторий (editable-установка, хост, toolbox/distrobox-контейнер с примонтированным репо). Entry point — обёртка `mnemos.train_entry`, которая при чистой wheel-установке сервера завершается с внятным fail-loud сообщением (код 3), а не ModuleNotFoundError.

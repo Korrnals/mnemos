@@ -1,4 +1,4 @@
-.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record
+.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record bench-s4 bench-s2-smoke
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
@@ -23,6 +23,9 @@ help:
 	@echo "  make coverage   - Run pytest with coverage"
 	@echo "  make bench-s1   - Run the S1 benchmark stand (gate mode, ADR-0020)"
 	@echo "  make bench-s1-record - Re-record the S1 baseline + regenerate BASELINE.md"
+	@echo "  make bench-s4   - Run the S4 availability stand (BF-2, nightly contour)"
+	@echo "  make bench-s4-record - Write the S4 baseline (first record / re-baseline)"
+	@echo "  make bench-s2-smoke - Run the S2 timing smoke (informational, never blocks)"
 	@echo "  make verify     - Run all checks (lint + typecheck + security + test + bench-s1 + doctor)"
 	@echo "  make doctor     - Run mnemos doctor health checks (config, storage, MCP, integration)"
 	@echo "  make clean      - Remove build artifacts"
@@ -85,6 +88,19 @@ bench-s1:
 
 bench-s1-record:
 	$(PYTHON) benchmarks/stands/s1_quality/run.py --record
+
+# BF-2 stands — NOT in the local merge gate (ADR-0020: S4 rides the
+# nightly contour while within budget; S2 never blocks locally). The
+# MNEMOS_BENCH_S1M_REQUIRED=1 flag for CI nightlies is documented in
+# benchmarks/README.md (S1m skip semantics); full CI wiring is BF-4.
+bench-s4:
+	$(PYTHON) benchmarks/stands/s4_availability/run.py
+
+bench-s4-record:
+	$(PYTHON) benchmarks/stands/s4_availability/run.py --record
+
+bench-s2-smoke:
+	$(PYTHON) benchmarks/stands/s2_timing/run.py
 
 verify: format-check lint typecheck test security security-reminder bench-s1 doctor check-version
 	@echo "✅ All verification checks passed"
