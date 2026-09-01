@@ -8,7 +8,7 @@ Senior Security Engineer, Senior QA Engineer
 removal), nano-refiner behind the #189 seam, model-quality contour S1m with
 `model_fingerprint`, model-artifact security, stages NM-0 – NM-4
 
-**Amended:** 2026-08-31 (committee session on model delivery) — Stage 2 delivery channels resolved: two-transports-one-pin; compression add-ons rejected (see Stage 2 §Delivery).
+**Amended by:** 2026-08-31 (committee session on model delivery) — Stage 2 delivery channels resolved: two-transports-one-pin; compression add-ons rejected (see Stage 2 §Delivery).
 
 ## Context
 
@@ -101,7 +101,10 @@ delivered either as a separate models wheel through the extra
 or via hash-pinned lazy download, the mandatory oversize channel. The
 weights pin lives in the signed server package: "model update = server
 release" is a feature — SBOM-consistent, package and weights cannot
-desync — and source metadata is never a trust anchor. Sharded wheels are
+desync — and source metadata is never a trust anchor. A separate
+model-update rhythm (outside server releases) remains possible only as a
+future decision requiring signature verification and revocation
+infrastructure. Sharded wheels are
 rejected: pip cannot assemble shards.
 
 Threshold: the wheel channel requires the measured artifact ≤95 MB
@@ -132,8 +135,9 @@ without network".
   the weights pin and the ADR-0020 contract.
 - Sharded wheels — pip cannot assemble shards.
 - Expand-once as a delivery channel — allowed only as an installation
-  step with the 7-test security minimum: zip-slip, bomb cap, atomic
-  rename, verify-then-use, TOCTOU-on-open-fd, 0700/0600, offline
+  step with the 7-test security minimum: zip-slip, bomb cap,
+  interruption-safe atomic rename (idempotent retry after mid-extract
+  kill), verify-then-use, TOCTOU-on-open-fd, 0700/0600, offline
   extraction.
 
 ### NM-0 — model-quality gate (prerequisite of both stages)
