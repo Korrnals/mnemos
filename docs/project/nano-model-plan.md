@@ -58,16 +58,16 @@ flowchart TD
 
 **Инфраструктура обучения:**
 - [ ] Подтверждён GPU-хост (решение владельца); зафиксированы версии (torch/transformers/sentence-transformers) в lockfile training-каталога
-- [ ] Учитель выбран: мультиязычный, 6-слойный класс, Apache-2.0/MIT (кандидаты: paraphrase-multilingual-MiniLM-L12-v2 как учитель; LaBSE-наследники)
+- [ ] Учитель выбран: мультиязычный, класс MiniLM-L12, Apache-2.0/MIT (кандидаты: paraphrase-multilingual-MiniLM-L12-v2 как учитель; LaBSE-наследники)
 - [ ] Датасет memory-shaped RU+EN собран: из golden-корпуса + синтетика (парафразы, чат-выдержки, код-заголовки); RU-доля ≥40%; дедупликация; лимиты длины 256 токенов
 - [ ] Скрипт дистилляции (студент 45–60M, KD-loss на cos-sim к учителю) + скрипт экспорта int8 ONNX (static shapes, opset пин) + eval-джига (cos-sim к учителю, retrieval-proxy на judged-корпусе)
-- [ ] Eval-отчёт: студент vs учитель vs текущий chromadb-MiniLM — порог перехода: retrieval-proxy не ниже учителя − 2%
+- [ ] Eval-отчёт: студент vs учитель vs текущий chromadb-MiniLM — порог перехода (provisional до первого eval-прогона, пересматривается по измерениям): retrieval-proxy не ниже учителя − 2%
 
 **Интеграция:**
 - [ ] NanoProvider (onnxruntime+tokenizers уже в зависимостях после выпила): weights_sha256 по локальному ONNX, dim probe, MNEMOS_ORT_THREADS
 - [ ] model_fingerprint: non-chromadb ветка model_contour теперь возвращает weights_sha256 реального файла (сейчас identifier-only)
 - [ ] Пакет: весовой артефакт ≤95МБ в wheel ИЛИ канал download (по замеру); sdist без весов; MNEMOS_OFFLINE_MODELS_DIR реализован (load from file + hash-проверка)
-- [ ] chromadb выпилен: pyproject, 26 тест-фикстур, model_contour, 41 docs-вхождение, конфиги; `provider="chromadb"` → миграционное предупреждение
+- [ ] chromadb выпилен: pyproject, 22 тест-упоминания `provider: chromadb`, model_contour, 41 docs-вхождение, конфиги; `provider="chromadb"` → миграционное предупреждение
 - [ ] Подпись артефакта: release-pipeline подписывает модельный wheel (SHA256+cosign+GPG+SBOM-провенанс: base-модель, ревизия, лицензия Apache-2.0/MIT)
 - [ ] Гоного-тесты: инференс без сети; первая установка без сети; попытка записи в файл весов падает
 - [ ] re-baseline: s1.json (model_fingerprint → nano), полный re-embed sweeper прогнан, BASELINE.md перегенерирован — тот же PR
