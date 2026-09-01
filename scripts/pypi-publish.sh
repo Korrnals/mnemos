@@ -251,7 +251,7 @@ else
   PIP_INSTALL="$SMV/bin/pip install -q --no-deps"
   if ! python -m venv "$SMV" 2>/dev/null || [[ ! -x "$SMV/bin/pip" ]]; then
     rm -rf "$SMV"
-    python -m venv --without-pip "$SMV" && PIP_INSTALL="pip install -q --no-deps --python $SMV/bin/python"
+    python -m venv --without-pip "$SMV" && PIP_INSTALL="pip --python $SMV/bin/python install -q --no-deps"
   fi
   set +e
   $PIP_INSTALL "$WHEEL" \
@@ -285,7 +285,7 @@ if $FULL_SMOKE; then
     FULL_PIP="$SMV/bin/pip install -q"
     if ! python -m venv "$SMV" 2>/dev/null || [[ ! -x "$SMV/bin/pip" ]]; then
       rm -rf "$SMV"
-      python -m venv --without-pip "$SMV" && FULL_PIP="pip install -q --python $SMV/bin/python"
+      python -m venv --without-pip "$SMV" && FULL_PIP="pip --python $SMV/bin/python install -q"
     fi
     set +e
     $FULL_PIP "$WHEEL" \
