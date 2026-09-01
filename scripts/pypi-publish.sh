@@ -245,9 +245,16 @@ if $DRY_RUN; then echo "→ DRY-RUN: venv install --no-deps + version + integrat
 else
   SMOKE_DIR=$(mktemp -d /tmp/mnemos-pypi-smoke.XXXXXX)
   SMV="$SMOKE_DIR/.venv"
+  # Debian/Ubuntu often ships python3 without ensurepip (python3-venv not
+  # installed): fall back to a pip-less venv + the OUTER pip targeting the
+  # venv interpreter (--python, pip >= 22.3 — the build venv has current pip).
+  PIP_INSTALL="$SMV/bin/pip install -q --no-deps"
+  if ! python -m venv "$SMV" 2>/dev/null || [[ ! -x "$SMV/bin/pip" ]]; then
+    rm -rf "$SMV"
+    python -m venv --without-pip "$SMV" && PIP_INSTALL="pip install -q --no-deps --python $SMV/bin/python"
+  fi
   set +e
-  python -m venv "$SMV" \
-    && "$SMV/bin/pip" install -q --no-deps "$WHEEL" \
+  $PIP_INSTALL "$WHEEL" \
     && EXPECTED="$PYV" NAME="$PKG_NAME" "$SMV/bin/python" - <<'PY'
 import os, importlib.resources as r
 from importlib.metadata import version
@@ -275,9 +282,13 @@ if $FULL_SMOKE; then
   else
     SMOKE_DIR=$(mktemp -d /tmp/mnemos-pypi-fullsmoke.XXXXXX)
     SMV="$SMOKE_DIR/.venv"
+    FULL_PIP="$SMV/bin/pip install -q"
+    if ! python -m venv "$SMV" 2>/dev/null || [[ ! -x "$SMV/bin/pip" ]]; then
+      rm -rf "$SMV"
+      python -m venv --without-pip "$SMV" && FULL_PIP="pip install -q --python $SMV/bin/python"
+    fi
     set +e
-    python -m venv "$SMV" \
-      && "$SMV/bin/pip" install -q "$WHEEL" \
+    $FULL_PIP "$WHEEL" \
       && OUT="$("$SMV/bin/mnemos" --version 2>&1)"; rc=$?
     set -e
     rm -rf "$SMOKE_DIR"
