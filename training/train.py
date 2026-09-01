@@ -115,7 +115,11 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
 def cmd_train(args: argparse.Namespace) -> int:
     run_dir = args.out_dir
-    ds = run_dir / "dataset"
+    # The manager keeps the dataset alongside the run by default (prepare
+    # writes to <run-dir>/dataset), but also accepts the dataset prepared
+    # into a sibling default location (TRAIN_DIR/data per prepare default).
+    candidates = [run_dir / "dataset", TRAIN_DIR / "data"]
+    ds = next((c for c in candidates if (c / "train.jsonl").exists()), candidates[0])
     if not (ds / "train.jsonl").exists():
         print("error: dataset not found — run `train.py prepare` first", file=sys.stderr)
         return 2
@@ -132,6 +136,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         print(f"train: resuming — epochs done {done}, running {planned} more")
     if args.stop_flag:
         (run_dir / "STOP").write_text("stop requested\n", encoding="utf-8")
+        print("stop-flag written — distill will exit at the next epoch boundary")
     cmd = [
         _python(),
         str(TRAIN_DIR / "distill.py"),
@@ -150,6 +155,11 @@ def cmd_train(args: argparse.Namespace) -> int:
         "--out-dir",
         str(run_dir),
     ]
+    done = _epochs_done(run_dir)
+    if done:
+        # Resume contract: distill skips completed epochs via --start-epoch
+        # and appends to the same metrics.jsonl.
+        cmd += ["--start-epoch", str(max(done) + 1)]
     if args.teacher:
         cmd += ["--teacher", args.teacher]
     if args.student_init:
@@ -157,6 +167,14 @@ def cmd_train(args: argparse.Namespace) -> int:
     if args.max_pairs:
         cmd += ["--max-pairs", str(args.max_pairs)]
     return _run(cmd)
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    run_dir = args.out_dir
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "STOP").write_text("stop requested\n", encoding="utf-8")
+    print(f"stop-flag written to {run_dir / 'STOP'} — distill exits at the next epoch boundary")
+    return 0
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -172,12 +190,12 @@ def cmd_export(args: argparse.Namespace) -> int:
     cmd = [
         _python(),
         str(TRAIN_DIR / "export_onnx.py"),
-        "--checkpoint",
+        "--model-dir",
         str(ckpt),
+        "--pairs-dir",
+        str(run_dir / "dataset"),
         "--out-dir",
         str(run_dir / "export"),
-        "--calib-jsonl",
-        str(run_dir / "dataset" / "val.jsonl"),
     ]
     return _run(cmd)
 
@@ -195,11 +213,11 @@ def cmd_eval(args: argparse.Namespace) -> int:
     cmd = [
         _python(),
         str(TRAIN_DIR / "eval_distilled.py"),
-        "--onnx",
-        str(export / "model.onnx"),
-        "--tokenizer",
-        str(export / "tokenizer.json"),
-        "--out",
+        "--onnx-dir",
+        str(export),
+        "--pairs-dir",
+        str(run_dir / "dataset"),
+        "--report-dir",
         str(REPO_ROOT / "benchmarks" / "reports"),
     ]
     if args.epoch:
@@ -216,6 +234,12 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
         return 2
     name = args.name or f"epoch{epoch}"
     src = run_dir / f"epoch{epoch}"
+    if not ckpt_dir_exists(src):
+        print(
+            f"error: checkpoint epoch{epoch} incomplete or missing in {run_dir} — cannot snapshot",
+            file=sys.stderr,
+        )
+        return 2
     dst = run_dir / "snapshots" / name
     if dst.exists() and not args.force:
         print(f"snapshot: '{name}' already exists — use another name or --force")
@@ -340,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--epochs", type=int, default=3)
     sp.add_argument("--batch-size", type=int, default=32)
     sp.add_argument("--threads", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    sp.add_argument("--seed", type=int, default=42)
     sp.add_argument("--teacher", default=None, help="override teacher HF id")
     sp.add_argument("--student-init", default=None, help="override student init HF id")
     sp.add_argument("--max-pairs", type=int, default=None)
@@ -349,6 +374,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="write STOP and start training — loop exits at next epoch boundary",
     )
     sp.set_defaults(func=cmd_train)
+
+    sp = sub.add_parser("stop", help="write the STOP flag — running train exits at next epoch")
+    sp.set_defaults(func=cmd_stop)
 
     sp = sub.add_parser("export", help="int8 ONNX export from a checkpoint")
     sp.add_argument("--epoch", type=int, default=None, help="default: latest")
