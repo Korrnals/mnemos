@@ -81,6 +81,17 @@ ollama = [
 sentence-transformers = [
     "sentence-transformers>=3.0",
 ]
+training = [
+    # NM-1b training stack — OUTSIDE the runtime deps by ADR-0021 (training
+    # happens in a container/venv, never in the server environment).
+    "torch>=2.2",
+    "transformers>=4.51",
+    "tokenizers>=0.21",
+    "onnxruntime>=1.20",
+    "onnx>=1.17",
+    "sentence-transformers>=3.0",
+    "huggingface_hub>=0.30",
+]
 openvino = [
     "optimum[openvino]>=1.19",
 ]
@@ -113,6 +124,7 @@ all = [
 
 [project.scripts]
 mnemos = "mnemos.cli.main:app"
+mnemos-train = "mnemos.training.train:main"
 
 # Korrnals/release-pipeline symlinks (local pipeline mode) must never enter
 # the sdist: their absolute symlink targets break sdist extraction during
