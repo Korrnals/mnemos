@@ -1,0 +1,175 @@
+{
+  "baseline_version": 1,
+  "stand_version": "s4-1",
+  "corpus_fingerprint": "7847aee46b964d40bd85f3a1482dc8db8b8732194a3cbc2e8f869213644f62e1",
+  "model_fingerprint": {
+    "provider": "chromadb",
+    "model": "all-MiniLM-L6-v2",
+    "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
+    "opset": null
+  },
+  "created": "2026-09-01T10:36:50+00:00",
+  "metrics": {
+    "probe_pass_rate": 1.0,
+    "memory_completeness": 1.0,
+    "quarantine_exclusion": {
+      "value": 1.0,
+      "expect": 1.0,
+      "ok": true
+    },
+    "embed_staleness": {
+      "checked_refined": 0,
+      "stale": 0,
+      "stale_ids": [],
+      "quarantined_absent_from_vectors": true
+    },
+    "probes": {
+      "probes": [
+        {
+          "probe": "search-fts:published",
+          "token": "quartzhaven",
+          "found": true,
+          "results": 1,
+          "search_types": [],
+          "pass": true
+        },
+        {
+          "probe": "search-hybrid:published",
+          "token": "quartzhaven",
+          "found": true,
+          "results": 3,
+          "search_types": [
+            "hybrid"
+          ],
+          "pass": true
+        },
+        {
+          "probe": "search-fts:refined",
+          "token": "cobaltmere",
+          "found": true,
+          "results": 1,
+          "search_types": [],
+          "pass": true
+        },
+        {
+          "probe": "search-hybrid:refined",
+          "token": "cobaltmere",
+          "found": true,
+          "results": 3,
+          "search_types": [
+            "hybrid"
+          ],
+          "pass": true
+        },
+        {
+          "probe": "search-fts:failed",
+          "token": "ironvale",
+          "found": true,
+          "results": 1,
+          "search_types": [],
+          "pass": true
+        },
+        {
+          "probe": "search-hybrid:failed",
+          "token": "ironvale",
+          "found": true,
+          "results": 3,
+          "search_types": [
+            "hybrid"
+          ],
+          "pass": true
+        },
+        {
+          "probe": "search-excluded:quarantined",
+          "token": "emberholt",
+          "found": false,
+          "results": 3,
+          "search_types": [
+            "hybrid"
+          ],
+          "pass": true
+        },
+        {
+          "probe": "search-excluded:raw",
+          "token": "duskmire",
+          "found": false,
+          "results": 3,
+          "search_types": [
+            "hybrid"
+          ],
+          "pass": true
+        },
+        {
+          "probe": "get-by-id",
+          "outcomes": {
+            "published": "ok",
+            "refined": "ok",
+            "failed": "ok",
+            "quarantined": "retracted",
+            "raw": "ok"
+          },
+          "pass": true
+        },
+        {
+          "probe": "list_recent",
+          "listed": 4,
+          "admissible_listed": 4,
+          "quarantined_listed": 0,
+          "pass": true
+        },
+        {
+          "probe": "assemble-budget",
+          "budget": 2048,
+          "blocks": 3,
+          "chars": 1072,
+          "published_surfaced": true,
+          "quarantined_absent": true,
+          "pass": true
+        },
+        {
+          "probe": "marker-parse",
+          "hash": "df52d04a0d3e",
+          "found": true,
+          "pass": true
+        }
+      ],
+      "pass_count": 12,
+      "total": 12
+    },
+    "populations": {
+      "fixture": 5,
+      "quarantined_rows": 1,
+      "raw_rows": 2,
+      "fixture_content_counts": {
+        "memories": 5,
+        "embeddings": 3
+      }
+    },
+    "read_only_invariant": {
+      "ok": true,
+      "content_counts_before": {
+        "memories": 5,
+        "embeddings": 3
+      },
+      "content_counts_after": {
+        "memories": 5,
+        "embeddings": 3
+      },
+      "note": "a probe that writes moves memories/embeddings \u2014 the mutation the S4 read-only invariant exists to catch"
+    },
+    "audit_marking": {
+      "actor": "benchmark",
+      "stand_version": "s4-1",
+      "released": true,
+      "requarantined": true,
+      "lines": [
+        "pipeline: id=quarantined outcome=quarantine-released to=failed source=benchmark reason_cleared=secret",
+        "pipeline: id=quarantined outcome=quarantined reason=secret source=benchmark"
+      ]
+    }
+  },
+  "environment": {
+    "python": "3.12.3",
+    "deterministic_embedder": true
+  }
+}
