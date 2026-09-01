@@ -251,6 +251,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pairs", required=True, help="train jsonl from prepare_dataset.py")
     p.add_argument("--val", required=True, help="val jsonl from prepare_dataset.py")
     p.add_argument("--epochs", type=int, default=3)
+    p.add_argument(
+        "--start-epoch",
+        type=int,
+        default=1,
+        help="first epoch number to run (manager resume: last completed + 1)",
+    )
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=2e-5)
     p.add_argument(
@@ -268,6 +274,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out-dir", type=Path, default=TRAIN_DIR / "runs" / "nm1b")
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "ipex", "cuda"])
     args = p.parse_args(argv)
+
+    # Manager contract check BEFORE the heavy imports: `train.py stop` writes
+    # this flag; honoring it here means the loop never even starts when the
+    # operator stopped the run before launch (torch need not be installed).
+    if (args.out_dir / "STOP").exists():
+        print("stop-flag present before start — nothing to do (remove STOP to run)")
+        return 0
 
     try:
         import torch
@@ -299,7 +312,12 @@ def main(argv: list[str] | None = None) -> int:
     metrics_path = args.out_dir / "metrics.jsonl"
     order_rng = random.Random(args.seed)
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(args.start_epoch, args.epochs + 1):
+        if (args.out_dir / "STOP").exists():
+            # Manager contract: `train.py stop` writes this flag; the loop
+            # exits cleanly at the epoch boundary, checkpoints stay intact.
+            print(f"stop-flag detected before epoch {epoch} — exiting cleanly")
+            break
         epoch_order = list(train_texts)
         order_rng.shuffle(epoch_order)  # deterministic per-epoch order
         student.train()
