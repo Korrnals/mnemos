@@ -2088,3 +2088,53 @@ class TestPiTarget:
         restamped = stamp_content(stamped, "2.1.0", line_comment=True)
         assert restamped.count("mnemos-integration:") == 1
         assert read_stamp(restamped) == "2.1.0"
+
+
+class TestSkillPack:
+    """The shipped ``integrations/skills/`` pack is present and well-formed."""
+
+    @staticmethod
+    def _skill_files() -> list[Path]:
+        repo_root = Path(__file__).resolve().parent.parent
+        skills = repo_root / "integrations" / "skills"
+        return sorted(skills.glob("mnemos-*.md"))
+
+    def test_skill_pack_nonempty(self) -> None:
+        files = self._skill_files()
+        assert files, "integrations/skills/ pack must contain skill files"
+
+    def test_context_lifecycle_skill_present_and_parses(self) -> None:
+        files = self._skill_files()
+        skill = next(
+            (p for p in files if p.name == "mnemos-context-lifecycle.md"), None
+        )
+        assert skill is not None, (
+            "issue #209: mnemos-context-lifecycle.md must ship in the skill pack"
+        )
+        text = skill.read_text(encoding="utf-8")
+        # Frontmatter: delimited, name matches the filename stem.
+        assert text.startswith("---\n"), "skill must start with a frontmatter block"
+        (fm, _, body) = text.partition("\n---\n")
+        assert fm.startswith("---\nname: mnemos-context-lifecycle")
+        assert "description:" in fm
+        # Body follows the standard skill section convention.
+        assert "# Mnemos Context Lifecycle" in body
+        for section in ("## WHEN", "## STEPS", "## DISCIPLINE", "## See also"):
+            assert section in body, f"missing standard section {section}"
+        # Covers the three publication-engine tools (issue #209).
+        for tool in (
+            "mnemos_assemble_context",
+            "mnemos_context_rewrite",
+            'mnemos_hooks(action="on_session_start"',
+        ):
+            assert tool in body, f"skill must document {tool}"
+
+    def test_every_skill_file_has_name_description(self) -> None:
+        for path in self._skill_files():
+            text = path.read_text(encoding="utf-8")
+            assert text.startswith("---\n"), f"{path.name}: missing frontmatter"
+            fm = text.split("\n---\n", 1)[0]
+            assert "name: " in fm, f"{path.name}: frontmatter missing name:"
+            assert "description: " in fm, (
+                f"{path.name}: frontmatter missing description:"
+            )
