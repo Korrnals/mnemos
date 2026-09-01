@@ -19,7 +19,7 @@ Architecture::
 
 Installation::
 
-    # 1. mnemos importable in the Hermes Python env (pip install mnemos)
+    # 1. mnemos importable in the Hermes Python env (pip install mnemos-memory-server)
     #    — no separate ``mnemos serve`` process is needed anymore
     # 2. Copy this plugin into the Hermes plugins dir
     cp -r integrations/hermes ~/.hermes/plugins/mnemos

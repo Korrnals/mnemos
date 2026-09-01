@@ -5,7 +5,7 @@ author: Korrnals
 license: MIT
 homepage: https://github.com/Korrnals/mnemos
 requires:
-  - "the mnemos package importable in the Hermes Python environment (pip install mnemos) — no separate `mnemos serve` process is needed"
+  - "the mnemos package importable in the Hermes Python environment (pip install mnemos-memory-server) — no separate `mnemos serve` process is needed"
 config_keys:
   data_dir:
     description: "Mnemos data dir (empty = mnemos default). One owner process per data dir (SQLite single-writer)."

@@ -2,21 +2,25 @@
 
 **🌐 Language / Язык:** English · [Русский](../../../ru/admin/runbooks/pypi-publish.md)
 
-First-publish pipeline for the `mnemos` package on PyPI — issue #122,
-ADR-0017 Phase 0 (Distribution). GitHub Actions is billing-locked (#117),
-so the whole pipeline runs locally via `scripts/pypi-publish.sh`
-(sibling of `scripts/local-release.sh`, which owns the container image +
-GitHub Release half).
+First-publish pipeline for the `mnemos-memory-server` package on PyPI —
+issue #122, ADR-0017 Phase 0 (Distribution). GitHub Actions is
+billing-locked (#117), so the whole pipeline runs locally via
+`scripts/pypi-publish.sh` (sibling of `scripts/local-release.sh`, which
+owns the container image + GitHub Release half).
 
-**First publish and the final package name are owner decisions.** PyPI
-names and versions are immutable: a published version can never be
-re-uploaded or replaced, and a project name cannot be silently migrated.
-Everything below prepares and verifies the artifacts — the actual
-`twine upload` is a deliberate, manual, owner-executed step.
+**First publish is an owner-executed step.** PyPI names and versions are
+immutable: a published version can never be re-uploaded or replaced, and
+a project name cannot be silently migrated. Everything below prepares and
+verifies the artifacts — the actual `twine upload` is a deliberate,
+manual step.
 
-## Package name — availability (checked 2026-08-21)
+## Package name — DECIDED: `mnemos-memory-server` (2026-09-01)
 
-The natural name `mnemos` is **taken** on PyPI. Availability matrix:
+The distribution name was decided 2026-09-01 and set in `pyproject.toml`
+(`name = "mnemos-memory-server"`). The import package stays `mnemos` and
+the CLI stays `mnemos` — only the installable/PyPI name changed. The
+matrix below is kept as decision history; it was last re-checked
+2026-09-01 (statuses unchanged since 2026-08-21).
 
 | Name | PyPI status | Occupied by |
 | --- | --- | --- |
@@ -32,10 +36,9 @@ Both taken names are **AI-memory projects in the same domain** — a third
 similar name maximizes user confusion, so the fallback should be
 self-descriptive rather than minimal.
 
-**Recommendation: `mnemos-memory-server`** — states exactly what the
+**Chosen: `mnemos-memory-server`** — states exactly what the
 package is ("a memory server named mnemos"), matches the project
 description, and is unambiguous against both taken neighbors.
-Alternative: `mnemos-server` (shorter, still clear).
 
 How to re-check (no auth needed):
 
@@ -64,6 +67,14 @@ reads the name from `pyproject.toml` and adapts automatically (wheel
 filename normalization included). Do it BEFORE the first publish;
 afterwards the name is fixed forever.
 
+> **Asset note (2026-09-01):** tag `v3.1.0` was cut with the old name and
+> is NOT re-cut (its npm channel `pi-mnemos@3.1.0` is already published).
+> No wheel asset with the new filename exists for v3.1.0 — the README
+> `<!-- version:pip -->` marker therefore points at the NEXT release
+> (v3.2.0). `scripts/sync-readme-version.sh` keeps the marker correct
+> from that release on; `scripts/install.sh` builds the URL from the
+> normalized filename.
+
 ## Pipeline — `scripts/pypi-publish.sh`
 
 | Mode | What it does |
@@ -88,9 +99,9 @@ Makefile alias: `make pypi-publish` (check mode).
 | G3 | wheel + sdist filename versions == `pyproject.toml` version | `--publish` mode |
 | G4 | smoke-installed package version == `pyproject.toml` version | always (artifact proof) |
 
-G0 exists because the project name was still undecided at packaging
-time (see the matrix above): an accidental `--publish` against a taken
-name fails cleanly BEFORE any upload attempt.
+G0 stays as a hard safety net even though the name is now decided (see
+the matrix above): an accidental `--publish` against a taken or renamed
+name still fails cleanly BEFORE any upload attempt.
 
 ## Publish procedure (owner)
 

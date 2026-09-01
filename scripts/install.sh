@@ -153,7 +153,7 @@ if [[ "$CONTAINER" == true ]]; then
 fi
 
 # ── Build wheel URL ───────────────────────────────────────────────
-WHEEL_URL="https://github.com/Korrnals/mnemos/releases/download/v${VERSION}/mnemos-${VERSION}-py3-none-any.whl"
+WHEEL_URL="https://github.com/Korrnals/mnemos/releases/download/v${VERSION}/mnemos_memory_server-${VERSION}-py3-none-any.whl"
 
 # ── Create venv (unless --no-venv) ────────────────────────────────
 if [[ "$NO_VENV" == false ]]; then

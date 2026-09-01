@@ -15,7 +15,7 @@ def test_version_is_string() -> None:
 
 def test_version_matches_metadata() -> None:
     """__version__ must match the version in pyproject.toml (via metadata)."""
-    metadata_version = pkg_version("mnemos")
+    metadata_version = pkg_version("mnemos-memory-server")
     assert __version__ == metadata_version, (
         f"__version__ ({__version__}) != metadata ({metadata_version})"
     )

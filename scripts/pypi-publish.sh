@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# pypi-publish.sh — local PyPI publish pipeline for mnemos.
+# pypi-publish.sh — local PyPI publish pipeline for the mnemos
+# distribution (mnemos-memory-server on PyPI; import package: mnemos).
 #
 # WHY: GitHub Actions is billing-locked (#117) so the release workflow
 # does not fire, and a first PyPI publish is an IRREVERSIBLE owner
@@ -36,8 +37,9 @@
 # branch merged to main, network access to pypi.org for G0 (--publish
 # only), twine check and --full-smoke.
 #
-# First publish + final package name are OWNER decisions (irreversible
-# on PyPI). Name availability matrix + procedure:
+# First publish is an OWNER-executed step (irreversible on PyPI; the
+# distribution name is decided: mnemos-memory-server). Matrix history +
+# procedure:
 #   docs/en/admin/runbooks/pypi-publish.md
 #
 # See: issue #122 (ADR-0017 Phase 0), scripts/local-release.sh (sibling
@@ -243,9 +245,16 @@ if $DRY_RUN; then echo "→ DRY-RUN: venv install --no-deps + version + integrat
 else
   SMOKE_DIR=$(mktemp -d /tmp/mnemos-pypi-smoke.XXXXXX)
   SMV="$SMOKE_DIR/.venv"
+  # Debian/Ubuntu often ships python3 without ensurepip (python3-venv not
+  # installed): fall back to a pip-less venv + the OUTER pip targeting the
+  # venv interpreter (--python, pip >= 22.3 — the build venv has current pip).
+  PIP_INSTALL="$SMV/bin/pip install -q --no-deps"
+  if ! python -m venv "$SMV" 2>/dev/null || [[ ! -x "$SMV/bin/pip" ]]; then
+    rm -rf "$SMV"
+    python -m venv --without-pip "$SMV" && PIP_INSTALL="pip --python $SMV/bin/python install -q --no-deps"
+  fi
   set +e
-  python -m venv "$SMV" \
-    && "$SMV/bin/pip" install -q --no-deps "$WHEEL" \
+  $PIP_INSTALL "$WHEEL" \
     && EXPECTED="$PYV" NAME="$PKG_NAME" "$SMV/bin/python" - <<'PY'
 import os, importlib.resources as r
 from importlib.metadata import version
@@ -273,9 +282,13 @@ if $FULL_SMOKE; then
   else
     SMOKE_DIR=$(mktemp -d /tmp/mnemos-pypi-fullsmoke.XXXXXX)
     SMV="$SMOKE_DIR/.venv"
+    FULL_PIP="$SMV/bin/pip install -q"
+    if ! python -m venv "$SMV" 2>/dev/null || [[ ! -x "$SMV/bin/pip" ]]; then
+      rm -rf "$SMV"
+      python -m venv --without-pip "$SMV" && FULL_PIP="pip --python $SMV/bin/python install -q"
+    fi
     set +e
-    python -m venv "$SMV" \
-      && "$SMV/bin/pip" install -q "$WHEEL" \
+    $FULL_PIP "$WHEEL" \
       && OUT="$("$SMV/bin/mnemos" --version 2>&1)"; rc=$?
     set -e
     rm -rf "$SMOKE_DIR"
@@ -317,7 +330,7 @@ if ! $PUBLISH; then
   echo ""
   echo "════════════════════════════════════════════════════════════════"
   echo " HARD STOP — everything prepared, NOTHING uploaded to PyPI."
-  echo " First publish + final package name are OWNER decisions"
+  echo " First publish is an OWNER-executed step (name decided: see pyproject)."
   echo " (PyPI names/versions are immutable — see the runbook):"
   echo "   docs/en/admin/runbooks/pypi-publish.md"
   echo "════════════════════════════════════════════════════════════════"

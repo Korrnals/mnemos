@@ -541,7 +541,7 @@ Mnemos предоставляет нативный плагин `MemoryProvider`
 
 1. Сделайте пакет `mnemos` импортируемым в Python-окружении Hermes:
    ```bash
-   pip install mnemos
+   pip install mnemos-memory-server
    ```
    Отдельный процесс `mnemos serve` больше не нужен.
 

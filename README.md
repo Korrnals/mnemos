@@ -135,7 +135,7 @@ uv pip install -e ".[dev]"
 
 <!-- version:pip -->
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v3.1.0/mnemos-3.1.0-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v3.2.0/mnemos_memory_server-3.2.0-py3-none-any.whl
 ```
 <!-- /version:pip -->
 
@@ -347,7 +347,7 @@ pick the strongest one your harness supports:
 
 - **[Hermes Agent](https://hermes-agent.nousresearch.com/)** — native `MemoryProvider` plugin
   (`integrations/hermes/`): automatic prefetch, sync-turn, built-in memory mirroring.
-  Since plugin **3.0.0** (ADR-0017 D1) the plugin runs **in-process** — it needs `pip install mnemos`
+  Since plugin **3.0.0** (ADR-0017 D1) the plugin runs **in-process** — it needs `pip install mnemos-memory-server`
   in the Hermes Python environment, and the legacy `base_url` / `api_key` / `totp_secret` config keys are gone.
   See the [integration guide](docs/en/user/integration-guide.md#hermes-agent).
 - **Native targets** — `mnemos integration setup --target <name>` deploys the
