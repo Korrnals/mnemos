@@ -285,9 +285,11 @@ def main(argv: list[str] | None = None) -> int:
 
     synthetic = collect_synthetic(args.seed)
     if args.ru_boost:
-        # The fixture corpus is EN-dominant (golden corpus is authored in
-        # EN); replicate the RU synthetic half once so the >=40 % RU quota
-        # survives the mix. Deterministic: pure repetition, no extra RNG.
+        # Honest note (review F2): this replication is a NO-OP after the
+        # exact-text dedup below — duplicated RU rows are removed with the
+        # rest. The flag is kept for CLI compatibility; the >=40 % RU quota
+        # is actually reached by repeat-to-cap with variant suffixes (which
+        # survive dedup), and the unique-text RU share is reported separately.
         ru_half = [(t, lang, src) for t, lang, src in synthetic if lang == "ru"]
         synthetic = synthetic + ru_half
     stats["synthetic"] = len(synthetic)
@@ -315,26 +317,44 @@ def main(argv: list[str] | None = None) -> int:
         # for a given seed; near-duplicates are intentional here — the
         # KD signal is the teacher's geometry, and true dedup still ran
         # on the base pool above.
+        #
+        # Review fix (train/val leakage): the split happens on the UNIQUE
+        # pool BEFORE replication so every val row is textually absent from
+        # train — val_cosine and int8 calibration would otherwise score on
+        # train texts. Only the train part is repeated toward the cap.
         rng = random.Random(f"{args.seed}:repeat")
-        base = list(rows)
-        while len(rows) < args.max_pairs:
+        train, val = train_val_split(rows, args.seed)
+        base = list(train)
+        train = list(train)
+        while len(train) < args.max_pairs - len(val):
             text, lang, source = base[rng.randrange(len(base))]
             variant = rng.choice(
                 ["", " (v2)", " (v3)", " — follow-up", " — update", " — уточнение"]
             )
-            rows.append((text + variant, lang, source))
-    stats["final_pairs"] = len(rows)
-
-    train, val = train_val_split(rows, args.seed)
+            train.append((text + variant, lang, source))
+    else:
+        train, val = train_val_split(rows, args.seed)
+    stats["final_pairs"] = len(train) + len(val)
     fp_train = write_jsonl(args.out_dir / "train.jsonl", train)
     fp_val = write_jsonl(args.out_dir / "val.jsonl", val)
     fingerprint = hashlib.sha256((fp_train + fp_val).encode("utf-8")).hexdigest()
     (args.out_dir / "fingerprint.txt").write_text(fingerprint + "\n", encoding="utf-8")
 
     share = ru_share(rows)
-    quota_flag = "OK" if share >= RU_QUOTA_TARGET else "BELOW TARGET"
+    # Unique-text RU share: the weighted share is inflated by repeat-to-cap
+    # replication — report both so the reviewer-visible number is honest.
+    first_lang_by_text: dict[str, str] = {}
+    for t, lang, _ in rows:
+        first_lang_by_text.setdefault(t, lang)
+    unique_rows = [(t, first_lang_by_text[t], "unique") for t in first_lang_by_text]
+    unique_share = ru_share(unique_rows)
+    quota_flag = "OK" if unique_share >= RU_QUOTA_TARGET else "BELOW TARGET"
     print("dataset stats:", json.dumps(stats, sort_keys=True))
     print(f"ru_share: {share:.3f} (target >= {RU_QUOTA_TARGET:.2f}) -> {quota_flag}")
+    print(
+        f"ru_share_unique: {unique_share:.3f} over {len(unique_rows)} unique texts "
+        "(weighted share is inflated by repeat-to-cap replication)"
+    )
     print(f"train/val: {len(train)}/{len(val)} (seed={args.seed})")
     print(f"dataset_fingerprint: {fingerprint}")
     if share < RU_QUOTA_TARGET:

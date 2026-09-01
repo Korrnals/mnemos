@@ -13,8 +13,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import types
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -294,3 +297,86 @@ class TestExportManifestSchema:
             assert f'"{field}"' in src, f"manifest field {field!r} missing from export_onnx.py"
         # fingerprint field must come from the deterministic helper
         assert export.dataset_fingerprint.__doc__ is not None
+
+
+class TestTrainValLeakage:
+    def test_repeat_to_cap_split_has_no_train_val_text_overlap(self, tmp_path: Path) -> None:
+        """Review F1 regression: with repeat-to-cap ON (the default), the split
+        must happen on unique texts BEFORE replication — every val text must
+        be absent from train (reviewer measured 5000/5000 overlap pre-fix)."""
+        cmd = [
+            sys.executable,
+            str(_TRAIN_DIR / "dataset" / "prepare_dataset.py"),
+            "--max-pairs",
+            "100",
+            "--out-dir",
+            str(tmp_path / "leak"),
+        ]
+        subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=REPO_ROOT)
+        out_dir = tmp_path / "leak"
+        train_texts = {
+            json.loads(line)["text"]
+            for line in (out_dir / "train.jsonl").read_text(encoding="utf-8").splitlines()
+        }
+        val_texts = {
+            json.loads(line)["text"]
+            for line in (out_dir / "val.jsonl").read_text(encoding="utf-8").splitlines()
+        }
+        overlap = train_texts & val_texts
+        assert not overlap, f"train/val leakage: {len(overlap)} shared texts"
+
+    def test_encode_batch_student_leg_builds_grad_graph(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review F4 regression: the student leg must NOT run under no_grad —
+        backward needs a live graph. Verified without torch via a fake module
+        capture of the no_grad context usage."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("nm1a_distill", _TRAIN_DIR / "distill.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        calls: list[bool] = []
+
+        class FakeNoGrad:
+            def __enter__(self) -> None:
+                calls.append(True)
+
+            def __exit__(self, *args: object) -> None:
+                pass
+
+        class FakeTensor:
+            last_hidden_state = object()
+            attention_mask_placeholder = None
+
+        class FakeOut:
+            last_hidden_state = FakeTensor()
+
+        class FakeModel:
+            def __call__(self, **enc: object) -> FakeOut:
+                calls.append(False)  # False = ran OUTSIDE no_grad (grad path)
+                return FakeOut()
+
+        fake_torch = types.SimpleNamespace(no_grad=lambda: FakeNoGrad())
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+        class FakeEnc(dict):
+            """dict whose .to(device) returns self (real tensors have .to)."""
+
+            def to(self, device: str) -> FakeEnc:
+                return self
+
+        def fake_tokenizer(texts: list[str], **kw: object) -> dict[str, FakeEnc]:
+            return {"input_ids": FakeEnc(), "attention_mask": FakeEnc()}
+
+        _out, mask = mod.encode_batch(
+            FakeModel(), fake_tokenizer, ["t"], "cpu", 256, requires_grad=True
+        )
+        # grad path: model ran OUTSIDE no_grad; mask passthrough intact
+        assert calls == [False]
+        assert mask == FakeEnc()  # FakeEnc.to() returns self, dict equality holds
+        calls.clear()
+        mod.encode_batch(FakeModel(), fake_tokenizer, ["t"], "cpu", 256, requires_grad=False)
+        # non-grad leg: no_grad.__enter__ (True) fires BEFORE the model call (False)
+        assert calls == [True, False]

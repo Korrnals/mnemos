@@ -161,6 +161,7 @@ def encode_batch(
     texts: list[str],
     device: str,
     max_length: int,
+    requires_grad: bool = False,
 ) -> tuple[Any, Any]:
     import torch
 
@@ -172,8 +173,13 @@ def encode_batch(
         return_tensors="pt",
     )
     enc = {k: v.to(device) for k, v in enc.items()}
-    with torch.no_grad():
+    # Teacher inference and evaluation run under no_grad; the student leg in
+    # the KD train loop must NOT (backward needs a live graph).
+    if requires_grad:
         out = model(**enc)
+    else:
+        with torch.no_grad():
+            out = model(**enc)
     return out.last_hidden_state, enc["attention_mask"]
 
 
@@ -300,7 +306,9 @@ def main(argv: list[str] | None = None) -> int:
         total_loss, n_batches = 0.0, 0
         for start in range(0, len(epoch_order), args.batch_size):
             chunk = epoch_order[start : start + args.batch_size]
-            hs, mask_s = encode_batch(student, tokenizer_s, chunk, device, args.max_length)
+            hs, mask_s = encode_batch(
+                student, tokenizer_s, chunk, device, args.max_length, requires_grad=True
+            )
             student_pooled = mean_pool(hs, mask_s)
             ht, mask_t = encode_batch(teacher, tokenizer_t, chunk, device, args.max_length)
             with torch.no_grad():
