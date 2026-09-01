@@ -1,0 +1,13 @@
+# training/ dependencies — NOT runtime deps (ADR-0021 anti-scope: training
+# lives outside the package; pyproject.toml must stay torch-free).
+# Install inside the toolbox/distrobox container (see training/README.md).
+# CPU-only torch keeps the container small; NM-1b owner decides about a
+# CUDA/ROCm wheel on the GPU host.
+torch>=2.2
+transformers>=4.40
+sentence-transformers>=3.0
+numpy>=1.26
+onnx>=1.16
+onnxruntime>=1.18
+tokenizers>=0.19
+huggingface_hub>=0.23
