@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mnemos"
+name = "mnemos-memory-server"
 version = "3.2.0"
 description = "Standalone memory & knowledge server for AI agents — forked from ai-brain"
 readme = "README.md"
@@ -108,7 +108,7 @@ dev = [
     "pip-audit>=2.7",
 ]
 all = [
-    "mnemos[anthropic,openai,gemini,azure,ollama,mcp,pdf,docx,dev]",
+    "mnemos-memory-server[anthropic,openai,gemini,azure,ollama,mcp,pdf,docx,dev]",
 ]
 
 [project.scripts]
