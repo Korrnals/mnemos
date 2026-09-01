@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
 import sys
 import tempfile
 import time
@@ -49,7 +48,7 @@ REPORTS_DIR = ROOT / "benchmarks" / "reports"
 
 #: Workload shape (smoke): ~10³ ops total by default. ``--repeats N``
 #: (nightly) multiplies the whole measurement pass.
-DEFAULT_OPS = 250  # × 4 verbs ≈ 10³ operations
+DEFAULT_OPS = 250  # x4 verbs ~ 1e3 operations
 
 #: The four F1 verbs (ADR-0020 family F1) the smoke covers.
 VERBS: tuple[str, ...] = ("add", "search", "assemble", "refine_single")
@@ -89,7 +88,7 @@ def run_workload(ops: int) -> dict[str, list[float]]:
                     data=MemoryCreate(
                         content=content,
                         title=f"{token} entry {i}",
-                        tags=[f"project:s2-workload", f"agent:s2-stand", "mnemos:rule"],
+                        tags=["project:s2-workload", "agent:s2-stand", "mnemos:rule"],
                         source=MemorySource.MCP,
                         status=MemoryStatus.PUBLISHED,
                     ),
@@ -175,7 +174,9 @@ def run(repeats: int) -> dict[str, Any]:
         "ops_per_repeat": DEFAULT_OPS,
         "total_operations": DEFAULT_OPS * 4 * repeats,
         "created": started,
-        "verb_metrics": per_repeat[0] if repeats == 1 else {
+        "verb_metrics": per_repeat[0]
+        if repeats == 1
+        else {
             "note": (
                 "per-repeat summaries in 'repeats'; the spread between "
                 "repeat p50/p95 IS the measured noise band (nightly use)"
@@ -185,7 +186,10 @@ def run(repeats: int) -> dict[str, Any]:
         "environment": {
             "python": ".".join(str(v) for v in sys.version_info[:3]),
             "deterministic_embedder": True,
-            "note": "timing on the deterministic lexical embedder — measures the pipeline, not any model",
+            "note": (
+                "timing on the deterministic lexical embedder — measures the "
+                "pipeline, not any model"
+            ),
         },
     }
 

@@ -18,8 +18,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from benchmarks.stands.s1_quality import run as s1_run
 
 ROOT = Path(s1_run.__file__).resolve().parents[3]
@@ -48,6 +46,30 @@ class TestS1mRootIsolation:
                 "s1m must nest its OWN root under the run root — a shared "
                 "root mixes 256-dim reference and 384-dim production vectors"
             )
+
+    def test_run_model_leg_uses_isolated_root_source_pin(self) -> None:
+        """Source-level pin (reviewer F1): run_model_leg must pass root/s1m.
+
+        The path-shape assertions above pin the intended geometry but are
+        tautological against the REAL mutation — reverting run.py:165 to
+        ``build_golden_manager(root, …)`` left them green (verified in
+        review #215: shared-root mutation → 4 passed). This pin reads the
+        run.py source and fails if the model leg ever stops isolating
+        its root, making the shared-root mutation RED.
+        """
+        source = (
+            Path(__file__)
+            .parents[1]
+            .joinpath("benchmarks/stands/s1_quality/run.py")
+            .read_text(encoding="utf-8")
+        )
+        body = source.split("def run_model_leg", 1)[1]
+        body = body.split("\ndef ", 1)[0]
+        assert 'build_golden_manager(root / "s1m"' in body, (
+            "run_model_leg must isolate the model leg under root/'s1m' — "
+            "a shared root mixes 256-dim reference and 384-dim production "
+            "vectors in one vectors.db (the silent FTS-only degradation)"
+        )
 
     def test_shared_root_actually_mixes_vectors(self) -> None:
         """The DANGEROUS configuration, demonstrated: one root → one db.
@@ -115,7 +137,8 @@ class TestPyprojectMcpFloor:
         mcp_lines = [
             line.strip()
             for line in text.splitlines()
-            if line.strip().startswith('"mcp[') or line.strip().startswith('"mcp>')
+            if line.strip().startswith('"mcp[')
+            or line.strip().startswith('"mcp>')
             or line.strip().startswith('"mcp=')
         ]
         assert mcp_lines, "the mcp dependency line vanished from pyproject.toml"
