@@ -6,7 +6,11 @@ Sources (NM-1a — local only, NO external dataset downloads):
   (b) synthetic: programmatic RU+EN paraphrase templates
       (``synthetic_templates.py``) — notes / chat excerpts / code headlines;
   (c) optional ``--from-mnemos-dir <path>``: owner's local store dump —
-      privacy: the data never leaves the machine (no network anywhere).
+      privacy: the data never leaves the machine (no network anywhere);
+  (d) optional ``--from-mnemos-db <path>``: the live mnemos SQLite store
+      opened READ-ONLY — only the ``content`` field enters the pool,
+      ``project:``* tags are read solely for the optional filter (same
+      local-only privacy contract).
 
 Pipeline: collect -> deduplicate (sha256 of normalised text) -> enforce
 the 256-token length limit -> count the RU quota (>= 40 % gate printed,
@@ -152,6 +156,85 @@ def collect_from_mnemos_dir(root: Path, *, limit: int) -> list[tuple[str, str, s
     return out[:limit]
 
 
+def _project_slug(tags_raw: str, project_column: str | None) -> str:
+    """Extract the project:* slug from a memories row (tags JSON first).
+
+    The denormalised ``project`` column is the fallback for rows written
+    before the tag-contract denormalisation (M2). Purely a filter key —
+    the slug never enters the training corpus.
+    """
+    try:
+        tags = json.loads(tags_raw) if tags_raw else []
+    except json.JSONDecodeError:
+        tags = []
+    if isinstance(tags, list):
+        for tag in tags:
+            if isinstance(tag, str) and tag.startswith("project:"):
+                return tag[len("project:") :].strip().lower()
+    if project_column:
+        return project_column.strip().lower()
+    return ""
+
+
+def collect_from_mnemos_db(
+    db_path: Path, *, limit: int, projects: list[str] | None = None
+) -> list[tuple[str, str, str]]:
+    """Read memory content from a live mnemos SQLite store (owner's machine).
+
+    Privacy contract (same as --from-mnemos-dir): local file only, no
+    network, the data never leaves the machine. The connection is opened
+    READ-ONLY (``file:...?mode=ro`` URI — the running server keeps its
+    write lock); only the ``content`` field enters the training pool, and
+    ``tags``/``project`` are read solely to apply the optional
+    ``project:``* filter. Long rows are chunked by paragraph to stay
+    memory-shaped, mirroring the dir collector.
+
+    ``projects`` is a list of slugs (``project:<slug>`` tags, with or
+    without the ``project:`` prefix); None means "no filter".
+    """
+    import sqlite3
+
+    if not db_path.is_file():
+        raise SystemExit(f"error: --from-mnemos-db is not a file: {db_path}")
+    wanted = {p.strip().lower().removeprefix("project:") for p in (projects or []) if p.strip()}
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise SystemExit(
+            f"error: cannot open {db_path} read-only: {exc} "
+            "(stop the mnemos server or copy the db to a scratch path)"
+        ) from exc
+    out: list[tuple[str, str, str]] = []
+    try:
+        try:
+            cur: sqlite3.Cursor = conn.execute("SELECT content, tags, project FROM memories")
+        except sqlite3.OperationalError:
+            # Legacy store without the M2 denormalised column.
+            cur = conn.execute("SELECT content, tags FROM memories")
+        for row in cur:
+            content = row[0]
+            tags_raw = row[1] if len(row) > 1 else ""
+            project_column = row[2] if len(row) > 2 else None
+            if not isinstance(content, str) or not content.strip():
+                continue
+            if wanted and _project_slug(str(tags_raw or ""), project_column) not in wanted:
+                continue
+            for para in re.split(r"\n\s*\n", content):
+                text = normalise(para)
+                if len(text) < 40:  # skip headings/blank-ish fragments
+                    continue
+                out.append((text[:4000], detect_lang(text), f"mnemos-db:{db_path.name}"))
+                if len(out) >= limit:
+                    return out
+    except sqlite3.DatabaseError as exc:
+        raise SystemExit(
+            f"error: {db_path} is not a readable mnemos store (memories table): {exc}"
+        ) from exc
+    finally:
+        conn.close()
+    return out
+
+
 def collect_synthetic(seed: int) -> list[tuple[str, str, str]]:
     return generate_synthetic(seed)
 
@@ -258,6 +341,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=20_000,
         help="cap on rows read from --from-mnemos-dir",
     )
+    p.add_argument(
+        "--from-mnemos-db",
+        type=Path,
+        default=None,
+        help=(
+            "optional live mnemos SQLite store (opened READ-ONLY; only the "
+            "content field enters the pool; privacy: stays on this machine)"
+        ),
+    )
+    p.add_argument(
+        "--mnemos-db-limit",
+        type=int,
+        default=20_000,
+        help="cap on paragraph chunks read from --from-mnemos-db",
+    )
+    p.add_argument(
+        "--mnemos-db-projects",
+        default=None,
+        help=(
+            "comma-separated project:* slugs to include from --from-mnemos-db "
+            "(e.g. 'project-mnemos,project-atlas'; no filter when omitted)"
+        ),
+    )
     return p
 
 
@@ -281,6 +387,18 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         local = collect_from_mnemos_dir(args.from_mnemos_dir, limit=args.mnemos_limit)
         stats["mnemos-dir"] = len(local)
+        rows.extend(local)
+
+    if args.from_mnemos_db is not None:
+        projects = (
+            [p for p in args.mnemos_db_projects.split(",") if p.strip()]
+            if args.mnemos_db_projects
+            else None
+        )
+        local = collect_from_mnemos_db(
+            args.from_mnemos_db, limit=args.mnemos_db_limit, projects=projects
+        )
+        stats["mnemos-db"] = len(local)
         rows.extend(local)
 
     synthetic = collect_synthetic(args.seed)

@@ -11,3 +11,6 @@ onnx>=1.16
 onnxruntime>=1.18
 tokenizers>=0.19
 huggingface_hub>=0.23
+# benchmark report PNGs (benchmarks/reports/generate_report.py) — training
+# side only, NEVER in pyproject.toml (ADR-0021 anti-scope)
+matplotlib>=3.8

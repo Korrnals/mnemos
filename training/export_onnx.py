@@ -9,7 +9,12 @@ is chosen with ``--epoch``, default: the highest recorded epoch in
   tokenizer.json  the student tokenizer (fast-tokenizer export)
   manifest.json   {base_teacher, student_params, dataset_fingerprint,
                    weights_sha256 (post-export, over model.onnx bytes),
-                   opset, created, license, quantized}
+                   opset, created, license, quantized, embed_dim, mrl_dims}
+
+MRL (round 3): a Matryoshka-trained checkpoint exports ONE model at the
+full embed dim (384); the trained sub-dims are recorded as ``mrl_dims``
+(read from ``<checkpoint>/mrl_dims.json``; ``--mrl-dims`` overrides) —
+consumers truncate + re-normalise at inference to serve any listed dim.
 
 int8 static PTQ (``--int8``, default on): calibrate over a representative
 batch drawn deterministically from the val split (``--calib-samples``).
@@ -26,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import subprocess
 import sys
@@ -41,6 +47,9 @@ REPO_ROOT = TRAIN_DIR.parent
 ONNX_OPSET = 15
 # Static shape pin matching the runtime embedder contract.
 MAX_SEQ = 256
+# Plain-mode embed dim (no mrl_dims.json in the checkpoint, no --mrl-dims
+# override): the runtime contract dim.
+DEFAULT_EMBED_DIM = 384
 
 
 def sha256_file(path: Path) -> str:
@@ -89,6 +98,36 @@ def count_params(model_dir: Path) -> int | None:
     embeddings = vocab * hidden + cfg.get("max_position_embeddings", 512) * hidden
     per_layer = 4 * hidden * hidden + 2 * hidden * (4 * hidden)
     return embeddings + layers * per_layer + 2 * hidden
+
+
+def detect_mrl_dims(model_dir: Path, cli_spec: str | None) -> dict[str, Any]:
+    """MRL contract of a checkpoint: {'embed_dim': int, 'mrl_dims': [int...]}.
+
+    Precedence: explicit ``--mrl-dims``/``--embed-dim`` CLI override, then
+    the ``mrl_dims.json`` written by distill.py into every epoch
+    checkpoint, then the plain single-dim default (384, the runtime
+    contract). MRL exports ship ONE model at the full embed dim — the
+    smaller dims are inference-time truncations (slice + re-normalise),
+    documented in the manifest as ``mrl_dims``.
+    """
+    fallback = {"embed_dim": DEFAULT_EMBED_DIM, "mrl_dims": [DEFAULT_EMBED_DIM]}
+    file_data: dict[str, Any] = {}
+    mrl_path = model_dir / "mrl_dims.json"
+    if mrl_path.is_file():
+        try:
+            loaded = json.loads(mrl_path.read_text(encoding="utf-8"))
+            has_dims = isinstance(loaded.get("mrl_dims"), list)
+            if has_dims and isinstance(loaded.get("embed_dim"), int):
+                file_data = loaded
+        except json.JSONDecodeError:
+            print(f"warn: corrupt {mrl_path} — falling back to the single-dim default")
+    if cli_spec is not None:
+        dims = [int(part.strip()) for part in cli_spec.split(",") if part.strip()]
+        ascending = all(b > a for a, b in itertools.pairwise(dims))
+        if not dims or any(d <= 0 for d in dims) or not ascending:
+            raise SystemExit(f"error: --mrl-dims must be ascending positive ints: {cli_spec!r}")
+        return {"embed_dim": dims[-1], "mrl_dims": dims}
+    return file_data or fallback
 
 
 def export_onnx_fp32(model_dir: Path, out_path: Path, tokenizer: Any) -> None:
@@ -325,7 +364,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--no-int8", action="store_true", help="skip int8 PTQ, export fp32 only")
     p.add_argument(
-        "--teacher", default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        "--mrl-dims",
+        default=None,
+        help=(
+            "override the MRL dims recorded in the manifest, e.g. '64,128,256,384' "
+            "(default: read from <checkpoint>/mrl_dims.json written by distill.py, "
+            "else the plain single-dim [384])"
+        ),
+    )
+    p.add_argument(
+        "--teacher", default="Qwen/Qwen3-Embedding-0.6B"
     )
     p.add_argument("--license", default="Apache-2.0", help="license of the student artefact")
     p.add_argument("--student-name", default=None, help="student HF id recorded in the manifest")
@@ -385,6 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     export_tokenizer_json(tokenizer, out_dir / "tokenizer.json")
 
     params = count_params(model_dir)
+    mrl = detect_mrl_dims(model_dir, args.mrl_dims)
     manifest = {
         "base_teacher": args.teacher,
         "student_params": params,
@@ -393,6 +442,10 @@ def main(argv: list[str] | None = None) -> int:
         "weights_sha256": sha256_file(final_path),
         "opset": ONNX_OPSET,
         "max_seq": MAX_SEQ,
+        "embed_dim": mrl["embed_dim"],
+        # MRL contract: ONE model at the full embed dim; the listed dims
+        # are inference-time truncations (slice + re-normalise).
+        "mrl_dims": mrl["mrl_dims"],
         "quantized": quantized,
         "created": datetime.now(UTC).isoformat(timespec="seconds"),
         "license": args.license,

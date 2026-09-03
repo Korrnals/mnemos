@@ -218,7 +218,8 @@ class TestDistillModuleSurface:
     def test_import_and_args(self) -> None:
         import training.distill as distill
 
-        assert distill.DEFAULT_TEACHER.startswith("sentence-transformers/")
+        # Round-3 default teacher: Qwen3-Embedding-0.6B (Apache-2.0, MRL).
+        assert distill.DEFAULT_TEACHER == "Qwen/Qwen3-Embedding-0.6B"
         assert distill.DEFAULT_MAX_LENGTH == 256
         # KD loss is cos-sim based (MSE on normalised residual, temperature-scaled)
         assert "temperature" in distill.kd_cosine_loss.__doc__
