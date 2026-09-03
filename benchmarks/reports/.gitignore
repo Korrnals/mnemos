@@ -1,3 +1,5 @@
 *
 !.gitignore
 !README.md
+!latest.md
+!latest-prev.json

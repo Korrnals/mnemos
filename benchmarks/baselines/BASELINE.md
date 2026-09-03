@@ -6,8 +6,8 @@
 
 - **baseline_version:** 1
 - **stand_version:** s1-1
-- **corpus_fingerprint:** `492fb39b2e98d92037438137a08419266946aacf7062ed7370b07f9d3fb41f59`
-- **created:** 2026-08-31T20:41:12+00:00
+- **corpus_fingerprint:** `c2ce056d57d91143f7a1959442ef2b37891464d4cd5f218f5eabbc785c8e72f1`
+- **created:** 2026-09-03T18:11:25+00:00
 - **model_fingerprint (production embedder):** `chromadb all-MiniLM-L6-v2 sha256:4f148ba8ae9c…`
   - full weights sha256: `4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6`
 - **environment:** python 3.12.3, deterministic_embedder=True (BLAKE2b lexical — pins the retrieval PIPELINE, not MiniLM)
@@ -16,11 +16,11 @@
 
 | Metric | Value | 95% CI (half-width) |
 | --- | ---: | ---: |
-| precision@5 | 0.2979 | 0.0411 |
-| precision@10 | 0.1489 | 0.0205 |
-| recall@5 | 0.9858 | 0.0194 |
-| recall@10 | 0.9858 | 0.0194 |
-| queries (judged / probes / hybrid) | 47 / 1 / 48 | — |
+| precision@5 | 0.2293 | 0.0184 |
+| precision@10 | 0.1199 | 0.0096 |
+| recall@5 | 0.8637 | 0.0436 |
+| recall@10 | 0.8944 | 0.0390 |
+| queries (judged / probes / hybrid) | 191 / 1 / 192 | — |
 
 ## 2. Invariants (hard — any deviation is a defect, not a dip)
 
@@ -37,19 +37,19 @@
 
 ## 3. Injection-acceptance detail
 
-- planted appearances across all queries: **53**, leaks: **0** (search channel)
+- planted appearances across all queries: **211**, leaks: **0** (search channel)
 - assemble_context probes: leaks **[]**, all planted surfaced: **True**
 
 ## 4. A9 before/after (vector-leg predicate x over-fetch)
 
 | Variant | recall@5 | recall@10 | precision@5 | precision@10 | hybrid | planted |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| a9-on x4 (current) | 0.9858 | 0.9858 | 0.2979 | 0.1489 | 48 | 53 |
-| a9-off x4 | 0.9769 | 0.9929 | 0.2936 | 0.1511 | 48 | 51 |
-| a9-off x2 (pre-A9) | 0.9823 | 0.9929 | 0.2979 | 0.1511 | 47 | 35 |
-| a9-on x2 | 0.9858 | 0.9858 | 0.2979 | 0.1489 | 48 | 52 |
+| a9-on x4 (current) | 0.8637 | 0.8944 | 0.2293 | 0.1199 | 192 | 211 |
+| a9-off x4 | 0.8668 | 0.9031 | 0.2293 | 0.1215 | 192 | 195 |
+| a9-off x2 (pre-A9) | 0.8794 | 0.9101 | 0.2356 | 0.1230 | 190 | 135 |
+| a9-on x2 | 0.8637 | 0.8944 | 0.2293 | 0.1199 | 192 | 208 |
 
-Delta (current - pre-A9) recall@10: **-0.0071**
+Delta (current - pre-A9) recall@10: **-0.0157**
 
 ## 5. ADR-0018 rewrite pair
 
@@ -81,13 +81,13 @@ Delta (current - pre-A9) recall@10: **-0.0071**
 
 ## 8. Render-neutrality sweep
 
-- surfaces checked: **491** (assembled_context, search_issuance + retraction renders)
+- surfaces checked: **1931** (assembled_context, search_issuance + retraction renders)
 - violations: **0**
 
 ## 9. McNemar jig (interim)
 
-- pair: `fts_only_vs_hybrid_rrf` over 47 judged queries
-- hits: leg A 46 / leg B 45; discordant b=1, c=2; two-sided sign-test p = **1.0000**
+- pair: `fts_only_vs_hybrid_rrf` over 191 judged queries
+- hits: leg A 126 / leg B 163; discordant b=46, c=9; two-sided sign-test p = **0.0000**
 - interim per ADR-0020 (48 judged queries are underpowered for McNemar); the same jig re-targets raw-vs-refined projections when deterministic refined projections exist
 
 ## 10. S1m — production-embedder model contour (ADR-0021 NM-0)
@@ -96,32 +96,32 @@ Delta (current - pre-A9) recall@10: **-0.0071**
 
 | Metric | Value | 95% CI (half-width) |
 | --- | ---: | ---: |
-| precision@5 | 0.2936 | 0.0393 |
-| precision@10 | 0.1489 | 0.0205 |
-| recall@5 | 0.9787 | 0.0235 |
-| recall@10 | 0.9858 | 0.0194 |
-| mrr | 1.0000 | — |
-| ndcg@5 | 0.9817 | — |
-| ndcg@10 | 0.9852 | — |
-| judged queries | 47 | — |
+| precision@5 | 0.2492 | 0.0179 |
+| precision@10 | 0.1277 | 0.0092 |
+| recall@5 | 0.9293 | 0.0304 |
+| recall@10 | 0.9424 | 0.0277 |
+| mrr | 0.9466 | — |
+| ndcg@5 | 0.9192 | — |
+| ndcg@10 | 0.9249 | — |
+| judged queries | 191 | — |
 - embedder: `chromadb all-MiniLM-L6-v2 sha256:4f148ba8ae9c…`, dim 384, arch x86_64
 
 ## 11. Gate corridors (derived from THIS baseline)
 
 | Metric | Corridor |
 | --- | --- |
-| precision_at_5 ≥ | +0.2568 (baseline 0.2979 - max(0.02; ci 0.0411)) |
-| precision_at_10 ≥ | +0.1284 (baseline 0.1489 - max(0.02; ci 0.0205)) |
-| recall_at_5 ≥ | +0.9658 (baseline 0.9858 - max(0.02; ci 0.0200)) |
-| recall_at_10 ≥ | +0.9658 (baseline 0.9858 - max(0.02; ci 0.0200)) |
+| precision_at_5 ≥ | +0.2093 (baseline 0.2293 - max(0.02; ci 0.0200)) |
+| precision_at_10 ≥ | +0.0999 (baseline 0.1199 - max(0.02; ci 0.0200)) |
+| recall_at_5 ≥ | +0.8201 (baseline 0.8637 - max(0.02; ci 0.0436)) |
+| recall_at_10 ≥ | +0.8554 (baseline 0.8944 - max(0.02; ci 0.0390)) |
 | replace-hit-rate ≥ | +0.9175 |
 | replace-regret-rate ≤ | +0.2700 |
 | A9 recall@10 delta ≥ | -0.0200 |
 | invariants | exact (= 1.000 / = 0), never carried over a re-baseline |
-| s1m precision_at_5 ≥ | +0.2543 (baseline 0.2936 - max(0.02; ci 0.0393)) |
-| s1m precision_at_10 ≥ | +0.1284 (baseline 0.1489 - max(0.02; ci 0.0205)) |
-| s1m recall_at_5 ≥ | +0.9552 (baseline 0.9787 - max(0.02; ci 0.0235)) |
-| s1m recall_at_10 ≥ | +0.9658 (baseline 0.9858 - max(0.02; ci 0.0200)) |
+| s1m precision_at_5 ≥ | +0.2292 (baseline 0.2492 - max(0.02; ci 0.0200)) |
+| s1m precision_at_10 ≥ | +0.1077 (baseline 0.1277 - max(0.02; ci 0.0200)) |
+| s1m recall_at_5 ≥ | +0.8989 (baseline 0.9293 - max(0.02; ci 0.0304)) |
+| s1m recall_at_10 ≥ | +0.9147 (baseline 0.9424 - max(0.02; ci 0.0277)) |
 | model_fingerprint | exact match vs this baseline — a mismatch is RED (re-baseline `--record`, same PR, per ADR-0021) |
 
 ## 12. Reproducing

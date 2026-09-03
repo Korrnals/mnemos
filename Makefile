@@ -1,4 +1,4 @@
-.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record bench-s4 bench-s4-record bench-s2-smoke bench-s3 bench-s3-record
+.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record bench-s4 bench-s4-record bench-s2-smoke bench-s2-nightly bench-s3 bench-s3-record bench-report
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
@@ -26,6 +26,8 @@ help:
 	@echo "  make bench-s4   - Run the S4 availability stand (BF-2, nightly contour)"
 	@echo "  make bench-s4-record - Write the S4 baseline (first record / re-baseline)"
 	@echo "  make bench-s2-smoke - Run the S2 timing smoke (informational, never blocks)"
+	@echo "  make bench-s2-nightly - Full S2 nightly: R repeats + S1 gate with S1m required (ADR-0020 §5)"
+	@echo "  make bench-report - Regenerate the one-page owner report (benchmarks/reports/latest.md)"
 	@echo "  make bench-s3   - Run the S3 session stand (BF-3, nightly contour)"
 	@echo "  make bench-s3-record - Write the S3 baseline (first record / re-baseline)"
 	@echo "  make verify     - Run all checks (lint + typecheck + security + test + bench-s1 + doctor)"
@@ -103,6 +105,33 @@ bench-s4-record:
 
 bench-s2-smoke:
 	$(PYTHON) benchmarks/stands/s2_timing/run.py
+
+# BF-4 — full S2 NIGHTLY (ADR-0020 §5, epic #169). Runs on the quiet
+# nightly machine ONLY: R full-workload repeats, the between-repeat
+# spread is the measured noise band. A band wider than the corridor →
+# status NOISE (de-escalated to report + ticket, exit 0); a tight-band
+# median breach → REGRESSION (exit 1). The S2 baseline
+# (benchmarks/baselines/s2.json) is born HERE ONLY (--record-nightly,
+# ≥3 repeats; overwrite needs --force — event-driven re-baseline).
+#
+# MNEMOS_BENCH_S1M_REQUIRED=1 is preset for the WHOLE target (review
+# N4 on #206): the nightly contour is the only place where the
+# required-S1m semantics is mandatory — the S1 gate leg below fails
+# red when the production embedder cannot be verified, while the local
+# `make verify` posture stays soft (skip tolerated). The env var is
+# exported per-invocation, never globally.
+S2_REPEATS ?= 5
+S2_NIGHTLY_FLAGS ?=
+
+bench-s2-nightly:
+	MNEMOS_BENCH_S1M_REQUIRED=1 $(PYTHON) benchmarks/stands/s1_quality/run.py --quiet
+	MNEMOS_BENCH_S1M_REQUIRED=1 $(PYTHON) benchmarks/stands/s2_timing/run.py --repeats $(S2_REPEATS) $(S2_NIGHTLY_FLAGS)
+
+# BF-4 — the one-page owner report (ADR-0020 §5 gate policy 5): traffic
+# light per family F1–F7 from ALL baselines/*.json (bytes, not memory),
+# invariants as separate lines, trend arrows vs the previous snapshot.
+bench-report:
+	$(PYTHON) benchmarks/report_page.py
 
 # BF-3 stand — NOT in the local merge gate (ADR-0020: S3 is nightly
 # class, 100–500 turns; the suite carries only a 20-turn determinism

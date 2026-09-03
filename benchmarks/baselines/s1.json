@@ -1,29 +1,29 @@
 {
   "baseline_version": 1,
   "stand_version": "s1-1",
-  "corpus_fingerprint": "492fb39b2e98d92037438137a08419266946aacf7062ed7370b07f9d3fb41f59",
+  "corpus_fingerprint": "c2ce056d57d91143f7a1959442ef2b37891464d4cd5f218f5eabbc785c8e72f1",
   "model_fingerprint": {
     "provider": "chromadb",
     "model": "all-MiniLM-L6-v2",
     "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
     "opset": null
   },
-  "created": "2026-08-31T20:41:12+00:00",
+  "created": "2026-09-03T18:11:25+00:00",
   "metrics": {
     "retrieval": {
-      "precision_at_5": 0.297872,
-      "precision_at_10": 0.148936,
-      "recall_at_5": 0.985816,
-      "recall_at_10": 0.985816,
+      "precision_at_5": 0.229319,
+      "precision_at_10": 0.119895,
+      "recall_at_5": 0.8637,
+      "recall_at_10": 0.894415,
       "ci95": {
-        "precision_at_5": 0.04108,
-        "precision_at_10": 0.02054,
-        "recall_at_5": 0.019443,
-        "recall_at_10": 0.019443
+        "precision_at_5": 0.018393,
+        "precision_at_10": 0.009566,
+        "recall_at_5": 0.043607,
+        "recall_at_10": 0.03904
       },
-      "judged_queries": 47,
+      "judged_queries": 191,
       "probe_queries": 1,
-      "hybrid_queries": 48
+      "hybrid_queries": 192
     },
     "invariants": {
       "injection_acceptance": {
@@ -68,7 +68,7 @@
       }
     },
     "injection": {
-      "planted_appearances": 53,
+      "planted_appearances": 211,
       "planted_leaks": 0,
       "assemble_leaks": [],
       "assemble_all_planted_surfaced": true
@@ -77,42 +77,42 @@
       "variants": {
         "current": {
           "label": "a9-on x4 (current)",
-          "recall_at_5": 0.985816,
-          "recall_at_10": 0.985816,
-          "precision_at_5": 0.297872,
-          "precision_at_10": 0.148936,
-          "hybrid_queries": 48,
-          "planted_appearances": 53
+          "recall_at_5": 0.8637,
+          "recall_at_10": 0.894415,
+          "precision_at_5": 0.229319,
+          "precision_at_10": 0.119895,
+          "hybrid_queries": 192,
+          "planted_appearances": 211
         },
         "a9_off_x4": {
           "label": "a9-off x4",
-          "recall_at_5": 0.97695,
-          "recall_at_10": 0.992908,
-          "precision_at_5": 0.293617,
-          "precision_at_10": 0.151064,
-          "hybrid_queries": 48,
-          "planted_appearances": 51
+          "recall_at_5": 0.866754,
+          "recall_at_10": 0.903141,
+          "precision_at_5": 0.229319,
+          "precision_at_10": 0.121466,
+          "hybrid_queries": 192,
+          "planted_appearances": 195
         },
         "pre_a9": {
           "label": "a9-off x2 (pre-A9)",
-          "recall_at_5": 0.98227,
-          "recall_at_10": 0.992908,
-          "precision_at_5": 0.297872,
-          "precision_at_10": 0.151064,
-          "hybrid_queries": 47,
-          "planted_appearances": 35
+          "recall_at_5": 0.879407,
+          "recall_at_10": 0.910122,
+          "precision_at_5": 0.235602,
+          "precision_at_10": 0.123037,
+          "hybrid_queries": 190,
+          "planted_appearances": 135
         },
         "a9_on_x2": {
           "label": "a9-on x2",
-          "recall_at_5": 0.985816,
-          "recall_at_10": 0.985816,
-          "precision_at_5": 0.297872,
-          "precision_at_10": 0.148936,
-          "hybrid_queries": 48,
-          "planted_appearances": 52
+          "recall_at_5": 0.8637,
+          "recall_at_10": 0.894415,
+          "precision_at_5": 0.229319,
+          "precision_at_10": 0.119895,
+          "hybrid_queries": 192,
+          "planted_appearances": 208
         }
       },
-      "delta_recall10_current_vs_pre_a9": -0.007092
+      "delta_recall10_current_vs_pre_a9": -0.015707
     },
     "rewrite": {
       "events": 24,
@@ -202,7 +202,7 @@
       "note": "conditional corridor (ADR-0020): applies only while injection-acceptance = 1.000 and quarantine-exclusion = 1.000; the FP rate must never be 'improved' by weakening detectors"
     },
     "render_neutrality": {
-      "surfaces_checked": 491,
+      "surfaces_checked": 1931,
       "issuance_surface_kinds": [
         "assembled_context",
         "search_issuance"
@@ -212,12 +212,12 @@
     },
     "mcnemar_interim": {
       "pair": "fts_only_vs_hybrid_rrf",
-      "queries": 47,
-      "hits_leg_a": 46,
-      "hits_leg_b": 45,
-      "discordant_b": 1,
-      "discordant_c": 2,
-      "p_two_sided": 1.0,
+      "queries": 191,
+      "hits_leg_a": 126,
+      "hits_leg_b": 163,
+      "discordant_b": 46,
+      "discordant_c": 9,
+      "p_two_sided": 4.336383137015787e-07,
       "note": "interim per ADR-0020 (48 judged queries are underpowered for McNemar); the same jig re-targets raw-vs-refined projections when deterministic refined projections exist"
     },
     "s1m": {
@@ -231,20 +231,20 @@
         "opset": null
       },
       "metrics": {
-        "precision_at_5": 0.293617,
-        "precision_at_10": 0.148936,
-        "recall_at_5": 0.978723,
-        "recall_at_10": 0.985816,
-        "mrr": 1.0,
-        "ndcg_at_5": 0.981683,
-        "ndcg_at_10": 0.98524,
+        "precision_at_5": 0.249215,
+        "precision_at_10": 0.127749,
+        "recall_at_5": 0.929319,
+        "recall_at_10": 0.942408,
+        "mrr": 0.946553,
+        "ndcg_at_5": 0.919171,
+        "ndcg_at_10": 0.92494,
         "ci95": {
-          "precision_at_5": 0.039274,
-          "precision_at_10": 0.02054,
-          "recall_at_5": 0.023547,
-          "recall_at_10": 0.019443
+          "precision_at_5": 0.017872,
+          "precision_at_10": 0.009219,
+          "recall_at_5": 0.030417,
+          "recall_at_10": 0.027713
         },
-        "judged_queries": 47,
+        "judged_queries": 191,
         "dimension": 384
       },
       "environment": {

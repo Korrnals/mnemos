@@ -1,0 +1,33 @@
+{
+  "generated": "2026-09-03T18:15:39+00:00",
+  "headlines": {
+    "F1": {
+      "metric": "s2_add_p50_ms",
+      "value": null
+    },
+    "F2": {
+      "metric": "recall_at_10",
+      "value": 0.894415
+    },
+    "F3": {
+      "metric": "context_growth_factor",
+      "value": 1.0
+    },
+    "F4": {
+      "metric": "duplicate_occurrences_at_10",
+      "value": 0
+    },
+    "F5": {
+      "metric": "fact_retention",
+      "value": 1.0
+    },
+    "F6": {
+      "metric": "memory_completeness",
+      "value": 1.0
+    },
+    "F7": {
+      "metric": "a9_delta",
+      "value": -0.015707
+    }
+  }
+}
