@@ -273,15 +273,9 @@ def render_baseline_md(baseline: dict[str, Any]) -> str:
         sm = s1m.get("metrics") or {}
         for metric in S1M_CORRIDOR_METRICS:
             metric_ci = (sm.get("ci95") or {}).get(metric, 0.0)
-            add(
-                f"| s1m {metric} ≥ | "
-                f"{_corridor(float(sm.get(metric, 0.0)), float(metric_ci))} |"
-            )
+            add(f"| s1m {metric} ≥ | {_corridor(float(sm.get(metric, 0.0)), float(metric_ci))} |")
     else:
-        add(
-            "| s1m | skipped (provider unavailable) — green unless "
-            "MNEMOS_BENCH_S1M_REQUIRED=1 |"
-        )
+        add("| s1m | skipped (provider unavailable) — green unless MNEMOS_BENCH_S1M_REQUIRED=1 |")
     add(
         "| model_fingerprint | exact match vs this baseline — a mismatch is RED "
         "(re-baseline `--record`, same PR, per ADR-0021) |"

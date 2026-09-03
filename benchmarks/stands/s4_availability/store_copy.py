@@ -116,9 +116,7 @@ def store_fingerprint(settings: Settings) -> dict[str, int]:
                 counts["ccr_cache"] = int(
                     conn.execute("SELECT COUNT(*) FROM ccr_cache").fetchone()[0]
                 )
-                counts["traces"] = int(
-                    conn.execute("SELECT COUNT(*) FROM traces").fetchone()[0]
-                )
+                counts["traces"] = int(conn.execute("SELECT COUNT(*) FROM traces").fetchone()[0])
             else:
                 counts["embeddings"] = int(
                     conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]

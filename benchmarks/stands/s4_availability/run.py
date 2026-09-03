@@ -235,13 +235,9 @@ def run_measurement() -> dict[str, Any]:
         audit = _audit_marking_wave(probe_root, ids)
 
         # ── F6 population counts from the copy's real tables ──────────
-        conn = sqlite3.connect(
-            f"file:{fixture_settings(probe_root).db_path}?mode=ro", uri=True
-        )
+        conn = sqlite3.connect(f"file:{fixture_settings(probe_root).db_path}?mode=ro", uri=True)
         try:
-            rows = conn.execute(
-                "SELECT pipeline_state, status FROM memories"
-            ).fetchall()
+            rows = conn.execute("SELECT pipeline_state, status FROM memories").fetchall()
         finally:
             conn.close()
         quarantined_n = sum(1 for r in rows if r[0] == PipelineState.QUARANTINED.value)
@@ -255,9 +251,7 @@ def run_measurement() -> dict[str, Any]:
 
     # memory-completeness = |retrievable admissible| / |admissible|.
     retrievable_admissible = sum(
-        1
-        for pop in ADMISSIBLE_POPULATIONS
-        if (_probe(f"search-fts:{pop}") or {}).get("found")
+        1 for pop in ADMISSIBLE_POPULATIONS if (_probe(f"search-fts:{pop}") or {}).get("found")
     )
     completeness = retrievable_admissible / len(ADMISSIBLE_POPULATIONS)
 
