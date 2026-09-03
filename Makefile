@@ -1,4 +1,4 @@
-.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record bench-s4 bench-s4-record bench-s2-smoke bench-s2-nightly bench-s3 bench-s3-record bench-report
+.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record bench-s4 bench-s4-record bench-s2-smoke bench-s2-nightly bench-s3 bench-s3-record bench-report
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
@@ -18,7 +18,6 @@ help:
 	@echo "  make typecheck  - Run mypy"
 	@echo "  make security   - Run bandit + pip-audit"
 	@echo "  make security-reminder - Show pinned CVE reminder for manual dependency review"
-	@echo "  make update-chromadb - Try upgrading chromadb and re-run audit"
 	@echo "  make update-deps - Upgrade all deps and re-run audit"
 	@echo "  make coverage   - Run pytest with coverage"
 	@echo "  make bench-s1   - Run the S1 benchmark stand (gate mode, ADR-0020)"
@@ -64,12 +63,9 @@ security:
 	pip-audit --ignore-vuln CVE-2026-45829
 
 security-reminder:
-	@echo "⚠️  SECURITY REMINDER: chromadb 1.5.9 has ignored CVE-2026-45829 (no upstream fix yet)."
-	@echo "⚠️  Re-check weekly: make update-chromadb"
-
-update-chromadb:
-	pip install --upgrade chromadb
-	pip-audit
+	@echo "⚠️  SECURITY REMINDER: review the pip-audit output weekly (make security / make update-deps);"
+	@echo "⚠️  chromadb and its ignored CVE-2026-45829 left the runtime in NM-1c — remove the"
+	@echo "⚠️  stale --ignore-vuln flag below once no environment still carries chromadb."
 
 update-deps:
 	pip install --upgrade -e ".[dev]"

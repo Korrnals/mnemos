@@ -1,8 +1,8 @@
-"""NM-1c — NanoProvider: the bundled distilled embedder (ADR-0021).
+"""NM-1c/NM-1d — NanoProvider: the bundled mnema-embed model (ADR-0021).
 
-Guards the new production default:
+Guards the production default:
 
-* the bundled artifact under ``mnemos/models/nano-embed-v1/`` is complete
+* the bundled artifact under ``mnemos/models/mnema-embed-v1/`` is complete
   and its manifest pins the REAL weights hash (the manifest drifting
   from the shipped bytes would poison every fingerprint consumer);
 * the provider loads from the shipped default config (no config edits
@@ -10,7 +10,10 @@ Guards the new production default:
   vectors in single and batch mode;
 * legacy ``provider=chromadb`` configs migrate to nano with a loud
   deprecation warning instead of crashing the legacy install (the
-  chromadb runtime dependency was removed in NM-1c);
+  chromadb runtime dependency was removed in NM-1c); the FULL legacy
+  default pair (chromadb + all-MiniLM-L6-v2) degrades the model to the
+  bundled artifact too — review #221 F1: degrading only the provider
+  crashed NanoProvider with FileNotFoundError on the MiniLM spec;
 * an unknown provider still fails loud at the boundary.
 """
 
@@ -25,9 +28,10 @@ import pytest
 
 from mnemos.config import EmbeddingConfig
 from mnemos.embeddings import (
+    MNEMA_EMBED_MODEL,
     NanoProvider,
     create_embedding_provider,
-    nano_artifact_onnx_path,
+    mnema_artifact_onnx_path,
 )
 
 
@@ -38,7 +42,7 @@ def provider() -> NanoProvider:
 
 
 def _artifact_dir() -> Path:
-    return Path(str(resource_files("mnemos") / "models" / "nano-embed-v1"))
+    return Path(str(resource_files("mnemos") / "models" / MNEMA_EMBED_MODEL))
 
 
 # ── bundled artifact ──────────────────────────────────────────────────────────
@@ -50,7 +54,7 @@ def test_bundled_artifact_manifest_pins_real_weights() -> None:
     assert (artifact / "tokenizer.json").is_file(), "tokenizer missing from the bundle"
 
     manifest = json.loads((artifact / "manifest.json").read_text())
-    assert manifest["name"] == "nano-embed-v1"
+    assert manifest["name"] == MNEMA_EMBED_MODEL
     assert manifest["dimensions"] == 384
     assert manifest["max_seq"] == 256
     assert "Apache-2.0" in manifest["license"]
@@ -65,10 +69,10 @@ def test_bundled_artifact_manifest_pins_real_weights() -> None:
 
 
 def test_default_config_builds_nano() -> None:
-    """The shipped default is provider=nano / model=nano-embed-v1."""
+    """The shipped default is provider=nano / model=mnema-embed-v1."""
     cfg = EmbeddingConfig()
     assert cfg.provider == "nano"
-    assert cfg.model == "nano-embed-v1"
+    assert cfg.model == MNEMA_EMBED_MODEL
     built = create_embedding_provider(cfg)
     assert isinstance(built, NanoProvider)
 
@@ -108,7 +112,7 @@ def test_embed_truncates_overlong_input(provider: NanoProvider) -> None:
 
 def test_custom_onnx_path_resolution(provider: NanoProvider) -> None:
     """An explicit .onnx path resolves its sibling tokenizer.json."""
-    onnx_path = nano_artifact_onnx_path("nano-embed-v1")
+    onnx_path = mnema_artifact_onnx_path(MNEMA_EMBED_MODEL)
     custom = NanoProvider(model=str(onnx_path))
     assert custom.dimension == 384
     assert custom.weights_sha256 == provider.weights_sha256
@@ -126,6 +130,26 @@ def test_legacy_provider_migrates_to_nano(legacy: str, caplog: pytest.LogCapture
     assert any(
         "deprecated" in rec.message and "provider=nano" in rec.message for rec in caplog.records
     ), f"expected a deprecation warning for provider={legacy!r}"
+
+
+def test_legacy_default_pair_migrates_model_too(caplog: pytest.LogCaptureFixture) -> None:
+    """Review #221 F1: the FULL legacy default pair degrades wholesale.
+
+    ``provider=chromadb`` + ``model=all-MiniLM-L6-v2`` is the shipped
+    default of a pre-NM-1c install. Degrading only the provider used to
+    crash NanoProvider with FileNotFoundError (the MiniLM string is not
+    a bundled artifact name); the factory must swap the model to the
+    bundled mnema-embed artifact with a loud warning.
+    """
+    with caplog.at_level("WARNING", logger="mnemos.embeddings"):
+        built = create_embedding_provider(
+            EmbeddingConfig(provider="chromadb", model="all-MiniLM-L6-v2")
+        )
+    assert isinstance(built, NanoProvider)
+    assert built.model_name == MNEMA_EMBED_MODEL
+    assert any(
+        "deprecated" in rec.message and "provider=nano" in rec.message for rec in caplog.records
+    ), "expected a deprecation warning naming the degraded pair"
 
 
 def test_unknown_provider_fails_loud() -> None:

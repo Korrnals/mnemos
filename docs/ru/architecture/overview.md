@@ -44,12 +44,12 @@ MCP-сервер и Obsidian-совместимый vault. Web UI заплани
 ├─────────┴────────────────┴───────────────────┴──────────┤
 │                    ХРАНИЛИЩЕ                             │
 │  ┌────────────────┐  ┌───────────────┐  ┌─────────────┐ │
-│  │ Obsidian Vault │  │  ChromaDB     │  │  SQLite     │ │
-│  │ (markdown)     │  │  (vectors)    │  │  (metadata) │ │
+│  │ Obsidian Vault │  │  Vector index │  │  SQLite     │ │
+│  │ (markdown)     │  │  (vectors.db) │  │  (metadata) │ │
 │  └────────────────┘  └───────────────┘  └─────────────┘ │
 ├─────────────────────────────────────────────────────────┤
 │                    EMBEDDING                             │
-│  sentence-transformers (local) / Ollama / OpenAI API    │
+│ mnema-embed-v1 (встроена) / onnx / Ollama / sentence-tr.│
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -62,7 +62,7 @@ MCP-сервер и Obsidian-совместимый vault. Web UI заплани
 | Компонент | Назначение | Технология |
 | --- | --- | --- |
 | Obsidian Vault | Человеко-читаемые заметки, markdown + frontmatter | Файловая система |
-| ChromaDB | Векторные эмбеддинги для семантического поиска | ChromaDB (persistent) |
+| Векторный индекс | Векторные эмбеддинги для семантического поиска | SQLite (`vectors.db`, локально) |
 | SQLite | Метаданные, теги, связи, история, кэш | SQLite + aiosqlite |
 
 **Obsidian-совместимость**:
@@ -73,9 +73,8 @@ MCP-сервер и Obsidian-совместимый vault. Web UI заплани
 
 ### 2. Embedding Layer
 
-- **По умолчанию**: `sentence-transformers/all-MiniLM-L6-v2` (быстро, ~80MB)
-- **Для русского**: `intfloat/multilingual-e5-base` или `cointegrated/rubert-tiny2`
-- **Опционально**: Ollama embeddings, OpenAI API
+- **По умолчанию**: `mnema-embed-v1` — встроенная локальная модель (~30 МБ, int8 ONNX, RU+EN, 384d), работает офлайн
+- **Внешние провайдеры остаются доступны**: `onnx` (любая HF-модель), Ollama, `sentence-transformers`
 - Embedding-провайдер настраивается через конфиг
 - Кэширование эмбеддингов для избежания повторных вычислений
 
@@ -84,11 +83,11 @@ MCP-сервер и Obsidian-совместимый vault. Web UI заплани
 #### MemoryManager
 - CRUD для записей памяти (create, read, update, delete)
 - Автоматическая генерация эмбеддингов при создании/обновлении
-- Синхронизация: markdown-файл ↔ ChromaDB ↔ SQLite
+- Синхронизация: markdown-файл ↔ векторный индекс ↔ SQLite
 - Теги, категории, приоритеты, TTL (время жизни записи)
 
 #### SearchEngine
-- **Семантический поиск**: vector similarity через ChromaDB
+- **Семантический поиск**: vector similarity через локальный векторный индекс
 - **Полнотекстовый поиск**: FTS5 через SQLite
 - **Гибридный поиск**: RRF (Reciprocal Rank Fusion) для объединения результатов
 - Фильтрация по тегам, датам, источникам, типам
@@ -346,13 +345,12 @@ updated: 2026-04-10T12:00:00
 # config.yaml
 mnemos:
   vault_path: ~/.mnemos/vault          # Obsidian vault
-  data_dir: ~/.mnemos/data             # ChromaDB + SQLite
+  data_dir: ~/.mnemos/data             # векторный индекс + SQLite
 
 embedding:
-  provider: sentence-transformers    # sentence-transformers | ollama | openai
-  model: intfloat/multilingual-e5-base
+  provider: nano                       # nano (mnema-embed-v1, встроена) | onnx | ollama | sentence-transformers
+  model: mnema-embed-v1
   # ollama_url: http://localhost:11434
-  # openai_api_key: ...
 
 search:
   default_limit: 20
