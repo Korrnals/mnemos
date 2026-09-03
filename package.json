@@ -3,7 +3,7 @@
   "version": "3.2.0",
   "description": "Mnemos memory & knowledge server — Pi extension. Spawns `mnemos mcp-server` over stdio and exposes every mnemos_* tool as a native Pi tool, plus the mnemos skill pack.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Korrnals",
   "homepage": "https://github.com/Korrnals/mnemos",
   "repository": {
