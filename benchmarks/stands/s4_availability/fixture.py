@@ -16,9 +16,10 @@ any measured metric (timestamps are run metadata only).
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from benchmarks.corpus.deterministic_embedder import LexicalHashEmbedder
 from mnemos.config import Settings
@@ -162,9 +163,7 @@ def build_fixture(root: Path) -> tuple[MemoryManager, dict[str, str]]:
         # completion for a solo row. The quarantine below is the
         # terminal transition under test.
         pass
-    quarantined = mgr.quarantine_entry(
-        m_quar.id, reason="secret", source="s4-fixture"
-    )
+    quarantined = mgr.quarantine_entry(m_quar.id, reason="secret", source="s4-fixture")
     if not quarantined:
         raise RuntimeError("s4 fixture: quarantine transition failed")
 

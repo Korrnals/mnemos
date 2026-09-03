@@ -35,7 +35,6 @@ counter bumps are performed on the copy, never the fixture).
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -101,7 +100,8 @@ def _search_probe(
     ok = not target_surfaced if excluded else target_surfaced
     return {
         "probe": (
-            f"search-excluded:{population}" if excluded
+            f"search-excluded:{population}"
+            if excluded
             else f"search-{'hybrid' if hybrid else 'fts'}:{population}"
         ),
         "token": token,
@@ -148,8 +148,7 @@ def _list_recent_probe(mgr: MemoryManager, ids: dict[str, str]) -> dict[str, Any
         "listed": len(listed),
         "admissible_listed": sum(1 for mid in admissible_ids if mid in listed),
         "quarantined_listed": int(quarantined_id in listed),
-        "pass": all(mid in listed for mid in admissible_ids)
-        and quarantined_id not in listed,
+        "pass": all(mid in listed for mid in admissible_ids) and quarantined_id not in listed,
     }
 
 

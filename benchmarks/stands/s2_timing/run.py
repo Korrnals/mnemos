@@ -282,19 +282,21 @@ def analyze_nightly(
         band_p50 = max(p50s) - min(p50s)
         band_p95 = (max(p95s) - min(p95s)) if p95s else 0.0
         rel_band = band_p50 / med_p50 if med_p50 > 0 else 0.0
+        rel_band_p95 = band_p95 / med_p95 if med_p95 > 0 else 0.0
         entry: dict[str, Any] = {
             "median_p50_ms": round(med_p50, 3),
             "median_p95_ms": round(med_p95, 3),
             "band_p50_ms": round(band_p50, 3),
             "band_p95_ms": round(band_p95, 3),
             "relative_band": round(rel_band, 4),
+            "relative_band_p95": round(rel_band_p95, 4),
         }
-        if rel_band > NOISE_RELATIVE_BAND:
+        if rel_band > NOISE_RELATIVE_BAND or rel_band_p95 > NOISE_RELATIVE_BAND:
             entry["status"] = "NOISE"
             entry["why"] = (
-                f"noise band {rel_band:.1%} wider than the corridor width "
-                f"{NOISE_RELATIVE_BAND:.0%} — de-escalated to report + ticket "
-                "(ADR-0020 §5)"
+                f"noise band p50={rel_band:.1%} p95={rel_band_p95:.1%} wider "
+                f"than the corridor width {NOISE_RELATIVE_BAND:.0%} — "
+                "de-escalated to report + ticket (ADR-0020 §5)"
             )
         elif baseline_metrics is None:
             entry["status"] = "PASS"
@@ -458,6 +460,14 @@ def main(argv: list[str] | None = None) -> int:
                 "s2-nightly: FAIL — baselines/s2.json already exists; an "
                 "overwrite is an event-driven re-baseline (--record-nightly "
                 "--force) per ADR-0020",
+                file=sys.stderr,
+            )
+            return 1
+        if analysis["overall"] == "NOISE":
+            print(
+                "s2-nightly: FAIL — overall=NOISE: too noisy to RECORD from "
+                "(a noisy corridor is worse than none; re-run on a quieter "
+                "machine per ADR-0020 §5)",
                 file=sys.stderr,
             )
             return 1
