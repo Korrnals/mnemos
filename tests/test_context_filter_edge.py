@@ -40,7 +40,7 @@ def _make_settings(tmpdir: str, *, auto_filter: bool = True) -> Settings:
             "db_name": "test.db",
             "auto_filter": auto_filter,
         },
-        embedding={"provider": "chromadb"},
+        embedding={"provider": "nano"},
     )
     settings.resolve_paths()
     return settings
@@ -519,7 +519,7 @@ class TestCliFilterAllEmpty:
             f"  data_dir: {tmp_path / 'data'}\n"
             f"  db_name: cli-filter-empty.db\n"
             f"embedding:\n"
-            f"  provider: chromadb\n"
+            f"  provider: nano\n"
         )
         monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
 

@@ -71,10 +71,11 @@ def clean_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def no_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
     """Simulate 'no embedding provider available' on a clean install.
 
-    The default provider (chromadb ONNX MiniLM) needs to download an
-    ~80 MB model on first use; offline (or before the download) every
-    embed call fails. Both the add path and the search vector leg must
-    treat this as non-fatal — FTS5 lexical recall stays active.
+    A clean install works offline with the bundled nano embedder
+    (NM-1c); this fixture simulates it being unavailable anyway
+    (corrupted artifact, missing onnxruntime) — every embed call
+    fails. Both the add path and the search vector leg must treat
+    this as non-fatal — FTS5 lexical recall stays active.
     """
 
     def _broken(_cfg: object) -> object:

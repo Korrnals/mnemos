@@ -3,12 +3,12 @@
   "stand_version": "s1-1",
   "corpus_fingerprint": "c2ce056d57d91143f7a1959442ef2b37891464d4cd5f218f5eabbc785c8e72f1",
   "model_fingerprint": {
-    "provider": "chromadb",
-    "model": "all-MiniLM-L6-v2",
-    "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
+    "provider": "nano",
+    "model": "nano-embed-v1",
+    "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
     "opset": null
   },
-  "created": "2026-09-03T18:11:25+00:00",
+  "created": "2026-09-03T18:45:07+00:00",
   "metrics": {
     "retrieval": {
       "precision_at_5": 0.229319,
@@ -225,24 +225,24 @@
       "reason": null,
       "required": false,
       "fingerprint": {
-        "provider": "chromadb",
-        "model": "all-MiniLM-L6-v2",
-        "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
+        "provider": "nano",
+        "model": "nano-embed-v1",
+        "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
         "opset": null
       },
       "metrics": {
-        "precision_at_5": 0.249215,
-        "precision_at_10": 0.127749,
-        "recall_at_5": 0.929319,
-        "recall_at_10": 0.942408,
-        "mrr": 0.946553,
-        "ndcg_at_5": 0.919171,
-        "ndcg_at_10": 0.92494,
+        "precision_at_5": 0.227225,
+        "precision_at_10": 0.120942,
+        "recall_at_5": 0.87452,
+        "recall_at_10": 0.913787,
+        "mrr": 0.839448,
+        "ndcg_at_5": 0.823242,
+        "ndcg_at_10": 0.838069,
         "ci95": {
-          "precision_at_5": 0.017872,
-          "precision_at_10": 0.009219,
-          "recall_at_5": 0.030417,
-          "recall_at_10": 0.027713
+          "precision_at_5": 0.017273,
+          "precision_at_10": 0.008585,
+          "recall_at_5": 0.042274,
+          "recall_at_10": 0.034463
         },
         "judged_queries": 191,
         "dimension": 384
@@ -260,5 +260,10 @@
   "environment": {
     "python": "3.12.3",
     "deterministic_embedder": true
+  },
+  "rebaseline": {
+    "trigger": "embedder change (ADR-0020 \u00a7triggers, ADR-0021 NM-1c)",
+    "reason": "production embedder switched chromadb/all-MiniLM-L6-v2 -> bundled nano-embed-v1",
+    "task": "NM-1c"
   }
 }

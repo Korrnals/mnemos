@@ -1,9 +1,11 @@
 """Embeddings layer for Mnemos.
 
-Uses local ONNX MiniLM-class models by default (privacy + offline).
+Uses local ONNX models by default (privacy + offline).
 
 Providers:
-  - ChromaDefaultProvider   — zero-dep ONNX via chromadb (default)
+  - NanoProvider            — the bundled distilled nano-embedder (default,
+                              ADR-0021 NM-1: 384d, int8 ONNX, ships in the
+                              wheel — zero downloads, zero network)
   - ONNXHubProvider         — any HuggingFace ONNX model
   - OllamaProvider          — local Ollama embeddings
   - SentenceTransformerProvider — via sentence-transformers (optional dep)
@@ -11,9 +13,12 @@ Providers:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from abc import ABC, abstractmethod
+from importlib.resources import files as resource_files
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -38,39 +43,148 @@ class EmbeddingProvider(ABC):
     def dimension(self) -> int: ...
 
 
-# ── ChromaDB default (zero extra deps) ────────────────────────────────────────
+# ── Nano: the bundled distilled embedder (ADR-0021 NM-1) ──────────────────────
+
+#: Bundled artifact directory name (src/mnemos/models/<name>/ inside the
+#: wheel, reachable via importlib.resources). NOTE: ``mnemos/models/`` is a
+#: DATA directory, deliberately NOT a Python package — ``mnemos.models``
+#: remains the ``models.py`` module; a directory without ``__init__.py``
+#: never shadows it at import time.
+NANO_DEFAULT_MODEL = "nano-embed-v1"
+
+#: Static sequence shape of the exported graph (batch 1 x 256 tokens).
+NANO_MAX_SEQ = 256
+
+#: Dtype-agnostic ndarray alias for ORT graph edges — numpy stubs are import-
+#: skipped (pyproject mypy overrides), so a bare ``np.ndarray`` trips
+#: strict ``disallow_any_generics``; the alias keeps the NanoProvider
+#: annotations clean without pretending dtype precision we cannot check.
+_OrtTensor = np.ndarray[Any, Any]
 
 
-class ChromaDefaultProvider(EmbeddingProvider):
-    """Uses ChromaDB's built-in ONNX embedding function (all-MiniLM-L6-v2).
+def _nano_artifact_dir(model: str) -> Path:
+    """Resolve the artifact directory for a nano model spec.
 
-    Zero extra dependencies — onnxruntime is pulled by chromadb.
-    ~80 MB model, 384-dim output. Fast on CPU.
+    ``model`` is either (a) a filesystem path to a ``.onnx`` file — the
+    tokenizer is then expected as ``tokenizer.json`` next to it — or
+    (b) a bundled artifact name resolved under ``mnemos/models/``.
+
+    Raises FileNotFoundError (fail-loud at the boundary) when neither
+    resolves; callers that prefer degradation own the try/except.
+    """
+    spec = (model or "").strip()
+    if spec.endswith(".onnx"):
+        onnx_path = Path(spec).expanduser().resolve()
+        if onnx_path.is_file():
+            return onnx_path.parent
+        raise FileNotFoundError(
+            f"nano embedding model not found at {onnx_path!s}; pass a path to "
+            f"an existing .onnx file or a bundled name (default: {NANO_DEFAULT_MODEL!r})"
+        )
+    name = spec or NANO_DEFAULT_MODEL
+    bundled = resource_files("mnemos") / "models" / name
+    if (bundled / "model.onnx").is_file():
+        # onnxruntime needs a real file path, so the Traversable is
+        # stringified — the wheel/source layouts are real directories.
+        return Path(str(bundled))
+    raise FileNotFoundError(
+        f"nano embedding artifact {name!r} is not bundled (looked at {bundled!s}); "
+        f"expected model.onnx + tokenizer.json inside it"
+    )
+
+
+def nano_artifact_onnx_path(model: str = "") -> Path:
+    """Path to the resolved nano ``model.onnx`` (never checks existence).
+
+    Shared with the S1m model-contour fingerprint so the provider and the
+    gate hash the SAME file for ``weights_sha256``.
+    """
+    return _nano_artifact_dir(model) / "model.onnx"
+
+
+def nano_weights_sha256(model: str = "") -> str:
+    """SHA-256 over the resolved nano ``model.onnx`` bytes."""
+    digest = hashlib.sha256()
+    with nano_artifact_onnx_path(model).open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+class NanoProvider(EmbeddingProvider):
+    """The bundled distilled nano-embedder (ADR-0021 NM-1).
+
+    Loads the int8-quantized ONNX artifact shipped inside the package
+    (``mnemos/models/<name>/``): 384-dim, multilingual (RU+EN), L2-
+    normalized. Mean-pooling and L2 normalization are part of the ONNX
+    graph — the provider must NOT re-pool or re-normalize the output.
+
+    The exported graph has a STATIC batch-1 x 256 shape, so batches are
+    embedded text-by-text (same contract as the training-side
+    ``OnnxEmbedder`` in ``training/eval_distilled.py``).
     """
 
-    def __init__(self) -> None:
-        _n = os.environ.get("ONNX_NUM_THREADS") or os.environ.get("OMP_NUM_THREADS") or "4"
-        os.environ.setdefault("OMP_NUM_THREADS", _n)
-        os.environ.setdefault("MKL_NUM_THREADS", _n)
-        os.environ.setdefault("OPENBLAS_NUM_THREADS", _n)
-        from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+    def __init__(self, model: str = "") -> None:
+        import onnxruntime as ort
+        from tokenizers import Tokenizer
 
-        logger.info("Using ChromaDB default ONNX embeddings (all-MiniLM-L6-v2)")
-        # chromadb's `EmbeddingFunction` is a generic Protocol; its stubs
-        # declare the return as `Embedding?` (a TypeVar bound) which mypy
-        # can't prove is iterable. We treat the callable as `Any` and cast
-        # the result to the concrete ndarray shape we know it returns at
-        # runtime.
-        self._fn: Any = DefaultEmbeddingFunction()
-        self._dim = 384
+        artifact_dir = _nano_artifact_dir(model)
+        self.model_name = (model or "").strip() or NANO_DEFAULT_MODEL
+        self.weights_sha256 = nano_weights_sha256(model)
+
+        tokenizer_path = artifact_dir / "tokenizer.json"
+        self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
+        # Static 1x256 graph: pad every input to exactly MAX_SEQ tokens.
+        # The tokenizer's attention_mask is used AS IS — a manual mask from
+        # token count would be all-ones and pollute the graph-side
+        # mean-pooling with pad embeddings (review F1, PR #218).
+        self._tokenizer.enable_truncation(max_length=NANO_MAX_SEQ)
+        self._tokenizer.enable_padding(length=NANO_MAX_SEQ)
+
+        n_threads = max(
+            1,
+            int(os.environ.get("MNEMOS_ORT_THREADS") or os.environ.get("OMP_NUM_THREADS") or "4"),
+        )
+        sess_opts = ort.SessionOptions()
+        sess_opts.intra_op_num_threads = n_threads
+        sess_opts.inter_op_num_threads = 1
+        self._session = ort.InferenceSession(
+            str(artifact_dir / "model.onnx"),
+            sess_options=sess_opts,
+            providers=["CPUExecutionProvider"],
+        )
+        self._model_inputs = {inp.name for inp in self._session.get_inputs()}
+        test = self._infer(["test"])
+        self._dim = int(test.shape[-1])
+        logger.info(
+            "nano embedder ready: %s (dim=%d, sha256=%s…)",
+            self.model_name,
+            self._dim,
+            self.weights_sha256[:12],
+        )
+
+    def _infer(self, texts: list[str]) -> _OrtTensor:
+        """Embed text-by-text (static batch-1 graph). Output is already pooled+normalized."""
+        rows: list[_OrtTensor] = []
+        for text in texts:
+            e = self._tokenizer.encode_batch([text])[0]
+            ids = np.array([e.ids], dtype=np.int64)
+            mask = np.array([e.attention_mask], dtype=np.int64)
+            inputs: dict[str, _OrtTensor] = {"input_ids": ids, "attention_mask": mask}
+            if "token_type_ids" in self._model_inputs:
+                inputs["token_type_ids"] = np.zeros_like(ids)
+            # `ort.InferenceSession.run` is untyped in the onnxruntime
+            # stubs; output[0] is the (1, dim) embedding tensor.
+            outputs = cast(list[_OrtTensor], self._session.run(None, inputs))
+            rows.append(outputs[0][0])
+        stacked: _OrtTensor = np.stack(rows)
+        return stacked
 
     def embed(self, text: str) -> list[float]:
-        result = cast("list[Any]", self._fn([text])[0])
-        return [float(x) for x in result]
+        return [float(x) for x in self._infer([text])[0]]
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        rows = cast("list[list[Any]]", self._fn(texts))
-        return [[float(x) for x in row] for row in rows]
+        return [[float(x) for x in row] for row in self._infer(texts)]
 
     @property
     def dimension(self) -> int:
@@ -253,8 +367,17 @@ class SentenceTransformerProvider(EmbeddingProvider):
 def create_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
     """Instantiate the configured embedding provider."""
     provider = cfg.provider.lower()
+    if provider == "nano":
+        return NanoProvider(cfg.model)
     if provider in ("chromadb", "chroma", "default"):
-        return ChromaDefaultProvider()
+        # NM-1c migration: chromadb was removed from the runtime (ADR-0021).
+        # Legacy config values degrade to the bundled nano embedder with a
+        # loud warning instead of crashing the legacy install.
+        logger.warning(
+            "provider=%s is deprecated, using nano; set provider=nano explicitly",
+            provider,
+        )
+        return NanoProvider(cfg.model)
     if provider == "ollama":
         return OllamaProvider(cfg.model, cfg.ollama_url)
     if provider in ("onnx", "onnxhub"):
@@ -267,5 +390,5 @@ def create_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
         return SentenceTransformerProvider(cfg.model)
     raise ValueError(
         f"Unknown embedding provider: {provider!r}. "
-        "Valid: chromadb, ollama, onnx, sentence-transformers"
+        "Valid: nano, ollama, onnx, sentence-transformers"
     )

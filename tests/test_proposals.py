@@ -40,7 +40,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"  data_dir: {tmp_path / 'data'}\n"
         f"  db_name: proposals.db\n"
         f"embedding:\n"
-        f"  provider: chromadb\n",
+        f"  provider: nano\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))

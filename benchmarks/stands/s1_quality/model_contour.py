@@ -5,8 +5,8 @@ its corridors stay the single source for pipeline mechanics forever
 (ADR-0021, "replacing the BLAKE2b S1 reference" rejected). S1m pins the
 THING THAT EMBEDS: the SAME judged corpus and the SAME golden queries,
 run through the PRODUCTION embedder (the provider the shipped default
-config builds — today chromadb's all-MiniLM-L6-v2 ONNX), measuring the
-semantic retrieval quality of that model:
+config builds — since NM-1c the bundled nano-embedder ONNX artifact),
+measuring the semantic retrieval quality of that model:
 
     recall@k, precision@k (k ∈ {5, 10}), MRR, nDCG@k
 
@@ -21,14 +21,14 @@ recorded one fails with an explicit "explicit re-baseline required"
 message — the silent embedder substitution that passed before NM-0 can
 no longer pass.
 
-Network / heavy-init grace (the production embedder needs its ONNX
-artifact on disk; chromadb downloads it on first use): when the
-provider cannot be built in the run environment (no cached weights, no
-network, missing optional dependency), the S1m section reports
-``status: "skipped"`` with the concrete reason — NOT red. A skipped S1m
-is a gate failure only when the operator asked for it to be mandatory
-via ``MNEMOS_BENCH_S1M_REQUIRED=1`` (CI nightlies); in the default
-local ``make verify`` posture the skip is tolerated.
+Network / heavy-init grace (the production embedder initializes an ONNX
+runtime session over its bundled artifact): when the provider cannot be
+built in the run environment (artifact missing, optional dependency
+absent), the S1m section reports ``status: "skipped"`` with the concrete
+reason — NOT red. A skipped S1m is a gate failure only when the operator
+asked for it to be mandatory via ``MNEMOS_BENCH_S1M_REQUIRED=1`` (CI
+nightlies); in the default local ``make verify`` posture the skip is
+tolerated.
 """
 
 from __future__ import annotations
@@ -79,9 +79,8 @@ def production_config() -> Any:
 def build_production_embedder() -> Any:
     """Build the production embedder, or raise (→ the skip path).
 
-    Construction may download weights (chromadb's DefaultEmbeddingFunction
-    lazily fetches its ONNX artifact on first use) — callers keep this
-    inside the skip guard.
+    Construction initializes the ONNX runtime session over the bundled
+    nano artifact — callers keep this inside the skip guard.
     """
     from mnemos.embeddings import create_embedding_provider
 
@@ -122,22 +121,22 @@ def _onnx_opset(onnx_path: Path) -> int | None:
         return None
 
 
-def _chromadb_fingerprint(provider: str, model: str) -> dict[str, Any] | None:
-    """Fingerprint chromadb's default ONNX artifact if it is on disk.
+def _nano_fingerprint(provider: str, model: str) -> dict[str, Any] | None:
+    """Fingerprint the nano embedder's local ONNX artifact.
 
-    The hash is over the REAL ``model.onnx`` — a weights swap on disk
-    (the "silent substitution" hole) changes it even when every
+    The hash is over the REAL resolved ``model.onnx`` (bundled artifact or
+    the explicit path from ``EmbeddingConfig.model``) — a weights swap on
+    disk (the "silent substitution" hole) changes it even when every
     provider string stays identical.
     """
     try:
-        from chromadb.utils.embedding_functions import (
-            ONNXMiniLM_L6_V2,
-        )
-    except Exception:  # chromadb is an optional production dependency
+        from mnemos.embeddings import nano_artifact_onnx_path
+    except Exception:  # mnemos import failure in the stand environment
         return None
-    onnx_path = Path(ONNXMiniLM_L6_V2.DOWNLOAD_PATH) / (
-        ONNXMiniLM_L6_V2.EXTRACTED_FOLDER_NAME
-    ) / "model.onnx"
+    try:
+        onnx_path = nano_artifact_onnx_path(model)
+    except Exception:  # unresolvable model spec → identifier-only below
+        return None
     if not onnx_path.is_file():
         return None
     return {
@@ -152,10 +151,10 @@ def model_fingerprint() -> dict[str, Any] | None:
     """Fingerprint the embedder the production default config builds.
 
     Enrichment order: local artifact hash when the provider keeps one
-    on disk (chromadb), else identifier-only (API / lazy-download
-    providers carry no local weights to hash — the pinned model id is
-    the identity). Never raises; the skip machinery owns the
-    fail/skip decision, not this probe.
+    on disk (nano — bundled or explicit path), else identifier-only
+    (API / lazy-download providers carry no local weights to hash — the
+    pinned model id is the identity). Never raises; the skip machinery
+    owns the fail/skip decision, not this probe.
     """
     try:
         cfg = production_config()
@@ -164,8 +163,14 @@ def model_fingerprint() -> dict[str, Any] | None:
     except Exception:
         return None
     if provider in ("chromadb", "chroma", "default"):
-        return _chromadb_fingerprint("chromadb", model) or {
-            "provider": "chromadb",
+        # NM-1c migration: the factory degrades legacy values to nano with
+        # a deprecation warning — the fingerprint must pin the EFFECTIVE
+        # embedder, or every legacy-config gate run would false-RED on the
+        # provider field alone.
+        provider = "nano"
+    if provider == "nano":
+        return _nano_fingerprint("nano", model) or {
+            "provider": "nano",
             "model": model,
             "weights_sha256": None,
             "opset": None,
@@ -190,9 +195,7 @@ def fingerprint_label(fingerprint: dict[str, Any] | None) -> str:
     return " ".join(parts)
 
 
-def fingerprint_equal(
-    recorded: dict[str, Any] | None, current: dict[str, Any] | None
-) -> bool:
+def fingerprint_equal(recorded: dict[str, Any] | None, current: dict[str, Any] | None) -> bool:
     """Fingerprint equivalence for the fail-loud gate.
 
     ``None`` on either side never equals a live fingerprint — the
@@ -349,9 +352,7 @@ def run_model_contour(
     return report
 
 
-def gate_model_contour(
-    current: dict[str, Any], baseline: dict[str, Any] | None
-) -> dict[str, Any]:
+def gate_model_contour(current: dict[str, Any], baseline: dict[str, Any] | None) -> dict[str, Any]:
     """The S1m half of the gate (ADR-0021 NM-0). ``baseline`` is the
     whole recorded ``s1.json`` (reads ``model_fingerprint`` + ``s1m``).
 

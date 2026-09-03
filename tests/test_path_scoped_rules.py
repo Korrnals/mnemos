@@ -17,7 +17,7 @@ def manager():
     with tempfile.TemporaryDirectory() as tmpdir:
         settings = Settings(
             mnemos={"vault_path": tmpdir, "data_dir": tmpdir, "db_name": "test.db"},
-            embedding={"provider": "chromadb"},
+            embedding={"provider": "nano"},
         )
         mgr = MemoryManager(settings)
         yield mgr

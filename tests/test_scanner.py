@@ -568,7 +568,7 @@ class TestScannerCLI:
             f"  db_name: cli-scanner.db\n"
             f"  auto_filter: false\n"
             f"embedding:\n"
-            f"  provider: chromadb\n"
+            f"  provider: nano\n"
             f"scanner:\n"
             f"  enabled: true\n"
             f"  interval_hours: 1\n"

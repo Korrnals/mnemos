@@ -124,14 +124,14 @@ def test_render_neutrality_invariant_catches_reason_leak(
 from benchmarks.stands.s1_quality import model_contour as s1m_contour  # noqa: E402
 
 _FP_A: dict = {
-    "provider": "chromadb",
-    "model": "all-MiniLM-L6-v2",
-    "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
+    "provider": "nano",
+    "model": "nano-embed-v1",
+    "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
     "opset": None,
 }
 _FP_B: dict = {
-    "provider": "chromadb",
-    "model": "all-MiniLM-L6-v2",
+    "provider": "nano",
+    "model": "nano-embed-v1",
     "weights_sha256": "deadbeef" * 8,  # the silent weights swap NM-0 must catch
     "opset": None,
 }
@@ -268,7 +268,7 @@ def test_skip_semantics_green_by_default_red_when_required(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Provider unavailable → SKIP is green locally, red under the CI flag."""
-    reason = "ModuleNotFoundError: No module named 'chromadb'"
+    reason = "ModuleNotFoundError: No module named 'onnxruntime'"
     monkeypatch.delenv(s1m_contour.REQUIRED_ENV, raising=False)
     skipped = s1m_contour.run_model_contour(None, skip_reason=reason)
     assert skipped["status"] == "skipped"

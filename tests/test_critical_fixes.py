@@ -225,7 +225,7 @@ class TestCLI:
             f"  data_dir: {tmp_path / 'data'}\n"
             f"  db_name: cli-critical.db\n"
             f"embedding:\n"
-            f"  provider: chromadb\n"
+            f"  provider: nano\n"
         )
         monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
         yield cfg
