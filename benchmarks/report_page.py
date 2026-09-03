@@ -184,9 +184,16 @@ def evaluate_f1(
             "informational only (ADR-0020 §5)"
         )
     verdict = analysis.get("overall")
+    report_mode = (nightly.get("mode") or "").strip().lower()
     if verdict == "REGRESSION":
         light = "red"
     elif verdict == "NOISE" or base is None:
+        light = "yellow"
+    elif report_mode == "smoke" and base is None:
+        # a fresh local SMOKE report has no nightly corridor behind it —
+        # it must not paint F1 green (review #220 F4)
+        light = "yellow"
+    elif base is None:
         light = "yellow"
     else:
         light = "green"

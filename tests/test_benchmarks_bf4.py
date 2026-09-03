@@ -17,7 +17,7 @@ Covers:
   overwrite without ``--force``; the baseline payload carries the
   workload fingerprint;
 * **the one-page report** — generation from the real baselines produces
-  a valid page with every family F1–F7; traffic-light semantics on
+  a valid page with every family F1-F7; traffic-light semantics on
   synthetic JSON: a breached corridor / invariant is RED (and the
   generator exits 1), a skipped S1m is YELLOW, a missing S2 baseline is
   YELLOW; a run report older than its baseline is stale and ignored;
@@ -42,6 +42,8 @@ from benchmarks.report_page import (
     evaluate_f4,
     load_baselines,
     load_fresh_reports,
+)
+from benchmarks.report_page import (
     main as report_main,
 )
 from benchmarks.stands.s1_quality import run as s1_run
