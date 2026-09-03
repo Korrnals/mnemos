@@ -96,7 +96,7 @@ training = [
     "sentence-transformers>=3.0",
 ]
 openvino = [
-    "optimum[openvino]>=1.19",
+    "optimum[openvino]>=2.2.0",
 ]
 mcp = [
     # MCP SDK 2.x (#185): mcp_server.py was ported off the 1.x runtime-decorator
