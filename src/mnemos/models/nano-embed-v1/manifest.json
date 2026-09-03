@@ -1,0 +1,9 @@
+{
+  "name": "nano-embed-v1",
+  "version": "1.0.0",
+  "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
+  "dimensions": 384,
+  "max_seq": 256,
+  "created": "2026-09-03T17:47:37+00:00",
+  "license": "Apache-2.0 (distilled from paraphrase-multilingual-MiniLM-L12-v2)"
+}

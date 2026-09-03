@@ -18,19 +18,23 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "pyyaml>=6.0.3",
     "aiosqlite>=0.20",
-    # Vector Search (includes onnxruntime for built-in embeddings — no torch needed)
-    "chromadb>=0.5",
+    # Vector Search (NM-1c, ADR-0021): the bundled nano-embedder runs on
+    # onnxruntime directly — chromadb is gone from the runtime. These three
+    # were transitive via chromadb before and are now direct deps.
+    "onnxruntime>=1.20",
+    "tokenizers>=0.21",
+    "huggingface_hub>=0.30",
     # API
     "fastapi>=0.138.0",
     # CVE-2026-40347/42561/53538/53539/53540 fixed in 0.0.31.
     "python-multipart>=0.0.31",  # multipart form data for POST /api/v1/import (UploadFile)
     "uvicorn[standard]>=0.30",
     # Transitive CVE closure (M15.5.1) — pinned directly to force resolver
-    # past vulnerable transitive versions still pulled by chromadb/k8s/fastapi.
+    # past vulnerable transitive versions still pulled by fastapi/uvicorn.
     "aiohttp>=3.14.1,<4.0",    # CVE-2026-34993, 47265, 50269, 54273-54280 fixed in 3.14.x
     "starlette>=1.3.0,<2.0",   # CVE-2026-48817, 48818, 54282, 54283 fixed in 1.3.x
     # Transitive CVE closure (M15.5.2) — pinned directly to force resolver
-    # past vulnerable transitive versions pulled by mcp/chromadb/httpx.
+    # past vulnerable transitive versions pulled by mcp/httpx.
     "pyjwt>=2.13.0",           # PYSEC-2026-120/175/176/177/178/179 fixed in 2.13.0
     "urllib3>=2.7.0",          # PYSEC-2026-141/142 fixed in 2.7.0
     "python-dotenv>=1.2.2",    # CVE-2026-28684 fixed in 1.2.2
@@ -84,13 +88,12 @@ sentence-transformers = [
 training = [
     # NM-1b training stack — OUTSIDE the runtime deps by ADR-0021 (training
     # happens in a container/venv, never in the server environment).
+    # onnxruntime/tokenizers/huggingface_hub moved to core deps in NM-1c
+    # (the runtime nano embedder needs them directly).
     "torch>=2.2",
     "transformers>=4.51",
-    "tokenizers>=0.21",
-    "onnxruntime>=1.20",
     "onnx>=1.17",
     "sentence-transformers>=3.0",
-    "huggingface_hub>=0.30",
 ]
 openvino = [
     "optimum[openvino]>=1.19",

@@ -38,7 +38,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"  data_dir: {tmp_path / 'data'}\n"
         f"  db_name: cli-smoke.db\n"
         f"embedding:\n"
-        f"  provider: chromadb\n"
+        f"  provider: nano\n"
     )
     monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
     yield cfg
@@ -421,7 +421,7 @@ class TestDoctorCommand:
             f"  data_dir: {tmp_path / 'data'}\n"
             f"  db_name: doctor-smoke.db\n"
             f"embedding:\n"
-            f"  provider: chromadb\n",
+            f"  provider: nano\n",
             encoding="utf-8",
         )
         monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
@@ -440,7 +440,7 @@ class TestDoctorCommand:
             f"  data_dir: {tmp_path / 'data'}\n"
             f"  db_name: doctor-json.db\n"
             f"embedding:\n"
-            f"  provider: chromadb\n",
+            f"  provider: nano\n",
             encoding="utf-8",
         )
         monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
@@ -465,7 +465,7 @@ class TestDoctorCommand:
             f"  data_dir: {tmp_path / 'data'}\n"
             f"  db_name: doctor-fail.db\n"
             f"embedding:\n"
-            f"  provider: chromadb\n",
+            f"  provider: nano\n",
             encoding="utf-8",
         )
         monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
