@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-3776ab" alt="Python"></a>
-  <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-Apache_2.0-blue" alt="License: Apache-2.0"></a>
   <a href="https://github.com/Korrnals/mnemos/releases"><img src="https://img.shields.io/github/v/release/Korrnals/mnemos?label=version&color=blueviolet" alt="Version"></a>
 </p>
 
@@ -361,7 +361,7 @@ Mnemos работает с любым харнессом, говорящим п�
 ## ⚖️ Исходный код и лицензия
 
 - **Исходник** — этот репозиторий, [github.com/Korrnals/mnemos](https://github.com/Korrnals/mnemos).
-- **Лицензия** — MIT (см. [pyproject.toml](pyproject.toml)).
+- **Лицензия** — Apache-2.0 (см. [LICENSE](LICENSE)).
 
 ## 🌱 Участие
 

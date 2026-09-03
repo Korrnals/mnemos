@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-3776ab" alt="Python"></a>
-  <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-Apache_2.0-blue" alt="License: Apache-2.0"></a>
   <a href="https://github.com/Korrnals/mnemos/releases"><img src="https://img.shields.io/github/v/release/Korrnals/mnemos?label=version&color=blueviolet" alt="Version"></a>
 </p>
 
@@ -367,7 +367,7 @@ and at least one `mnemos:<subtype>` — that every memory entry must carry.
 ## ⚖️ Source &amp; license
 
 - **Source** — this repository, [github.com/Korrnals/mnemos](https://github.com/Korrnals/mnemos).
-- **License** — MIT (see [pyproject.toml](pyproject.toml)).
+- **License** — Apache-2.0 (see [LICENSE](LICENSE)).
 
 ## 🌱 Contributing
 
