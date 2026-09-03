@@ -54,20 +54,26 @@ pytestmark = pytest.mark.golden
 
 
 # ── non-normative D5 floors (tripwire = recorded baseline - 0.02) ────────────
-# Recorded from tests/golden/BASELINE.md (first baseline, W4): the
-# baseline measured precision@5=0.2979, precision@10=0.1489,
-# recall@5=recall@10=0.9858, hit-rate=0.9375 (15/16; the single miss is
-# the designed B5 verdict-gated snippet refusal on a secret-bearing
-# original), regret-rate=0.25 (6/24 scripted premature rewrites). These
-# floors are REGRESSION tripwires, not targets: an intentional retrieval
-# change that moves any number below its floor must re-record the
-# baseline (and say so in the PR), not loosen the floor. Non-normative
-# until the owner ratifies the corridors (see BASELINE.md
-# "Ratification items").
-FLOOR_PRECISION_5 = 0.28
-FLOOR_PRECISION_10 = 0.13
-FLOOR_RECALL_5 = 0.97
-FLOOR_RECALL_10 = 0.97
+# Re-derived from the BF-4 192-query re-baseline (ADR-0020 corpus-growth
+# trigger; the judged corpus grew 48 → 192 with the ph/pr/tp/xr query
+# families, benchmarks/corpus/queries.py): the baseline measures
+# precision@5=0.2293, precision@10=0.1199, recall@5=0.8637,
+# recall@10=0.8944 over 191 judged queries — the drop vs the 48-query
+# W4 numbers (0.2979/0.1489/0.9858/0.9858) is the HONEST cost of the
+# harder corpus (paraphrase queries with no verbatim overlap,
+# processed-entry targets that the vector-weighted RRF structurally
+# buries), not a retrieval regression: the same pipeline measured both.
+# hit-rate=0.9375 (15/16; the single miss is the designed B5
+# verdict-gated snippet refusal), regret-rate=0.25 (6/24 scripted
+# premature rewrites) are scenario-fixed and unchanged. These floors
+# are REGRESSION tripwires, not targets: an intentional change that
+# moves any number below its floor must re-record the baseline (and say
+# so in the PR), not loosen the floor. Non-normative until the owner
+# ratifies the corridors (see BASELINE.md "Ratification items").
+FLOOR_PRECISION_5 = 0.21
+FLOOR_PRECISION_10 = 0.10
+FLOOR_RECALL_5 = 0.84
+FLOOR_RECALL_10 = 0.87
 FLOOR_HIT_RATE = 0.85
 CEILING_REGRET_RATE = 0.30
 FLOOR_A9_DELTA = -0.02  # predicate-ON vs PRE-A9: at most 2pp worse

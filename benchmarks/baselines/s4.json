@@ -1,14 +1,14 @@
 {
   "baseline_version": 1,
   "stand_version": "s4-1",
-  "corpus_fingerprint": "7847aee46b964d40bd85f3a1482dc8db8b8732194a3cbc2e8f869213644f62e1",
+  "corpus_fingerprint": "400c57fb301f8ff52660510e85b6c4b28b145497d2d2a3efc7b53e26ae0dfe30",
   "model_fingerprint": {
     "provider": "chromadb",
     "model": "all-MiniLM-L6-v2",
     "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
     "opset": null
   },
-  "created": "2026-09-01T10:36:50+00:00",
+  "created": "2026-09-03T18:12:56+00:00",
   "metrics": {
     "probe_pass_rate": 1.0,
     "memory_completeness": 1.0,

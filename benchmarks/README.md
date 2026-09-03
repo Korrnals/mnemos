@@ -5,17 +5,27 @@ directive 2026-08-30, recorded as the ADR-0020 §4 amendment) and are
 **excluded from the wheel and sdist** (`pyproject.toml`). Language:
 English, matching the ADR canon this catalog implements.
 
+## The four stands at a glance (ADR-0020)
+
+| Stand | Question it answers | Local (`make verify`) | Nightly |
+| --- | --- | --- | --- |
+| S1 quality (+S1m) | does issuance retrieve the right things, safely? | **gate** (`bench-s1`, corridors + invariants) | re-run with S1m required |
+| S2 timing | how fast are the core verbs? | smoke only (`bench-s2-smoke`, informational) | **full** (`bench-s2-nightly`, R repeats, corridor vs `baselines/s2.json`) |
+| S3 session | does memory stay coherent over a long session? | determinism smoke in the suite | gate (`bench-s3`) |
+| S4 availability | is ALL memory correct and available at any moment? | — | gate (`bench-s4`) |
+
 ## Layout
 
 | Path | Contents |
 | --- | --- |
-| `corpus/` | The benchmark corpus — migrated byte-exact from `tests/golden` (entries, judged queries, planted FAKE secrets, rewrite scenario, deterministic BLAKE2b embedder) plus the BF-1 additions: the legitimate tech-pattern class (`tech_patterns.py`) and the detector-independent danger labelling (`danger_labels.py`). |
+| `corpus/` | The benchmark corpus — migrated byte-exact from `tests/golden` (entries, judged queries, planted FAKE secrets, rewrite scenario, deterministic BLAKE2b embedder) plus the BF-1 additions: the legitimate tech-pattern class (`tech_patterns.py`) and the detector-independent danger labelling (`danger_labels.py`). BF-4 grew the judged queries 48 → **192** (`queries.py`, four families: `-ph` exact phrases, `-pr` paraphrases, `-tp` topics, `-xr` cross-record) — the ADR-0020 McNemar activation threshold. |
 | `stands/s1_quality/` | Stand S1 (issuance quality and safety): `harness.py` reuses the W4 golden measurement logic, `scenarios.py` adds the ADR-0019 §5 quarantine/retraction scenarios, detector-quarantine-fp, the render-neutrality invariant and the interim McNemar sign-test jig; `run.py` is the single-command entry point; `model_contour.py` is the S1m production-embedder contour (ADR-0021 NM-0 — see below). |
-| `stands/s2_timing/` | Stand S2 (timing smoke, BF-2): wall-clock wrappers over add/search/assemble/refine on a fixed ~1e3-op load; R=1 informational, reports only — never baselines (the timing baseline belongs to the nightly quiet machine). |
+| `stands/s2_timing/` | Stand S2 (timing, BF-2/BF-4): wall-clock wrappers over add/search/assemble/refine on a fixed ~1e3-op load. R=1 smoke is informational; `--repeats N` (N ≥ 3) is the NIGHTLY mode — the between-repeat spread is the measured noise band, `analyze_nightly` turns it into PASS / NOISE (band wider than the corridor — de-escalated to report + ticket, exit 0, ADR-0020 §5) / REGRESSION (tight band beyond `baseline × 1.25`, exit 1). |
 | `stands/s3_session/` | Stand S3 (long-lived session, BF-3): `scenario.py` is the seeded session-as-data generator (fixed turns, logical time, unique fact markers), `run.py` replays it against one long-lived manager — fact-retention@N,k, recall-drift-over-session, checkpoint-return-integrity (invariant = 1.000), sufficiency@task, context-growth-factor, stage-discard-profile. |
 | `stands/s4_availability/` | Stand S4 (availability, BF-2): fixture populations, SQLite-backup isolated store copy, strictly read-only probes with a content-checksum read-only invariant. |
-| `baselines/` | Canonical `s1.json` (the source of truth: `baseline_version`, `stand_version`, `corpus_fingerprint`, `model_fingerprint`, `metrics`, `environment`) and the GENERATED `BASELINE.md` summary (`generate_md.py` — never hand-edit). |
-| `reports/` | Per-run reports; gitignored, not committed. |
+| `report_page.py` | The one-page owner report (BF-4, ADR-0020 §5 gate-policy 5): traffic light per family F1–F7 from ALL `baselines/*.json`, invariants as separate `=1.000`/`=0` lines, deltas to baseline, trend arrows vs the previous snapshot. `make bench-report`. |
+| `baselines/` | Canonical `s1.json` / `s3.json` / `s4.json` (the source of truth: `baseline_version`, `stand_version`, `corpus_fingerprint`, `model_fingerprint`, `metrics`, `environment`) and the GENERATED `BASELINE.md` summary (`generate_md.py` — never hand-edit). `s2.json` appears ONLY via nightly `--record-nightly` (see below). |
+| `reports/` | Per-run reports (gitignored) + the COMMITTED owner page `latest.md` and its trend snapshot `latest-prev.json` (both generated — never hand-edit). |
 
 ## Running
 
@@ -25,7 +35,10 @@ make bench-s1-record     # re-record the baseline + regenerate BASELINE.md
 make bench-s3            # S3 session stand — nightly class, NOT in make verify
 make bench-s3-record     # write / re-record baselines/s3.json
 make bench-s4            # S4 availability stand — nightly class, NOT in make verify
+make bench-s4-record     # write the S4 baseline
 make bench-s2-smoke      # S2 timing smoke — informational, reports only
+make bench-s2-nightly    # FULL nightly: S1 gate (S1m required) + S2 repeats
+make bench-report        # regenerate reports/latest.md from all baselines
 # or directly:
 python benchmarks/stands/s1_quality/run.py [--record]
 ```
@@ -33,8 +46,76 @@ python benchmarks/stands/s1_quality/run.py [--record]
 Determinism contract (ADR-0020): S1 uses the BLAKE2b lexical embedder
 (no ONNX download), fixed corpus order, scoped patches instead of
 `src/` edits, and measures **no wall-clock values** — the only
-timestamps are run metadata (`created`), never a metric. The S1 budget
-is < 30 s in the local merge gate (`make verify` runs `bench-s1`).
+timestamps are run metadata (`created`), never a metric. Measured
+budget on the 192-query corpus: the reference contour runs in < 1 s;
+the full gate pass including the S1m production-embedder leg measures
+~45 s wall (ONNX dominates — ADR-0020 budgets are
+provisional-until-measured, and this is the measurement).
+
+## S2 nightly — the only wall-clock baseline, born on the quiet machine
+
+The S2 baseline is a property of the nightly machine; it is NEVER
+recorded from a developer laptop (a noisy-laptop number would poison
+every future corridor). The nightly flow:
+
+```bash
+# on the QUIET nightly machine:
+make bench-s2-nightly                                   # gate vs baselines/s2.json
+S2_NIGHTLY_FLAGS=--record-nightly make bench-s2-nightly # FIRST baseline (≥3 repeats)
+S2_NIGHTLY_FLAGS="--record-nightly --force" make bench-s2-nightly  # event-driven re-baseline
+S2_REPEATS=10 make bench-s2-nightly                     # deeper noise band
+```
+
+Mechanics (`benchmarks/stands/s2_timing/run.py`):
+
+- `--repeats N` runs N full workload passes; per verb the max−min spread
+  of the repeat p50/p95 IS the measured noise band (the machine measures
+  its own noise first, then the numbers);
+- **NOISE** (band wider than the corridor width, 25%): the
+  median-vs-baseline comparison is meaningless — status NOISE,
+  de-escalated to report + ticket per ADR-0020 §5, **exit 0** (never a
+  block). Per-verb: a noisy verb de-escalates only ITS comparison;
+- **REGRESSION** (tight band, median p50/p95 beyond `baseline × 1.25`):
+  exit 1 — the nightly gate role;
+- `--record-nightly` requires `--repeats ≥ 3` (a band from two points is
+  a difference, not a band) and is the ONLY writer of
+  `baselines/s2.json`; overwriting an existing baseline additionally
+  needs `--force` (re-baselining is event-driven: workload change,
+  corpus ×2, pipeline change — never calendar-driven);
+- `workload_fingerprint` (sha256 of the stand module) pins the workload
+  shape: an edit fails the nightly gate until a same-PR re-record.
+
+`bench-s2-nightly` presets **`MNEMOS_BENCH_S1M_REQUIRED=1`** for its
+whole target (review N4 on #206): the nightly contour is the only
+place where the required-S1m semantics is mandatory — the target runs
+the S1 gate leg first, so a nightly on a machine that cannot verify the
+production embedder is RED, while the local `make verify` posture stays
+soft (a skipped S1m is tolerated; see the S1m section below).
+
+## The one-page owner report (`make bench-report`)
+
+`benchmarks/report_page.py` renders `benchmarks/reports/latest.md` from
+ALL `baselines/*.json` (bytes, not memory) plus — when a run report
+NEWER than its baseline exists — the freshest per-stand gate report
+(current values, deltas to baseline, gate verdict; anything older than
+its baseline was superseded by the re-record and is ignored).
+
+How to read it:
+
+- the **traffic light table** is the verdict: 🟢 corridor holds /
+  invariant meets requirement · 🟡 skip, noise, or a baseline not born
+  yet (e.g. S2 before the first nightly record) · 🔴 breach (a gate
+  failure or an invariant `ok: false` anywhere in the consumed JSON —
+  the generator exits 1 so a cron-only report run alarms);
+- each family F1–F7 carries 1–3 lines of key numbers with deltas;
+- **invariants** are separate `= 1.0000 / = 0 (required = …) — OK/BREACH`
+  lines, assigned to their registry family (injection-acceptance → F2,
+  duplicate-rate → F4, checkpoint integrity → F5, quarantine-exclusion
+  → F6, cross-principal leak + render-neutrality → F7);
+- **trend arrows** (↗/→/↘) compare against the previous wave's snapshot
+  (`reports/latest-prev.json`, rewritten each generation; the first
+  report after a re-baseline honestly has none).
+
 
 The golden pytest suite still exists (`pytest -m golden`) and imports
 the corpus from here — a transition is a state machine, an issuance is
@@ -129,7 +210,9 @@ deterministic run:
 3. S2 (timing) never blocks locally; S3/S4 are nightly-class — `make
    bench-s3` / `make bench-s4` gate on corridors + invariants but ride
    the nightly contour, not `make verify` (the suite carries only
-   fast determinism smokes; full CI wiring is BF-4).
+   fast determinism smokes). The nightly contour entry is
+   `make bench-s2-nightly` (BF-4: S1 gate with S1m required + full S2
+   repeats), the owner page is `make bench-report`.
 4. detector-quarantine-fp is informational with a conditional corridor
    (only while injection-acceptance and quarantine-exclusion hold):
    the FP rate must never be "improved" by weakening detectors.
