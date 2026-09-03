@@ -116,12 +116,19 @@ class OnnxEmbedder:
         for text in texts:
             encodings = self._tokenizer.encode_batch([text])
             e = encodings[0]
+            # enable_padding(length=MAX_SEQ) already pads ids to MAX_SEQ and
+            # produces a correct attention_mask — use it directly (a manual
+            # mask from len(e.ids) would be all-ones and pollute mean-pooling
+            # with pad tokens; review F1 of PR #218).
             ids = np.array([e.ids[:MAX_SEQ]], dtype="int64")
             if ids.shape[1] < MAX_SEQ:
                 pad = np.zeros((1, MAX_SEQ - ids.shape[1]), dtype="int64")
                 ids = np.concatenate([ids, pad], axis=1)
-            mask = np.zeros((1, MAX_SEQ), dtype="int64")
-            mask[0, : min(len(e.ids), MAX_SEQ)] = 1
+            mask = np.array([e.attention_mask[:MAX_SEQ]], dtype="int64")
+            if mask.shape[1] < MAX_SEQ:
+                mask = np.concatenate(
+                    [mask, np.zeros((1, MAX_SEQ - mask.shape[1]), dtype="int64")], axis=1
+                )
             inputs = {"input_ids": ids, "attention_mask": mask}
             if "token_type_ids" in self._input_names:
                 inputs["token_type_ids"] = np.zeros((1, MAX_SEQ), dtype="int64")
