@@ -3,3 +3,5 @@
 !README.md
 !latest.md
 !latest-prev.json
+# the canonical wave-report generator (round 3) — source, not generated
+!generate_report.py

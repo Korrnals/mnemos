@@ -19,14 +19,18 @@
 
 | Путь | Назначение |
 | --- | --- |
-| `dataset/prepare_dataset.py` | Сбор memory-shaped RU+EN корпуса (фикстуры репо + синтетика + опц. локальный стор), дедуп, лимит 256 токенов, RU-квота ≥40 %, train/val 95/5 (seed=42) |
+| `dataset/prepare_dataset.py` | Сбор memory-shaped RU+EN корпуса (фикстуры репо + синтетика + опц. локальный стор: `--from-mnemos-dir` / `--from-mnemos-db` SQLite read-only с project-фильтром), дедуп, лимит 256 токенов, RU-квота ≥40 %, train/val 95/5 (seed=42) |
 | `dataset/synthetic_templates.py` | Программные RU+EN шаблоны (заметки/чат-выдержки/код-заголовки), 50+ шаблонов × вариации |
-| `distill.py` | Дистилляция студента (KD-loss: MSE на cos-similarity к учителю, temperature-скейл), чекпоинты per-epoch, детерминизм |
-| `export_onnx.py` | Экспорт студента в ONNX (opset пин, static shapes 1×256), int8 static PTQ, `manifest.json` с fingerprints |
+| `distill.py` | Дистилляция студента (KD-loss: MSE на cos-similarity к учителю, temperature-скейл; round 3: Qwen3-учитель с instruct-префиксом и last-token pooling, MRL-головы `--mrl-dims`), чекпоинты per-epoch, детерминизм |
+| `export_onnx.py` | Экспорт студента в ONNX (opset пин, static shapes 1×256), int8 static PTQ, `manifest.json` с fingerprints + `mrl_dims` |
 | `eval_distilled.py` | Eval-джига: cos-sim студент/учитель на val; retrieval-proxy recall@5 против BM25-эталона на judged-корпусе; сводка JSON+markdown |
 | `run_pilot.sh` | One-command пайплайн NM-1b: prepare → distill → export → eval |
-| `requirements.txt` | Зависимости обучения (torch и пр.) — вне рантайма |
+| `requirements.txt` | Зависимости обучения (torch, matplotlib для отчётов и пр.) — вне рантайма |
 | `logs/` | Логи прогонов (gitignored) |
+
+Канонические отчёты бенчмарков (PNG + анализ) —
+`benchmarks/reports/generate_report.py` → `benchmarks/reports/canonical/`
+(см. `benchmarks/reports/README.md`, retention-политика).
 
 ## Требования (Silverblue-специфика)
 
@@ -59,27 +63,75 @@ python3 training/dataset/prepare_dataset.py \
 # с приватной выгрузкой локального стора владельца (данные не выходят с машины)
 python3 training/dataset/prepare_dataset.py --from-mnemos-dir ~/.local/share/mnemos
 
+# прямо из живой SQLite-базы мнемоса (read-only, только поле content;
+# опциональный фильтр по project:-тегам)
+python3 training/dataset/prepare_dataset.py \
+  --from-mnemos-db ~/.local/share/mnemos/mnemos.db \
+  --mnemos-db-projects "project-mnemos,project-atlas" \
+  --mnemos-db-limit 20000
+
 # кап по числу пар (смоук)
 python3 training/dataset/prepare_dataset.py --max-pairs 500 --out-dir /tmp/nm1a-smoke
 ```
+
+`--from-mnemos-db` открывает базу в режиме `file:…?mode=ro` (сервер может
+продолжать работать): в обучающий пул попадает ТОЛЬКО `content` (нарезка
+на абзацы ≥40 символов, как у dir-коллектора); `tags`/`project` читаются
+исключительно для фильтра `project:*` и в корпус не попадают. Приватность —
+та же, что у `--from-mnemos-dir`: локально, без сети, данные не покидают
+машину.
 
 Выход: `train.jsonl` / `val.jsonl` (95/5, seed=42 детерминизм), строки
 `{"text", "lang", "source"}`, fingerprint печатается в stdout.
 
 ### 2. Дистилляция (NM-1b; torch; CPU/iGPU через IPEX, иначе CPU-потоки)
 
+Учитель по умолчанию — `Qwen/Qwen3-Embedding-0.6B` (round 3): Apache-2.0,
+596M параметров, нативная размерность 1024 с MRL-поддержкой 32-1024. Ключевые
+механики (автоматически, см. `--teacher-pooling auto`):
+
+- **last-token pooling + left padding** — официальная геометрия Qwen3-Embedding
+  (causal LM); BERT-класс учителей остаётся на mean-pooling;
+- **instruction-префикс на query-стороне** — Qwen3-Embedding требует
+  `Instruct: <task>\nQuery: <text>` для запросов; при дистилляции корпусные
+  тексты проходят через query-сторону учителя:
+
 ```bash
 python3 training/distill.py \
-  --teacher sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
-  --student-init sentence-transformers/paraphrase-multilingual-MiniLM-L6-v2 \
+  --teacher Qwen/Qwen3-Embedding-0.6B \
+  --teacher-instruct-template "Given a memory note, retrieve similar notes" \
+  --student-init cointegrated/rubert-tiny2 \
   --pairs training/data/train.jsonl --val training/data/val.jsonl \
-  --epochs 3 --batch-size 32 --threads 4 --out-dir training/runs/nm1b
+  --epochs 3 --batch-size 32 --threads 4 --out-dir training/runs/nm1b-r3
 ```
 
-- чекпоинты каждую эпоху: `training/runs/nm1b/epoch<N>/`;
-- лог метрик per-epoch: avg KD-loss + cos-sim студента к учителю на val;
-- детерминизм: seed фикс (все источники случайности);
-- `--max-pairs 100 --epochs 1` — dry-режим смоука (без GPU, медленно).
+`--teacher-instruct-template` принимает либо голое описание задачи
+(оборачивается в канонический `Instruct: …\nQuery: …`), либо свободный
+шаблон с плейсхолдером `{text}`. Без флага текст уходит учителю как есть
+(поведение MiniLM-учителей round 1-2).
+
+**MRL-головы (Matryoshka, тренд-фича round 3)** — студент учится сразу на
+несколько размерностей, loss = взвешенная сумма KD по каждой (срез первых
+`d` компонент у студента и учителя, L2-ренормализация среза):
+
+```bash
+python3 training/distill.py --mrl-dims "64,128,256,384" \
+  --mrl-weights "4,2,1,1"   # опционально; default — равные веса
+```
+
+- одна модель — четыре размерности на инференсе (срез + L2-ренорм);
+- экспорт — ОДНОЙ моделью на полную размерность (`--embed-dim`, default
+  384), обученные срезы фиксируются в `manifest.json` как `mrl_dims`
+  (читаются из `mrl_dims.json` в чекпоинте);
+- KD-цель по умолчанию — срез учителя 1024→384 + ренормализация: это
+  валидная целевая геометрия ТОЛЬКО потому, что Qwen3-Embedding сам
+  MRL-обучен; для не-MRL учителей (MiniLM) держите `--mrl-dims 384`
+  (default = обычный режим, численно идентичен round 2).
+
+Прочее без изменений: чекпоинты каждую эпоху (`epoch<N>/`, +
+`mrl_dims.json`), метрики per-epoch в `metrics.jsonl` (при MRL — cos-sim
+по каждой размерности), детерминизм seed, `--max-pairs 100 --epochs 1` —
+смоук.
 
 ### 3. Экспорт ONNX + int8 PTQ (после дистилляции)
 
@@ -121,12 +173,16 @@ env-ручки: `THREADS` (потоки torch, default: половина яде�
 ### Тесты
 
 ```bash
-/usr/bin/python3.12 -m pytest tests/test_training_dataset.py -q -p no:cacheprovider
+/usr/bin/python3.12 -m pytest tests/test_training_dataset.py tests/test_training_round3.py -q -p no:cacheprovider
 ```
 
 Smoke-тесты датасет-препа и manifest-схемы без torch: детерминизм seed,
-RU-квота, дедуп, лимит 256 токенов. Тяжёлые импорты (torch/transformers)
-мокаются; если torch в окружении нет — тесты скипаются с причиной.
+RU-квота, дедуп, лимит 256 токенов. Round-3 юниты
+(`test_training_round3.py`): MRL-парсинг/агрегация (numpy-фекта вместо
+torch), instruct-template, last-token pooling, `--from-mnemos-db` (мок
+SQLite), детект `mrl_dims` при экспорте. Тяжёлые импорты
+(torch/transformers) мокаются; если torch в окружении нет — тесты
+скипаются с причиной.
 
 ## Политика параллельной работы (ноутбук)
 
@@ -141,18 +197,43 @@ RU-квота, дедуп, лимит 256 токенов. Тяжёлые имп�
 
 ## Политика приватности и лицензий
 
-- `--from-mnemos-dir` читает только **локальный** стор владельца; данные
-  не покидают машину (ни сети, ни выгрузок — прогон NM-1b автономен).
-- Учитель — только Apache-2.0/MIT-лицензии. Кандидаты:
+- `--from-mnemos-dir` / `--from-mnemos-db` читают только **локальный** стор
+  владельца; данные не покидают машину (ни сети, ни выгрузок — прогон
+  NM-1b автономен).
+- Учитель — только Apache-2.0/MIT-лицензии. Кандидаты (размеры проверены по
+  HF API, safetensors total, 2026-09-03):
 
-| Модель (HF) | Лицензия | dim | Комментарий |
-| --- | --- | --- | --- |
-| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Apache-2.0 | 384 | дефолт NM-1a/b: мультиязычный, RU+EN, парафразная близость |
-| `sentence-transformers/LaBSE` | Apache-2.0 | 768 | сильнее на переводных парах, тяжелее (471M) |
-| `sentence-transformers/distiluse-base-multilingual-cased` | Apache-2.0 | 768 | distil-класс, 12 языков (RU входит) |
+| Модель (HF) | Лицензия | Параметры | dim | Комментарий |
+| --- | --- | --- | --- | --- |
+| `Qwen/Qwen3-Embedding-0.6B` | Apache-2.0 | 595.8M | 1024 (MRL 32-1024) | **дефолт round 3**: MTEB-MM 64.33; last-token pooling + instruct-префикс |
+| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Apache-2.0 | 117.7M | 384 | дефолт round 1-2; остаётся через `--teacher` |
+| `sentence-transformers/LaBSE` | Apache-2.0 | ~471M | 768 | сильнее на переводных парах, тяжелее |
 
 Выбор — параметр `--teacher` (у `distill.py` и `export_onnx.py` через
 manifest `base_teacher`).
+
+### Кандидаты на init студента 45-60M (round 3, проверено по HF API)
+
+Цель NM-1b — студент 45-60M. Проверенные pre-trained мультиязычные
+кандидаты (HTTP 200 + safetensors total, 2026-09-03):
+
+| Модель (HF) | Лицензия | Параметры | Вердикт для init |
+| --- | --- | --- | --- |
+| `cointegrated/rubert-tiny2` | MIT | 29.4M | **остаётся дефолтом** — единственный <100M, RU-сильный |
+| `intfloat/multilingual-e5-small` | MIT | 117.7M | ближайший мультиязычный, но 2× сверх бюджета 60M |
+| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Apache-2.0 | 117.7M | 118M — сверх бюджета |
+| `intfloat/multilingual-e5-base` | MIT | 278.0M | слишком большой для init |
+| `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | Apache-2.0 | 278.0M | слишком большой для init |
+| `cointegrated/LaBSE-en-ru` | Apache-2.0 | 129.0M | 129M — сверх бюджета |
+
+**Рекомендация round 3**: в окне 45-60M pre-trained мультиязычных
+чекспоинтов НЕТ (все проверенные >100M). Остаёмся на `rubert-tiny2`
+(29.4M, MIT) как init и растим качество за счёт корпуса
+(`--from-mnemos-db` — реальные данные) и более сильного учителя
+(Qwen3-Embedding). Флаг `--student-init` — для экспериментов: если
+качество встанет, следующий кандидат — `intfloat/multilingual-e5-small`
+(117.7M), с осознанным превышением бюджета размера (компенсируется
+int8-квантизацией при экспорте).
 
 ## Статус NM-1a / NM-1b
 
