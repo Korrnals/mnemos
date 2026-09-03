@@ -110,15 +110,24 @@ class OnnxEmbedder:
         self._input_names = {inp.name for inp in self._session.get_inputs()}
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        # The exported graph has STATIC batch 1 — embed text-by-text.
         np = self._np
-        encodings = self._tokenizer.encode_batch(texts)
-        input_ids = np.array([e.ids for e in encodings], dtype="int64")
-        attention_mask = np.array([e.attention_mask for e in encodings], dtype="int64")
-        inputs = {"input_ids": input_ids, "attention_mask": attention_mask}
-        if "token_type_ids" in self._input_names:
-            inputs["token_type_ids"] = np.zeros_like(input_ids)
-        emb = self._session.run(None, inputs)[0]
-        return [[float(x) for x in row] for row in emb]
+        rows: list[list[float]] = []
+        for text in texts:
+            encodings = self._tokenizer.encode_batch([text])
+            e = encodings[0]
+            ids = np.array([e.ids[:MAX_SEQ]], dtype="int64")
+            if ids.shape[1] < MAX_SEQ:
+                pad = np.zeros((1, MAX_SEQ - ids.shape[1]), dtype="int64")
+                ids = np.concatenate([ids, pad], axis=1)
+            mask = np.zeros((1, MAX_SEQ), dtype="int64")
+            mask[0, : min(len(e.ids), MAX_SEQ)] = 1
+            inputs = {"input_ids": ids, "attention_mask": mask}
+            if "token_type_ids" in self._input_names:
+                inputs["token_type_ids"] = np.zeros((1, MAX_SEQ), dtype="int64")
+            emb = self._session.run(None, inputs)[0]
+            rows.append([float(x) for x in emb[0]])
+        return rows
 
 
 class HFEmbedder:

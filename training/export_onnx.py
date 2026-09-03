@@ -99,6 +99,23 @@ def export_onnx_fp32(model_dir: Path, out_path: Path, tokenizer: Any) -> None:
     model = AutoModel.from_pretrained(model_dir)
     model.eval()
 
+    # Dimension projection head (distill.py trains 312->384 alongside the
+    # student when dims differ; retrained projector-only runs save it as
+    # projector.pt next to the checkpoint). Without it the artifact would
+    # export raw student dim and diverge from the trained geometry.
+    projector_path = Path(model_dir) / "projector.pt"
+    projector = None
+    if projector_path.exists():
+        import torch as _torch
+
+        state = _torch.load(projector_path, map_location="cpu", weights_only=True)
+        in_features = state["weight"].shape[1]
+        out_features = state["weight"].shape[0]
+        projector = _torch.nn.Linear(in_features, out_features, bias=False)
+        projector.load_state_dict(state)
+        projector.eval()
+        print(f"projection head loaded: {in_features} -> {out_features}")
+
     class StudentEmbedder(torch.nn.Module):
         def __init__(self, inner: Any) -> None:
             super().__init__()
@@ -117,6 +134,8 @@ def export_onnx_fp32(model_dir: Path, out_path: Path, tokenizer: Any) -> None:
             summed = torch.sum(out.last_hidden_state * mask, dim=1)
             counts = torch.clamp(mask.sum(dim=1), min=1e-9)
             pooled = summed / counts
+            if projector is not None:
+                pooled = projector(pooled)
             return torch.nn.functional.normalize(pooled, p=2, dim=-1)
 
     wrapper = StudentEmbedder(model)
@@ -157,6 +176,47 @@ def export_onnx_fp32(model_dir: Path, out_path: Path, tokenizer: Any) -> None:
             do_constant_folding=True,
         )
 
+    _dedupe_output_tensor_names(out_path)
+
+
+def _dedupe_output_tensor_names(onnx_path: Path) -> None:
+    """Post-process: the torch exporter can emit TWO producers writing the
+    graph-output tensor (e.g. Gather + Div both named ``embedding`` when
+    output_names forces the name) — ORT rejects such graphs and quantization
+    dies with "Duplicate definition of name". Rename the first producer's
+    output to <name>_prenorm and rewire its consumers (except the final
+    producer, which keeps producing the graph output).
+    """
+    from collections import Counter
+
+    import onnx
+
+    model = onnx.load(str(onnx_path), load_external_data=True)
+    graph = model.graph
+    tensor_writers = Counter()
+    for node in graph.node:
+        for out in node.output:
+            tensor_writers[out] += 1
+    dupes = [name for name, count in tensor_writers.items() if count > 1]
+    for dup in dupes:
+        producers = [n for n in graph.node if dup in n.output]
+        first, last = producers[0], producers[-1]
+        temp = f"{dup}_prenorm"
+        first.output[list(first.output).index(dup)] = temp
+        for node in graph.node:
+            if node is last:
+                continue
+            rewired = [temp if i == dup else i for i in node.input]
+            if rewired != list(node.input):
+                del node.input[:]
+                node.input.extend(rewired)
+        last_inputs = [temp if i == dup else i for i in last.input]
+        del last.input[:]
+        last.input.extend(last_inputs)
+    if dupes:
+        onnx.save(model, str(onnx_path))
+        print(f"dedup: renamed first producers of {dupes} -> *_prenorm")
+
 
 def quantize_int8(onnx_path: Path, tokenizer: Any, calib_texts: list[str], out_path: Path) -> bool:
     """Static PTQ int8 with a deterministic representative batch.
@@ -175,13 +235,22 @@ def quantize_int8(onnx_path: Path, tokenizer: Any, calib_texts: list[str], out_p
         print("warn: onnxruntime quantization unavailable -> fp32 export only", file=sys.stderr)
         return False
     import numpy as np
+    import onnx
+
+    # torch.onnx.export with external weight data (model.onnx + model.onnx.data)
+    # trips ORT quantization with "Duplicate definition of name" — consolidate
+    # into a single in-memory model before quantizing.
+    consolidated = onnx.load(str(onnx_path), load_external_data=True)
+    onnx.save_model(consolidated, str(onnx_path))
 
     class TextCalibReader(CalibrationDataReader):
         def __init__(self, texts: list[str]) -> None:
             self._inputs = []
-            for start in range(0, len(texts), 8):
+            # The exported graph has STATIC batch 1 — calibrate text-by-text
+            # (a batch>1 reader trips "invalid dimensions for input").
+            for text in texts:
                 enc = tokenizer(
-                    texts[start : start + 8],
+                    [text],
                     padding="max_length",
                     truncation=True,
                     max_length=MAX_SEQ,

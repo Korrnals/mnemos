@@ -34,7 +34,12 @@ from typing import Any
 
 TRAIN_DIR = Path(__file__).resolve().parent
 DEFAULT_TEACHER = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-DEFAULT_STUDENT_INIT = "sentence-transformers/paraphrase-multilingual-MiniLM-L6-v2"
+# Student init: a real sub-100M pretrained multilingual checkpoint. The
+# earlier L6-v2 id does not exist on HF (HTTP 404). rubert-tiny2 (29.4M, MIT,
+# RU-strong / EN-weak) is the pilot init — KD on the RU+EN corpus transfers
+# the teacher's EN+cross-lingual geometry into it; 29M is below the 45-60M
+# NM-1 target and grows with dataset scale (NM-1b+).
+DEFAULT_STUDENT_INIT = "cointegrated/rubert-tiny2"
 DEFAULT_SEED = 42
 DEFAULT_MAX_LENGTH = 256
 
@@ -133,6 +138,7 @@ def kd_cosine_loss(
     student_emb: Any,
     teacher_emb: Any,
     temperature: float,
+    projector: Any = None,
 ) -> Any:
     """MSE on cosine similarity, temperature-scaled.
 
@@ -143,9 +149,15 @@ def kd_cosine_loss(
     vectors, which equals a scaled cosine-alignment objective; the
     temperature divides the residual before the square, matching the
     temperature-scale convention in the plan.
+
+    When student dim != teacher dim, `projector` (a trainable Linear) maps
+    the student embedding to the teacher dimension before normalisation —
+    the projector is part of the student and ships with the checkpoint.
     """
     import torch
 
+    if projector is not None:
+        student_emb = projector(student_emb)
     student_n = l2_normalise(student_emb)
     teacher_n = l2_normalise(teacher_emb)
     residual = (student_n - teacher_n) / temperature
@@ -192,6 +204,7 @@ def evaluate_cosine(
     device: str,
     max_length: int,
     batch_size: int,
+    projector: Any = None,
 ) -> dict[str, float]:
     """Student-vs-teacher cosine similarity over val texts (mean/median)."""
     import numpy as np
@@ -210,7 +223,10 @@ def evaluate_cosine(
         )
         enc_t = {k: v.to(device) for k, v in enc_t.items()}
         with torch.no_grad():
-            s = l2_normalise(mean_pool(student(**enc_s).last_hidden_state, enc_s["attention_mask"]))
+            s = mean_pool(student(**enc_s).last_hidden_state, enc_s["attention_mask"])
+            if projector is not None:
+                s = projector(s)
+            s = l2_normalise(s)
             t = l2_normalise(mean_pool(teacher(**enc_t).last_hidden_state, enc_t["attention_mask"]))
         sims.extend((s * t).sum(dim=-1).tolist())
     arr = np.asarray(sims, dtype=np.float64)
@@ -304,11 +320,29 @@ def main(argv: list[str] | None = None) -> int:
     for param in teacher.parameters():
         param.requires_grad_(False)
 
+    # Dimension projection: when the student embedding dim differs from the
+    # teacher's, a trainable Linear head maps student -> teacher dim (part of
+    # the student, saved with every checkpoint via save_pretrained on the
+    # wrapped module below).
+    import torch as _torch
+
+    probe = student(_torch.zeros((1, args.max_length), dtype=_torch.long))
+    student_dim = probe.last_hidden_state.shape[-1]
+    probe_t = teacher(_torch.zeros((1, args.max_length), dtype=_torch.long))
+    teacher_dim = probe_t.last_hidden_state.shape[-1]
+    projector = None
+    if student_dim != teacher_dim:
+        projector = _torch.nn.Linear(student_dim, teacher_dim, bias=False).to(device)
+        print(f"projection head: {student_dim} -> {teacher_dim}")
+
     train_texts = read_pairs(args.pairs, args.max_pairs)
     val_texts = read_pairs(args.val, None)
     print(f"pairs: train={len(train_texts)} val={len(val_texts)}")
 
-    optimizer = torch.optim.AdamW(student.parameters(), lr=args.lr)
+    params = list(student.parameters())
+    if projector is not None:
+        params += list(projector.parameters())
+    optimizer = _torch.optim.AdamW(params, lr=args.lr)
     metrics_path = args.out_dir / "metrics.jsonl"
     order_rng = random.Random(args.seed)
 
@@ -331,7 +365,9 @@ def main(argv: list[str] | None = None) -> int:
             ht, mask_t = encode_batch(teacher, tokenizer_t, chunk, device, args.max_length)
             with torch.no_grad():
                 teacher_pooled = mean_pool(ht, mask_t)
-            loss = kd_cosine_loss(student_pooled, teacher_pooled, args.temperature)
+            loss = kd_cosine_loss(
+                student_pooled, teacher_pooled, args.temperature, projector=projector
+            )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -354,6 +390,7 @@ def main(argv: list[str] | None = None) -> int:
             device,
             args.max_length,
             args.batch_size,
+            projector=projector,
         )
         record = {
             "epoch": epoch,
@@ -371,6 +408,10 @@ def main(argv: list[str] | None = None) -> int:
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         student.save_pretrained(ckpt_dir)
         tokenizer_s.save_pretrained(ckpt_dir)
+        # The projector is co-adapted with the backbone — saving it apart
+        # from the checkpoint loses the joint (pilot lesson 2026-09-03).
+        if projector is not None:
+            torch.save(projector.state_dict(), ckpt_dir / "projector.pt")
         print(f"checkpoint: {ckpt_dir}")
 
     print("done.")
