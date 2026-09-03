@@ -97,9 +97,13 @@ the README.
   the bundled mnema-embed-v1 provenance; pyproject `license = "Apache-2.0"`;
   npm `license` field updated; README badge and license section updated
   (EN/RU).
-- The v4.0.0 tag is re-cut under Apache-2.0; the previously MIT-tagged
-  v4.0.0 was never distributed (0 assets, absent from PyPI/npm), so no
-  consumer ever received MIT 4.0.0 code. Versions ≤ 3.2.0 remain MIT.
+- The v4.0.0 tag is re-cut under Apache-2.0. The previously MIT-tagged
+  v4.0.0 had no installable artifacts (PyPI and npm carried 3.2.0; no
+  wheel/asset/container was published), but the tag itself and its
+  GitHub auto-generated source archives were publicly reachable — those
+  snapshots remain MIT (per-version fixity). The re-cut is a release-gate
+  step requiring the destructive tag delete + recreate after merge.
+  Versions ≤ 3.2.0 remain MIT.
 - GitHub Sponsors enabled via `.github/FUNDING.yml`.
 - Future companion packages (models, training tooling) default to
   Apache-2.0 for family consistency.
