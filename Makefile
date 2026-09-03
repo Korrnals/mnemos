@@ -1,4 +1,4 @@
-.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record bench-s4 bench-s2-smoke
+.PHONY: help install bootstrap check-venv test lint lint-shell format typecheck security coverage clean verify doctor security-reminder update-chromadb update-deps build-dist build-image push-image check-version pypi-publish bench-s1 bench-s1-record bench-s4 bench-s4-record bench-s2-smoke bench-s3 bench-s3-record
 
 # Read version from pyproject.toml — keeps local build targets in sync with the package version.
 VERSION := $(shell grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
@@ -26,6 +26,8 @@ help:
 	@echo "  make bench-s4   - Run the S4 availability stand (BF-2, nightly contour)"
 	@echo "  make bench-s4-record - Write the S4 baseline (first record / re-baseline)"
 	@echo "  make bench-s2-smoke - Run the S2 timing smoke (informational, never blocks)"
+	@echo "  make bench-s3   - Run the S3 session stand (BF-3, nightly contour)"
+	@echo "  make bench-s3-record - Write the S3 baseline (first record / re-baseline)"
 	@echo "  make verify     - Run all checks (lint + typecheck + security + test + bench-s1 + doctor)"
 	@echo "  make doctor     - Run mnemos doctor health checks (config, storage, MCP, integration)"
 	@echo "  make clean      - Remove build artifacts"
@@ -101,6 +103,15 @@ bench-s4-record:
 
 bench-s2-smoke:
 	$(PYTHON) benchmarks/stands/s2_timing/run.py
+
+# BF-3 stand — NOT in the local merge gate (ADR-0020: S3 is nightly
+# class, 100–500 turns; the suite carries only a 20-turn determinism
+# smoke). Prerequisite of the ADR-0021 nano-refiner gate (NM-2 → NM-3).
+bench-s3:
+	$(PYTHON) benchmarks/stands/s3_session/run.py
+
+bench-s3-record:
+	$(PYTHON) benchmarks/stands/s3_session/run.py --record
 
 verify: format-check lint typecheck test security security-reminder bench-s1 doctor check-version
 	@echo "✅ All verification checks passed"

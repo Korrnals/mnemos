@@ -10,7 +10,10 @@ English, matching the ADR canon this catalog implements.
 | Path | Contents |
 | --- | --- |
 | `corpus/` | The benchmark corpus — migrated byte-exact from `tests/golden` (entries, judged queries, planted FAKE secrets, rewrite scenario, deterministic BLAKE2b embedder) plus the BF-1 additions: the legitimate tech-pattern class (`tech_patterns.py`) and the detector-independent danger labelling (`danger_labels.py`). |
-| `stands/s1_quality/` | Stand S1 (issuance quality and safety): `harness.py` reuses the W4 golden measurement logic, `scenarios.py` adds the ADR-0019 §5 quarantine/retraction scenarios, detector-quarantine-fp, the render-neutrality invariant and the interim McNemar sign-test jig; `run.py` is the single-command entry point; `model_contour.py` is the S1m production-embedder contour (ADR-0021 NM-0 — see below). Stands S2–S4 land in waves BF-2+. |
+| `stands/s1_quality/` | Stand S1 (issuance quality and safety): `harness.py` reuses the W4 golden measurement logic, `scenarios.py` adds the ADR-0019 §5 quarantine/retraction scenarios, detector-quarantine-fp, the render-neutrality invariant and the interim McNemar sign-test jig; `run.py` is the single-command entry point; `model_contour.py` is the S1m production-embedder contour (ADR-0021 NM-0 — see below). |
+| `stands/s2_timing/` | Stand S2 (timing smoke, BF-2): wall-clock wrappers over add/search/assemble/refine on a fixed ~1e3-op load; R=1 informational, reports only — never baselines (the timing baseline belongs to the nightly quiet machine). |
+| `stands/s3_session/` | Stand S3 (long-lived session, BF-3): `scenario.py` is the seeded session-as-data generator (fixed turns, logical time, unique fact markers), `run.py` replays it against one long-lived manager — fact-retention@N,k, recall-drift-over-session, checkpoint-return-integrity (invariant = 1.000), sufficiency@task, context-growth-factor, stage-discard-profile. |
+| `stands/s4_availability/` | Stand S4 (availability, BF-2): fixture populations, SQLite-backup isolated store copy, strictly read-only probes with a content-checksum read-only invariant. |
 | `baselines/` | Canonical `s1.json` (the source of truth: `baseline_version`, `stand_version`, `corpus_fingerprint`, `model_fingerprint`, `metrics`, `environment`) and the GENERATED `BASELINE.md` summary (`generate_md.py` — never hand-edit). |
 | `reports/` | Per-run reports; gitignored, not committed. |
 
@@ -19,6 +22,10 @@ English, matching the ADR canon this catalog implements.
 ```bash
 make bench-s1            # gate mode — corridors + invariants vs baselines/s1.json
 make bench-s1-record     # re-record the baseline + regenerate BASELINE.md
+make bench-s3            # S3 session stand — nightly class, NOT in make verify
+make bench-s3-record     # write / re-record baselines/s3.json
+make bench-s4            # S4 availability stand — nightly class, NOT in make verify
+make bench-s2-smoke      # S2 timing smoke — informational, reports only
 # or directly:
 python benchmarks/stands/s1_quality/run.py [--record]
 ```
@@ -32,6 +39,41 @@ is < 30 s in the local merge gate (`make verify` runs `bench-s1`).
 The golden pytest suite still exists (`pytest -m golden`) and imports
 the corpus from here — a transition is a state machine, an issuance is
 a golden measurement (ADR-0020 unit/golden split rule).
+
+## S3 — the long-lived-session stand (ADR-0020 BF-3)
+
+S3 answers the coherence question: does memory keep serving an agent
+that has been talking to it for hundreds of turns? `scenario.py` builds
+the whole session as DATA from a seed (`random.Random`; same seed →
+byte-identical turn list; logical time only — no wall-clock value
+enters any metric). One long-lived manager then replays the turns:
+fact writes with unique markers, past-fact searches (exact phrase and
+paraphrase), budgeted `assemble_context` (the `pre_llm_call` shape),
+periodic `on_context_rewrite` events, and checkpoint → new session →
+`recall_context` round-trips.
+
+- **Metrics** (families F5 + the F3/F4 cuts ADR-0020 assigns to S3):
+  `fact-retention@N,k` (histogram N ∈ {10, 50, 100, 200}, k = 5),
+  `recall-drift-over-session` (the same early-fact sample probed at ~1/3
+  and at the end), `checkpoint-return-integrity` (binary invariant =
+  1.000 — after every round-trip every fact so far is re-probed),
+  `sufficiency@task` (a task's required facts must land in the
+  ASSEMBLED block, not merely in search), `context-growth-factor`
+  (fixed budget + saturating anchor query at ~10% vs the final turn —
+  the F3 stop-signal for composition regressions) and the
+  `stage-discard-profile` (informational in baseline v1).
+- **Gate**: the checkpoint invariant blocks always; retention / drift /
+  sufficiency carry `baseline − max(0.02; 95% CI)` floors, growth a
+  +0.02 ceiling; a scenario-fingerprint or seed/turns mismatch demands
+  a same-PR `--record` (corridors only compare identical sessions).
+- **Nightly class**: `make bench-s3` (default 240 turns, < 1 s
+  measured) is NOT part of `make verify` — the pytest suite carries a
+  compact determinism smoke instead (`tests/test_benchmarks_s3.py`).
+- The stand's settings disable the context-rewrite per-minute quotas:
+  they are wall-clock quotas and the run compresses a multi-hour
+  logical session into seconds (rationale pinned by a source test).
+- S3 is the ADR-0021 NM-2 prerequisite: the nano-refiner (NM-3) ships
+  only while `fact-retention@N,k` does not regress on this stand.
 
 ## S1m — the production-embedder model contour (ADR-0021 NM-0)
 
@@ -84,8 +126,10 @@ deterministic run:
    A corpus-fingerprint mismatch fails the gate: re-baselining is
    event-driven (corpus ×2, embedder/model change, issuance-path
    change), never calendar-driven.
-3. S2 (timing) never blocks locally; S4 blocks while within budget —
-   both are BF-2+ concerns.
+3. S2 (timing) never blocks locally; S3/S4 are nightly-class — `make
+   bench-s3` / `make bench-s4` gate on corridors + invariants but ride
+   the nightly contour, not `make verify` (the suite carries only
+   fast determinism smokes; full CI wiring is BF-4).
 4. detector-quarantine-fp is informational with a conditional corridor
    (only while injection-acceptance and quarantine-exclusion hold):
    the FP rate must never be "improved" by weakening detectors.

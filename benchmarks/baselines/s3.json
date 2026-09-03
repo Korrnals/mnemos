@@ -1,0 +1,186 @@
+{
+  "baseline_version": 1,
+  "stand_version": "s3-1",
+  "corpus_fingerprint": "07d38cf001828f6d649e3cc2ccb7fa399b5ee3855f7097cbe3c9a36caf583ebd",
+  "model_fingerprint": {
+    "provider": "chromadb",
+    "model": "all-MiniLM-L6-v2",
+    "weights_sha256": "4f148ba8ae9c2c7fbee4af2b132db8d06c6a6545b47fc83bbb98c3d22b8393e6",
+    "opset": null
+  },
+  "created": "2026-09-03T15:31:53+00:00",
+  "metrics": {
+    "scenario": {
+      "seed": 42,
+      "turns": 240,
+      "k": 5,
+      "ages": [
+        10,
+        50,
+        100,
+        200
+      ],
+      "paraphrase_share": 0.35,
+      "facts": 106,
+      "operations": {
+        "WriteFact": 106,
+        "SearchProbe": 75,
+        "AssembleTurn": 40,
+        "RewriteTurn": 16,
+        "CheckpointTurn": 3
+      }
+    },
+    "fact_retention": {
+      "k": 5,
+      "overall": {
+        "probes": 53,
+        "hits": 53,
+        "rate": 1.0,
+        "ci95": 0.0
+      },
+      "by_age": {
+        "10": {
+          "probes": 14,
+          "hits": 14,
+          "rate": 1.0,
+          "ci95": 0.0,
+          "mean_age": 10.0
+        },
+        "50": {
+          "probes": 15,
+          "hits": 15,
+          "rate": 1.0,
+          "ci95": 0.0,
+          "mean_age": 50.0
+        },
+        "100": {
+          "probes": 15,
+          "hits": 15,
+          "rate": 1.0,
+          "ci95": 0.0,
+          "mean_age": 100.1
+        },
+        "200": {
+          "probes": 9,
+          "hits": 9,
+          "rate": 1.0,
+          "ci95": 0.0,
+          "mean_age": 199.8
+        }
+      },
+      "by_mode": {
+        "exact": {
+          "probes": 32,
+          "hits": 32,
+          "rate": 1.0,
+          "ci95": 0.0
+        },
+        "paraphrase": {
+          "probes": 21,
+          "hits": 21,
+          "rate": 1.0,
+          "ci95": 0.0
+        }
+      }
+    },
+    "recall_drift": {
+      "sample": 11,
+      "early": {
+        "probes": 11,
+        "hits": 11,
+        "rate": 1.0,
+        "ci95": 0.0
+      },
+      "late": {
+        "probes": 11,
+        "hits": 11,
+        "rate": 1.0,
+        "ci95": 0.0
+      },
+      "delta": 0.0,
+      "note": "delta = late - early over the SAME early-fact sample; negative values are degradation (F5 recall-drift-over-session)"
+    },
+    "checkpoint_return_integrity": {
+      "value": 1.0,
+      "expect": 1.0,
+      "ok": true,
+      "checkpoints": 3,
+      "restores_ok": 3,
+      "facts_probed": 120,
+      "misses": 0,
+      "note": "after every save_context \u2192 recall_context round-trip every fact so far is re-probed by search; any loss breaks the invariant"
+    },
+    "sufficiency_at_task": {
+      "tasks": 5,
+      "required": 15,
+      "found": 14,
+      "rate": 0.933333,
+      "per_task": [
+        {
+          "turn": 53,
+          "required": 3,
+          "found": 2
+        },
+        {
+          "turn": 84,
+          "required": 3,
+          "found": 3
+        },
+        {
+          "turn": 114,
+          "required": 3,
+          "found": 3
+        },
+        {
+          "turn": 145,
+          "required": 3,
+          "found": 3
+        },
+        {
+          "turn": 176,
+          "required": 3,
+          "found": 3
+        }
+      ]
+    },
+    "context_growth": {
+      "budget": 1024,
+      "query": "lighthouse",
+      "early": {
+        "tokens": 949,
+        "blocks": 10,
+        "chars": 3839
+      },
+      "late": {
+        "tokens": 949,
+        "blocks": 10,
+        "chars": 3836
+      },
+      "factor": 1.0,
+      "note": "assembled size at a FIXED budget and query (anchor topic) at ~10% vs the final turn; growth beyond the recorded factor is a composition-purity regression (ADR-0020 F3 stop-signal)"
+    },
+    "stage_discard_profile": {
+      "assembles": 40,
+      "recall_candidates_total": 400,
+      "content_type_filtered_total": 0,
+      "scan_blocks_refused": 0,
+      "budget_blocks_included": 400,
+      "budget_blocks_skipped": 0,
+      "filter_profiles": {
+        "default": 373,
+        "docs": 27
+      },
+      "align_blocks_aligned": 37,
+      "align_moved_chars": 750,
+      "note": "informational in baseline v1 (ADR-0020 F4): which assemble stage discarded how many blocks; corridors attach after a second measured wave"
+    },
+    "rewrite_events": {
+      "events": 16,
+      "markers_minted": 16
+    }
+  },
+  "environment": {
+    "python": "3.12.3",
+    "deterministic_embedder": true
+  }
+}
