@@ -23,7 +23,7 @@ Mnemos needs Python 3.11 or newer and `git`. We recommend `uv` for fast, isolate
 
 > **OS notes.** Mnemos is developed on Linux (Arch, Fedora, Ubuntu 22.04+) and is regularly smoke-tested on macOS. Windows works through WSL2. The systemd unit in `contrib/systemd/` is Linux-only.
 
-> **Hardware.** The default ONNX embedding model (`all-MiniLM-L6-v2`) is ~25 MB and runs comfortably on a single CPU core. No GPU is required. A 2 vCPU / 2 GB VM is enough for personal use.
+> **Hardware.** The default embedding model (`mnema-embed-v1`, ~30 MB, bundled — nothing is downloaded) runs comfortably on a single CPU core. No GPU is required. A 2 vCPU / 2 GB VM is enough for personal use.
 
 ---
 
@@ -282,7 +282,7 @@ Mnemos reads `config.yaml` from the current directory or `~/.mnemos/config.yaml`
 | `mnemos.vault_path` | `~/.mnemos/vault` | Obsidian mirror |
 | `mnemos.data_dir` | `~/.mnemos/data` | SQLite + vector index |
 | `mnemos.strict_tag_contract` | `true` | Enforce M2 contract (set `false` only for legacy imports) |
-| `embedding.provider` | `chromadb` | `chromadb` / `onnx` / `ollama` / `sentence-transformers` |
+| `embedding.provider` | `nano` | `nano` (mnema-embed-v1, bundled local model) / `onnx` / `ollama` / `sentence-transformers` |
 | `search.hybrid_alpha` | `0.7` | Weight of vector leg in RRF (0.0 = pure FTS, 1.0 = pure vector) |
 | `api.host` / `api.port` | `127.0.0.1` / `8787` | `mnemos serve` defaults |
 | `llm.provider` / `llm.model` | `ollama` / `qwen2.5:3b` | M4 synthesis & M10 context filter |
@@ -314,11 +314,11 @@ CLI: `mnemos serve --verbose` for DEBUG level, `mnemos serve --log-file /path/to
 
 ### `make verify` fails on `pip-audit`
 
-You probably hit a pinned CVE. The most common is `CVE-2026-45829` in `chromadb 1.5.9`. The current policy is to **ignore it with audit** and re-check weekly. See [dependency-updates runbook](../admin/runbooks/dependency-updates.md) for the workflow.
+You probably hit a pinned CVE in a transitive dependency. The policy is to **pin the fixed version directly** (see the pins in `pyproject.toml`) and keep the failure visible until the pin lands. See [dependency-updates runbook](../admin/runbooks/dependency-updates.md) for the workflow. (Historical note: the loudest such case was `CVE-2026-45829` in `chromadb 1.5.9` — chromadb was removed from the runtime entirely in NM-1c, taking its CVEs with it.)
 
 ### First model download is slow
 
-The first time you start Mnemos, the default ONNX embedding model (`all-MiniLM-L6-v2`, ~25 MB) is downloaded from Hugging Face. Subsequent starts are instant. To pre-warm:
+The default embedding model (`mnema-embed-v1`) ships inside the package — there is no download and the first start is as fast as any other. A download delay means you switched to an external provider (`onnx`, `sentence-transformers`): those fetch their model from Hugging Face on first use; subsequent starts are instant. To pre-warm:
 
 ```bash
 python -c "from mnemos.embeddings import create_embedding_provider; from mnemos.config import load_settings; create_embedding_provider(load_settings().embedding).embed('warm up')"

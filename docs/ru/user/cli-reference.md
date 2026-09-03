@@ -66,7 +66,7 @@ MNEMOS_LOG_LEVEL=DEBUG mnemos search "test"
 | `MNEMOS_API__HOST` | `127.0.0.1` | Адрес по умолчанию для `mnemos serve` |
 | `MNEMOS_API__PORT` | `8787` | Порт по умолчанию для `mnemos serve` |
 | `MNEMOS_SEARCH__HYBRID_ALPHA` | `0.7` | Вес вектора в RRF-слиянии |
-| `MNEMOS_EMBEDDING__PROVIDER` | `chromadb` | `chromadb` / `onnx` / `ollama` / `sentence-transformers` |
+| `MNEMOS_EMBEDDING__PROVIDER` | `nano` | `nano` (mnema-embed-v1, встроенная) / `onnx` / `ollama` / `sentence-transformers` |
 | `MNEMOS_LLM__PROVIDER` | `ollama` | LLM для синтеза и контекстного фильтра |
 | `MNEMOS_LLM__MODEL` | `qwen2.5:3b` | Имя LLM-модели |
 | `MNEMOS_AUTO_COLLECT` | `0` | Установите `1` для включения режима auto-collect MCP |
@@ -229,7 +229,7 @@ mnemos stats [OPTIONS]
 | `vault_path` | Разрешённая директория vault |
 | `total` | Общее количество записей (любой статус) |
 | `by_status` | Словарь `raw` / `processing` / `processed` / `published` / `archived` |
-| `vectors` | Количество векторов в индексе ChromaDB |
+| `vectors` | Количество векторов в локальном векторном индексе (`vectors.db`) |
 
 ### Пример
 

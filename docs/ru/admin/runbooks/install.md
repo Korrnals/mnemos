@@ -35,7 +35,7 @@ mnemos:
   vault_path: ~/.mnemos/vault
   strict_tag_contract: true
 embedding:
-  provider: chromadb  # или onnx, ollama
+  provider: nano  # mnema-embed-v1 — встроенная локальная модель, работает офлайн; или onnx, ollama
 ```
 
 ## Запуск MCP-сервера

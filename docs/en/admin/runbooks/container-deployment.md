@@ -264,7 +264,7 @@ Key settings:
 | `api.auth_enabled` | `true` | Must stay `true` when `host` is `0.0.0.0` |
 | `api.totp_enabled` | `true` | Requires TOTP 2FA; key via `MNEMOS_API__TOTP_MASTER_KEY` |
 | `api.behind_tls_proxy` | `true` | TLS terminates upstream (Caddy, nginx, etc.) |
-| `embedding.provider` | `chromadb` | Built-in ONNX; no GPU required |
+| `embedding.provider` | `nano` | mnema-embed-v1: bundled local model, works offline; no GPU required |
 
 ### Security requirements
 
@@ -279,7 +279,7 @@ For the full threat model and auth configuration details, see [../security.md](.
 
 ### Embedding provider
 
-- **Default**: `chromadb` with built-in ONNX embeddings (no torch, no GPU)
+- **Default**: `nano` — the bundled `mnema-embed-v1` local ONNX model (no torch, no GPU, works offline; external providers like `onnx`/`sentence-transformers` remain available)
 - **Ollama sidecar**: set `embedding.provider: ollama` and `embedding.ollama_url: http://ollama:11434`
   (see [Ollama sidecar](#ollama-sidecar-optional-embeddings) above)
 

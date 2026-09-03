@@ -4,11 +4,11 @@
   "corpus_fingerprint": "c2ce056d57d91143f7a1959442ef2b37891464d4cd5f218f5eabbc785c8e72f1",
   "model_fingerprint": {
     "provider": "nano",
-    "model": "nano-embed-v1",
+    "model": "mnema-embed-v1",
     "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
     "opset": null
   },
-  "created": "2026-09-03T18:45:07+00:00",
+  "created": "2026-09-03T19:28:56+00:00",
   "metrics": {
     "retrieval": {
       "precision_at_5": 0.229319,
@@ -226,7 +226,7 @@
       "required": false,
       "fingerprint": {
         "provider": "nano",
-        "model": "nano-embed-v1",
+        "model": "mnema-embed-v1",
         "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
         "opset": null
       },
@@ -262,8 +262,8 @@
     "deterministic_embedder": true
   },
   "rebaseline": {
-    "trigger": "embedder change (ADR-0020 \u00a7triggers, ADR-0021 NM-1c)",
-    "reason": "production embedder switched chromadb/all-MiniLM-L6-v2 -> bundled nano-embed-v1",
-    "task": "NM-1c"
+    "trigger": "embedder change (ADR-0020 §triggers, ADR-0021 NM-1d)",
+    "reason": "bundled artifact renamed nano-embed-v1 -> mnema-embed-v1 (same weights, sha256 unchanged)",
+    "task": "NM-1d"
   }
 }

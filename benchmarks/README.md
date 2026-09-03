@@ -160,7 +160,8 @@ periodic `on_context_rewrite` events, and checkpoint → new session →
 
 S1 gates the retrieval PIPELINE on the deterministic BLAKE2b reference;
 until NM-0 the PRODUCTION embedder (chromadb's all-MiniLM-L6-v2 ONNX
-today) was measured by nothing — a silent weights substitution passed
+back then; the bundled mnema-embed-v1 since NM-1c) was measured by
+nothing — a silent weights substitution passed
 the gate. S1m closes that hole as a separate section of the same
 deterministic run:
 
@@ -175,9 +176,10 @@ deterministic run:
   ADR-0021 explicitly rejected replacing one with the other).
 - **`model_fingerprint`** (top-level in `s1.json`): `{provider, model,
   weights_sha256, opset}` — the sha256 is over the REAL local ONNX
-  artifact when the provider keeps one (chromadb), so an on-disk
-  weights swap changes it even when every provider string stays
-  identical; API/lazy providers record identifier-only (`null` hash).
+  artifact when the provider keeps one (nano — bundled or explicit
+  path), so an on-disk weights swap changes it even when every provider
+  string stays identical; API/lazy providers record identifier-only
+  (`null` hash).
   `opset` is read via the optional `onnx` checker and participates only
   when both sides read it (readability is an environment property).
 - **Fail-loud**: a gate run whose live fingerprint differs from the

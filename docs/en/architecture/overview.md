@@ -44,12 +44,12 @@ and an Obsidian-compatible vault. A Web UI is planned as a separate project
 ├─────────┴────────────────┴───────────────────┴──────────┤
 │                    STORAGE                               │
 │  ┌────────────────┐  ┌───────────────┐  ┌─────────────┐ │
-│  │ Obsidian Vault │  │  ChromaDB     │  │  SQLite     │ │
-│  │ (markdown)     │  │  (vectors)    │  │  (metadata) │ │
+│  │ Obsidian Vault │  │  Vector index │  │  SQLite     │ │
+│  │ (markdown)     │  │  (vectors.db) │  │  (metadata) │ │
 │  └────────────────┘  └───────────────┘  └─────────────┘ │
 ├─────────────────────────────────────────────────────────┤
 │                    EMBEDDING                             │
-│  sentence-transformers (local) / Ollama / OpenAI API    │
+│ mnema-embed-v1 (bundled) / onnx / Ollama / sentence-tr. │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -62,7 +62,7 @@ and an Obsidian-compatible vault. A Web UI is planned as a separate project
 | Component | Purpose | Technology |
 | --- | --- | --- |
 | Obsidian Vault | Human-readable notes, markdown + frontmatter | Filesystem |
-| ChromaDB | Vector embeddings for semantic search | ChromaDB (persistent) |
+| Vector index | Vector embeddings for semantic search | SQLite (`vectors.db`, local) |
 | SQLite | Metadata, tags, relationships, history, cache | SQLite + aiosqlite |
 
 **Obsidian compatibility**:
@@ -73,9 +73,8 @@ and an Obsidian-compatible vault. A Web UI is planned as a separate project
 
 ### 2. Embedding Layer
 
-- **Default**: `sentence-transformers/all-MiniLM-L6-v2` (fast, ~80 MB)
-- **For Russian**: `intfloat/multilingual-e5-base` or `cointegrated/rubert-tiny2`
-- **Optional**: Ollama embeddings, OpenAI API
+- **Default**: `mnema-embed-v1` — bundled local model (~30 MB, int8 ONNX, RU+EN, 384d), works offline
+- **External providers still available**: `onnx` (any HF model), Ollama, `sentence-transformers`
 - Embedding provider configured via config file
 - Embedding caching to avoid repeated computation
 
@@ -84,11 +83,11 @@ and an Obsidian-compatible vault. A Web UI is planned as a separate project
 #### MemoryManager
 - CRUD for memory entries (create, read, update, delete)
 - Automatic embedding generation on create / update
-- Sync: markdown file ↔ ChromaDB ↔ SQLite
+- Sync: markdown file ↔ vector index ↔ SQLite
 - Tags, categories, priorities, TTL (entry lifetime)
 
 #### SearchEngine
-- **Semantic search**: vector similarity via ChromaDB
+- **Semantic search**: vector similarity via the local vector index
 - **Full-text search**: FTS5 via SQLite
 - **Hybrid search**: RRF (Reciprocal Rank Fusion) to combine results
 - Filtering by tags, dates, sources, types
@@ -350,13 +349,12 @@ Main note content...
 # config.yaml
 mnemos:
   vault_path: ~/.mnemos/vault         # Obsidian vault
-  data_dir: ~/.mnemos/data            # ChromaDB + SQLite
+  data_dir: ~/.mnemos/data            # vector index + SQLite
 
 embedding:
-  provider: sentence-transformers    # sentence-transformers | ollama | openai
-  model: intfloat/multilingual-e5-base
+  provider: nano                      # nano (mnema-embed-v1, bundled) | onnx | ollama | sentence-transformers
+  model: mnema-embed-v1
   # ollama_url: http://localhost:11434
-  # openai_api_key: ...
 
 search:
   default_limit: 20

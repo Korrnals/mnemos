@@ -66,7 +66,7 @@ All settings are env-overridable via the `MNEMOS_` prefix. Nested keys use `__` 
 | `MNEMOS_API__HOST` | `127.0.0.1` | Default for `mnemos serve` |
 | `MNEMOS_API__PORT` | `8787` | Default for `mnemos serve` |
 | `MNEMOS_SEARCH__HYBRID_ALPHA` | `0.7` | Vector weight in RRF fusion |
-| `MNEMOS_EMBEDDING__PROVIDER` | `chromadb` | `chromadb` / `onnx` / `ollama` / `sentence-transformers` |
+| `MNEMOS_EMBEDDING__PROVIDER` | `nano` | `nano` (mnema-embed-v1, bundled) / `onnx` / `ollama` / `sentence-transformers` |
 | `MNEMOS_LLM__PROVIDER` | `ollama` | LLM for synthesis + context filter |
 | `MNEMOS_LLM__MODEL` | `qwen2.5:3b` | LLM model name |
 | `MNEMOS_AUTO_COLLECT` | `0` | Set `1` to enable MCP auto-collect mode |
@@ -229,7 +229,7 @@ mnemos stats [OPTIONS]
 | `vault_path` | Resolved vault directory |
 | `total` | Total memory count (any status) |
 | `by_status` | Dict of `raw` / `processing` / `processed` / `published` / `archived` |
-| `vectors` | Number of vectors in the ChromaDB index |
+| `vectors` | Number of vectors in the local vector index (`vectors.db`) |
 
 ### Example
 

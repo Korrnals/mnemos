@@ -3,7 +3,7 @@
 Uses local ONNX models by default (privacy + offline).
 
 Providers:
-  - NanoProvider            — the bundled distilled nano-embedder (default,
+  - NanoProvider            — the bundled mnema-embed model (default,
                               ADR-0021 NM-1: 384d, int8 ONNX, ships in the
                               wheel — zero downloads, zero network)
   - ONNXHubProvider         — any HuggingFace ONNX model
@@ -43,17 +43,17 @@ class EmbeddingProvider(ABC):
     def dimension(self) -> int: ...
 
 
-# ── Nano: the bundled distilled embedder (ADR-0021 NM-1) ──────────────────────
+# ── mnema-embed: the bundled distilled embedder (ADR-0021 NM-1) ───────────────
 
 #: Bundled artifact directory name (src/mnemos/models/<name>/ inside the
 #: wheel, reachable via importlib.resources). NOTE: ``mnemos/models/`` is a
 #: DATA directory, deliberately NOT a Python package — ``mnemos.models``
 #: remains the ``models.py`` module; a directory without ``__init__.py``
 #: never shadows it at import time.
-NANO_DEFAULT_MODEL = "nano-embed-v1"
+MNEMA_EMBED_MODEL = "mnema-embed-v1"
 
 #: Static sequence shape of the exported graph (batch 1 x 256 tokens).
-NANO_MAX_SEQ = 256
+MNEMA_MAX_SEQ = 256
 
 #: Dtype-agnostic ndarray alias for ORT graph edges — numpy stubs are import-
 #: skipped (pyproject mypy overrides), so a bare ``np.ndarray`` trips
@@ -62,8 +62,8 @@ NANO_MAX_SEQ = 256
 _OrtTensor = np.ndarray[Any, Any]
 
 
-def _nano_artifact_dir(model: str) -> Path:
-    """Resolve the artifact directory for a nano model spec.
+def _mnema_artifact_dir(model: str) -> Path:
+    """Resolve the artifact directory for a mnema-embed model spec.
 
     ``model`` is either (a) a filesystem path to a ``.onnx`` file — the
     tokenizer is then expected as ``tokenizer.json`` next to it — or
@@ -78,41 +78,41 @@ def _nano_artifact_dir(model: str) -> Path:
         if onnx_path.is_file():
             return onnx_path.parent
         raise FileNotFoundError(
-            f"nano embedding model not found at {onnx_path!s}; pass a path to "
-            f"an existing .onnx file or a bundled name (default: {NANO_DEFAULT_MODEL!r})"
+            f"mnema-embed model not found at {onnx_path!s}; pass a path to "
+            f"an existing .onnx file or a bundled name (default: {MNEMA_EMBED_MODEL!r})"
         )
-    name = spec or NANO_DEFAULT_MODEL
+    name = spec or MNEMA_EMBED_MODEL
     bundled = resource_files("mnemos") / "models" / name
     if (bundled / "model.onnx").is_file():
         # onnxruntime needs a real file path, so the Traversable is
         # stringified — the wheel/source layouts are real directories.
         return Path(str(bundled))
     raise FileNotFoundError(
-        f"nano embedding artifact {name!r} is not bundled (looked at {bundled!s}); "
+        f"mnema-embed artifact {name!r} is not bundled (looked at {bundled!s}); "
         f"expected model.onnx + tokenizer.json inside it"
     )
 
 
-def nano_artifact_onnx_path(model: str = "") -> Path:
-    """Path to the resolved nano ``model.onnx`` (never checks existence).
+def mnema_artifact_onnx_path(model: str = "") -> Path:
+    """Path to the resolved mnema-embed ``model.onnx`` (never checks existence).
 
     Shared with the S1m model-contour fingerprint so the provider and the
     gate hash the SAME file for ``weights_sha256``.
     """
-    return _nano_artifact_dir(model) / "model.onnx"
+    return _mnema_artifact_dir(model) / "model.onnx"
 
 
-def nano_weights_sha256(model: str = "") -> str:
-    """SHA-256 over the resolved nano ``model.onnx`` bytes."""
+def mnema_weights_sha256(model: str = "") -> str:
+    """SHA-256 over the resolved mnema-embed ``model.onnx`` bytes."""
     digest = hashlib.sha256()
-    with nano_artifact_onnx_path(model).open("rb") as fh:
+    with mnema_artifact_onnx_path(model).open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
 
 class NanoProvider(EmbeddingProvider):
-    """The bundled distilled nano-embedder (ADR-0021 NM-1).
+    """The bundled mnema-embed model (ADR-0021 NM-1; provider key ``nano``).
 
     Loads the int8-quantized ONNX artifact shipped inside the package
     (``mnemos/models/<name>/``): 384-dim, multilingual (RU+EN), L2-
@@ -128,9 +128,9 @@ class NanoProvider(EmbeddingProvider):
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
-        artifact_dir = _nano_artifact_dir(model)
-        self.model_name = (model or "").strip() or NANO_DEFAULT_MODEL
-        self.weights_sha256 = nano_weights_sha256(model)
+        artifact_dir = _mnema_artifact_dir(model)
+        self.model_name = (model or "").strip() or MNEMA_EMBED_MODEL
+        self.weights_sha256 = mnema_weights_sha256(model)
 
         tokenizer_path = artifact_dir / "tokenizer.json"
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
@@ -138,8 +138,8 @@ class NanoProvider(EmbeddingProvider):
         # The tokenizer's attention_mask is used AS IS — a manual mask from
         # token count would be all-ones and pollute the graph-side
         # mean-pooling with pad embeddings (review F1, PR #218).
-        self._tokenizer.enable_truncation(max_length=NANO_MAX_SEQ)
-        self._tokenizer.enable_padding(length=NANO_MAX_SEQ)
+        self._tokenizer.enable_truncation(max_length=MNEMA_MAX_SEQ)
+        self._tokenizer.enable_padding(length=MNEMA_MAX_SEQ)
 
         n_threads = max(
             1,
@@ -157,7 +157,7 @@ class NanoProvider(EmbeddingProvider):
         test = self._infer(["test"])
         self._dim = int(test.shape[-1])
         logger.info(
-            "nano embedder ready: %s (dim=%d, sha256=%s…)",
+            "mnema-embed ready: %s (dim=%d, sha256=%s…)",
             self.model_name,
             self._dim,
             self.weights_sha256[:12],
@@ -364,6 +364,15 @@ class SentenceTransformerProvider(EmbeddingProvider):
 # ── factory ───────────────────────────────────────────────────────────────────
 
 
+#: The pre-NM-1c legacy default pair: chromadb + its built-in MiniLM
+#: model. A config carrying BOTH values is the shipped default of an old
+#: install — the factory degrades it wholesale to the bundled mnema-embed
+#: (review #221 F1: the MiniLM string alone is not a bundled artifact
+#: name, so degrading only the provider crashed NanoProvider with
+#: FileNotFoundError on the resolved artifact).
+_LEGACY_CHROMADB_MODEL = "all-minilm-l6-v2"
+
+
 def create_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
     """Instantiate the configured embedding provider."""
     provider = cfg.provider.lower()
@@ -373,6 +382,15 @@ def create_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
         # NM-1c migration: chromadb was removed from the runtime (ADR-0021).
         # Legacy config values degrade to the bundled nano embedder with a
         # loud warning instead of crashing the legacy install.
+        if cfg.model.strip().lower() == _LEGACY_CHROMADB_MODEL:
+            logger.warning(
+                "provider=%s + model=%s is the deprecated pre-NM-1c default "
+                "pair, using provider=nano + %s; set provider=nano explicitly",
+                provider,
+                cfg.model,
+                MNEMA_EMBED_MODEL,
+            )
+            return NanoProvider(MNEMA_EMBED_MODEL)
         logger.warning(
             "provider=%s is deprecated, using nano; set provider=nano explicitly",
             provider,

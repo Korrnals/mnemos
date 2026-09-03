@@ -149,18 +149,20 @@ def run_model_leg(root: Path) -> dict[str, Any]:
     search and the leg silently degrades to FTS-only — measured,
     honest-looking, wrong).
 
-    Initialization may download weights (chromadb lazily fetches its
-    ONNX artifact), so EVERY failure inside the leg (import, download,
-    init) converts to the documented SKIP with the concrete reason;
-    the deterministic reference measurement in the same
+    Initialization may still fail (the default since NM-1c is the bundled
+    mnema-embed artifact, but an operator-configured external provider
+    may fetch weights), so EVERY failure inside the leg (import,
+    download, init) converts to the documented SKIP with the concrete
+    reason; the deterministic reference measurement in the same
     ``run_measurement`` pass is never disturbed.
 
     Returns the ``s1m`` report section (measured or skipped).
     """
     try:
         embedder = build_production_embedder()
-        # warmup INSIDE the try: chromadb downloads the ONNX artifact on
-        # first embed, and that download must skip too, not crash the run.
+        # warmup INSIDE the try: a lazy external provider may fetch its
+        # model on first embed, and that fetch must skip too, not crash
+        # the run.
         embedder.embed("mnemos s1m warmup")
         mgr, slug_to_id = build_golden_manager(root / "s1m", embedder=embedder)
         try:

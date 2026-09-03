@@ -10,8 +10,8 @@ mnemos:
   data_dir: ~/.mnemos/data
 
 embedding:
-  # Default: chromadb — uses built-in ONNX model (all-MiniLM-L6-v2), no torch needed
-  provider: chromadb
+  # mnema-embed-v1: bundled local model, works offline; alternatives: onnx (any HF model), ollama, sentence-transformers
+  provider: nano
   # Alternative: Ollama (CPU works fine for embeddings)
   # provider: ollama
   # model: nomic-embed-text

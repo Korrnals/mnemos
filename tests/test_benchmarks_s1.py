@@ -125,13 +125,13 @@ from benchmarks.stands.s1_quality import model_contour as s1m_contour  # noqa: E
 
 _FP_A: dict = {
     "provider": "nano",
-    "model": "nano-embed-v1",
+    "model": "mnema-embed-v1",
     "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
     "opset": None,
 }
 _FP_B: dict = {
     "provider": "nano",
-    "model": "nano-embed-v1",
+    "model": "mnema-embed-v1",
     "weights_sha256": "deadbeef" * 8,  # the silent weights swap NM-0 must catch
     "opset": None,
 }
@@ -149,9 +149,7 @@ _S1M_METRICS: dict = {
 }
 
 
-def _measured_contour(
-    fingerprint: dict | None = _FP_A, metrics: dict | None = None
-) -> dict:
+def _measured_contour(fingerprint: dict | None = _FP_A, metrics: dict | None = None) -> dict:
     return s1m_contour.run_model_contour([("q-stub", [])], dimension=384) | {
         "fingerprint": fingerprint,
         "metrics": metrics if metrics is not None else dict(_S1M_METRICS),
@@ -354,9 +352,7 @@ def _s1_run_metrics_with(s1m: dict) -> dict:
     }
 
 
-def _s1m_test_baseline(
-    fingerprint: dict | None = _FP_A, metrics: dict | None = None
-) -> dict:
+def _s1m_test_baseline(fingerprint: dict | None = _FP_A, metrics: dict | None = None) -> dict:
     """A synthetic recorded s1.json shape (only the keys S1m reads)."""
     return {
         "model_fingerprint": fingerprint,
