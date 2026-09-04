@@ -4,7 +4,7 @@
 Reads every run report in ``benchmarks/reports/`` (``s1-*.json`` gate runs,
 ``nm1b-*.json`` / ``nm1-eval-*.json`` distillation evals) plus the canonical
 ``benchmarks/baselines/s1.json``, renders PNG charts (matplotlib, training
-side only — ADR-0021) and writes a Russian one-file analysis:
+side only — ADR-0021) and writes a one-file English analysis:
 
     benchmarks/reports/canonical/<timestamp>-report.md
     benchmarks/reports/canonical/<timestamp>-metrics.png   (bar chart)
@@ -77,8 +77,7 @@ def stand_reports(
     return [
         (path, payload)
         for path, payload in reports
-        if path.name.startswith(prefix)
-        and isinstance(payload.get("metrics"), dict)
+        if path.name.startswith(prefix) and isinstance(payload.get("metrics"), dict)
     ]
 
 
@@ -87,8 +86,7 @@ def eval_reports(reports: list[tuple[Path, dict[str, Any]]]) -> list[tuple[Path,
     return [
         (path, payload)
         for path, payload in reports
-        if path.name.startswith(_EVAL_PREFIXES)
-        and isinstance(payload.get("retrieval_proxy"), dict)
+        if path.name.startswith(_EVAL_PREFIXES) and isinstance(payload.get("retrieval_proxy"), dict)
     ]
 
 
@@ -328,10 +326,7 @@ def chart_epochs(runs: dict[str, list[dict[str, Any]]], out: Path) -> bool:
     plotted = False
     for run, lines in runs.items():
         epochs = [line["epoch"] for line in lines]
-        cos = [
-            ((line.get("val_cosine") or {}).get("cos_sim_mean"))
-            for line in lines
-        ]
+        cos = [((line.get("val_cosine") or {}).get("cos_sim_mean")) for line in lines]
         if any(c is not None for c in cos):
             ax.plot(
                 epochs,
@@ -441,25 +436,24 @@ def build_markdown(
     prune_note: str,
 ) -> str:
     out: list[str] = [
-        f"# Канонический отчёт бенчмарков — {label} ({stamp})",
+        f"# Canonical Benchmark Report — {label} ({stamp})",
         "",
-        "Источники: свежайшие `s1-*.json` / `nm1b-*.json` прогоны из "
-        "`benchmarks/reports/` + канонический `benchmarks/baselines/s1.json`.",
+        "Sources: freshest `s1-*.json` / `nm1b-*.json` runs from "
+        "`benchmarks/reports/` + canonical `benchmarks/baselines/s1.json`.",
         "",
     ]
 
-    out += ["## Метрики retrieval (student vs teacher vs BM25)", ""]
+    out += ["## Retrieval metrics (student vs teacher vs BM25)", ""]
     if charts.get("metrics"):
         out.append(f"![metrics]({stamp}-metrics.png)")
         out.append("")
     if matrix:
         metric_names = [name for name, _ in _BAR_METRICS]
-        out.append("| Модель | " + " | ".join(metric_names) + " |")
+        out.append("| Model | " + " | ".join(metric_names) + " |")
         out.append("|---|" + "---|" * len(metric_names))
         for model, values in matrix.items():
             cells = [
-                _fmt(values[name]) if values.get(name) is not None else "—"
-                for name in metric_names
+                _fmt(values[name]) if values.get(name) is not None else "—" for name in metric_names
             ]
             out.append(f"| {model} | " + " | ".join(cells) + " |")
         out.append("")
@@ -470,34 +464,34 @@ def build_markdown(
         analysis: list[str] = []
         if isinstance(student.get("recall@5"), float):
             analysis.append(
-                f"- Продакшн-студент (S1m, mnema-embed-v1): recall@5 "
+                f"- Production student (S1m, mnema-embed-v1): recall@5 "
                 f"{student['recall@5']:.4f}, MRR {_fmt(student.get('MRR'))}, "
                 f"nDCG@10 {_fmt(student.get('nDCG@10'))}."
             )
         if isinstance(teacher_r, float) and isinstance(bm25, float):
-            verdict = "выше" if teacher_r > bm25 else "не выше"
-            dense_vs_lex = "конкурентен" if teacher_r > bm25 else "уступает"
+            verdict = "above" if teacher_r > bm25 else "not above"
+            dense_vs_lex = "competitive with" if teacher_r > bm25 else "below"
             analysis.append(
-                f"- Учитель на judged-корпусе: recall@5 {teacher_r:.4f} — {verdict} "
-                f"BM25-эталона ({bm25:.4f}); плотный эмбеддер {dense_vs_lex} "
-                f"лексическому поиску."
+                f"- Teacher on judged corpus: recall@5 {teacher_r:.4f} — {verdict} "
+                f"the BM25 baseline ({bm25:.4f}); the dense embedder {dense_vs_lex} "
+                f"lexical search."
             )
         if isinstance(student_eval, float) and isinstance(teacher_r, float):
             gap = teacher_r - student_eval
             analysis.append(
-                f"- Дистиллированный студент отстаёт от учителя на {gap:.4f} recall@5 "
+                f"- Distilled student trails teacher by {gap:.4f} recall@5 "
                 f"({student_eval:.4f} vs {teacher_r:.4f}) — "
                 + (
-                    "разрыв основной таргет round 3."
+                    "the gap is the primary round-3 target."
                     if gap > 0.1
-                    else "разрыв в пределах 10 % — коридор близко."
+                    else "gap within 10% — corridor is close."
                 )
             )
         out += [*analysis, ""]
     else:
-        out += ["- данных retrieval нет — прогонов не найдено.", ""]
+        out += ["- no retrieval data — no runs found.", ""]
 
-    out += ["## Динамика дистилляции (по эпохам)", ""]
+    out += ["## Distillation dynamics (by epoch)", ""]
     if charts.get("epochs"):
         out.append(f"![epochs]({stamp}-epochs.png)")
         out.append("")
@@ -506,21 +500,21 @@ def build_markdown(
             first = lines[0].get("val_cosine") or {}
             last = lines[-1].get("val_cosine") or {}
             out.append(
-                f"- `{run}`: {len(lines)} эпох, cos-sim mean "
+                f"- `{run}`: {len(lines)} epochs, cos-sim mean "
                 f"{_fmt(first.get('cos_sim_mean'))} → {_fmt(last.get('cos_sim_mean'))} "
                 f"(KD-loss {lines[0].get('avg_kd_loss', float('nan')):.1f} → "
                 f"{lines[-1].get('avg_kd_loss', float('nan')):.1f})."
             )
         out.append("")
     else:
-        out += ["- `training/runs/*/metrics.jsonl` не найдены.", ""]
+        out += ["- `training/runs/*/metrics.jsonl` not found.", ""]
 
-    out += ["## recall@5 по раундам eval", ""]
+    out += ["## recall@5 across eval rounds", ""]
     if charts.get("rounds"):
         out.append(f"![rounds]({stamp}-rounds.png)")
         out.append("")
     if rounds:
-        out.append("| Раунд | student | teacher | BM25 |")
+        out.append("| Round | student | teacher | BM25 |")
         out.append("|---|---|---|---|")
 
         def _cell(value: Any) -> str:
@@ -534,22 +528,26 @@ def build_markdown(
             )
         out.append("")
     else:
-        out += ["- меньше двух eval-прогонов — тренд не строится.", ""]
+        out += ["- fewer than two eval runs — no trend to plot.", ""]
 
-    out += ["## Распределение cos(student, teacher)", ""]
+    out += ["## cos(student, teacher) distribution", ""]
     if dist and charts.get("cosine"):
         out.append(f"![cosine]({stamp}-cosine.png)")
         out.append("")
         hi = dist.get("0.95-1.00", 0.0)
-        near = "порог provisional (≥0.95 по mean) близко." if hi >= 0.5 else "далеко от порога."
+        near = (
+            "provisional threshold (≥0.95 by mean) is close."
+            if hi >= 0.5
+            else "far from threshold."
+        )
         out.append(
-            f"- {hi:.1%} пар val в коридоре ≥0.95 — {near}",
+            f"- {hi:.1%} of val pairs in the ≥0.95 corridor — {near}",
         )
         out.append("")
     else:
         out += [
-            "- нет данных: свежий eval-прогон не мерил cosine_student_vs_teacher "
-            "(нужен `--student-hf` + `--run-dir` у eval_distilled.py).",
+            "- no data: freshest eval run did not measure cosine_student_vs_teacher "
+            "(requires `--student-hf` + `--run-dir` on eval_distilled.py).",
             "",
         ]
 
@@ -564,26 +562,26 @@ def build_markdown(
         out += [
             "",
             (
-                "**Есть RED-семьи: " + ", ".join(reds) + " — разбираться до следующей волны.**"
+                "**RED families present: " + ", ".join(reds) + " — resolve before the next wave.**"
                 if reds
-                else "RED-семей нет; жёлтые — пропуски/шум (см. latest.md)."
+                else "No RED families; yellows are gaps/noise (see latest.md)."
             ),
             "",
         ]
     else:
-        out += ["- BF-4 evaluators недоступны — см. `benchmarks/reports/latest.md`.", ""]
+        out += ["- BF-4 evaluators unavailable — see `benchmarks/reports/latest.md`.", ""]
 
     out += [
-        "## Выводы и рекомендации",
+        "## Conclusions and recommendations",
         "",
-        "- Числа выше — моментальный срез; выводы уровня «регрессия/прогресс» "
-        "делаются против baseline-коридоров (ADR-0020), не против соседнего прогона.",
-        "- Round 3 уже подготовлен: учитель Qwen3-Embedding-0.6B (instruct-префикс "
-        "+ last-token pooling), MRL-головы 64/128/256/384, реальный корпус через "
-        "`--from-mnemos-db` — см. `training/README.md`.",
-        "- Основной рычаг по разрыву студент/учитель — корпус (реальные данные "
-        "стора) и более сильный учитель; MRL даёт гибкость размерности без "
-        "переобучения.",
+        "- The numbers above are a point-in-time snapshot; regression/progress "
+        "verdicts are made against baseline corridors (ADR-0020), not adjacent runs.",
+        "- Round 3 is prepared: Qwen3-Embedding-0.6B teacher (instruct prefix "
+        "+ last-token pooling), MRL heads 64/128/256/384, real corpus via "
+        "`--from-mnemos-db` — see `training/README.md`.",
+        "- The primary lever on the student/teacher gap is the corpus (real store "
+        "data) and a stronger teacher; MRL provides dimension flexibility "
+        "without retraining.",
         "",
         f"<!-- retention: {prune_note} -->",
         "",
@@ -647,21 +645,16 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_prune:
         removed = prune_run_reports(args.reports_dir, args.keep_last)
         kept = [
-            x.name
-            for x in sorted(args.reports_dir.glob("*.json"))
-            if x.name not in PRUNE_EXEMPT
+            x.name for x in sorted(args.reports_dir.glob("*.json")) if x.name not in PRUNE_EXEMPT
         ]
-        prune_note = (
-            f"pruned {len(removed)} run JSONs; breadcrumbs kept: "
-            + (", ".join(kept) if kept else "none")
+        prune_note = f"pruned {len(removed)} run JSONs; breadcrumbs kept: " + (
+            ", ".join(kept) if kept else "none"
         )
         print(f"generate-report: {prune_note}", file=sys.stderr)
 
     md_path = args.out_dir / f"{stamp}-report.md"
     md_path.write_text(
-        build_markdown(
-            stamp, args.label, matrix, runs, rounds, dist, lights, charts, prune_note
-        ),
+        build_markdown(stamp, args.label, matrix, runs, rounds, dist, lights, charts, prune_note),
         encoding="utf-8",
     )
     print(f"generate-report: canonical report -> {md_path}", file=sys.stderr)
