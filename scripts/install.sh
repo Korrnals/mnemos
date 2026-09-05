@@ -73,7 +73,7 @@ while [[ $# -gt 0 ]]; do
     --no-wire-agents)  WIRE_AGENTS="no"; shift ;;
     --container) CONTAINER=true; shift ;;
     --port)      CONTAINER_PORT="$2"; shift 2 ;;
-    --help|-h)  sed -n '2,28p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    --help|-h)  sed -n '2,27p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *)          die "Unknown flag: $1 (use --help)" ;;
   esac
 done
@@ -98,7 +98,9 @@ if [[ "$USE_UV" == false ]] && command -v uv &>/dev/null; then
 fi
 
 # ── Resolve version ───────────────────────────────────────────────
+VERSION_EXPLICIT=true
 if [[ -z "$VERSION" ]]; then
+  VERSION_EXPLICIT=false
   info "Detecting latest Mnemos version on PyPI…"
   VERSION="$(curl -fsSL "https://pypi.org/pypi/mnemos-memory-server/json" 2>/dev/null \
     | "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["info"]["version"])' 2>/dev/null || true)"
@@ -116,7 +118,15 @@ if [[ "$CONTAINER" == true ]]; then
   done
   [[ -z "$RUNTIME" ]] && die "Neither podman nor docker found. Install one to use --container."
 
-  "$RUNTIME" pull "ghcr.io/korrnals/mnemos:${VERSION}" || die "Failed to pull image."
+  # PyPI and GHCR are independent registries: an auto-detected PyPI version
+  # may not be tagged on GHCR yet. Fall back to :latest only when the version
+  # was not pinned explicitly by the caller.
+  if ! "$RUNTIME" pull "ghcr.io/korrnals/mnemos:${VERSION}"; then
+    [[ "$VERSION_EXPLICIT" == true ]] && die "Failed to pull image ghcr.io/korrnals/mnemos:${VERSION}."
+    warn "Tag ${VERSION} is not on GHCR (yet) — falling back to :latest."
+    VERSION="latest"
+    "$RUNTIME" pull "ghcr.io/korrnals/mnemos:${VERSION}" || die "Failed to pull image."
+  fi
 
   if "$RUNTIME" ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^mnemos$'; then
     warn "Container 'mnemos' already exists. Remove it first: $RUNTIME rm -f mnemos"
@@ -179,7 +189,7 @@ if [[ "$USE_UV" == true ]]; then
   uv pip install --reinstall "${PKG_SPEC}"
 else
   pip install --upgrade pip
-  pip install --upgrade "${PKG_SPEC}"
+  pip install --force-reinstall "${PKG_SPEC}"
 fi
 
 # ── Resolve the mnemos binary ─────────────────────────────────────

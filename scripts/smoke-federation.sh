@@ -55,7 +55,8 @@ echo "   exported $RECORD_COUNT record(s)"
 
 echo "3. Import the payload into peer A"
 IMPORT_OUT="$(MNEMOS_CONFIG="$CONF_A" "$MNEMOS_BIN" sync import "$PAYLOAD" 2>&1)"
-IMPORTED=$(echo "$IMPORT_OUT" | grep -oE 'Imported: [0-9]+' | grep -oE '[0-9]+')
+IMPORTED=$(echo "$IMPORT_OUT" | grep -oE 'Imported: [0-9]+' | grep -oE '[0-9]+' || true)
+IMPORTED="${IMPORTED:-0}"
 [[ "$IMPORTED" -ge 1 ]] || { echo "FAIL: import did not import any record"; echo "$IMPORT_OUT"; exit 1; }
 echo "   imported $IMPORTED record(s)"
 
@@ -67,8 +68,10 @@ echo "   search found the imported record"
 
 echo "5. Re-import the same payload — idempotent (skip, no duplicate)"
 REIMPORT_OUT="$(MNEMOS_CONFIG="$CONF_A" "$MNEMOS_BIN" sync import "$PAYLOAD" 2>&1)"
-REIMPORTED=$(echo "$REIMPORT_OUT" | grep -oE 'Imported: [0-9]+' | grep -oE '[0-9]+')
-SKIPPED=$(echo "$REIMPORT_OUT" | grep -oE 'skipped: [0-9]+' | grep -oE '[0-9]+')
+REIMPORTED=$(echo "$REIMPORT_OUT" | grep -oE 'Imported: [0-9]+' | grep -oE '[0-9]+' || true)
+REIMPORTED="${REIMPORTED:-0}"
+SKIPPED=$(echo "$REIMPORT_OUT" | grep -oE 'skipped: [0-9]+' | grep -oE '[0-9]+' || true)
+SKIPPED="${SKIPPED:-0}"
 [[ "$REIMPORTED" -eq 0 ]] || { echo "FAIL: re-import duplicated records"; echo "$REIMPORT_OUT"; exit 1; }
 [[ "$SKIPPED" -ge 1 ]] || { echo "FAIL: re-import did not skip existing"; echo "$REIMPORT_OUT"; exit 1; }
 echo "   re-import idempotent: imported=$REIMPORTED, skipped=$SKIPPED"
