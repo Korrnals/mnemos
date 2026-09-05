@@ -5,6 +5,9 @@
  * has no built-in MCP client by design: tools arrive via TypeScript
  * extensions. This extension spawns `mnemos mcp-server` over stdio, performs
  * the MCP handshake and registers every `mnemos_*` tool as a native Pi tool.
+ * It also injects the always-on mnemos behavioral pack into Pi's system
+ * prompt (before_agent_start hook) — Pi has no AGENTS.md surface, so the
+ * extension is the standing-instructions channel.
  *
  * Deployed by:  mnemos integration setup --target pi
  * Location:     ~/.pi/agent/extensions/mnemos-mcp.ts
@@ -18,6 +21,20 @@ import { Type } from "typebox";
 
 const MNEMOS_BIN = process.env.MNEMOS_BIN ?? "mnemos";
 const REQ_TIMEOUT_MS = 60_000;
+
+// Standing behavioral pack, injected into the system prompt on every turn
+// (mnemos:integration — kept in sync with integrations/agents_md/). Pi has
+// no AGENTS.md mechanism; for the bridge extension this hint IS the
+// always-on instructions channel.
+const MNEMOS_STANDING_HINT = [
+	"# Mnemos memory — always-on rules",
+	"",
+	"You have persistent shared memory through the `mnemos_*` tools.",
+	"- Session start: call mnemos_recall_context(project=<current-project>) BEFORE reading project files; surface a <=4-line memory header. Never block on failure.",
+	"- Before context compaction, session end or handoff: mnemos_save_context(project, goals, completed, next_steps) — unsaved context is lost.",
+	"- PRIORITY ops: mnemos_search before architectural decisions and before web searches; mnemos_add when you learn something non-obvious or make a decision; mnemos_agent_recall when resuming a named agent role.",
+	"- Tag contract on every mnemos_add/mnemos_ingest_url: exactly one project:<slug>, one agent:<slug>, at least one mnemos:<subtype>.",
+].join("\n");
 
 interface McpTool {
 	name: string;
@@ -164,6 +181,12 @@ export default function mnemosMcpBridge(pi: ExtensionAPI) {
 	}
 
 	// ── Lifecycle ────────────────────────────────────────────────────────────
+	// Standing hint: before_agent_start fires once per system-prompt build;
+	// returning an object with systemPrompt appends our pack to Pi's prompt
+	// (chained across extensions).
+	pi.on("before_agent_start", (event: { systemPrompt: string }) => {
+		return { systemPrompt: event.systemPrompt + "\n\n" + MNEMOS_STANDING_HINT };
+	});
 	pi.on("session_start", (_event: unknown, ctx: Parameters<Parameters<typeof pi.on>[1]>[1]) =>
 		connect(ctx as { ui?: { notify: (m: string, l?: string) => void } }),
 	);

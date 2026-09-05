@@ -7,6 +7,10 @@ This module is the engine behind the `mnemos util-*` CLI subcommands. It:
 * Deploys the shipped pack (``integrations/{instructions,skills,prompts}/``)
   into each detected harness, stamping every file with a version header so
   later runs can detect stale files and safely uninstall only our own.
+* Injects the always-on behavioral pack (``agents_md`` kind) as a stamped
+  BEGIN/END block INTO the user's ``AGENTS.md``-standard file (targets
+  ``agents``, ``zcode``, ``opencode``) — user content around the block is
+  never touched.
 * Verifies deployed files against the current package version.
 * Updates stale files in place.
 * Uninstalls only stamped files — never user-created content.
@@ -37,6 +41,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AGENTS_MD_BLOCK_RE",
     "ArtefactKind",
     "DeployResult",
     "DeployStatus",
@@ -45,6 +50,9 @@ __all__ = [
     "TargetsConfig",
     "VerifyResult",
     "load_targets",
+    "read_agents_md_version",
+    "render_agents_md_block",
+    "strip_agents_md_block",
 ]
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -52,8 +60,20 @@ __all__ = [
 #: The stamp injected into every deployed file (first useful line).
 STAMP_PATTERN = re.compile(r"<!--\s*mnemos-integration:\s*v(\S+?)\s*-->")
 
+#: Paired block markers for the ``agents_md`` deployment kind. Unlike file
+#: stamps, an ``agents_md`` deployment lives INSIDE a user-owned file (an
+#: ``AGENTS.md``-standard standing-instructions file), so the injected region
+#: is wrapped in paired BEGIN/END comments and only that region is ever
+#: mutated — user content around it is preserved byte-for-byte.
+AGENTS_MD_BLOCK_RE = re.compile(
+    r"<!--\s*mnemos:integration:v(?P<version>\S+?)\s+BEGIN\s*-->"
+    r"(?P<body>.*?)"
+    r"<!--\s*mnemos:integration:v(?P<end_version>\S+?)\s+END\s*-->\n?",
+    re.DOTALL,
+)
+
 #: Artefact sub-directories inside the shipped ``integrations/`` pack.
-ARTEFACT_DIRS: tuple[str, ...] = ("instructions", "skills", "prompts", "extensions")
+ARTEFACT_DIRS: tuple[str, ...] = ("instructions", "skills", "prompts", "extensions", "agents_md")
 
 #: File extensions considered deployable (skip ``.gitkeep`` and READMEs).
 DEPLOYABLE_SUFFIXES: tuple[str, ...] = (".md", ".yaml", ".yml", ".json", ".txt", ".ts")
@@ -70,6 +90,11 @@ class ArtefactKind(StrEnum):
     SKILLS = "skills"
     PROMPTS = "prompts"
     EXTENSION = "extensions"
+    #: Always-on behavioral pack injected as a stamped block INTO a shared
+    #: user-owned ``AGENTS.md``-standard file. The deploy-map value is the
+    #: FILE to inject into (not a directory) — handled by dedicated block
+    #: logic, never by the file-copy path.
+    AGENTS_MD = "agents_md"
 
 
 class DeployStatus(StrEnum):
@@ -326,10 +351,52 @@ def stamp_content(content: str, version: str, *, line_comment: bool = False) -> 
     cleaned.insert(insert_at, prefix + stamp + "\n")
     return "".join(cleaned)
 
+
 def read_stamp(content: str) -> str | None:
     """Extract the version from a stamped file, or ``None`` if unstamped."""
     match = STAMP_PATTERN.search(content)
     return match.group(1) if match else None
+
+
+# ── AGENTS.md block engine ────────────────────────────────────────────────────
+
+
+def render_agents_md_block(content: str, version: str) -> str:
+    """Wrap ``content`` in the stamped BEGIN/END block markers.
+
+    The result always ends with a newline so appending further user content
+    (or a future block refresh) never glues onto the END marker.
+    """
+    body = content if content.endswith("\n") else content + "\n"
+    return (
+        f"<!-- mnemos:integration:v{version} BEGIN -->\n"
+        f"{body}"
+        f"<!-- mnemos:integration:v{version} END -->\n"
+    )
+
+
+def strip_agents_md_block(content: str) -> tuple[str, str | None]:
+    """Remove every paired mnemos block from ``content``.
+
+    Returns ``(cleaned_content, version_of_first_removed_block)``. Only
+    PAIRED blocks (BEGIN … END, any versions) are removed — an unpaired
+    marker (e.g. half a block a user edited away) is left untouched, since
+    removing text without its terminator could eat user content.
+
+    Everything outside the removed regions is preserved byte-for-byte.
+    """
+    match = AGENTS_MD_BLOCK_RE.search(content)
+    if match is None:
+        return content, None
+    version = match.group("version")
+    cleaned = AGENTS_MD_BLOCK_RE.sub("", content)
+    return cleaned, version
+
+
+def read_agents_md_version(content: str) -> str | None:
+    """Extract the version from the first mnemos block, or ``None``."""
+    match = AGENTS_MD_BLOCK_RE.search(content)
+    return match.group("version") if match else None
 
 
 # ── Result types ──────────────────────────────────────────────────────────────
@@ -473,6 +540,20 @@ class IntegrationManager:
     def _all_pack_files(self) -> dict[ArtefactKind, list[Path]]:
         return {kind: self._pack_files(kind) for kind in ArtefactKind}
 
+    def _agents_md_content(self) -> tuple[str, Path | None]:
+        """Concatenate the ``agents_md`` pack fragments into one block body.
+
+        Returns ``(content, first_source_path)``. Multiple fragments (sorted
+        by path) are joined with a blank line, so the pack can grow extra
+        always-on fragments without schema changes. With an empty pack
+        returns ``("", None)`` — deploy/verify then skip the kind.
+        """
+        files = self._pack_files(ArtefactKind.AGENTS_MD)
+        if not files:
+            return "", None
+        content = "\n\n".join(p.read_text(encoding="utf-8").strip() for p in files) + "\n"
+        return content, files[0]
+
     # ── Deploy ─────────────────────────────────────────────────────────────────
 
     def deploy(
@@ -494,6 +575,10 @@ class IntegrationManager:
         result = DeployResult(target_name=target_name)
 
         for kind, files in self._all_pack_files().items():
+            if kind is ArtefactKind.AGENTS_MD:
+                # Block injection — handled after the file-copy loop (the
+                # deploy-map value is a FILE, not a directory).
+                continue
             dest_dir = target.deploy_map.get(kind.value)
             if dest_dir is None:
                 # Target doesn't accept this artefact kind — skip silently.
@@ -514,7 +599,70 @@ class IntegrationManager:
                 file_result = self._deploy_file(src, dest, dry_run=dry_run)
                 result.files.append(file_result)
 
+        agents_md_dest = target.deploy_map.get(ArtefactKind.AGENTS_MD.value)
+        if agents_md_dest is not None:
+            result.files.append(self._deploy_agents_md(agents_md_dest, dry_run=dry_run))
+
         return result
+
+    def _assemble_agents_md_file(self, existing: str, block_body: str) -> tuple[str, str | None]:
+        """Build the desired full content of an AGENTS.md file.
+
+        Returns ``(desired_content, existing_block_version)`` where
+        ``existing_block_version`` is the version of the block currently in
+        the content (``None`` if absent). The user's content is preserved
+        byte-for-byte; a missing trailing newline on the user's last line is
+        repaired (one ``\\n``) only so the injected block never glues onto
+        user text.
+        """
+        base, existing_version = strip_agents_md_block(existing)
+        if base and not base.endswith("\n"):
+            base += "\n"
+        return base + render_agents_md_block(block_body, self.version), existing_version
+
+    def _deploy_agents_md(self, dest: Path, *, dry_run: bool) -> FileResult:
+        """Inject or refresh the stamped block inside a shared AGENTS.md file.
+
+        Idempotent: re-running with the same pack content and version reports
+        CURRENT and writes nothing. An existing block (older version or
+        drifted content) is replaced IN PLACE — user content around it is
+        never touched.
+        """
+        block_body, src = self._agents_md_content()
+        if src is None:
+            return FileResult(
+                source=Path("<agents-md-pack>"),
+                destination=dest,
+                status=DeployStatus.SKIPPED,
+                note="no agents_md pack content shipped",
+            )
+
+        existing = dest.read_text(encoding="utf-8") if dest.exists() else ""
+        desired, existing_version = self._assemble_agents_md_file(existing, block_body)
+
+        if existing_version is not None and existing == desired:
+            return FileResult(
+                source=src,
+                destination=dest,
+                status=DeployStatus.CURRENT,
+                deployed_version=self.version,
+                note="block already up to date",
+            )
+
+        if not dry_run:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(desired, encoding="utf-8")
+        return FileResult(
+            source=src,
+            destination=dest,
+            status=DeployStatus.UPDATED if existing_version is not None else DeployStatus.DEPLOYED,
+            deployed_version=self.version,
+            note=(
+                f"block updated from v{existing_version}"
+                if existing_version is not None
+                else "block injected into AGENTS.md"
+            ),
+        )
 
     def _deploy_file(self, src: Path, dest: Path, *, dry_run: bool) -> FileResult:
         """Deploy a single file, returning the outcome."""
@@ -575,6 +723,9 @@ class IntegrationManager:
         result = VerifyResult(target_name=target_name)
 
         for kind, files in self._all_pack_files().items():
+            if kind is ArtefactKind.AGENTS_MD:
+                # Block presence/version/content — checked after the loop.
+                continue
             dest_dir = target.deploy_map.get(kind.value)
             if dest_dir is None:
                 continue
@@ -617,7 +768,59 @@ class IntegrationManager:
                             )
                         )
 
+        agents_md_dest = target.deploy_map.get(ArtefactKind.AGENTS_MD.value)
+        if agents_md_dest is not None:
+            result.files.append(self._verify_agents_md(agents_md_dest))
+
         return result
+
+    def _verify_agents_md(self, dest: Path) -> FileResult:
+        """Verify the stamped block in a shared AGENTS.md file."""
+        _, src = self._agents_md_content()
+        source = src if src is not None else Path("<agents-md-pack>")
+
+        if not dest.exists():
+            return FileResult(
+                source=source,
+                destination=dest,
+                status=DeployStatus.MISSING,
+                note="no AGENTS.md file — block not deployed",
+            )
+
+        existing = dest.read_text(encoding="utf-8")
+        deployed_version = read_agents_md_version(existing)
+        if deployed_version is None:
+            return FileResult(
+                source=source,
+                destination=dest,
+                status=DeployStatus.MISSING,
+                note="no mnemos block in file — not injected yet",
+            )
+        if deployed_version != self.version:
+            return FileResult(
+                source=source,
+                destination=dest,
+                status=DeployStatus.STALE,
+                deployed_version=deployed_version,
+                note=f"block v{deployed_version} != current v{self.version}",
+            )
+
+        block_body, _ = self._agents_md_content()
+        desired, _ = self._assemble_agents_md_file(existing, block_body)
+        if existing != desired:
+            return FileResult(
+                source=source,
+                destination=dest,
+                status=DeployStatus.STALE,
+                deployed_version=deployed_version,
+                note="block content drifted from pack — update restores it",
+            )
+        return FileResult(
+            source=source,
+            destination=dest,
+            status=DeployStatus.CURRENT,
+            deployed_version=self.version,
+        )
 
     def _verify_file(self, src: Path, dest: Path) -> FileResult:
         if not dest.exists():
@@ -693,6 +896,10 @@ class IntegrationManager:
             raise ValueError(f"Unknown target: {target_name!r}")
 
         for kind, files in self._all_pack_files().items():
+            if kind is ArtefactKind.AGENTS_MD:
+                # The block lives inside a shared user file — orphan removal
+                # does not apply (update refreshes it in place instead).
+                continue
             dest_dir = target.deploy_map.get(kind.value)
             if dest_dir is None or not dest_dir.exists():
                 continue
@@ -742,6 +949,9 @@ class IntegrationManager:
         result = UninstallResult(target_name=target_name)
 
         for kind in ArtefactKind:
+            if kind is ArtefactKind.AGENTS_MD:
+                # Shared user file — strip only the stamped block below.
+                continue
             dest_dir = target.deploy_map.get(kind.value)
             if dest_dir is None or not dest_dir.exists():
                 continue
@@ -759,7 +969,35 @@ class IntegrationManager:
                 else:
                     result.skipped_user_files.append(path)
 
+        agents_md_dest = target.deploy_map.get(ArtefactKind.AGENTS_MD.value)
+        if agents_md_dest is not None:
+            removed = self._uninstall_agents_md(agents_md_dest, dry_run=dry_run)
+            if removed is not None:
+                result.removed.append(removed)
+
         return result
+
+    def _uninstall_agents_md(self, dest: Path, *, dry_run: bool) -> Path | None:
+        """Remove ONLY the stamped block from a shared AGENTS.md file.
+
+        Returns the destination path when a block was found (the removal
+        target), or ``None`` when there is nothing of ours in the file. If
+        nothing but whitespace remains after the strip, the file itself is
+        removed — deploy created it, and whitespace-only content is not user
+        content. A file that still carries user content is kept.
+        """
+        if not dest.exists():
+            return None
+        existing = dest.read_text(encoding="utf-8")
+        cleaned, version = strip_agents_md_block(existing)
+        if version is None:
+            return None
+        if not dry_run:
+            if cleaned.strip() == "":
+                dest.unlink()
+            else:
+                dest.write_text(cleaned, encoding="utf-8")
+        return dest
 
     @staticmethod
     def _cleanup_empty_parents(path: Path, root: Path) -> None:
@@ -870,13 +1108,20 @@ class IntegrationManager:
 
         if target.mcp_format == "zcode":
             servers = data.setdefault("mcp", {}).setdefault("servers", {})
+        elif target.mcp_format == "opencode":
+            # OpenCode: the "mcp" key maps server names DIRECTLY to entries
+            # ({"type": "local", "command": [...]}) — no "servers" level.
+            servers = data.setdefault("mcp", {})
         else:
             servers = data.setdefault("mcpServers", {})
         if not isinstance(servers, dict):
             return False, f"{cfg_path}: server map is not an object"
 
         existing = servers.get("mnemos")
-        servers["mnemos"] = self._mcp_entry(mnemos_bin, existing)
+        if target.mcp_format == "opencode":
+            servers["mnemos"] = self._mcp_entry_opencode(mnemos_bin, existing)
+        else:
+            servers["mnemos"] = self._mcp_entry(mnemos_bin, existing)
 
         try:
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -908,6 +1153,33 @@ class IntegrationManager:
             kept_env.setdefault(key, value)
         entry["env"] = kept_env
         entry.update({"type": "stdio", "command": bin_path, "args": ["mcp-server"]})
+        return entry
+
+    def _mcp_entry_opencode(
+        self, mnemos_bin: str | None, existing: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Build the OpenCode local server entry, preserving user tuning.
+
+        Shape (OpenCode ``opencode.json``): ``{"type": "local", "command":
+        ["mnemos", "mcp-server"], "enabled": true, "environment": {...}}`` —
+        the command is ONE argv array (unlike the split ``command``/``args``
+        of the ``mcpServers`` formats) and env vars ride the ``environment``
+        key. Env defaults mirror :meth:`_mcp_entry`.
+        """
+        bin_path = (
+            mnemos_bin or shutil.which("mnemos") or str(self.home / ".mnemos/venv/bin/mnemos")
+        )
+        env = {
+            "MNEMOS_DATA_DIR": str(self.home / ".mnemos/data"),
+            "MNEMOS_VAULT__VAULT_PATH": str(self.home / ".mnemos/vault"),
+        }
+        entry = dict(existing) if isinstance(existing, dict) else {}
+        raw_env = entry.get("environment")
+        kept_env: dict[str, Any] = raw_env if isinstance(raw_env, dict) else {}
+        for key, value in env.items():
+            kept_env.setdefault(key, value)
+        entry["environment"] = kept_env
+        entry.update({"type": "local", "command": [bin_path, "mcp-server"], "enabled": True})
         return entry
 
     # ── MCP: legacy script registration (VS Code) ─────────────────────────────

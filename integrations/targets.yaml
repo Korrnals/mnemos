@@ -42,13 +42,16 @@ targets:
 
   # ZCode agent. Skills live as <skills-dir>/<name>/SKILL.md (layout:
   # nested); MCP is registered in the user config under mcp.servers,
-  # merged in place so other servers survive.
+  # merged in place so other servers survive. ZCode reads ~/.zcode/AGENTS.md
+  # natively as standing user instructions, so the always-on behavioral pack
+  # deploys as a stamped block inside it (kind: agents_md).
   zcode:
     detect:
       - path: "~/.zcode/cli/config.json"
       - path: "~/.zcode"
     deploy:
       skills: "~/.zcode/skills/"
+      agents_md: "~/.zcode/AGENTS.md"
     format: copy
     layout: nested
     mcp:
@@ -57,22 +60,47 @@ targets:
 
   # Universal AGENTS.md-standard target (~/.agents is read natively by
   # ZCode, Claude Code, Codex, Cursor and others). Skills deploy as
-  # <name>/SKILL.md; MCP registers into the top-level mcpServers key.
+  # <name>/SKILL.md; MCP registers into the top-level mcpServers key. The
+  # always-on behavioral pack deploys as a stamped block inside
+  # ~/.agents/AGENTS.md — the one shared channel for every harness that
+  # follows the AGENTS.md standard (Claude Code included: one mechanism,
+  # not a diverging CLAUDE.md writer).
   agents:
     detect:
       - path: "~/.agents"
     deploy:
       skills: "~/.agents/skills/"
+      agents_md: "~/.agents/AGENTS.md"
     format: copy
     layout: nested
     mcp:
       config: "~/.agents/mcp.json"
       format: agents
 
+  # OpenCode (opencode.ai). Reads AGENTS.md natively — global standing
+  # instructions live at ~/.config/opencode/AGENTS.md — so the always-on
+  # behavioral pack deploys there as a stamped block (kind: agents_md).
+  # Skills use the native global nested layout; MCP registers in
+  # opencode.json under the top-level "mcp" key (server names map DIRECTLY
+  # to entries: {"type": "local", "command": [...]}).
+  opencode:
+    detect:
+      - path: "~/.config/opencode"
+    deploy:
+      skills: "~/.config/opencode/skills/"
+      agents_md: "~/.config/opencode/AGENTS.md"
+    format: copy
+    layout: nested
+    mcp:
+      config: "~/.config/opencode/opencode.json"
+      format: opencode
+
   # Pi coding agent (@earendil-works/pi-coding-agent). Pi has no built-in
   # MCP client by design — tools arrive via TypeScript extensions, so the
   # shipped bridge extension IS the MCP registration: deploying it connects
   # Pi to the mnemos server (spawn `mnemos mcp-server`, stdio JSON-RPC).
+  # The bridge also injects the always-on behavioral pack into Pi's system
+  # prompt via its before_agent_start hook (Pi has no AGENTS.md surface).
   # Skills use the native nested layout under ~/.pi/agent/skills/.
   # NOTE: Pi also reads ~/.agents/skills/ — when both targets are deployed,
   # prefer --target pi to avoid duplicate skill listings.
