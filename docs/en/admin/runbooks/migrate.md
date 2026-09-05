@@ -21,7 +21,7 @@ Migrate your existing ai-brain data (SQLite DB + vault) into Mnemos format.
 Always run dry-run first to see what will be migrated:
 
 ```bash
-mnemos migrate-from-ai-brain --dry-run
+mnemos migrate from-ai-brain --dry-run
 ```
 
 Output shows:
@@ -32,7 +32,7 @@ Output shows:
 ## Full migration
 
 ```bash
-mnemos migrate-from-ai-brain
+mnemos migrate from-ai-brain
 ```
 
 This will:
@@ -51,7 +51,7 @@ Legacy ai-brain entries without `project:` / `agent:` / `mnemos:` tags get:
 After migration, review and retag important entries:
 
 ```bash
-mnemos search "project:legacy" --limit 50
+mnemos search legacy --tags project:legacy --limit 50
 ```
 
 ## Migrating `gcw:` tags → `mnemos:` tags
@@ -92,8 +92,8 @@ If something goes wrong:
 
 ```bash
 # Restore from Mnemos backup
-ls ~/.mnemos/*.backup-*
-cp ~/.mnemos/mnemos.db.backup-YYYYMMDD-HHMMSS ~/.mnemos/mnemos.db
+ls ~/.mnemos/data/*.backup-*
+cp ~/.mnemos/data/mnemos.db.backup-YYYYMMDD-HHMMSS ~/.mnemos/data/mnemos.db
 
 # Or start fresh
 rm -rf ~/.mnemos/data ~/.mnemos/vault

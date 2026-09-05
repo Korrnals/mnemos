@@ -8,7 +8,7 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 
 Сервер определён в `src/mnemos/mcp_server.py`. Каждый инструмент регистрируется с помощью декоратора `@server.list_tools()` и диспетчеризируется функцией `call_tool()`.
 
-Быстрое подключение к VS Code — в [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server). Те же возможности доступны через HTTP — см. [http-api.md](http-api.md). Схема тегов, соблюдаемая большинством инструментов, — в [tag-contract.md](tag-contract.md).
+Быстрое подключение к VS Code — в [getting-started.md#run-the-mcp-server](getting-started.md#подключите-ваш-харнес-mcp). Те же возможности доступны через HTTP — см. [http-api.md](http-api.md). Схема тегов, соблюдаемая большинством инструментов, — в [tag-contract.md](tag-contract.md).
 
 ---
 
@@ -38,6 +38,7 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | [`mnemos_list_recent`](#mnemos_list_recent) | Список последних записей | нет |
 | [`mnemos_list_tags`](#mnemos_list_tags) | Список всех тегов с количеством | нет |
 | [`mnemos_tags`](#mnemos_tags) *(пилот #97)* | Сгруппированные операции над тегами: rename / remove / add (`action: enum`) | нет |
+| [`mnemos_tags_rename`](#mnemos_tags_rename) | Массовое переименование префиксов тегов (напр. `gcw:` → `mnemos:`); по умолчанию dry-run | нет |
 | [`mnemos_workflow`](#mnemos_workflow) *(#96)* | Жизненный цикл workflow: set / get / history (`action: enum`) | нет |
 | [`mnemos_ingest_url`](#mnemos_ingest_url) | Загрузить и сохранить веб-страницу | да |
 | [`mnemos_watch_start`](#mnemos_watch_start) | Запустить фоновый file watcher | нет |
@@ -47,11 +48,13 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | [`mnemos_compress`](#mnemos_compress) | Обратимое сжатие (CCR) — кэш оригинала, маркер в вывод | нет |
 | [`mnemos_retrieve`](#mnemos_retrieve) | Извлечение оригинала из кэша CCR или FTS5-сниппеты | нет |
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — перенос динамического контента для стабильности prefix cache | нет |
+| [`mnemos_filter`](#mnemos_filter) | Запуск / обновление контекстного фильтра для существующей записи (секреты сканируются) | нет |
 | [`mnemos_assemble_context`](#mnemos_assemble_context) *(#125)* | ADR-0017 D1 — сборка контекстного блока перед вызовом LLM (recall → CCR → filter → scan → align → budget) | нет |
 | [`mnemos_context_rewrite`](#mnemos_context_rewrite) *(#125)* | ADR-0018 — событие жизненного цикла `on_context_rewrite`: сообщить о перезаписи контекста, оригинал уходит в LTM (идемпотентно, без версий) | нет |
 | [`mnemos_hooks`](#mnemos_hooks) *(#125)* | Хуки жизненного цикла ADR-0017 D1 / ADR-0018 — групповой инструмент `action:enum`: `pre_llm_call` / `on_session_start` / `post_tool_call` (автосжатие, opt-in) | нет |
 | [`mnemos_export`](#mnemos_export) | Экспорт записей в файл (JSON или SQLite-снимок) | нет |
 | [`mnemos_import`](#mnemos_import) | Импорт записей из файла экспорта (merge или restore) | нет |
+| [`mnemos_reprocess`](#mnemos_reprocess) | Ручной запуск конвейера знаний для записей в очереди raw/processing | нет |
 | [`mnemos_stats`](#mnemos_stats) | Счётчики состояния и ключевые пути | нет |
 
 ---
@@ -104,12 +107,12 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 | Ошибка | Причина |
 |--------|-------- |
 | `❌ Tag contract violation: ...` | Отсутствует тег `project:`, `agent:` или `mnemos:`. |
-| `❌ Error: ...` | Сбой записи SQLite, vault или ошибка эмбеддинга (последняя не критична — см. [обзор архитектуры](../architecture/overview.md#vector-store)). |
+| `❌ Error: ...` | Сбой записи SQLite, vault или ошибка эмбеддинга (последняя не критична — см. [обзор архитектуры](../architecture/overview.md#1-хранилище-storage-layer)). |
 
 ### Связанные ресурсы
 
 - Схема тегов: [tag-contract.md](tag-contract.md)
-- HTTP-эквивалент: [`POST /memories`](http-api.md#create-memory)
+- HTTP-эквивалент: [`POST /memories`](http-api.md#post-memories--создать-запись-create-memory)
 - CLI-эквивалент: [`mnemos add`](cli-reference.md#add)
 
 ---
@@ -172,7 +175,7 @@ Mnemos говорит на [Model Context Protocol](https://modelcontextprotocol
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`POST /search`](http-api.md#search)
+- HTTP-эквивалент: [`POST /search`](http-api.md#post-search--гибридный-поиск)
 - CLI-эквивалент: [`mnemos search`](cli-reference.md#search)
 
 ---
@@ -232,7 +235,7 @@ Per-agent recall (M3). Возвращает последние записи од
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`GET /recall/agent/{name}`](http-api.md#agent-recall)
+- HTTP-эквивалент: [`GET /recall/agent/{name}`](http-api.md#get-recallagentname--отзыв-агента)
 - CLI-эквивалент: [`mnemos recall --agent <slug>`](cli-reference.md#recall)
 
 ---
@@ -297,8 +300,8 @@ No context found for project 'mnemos'. Start by saving context with mnemos_save_
 ### Связанные ресурсы
 
 - `mnemos_save_context` — парный инструмент записи
-- [architecture.md#session-context](../architecture/overview.md#session-context)
-- HTTP-эквивалент: [`POST /context/recall`](http-api.md#context-recall)
+- [architecture.md](../architecture/overview.md)
+- HTTP-эквивалент: [`POST /context/recall`](http-api.md#post-contextrecall--отозвать-контекст-сессии)
 
 ---
 
@@ -348,8 +351,8 @@ Mnemos синтезирует части в единую запись Markdown �
 ### Связанные ресурсы
 
 - `mnemos_recall_context` — парный инструмент чтения
-- Режим auto-collect: [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server)
-- HTTP-эквивалент: [`POST /context/save`](http-api.md#context-save)
+- Режим auto-collect: [mcp-tools.md#режим-auto-collect](#режим-auto-collect)
+- HTTP-эквивалент: [`POST /context/save`](http-api.md#post-contextsave--сохранить-чекпойнт-сессии)
 
 ---
 
@@ -395,8 +398,8 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`GET /memories`](http-api.md#list-recent)
-- CLI-эквивалент: [`mnemos list`](cli-reference.md#list)
+- HTTP-эквивалент: [`GET /memories`](http-api.md#get-memories--список-последних)
+- CLI-эквивалент: [`mnemos recall`](cli-reference.md#recall)
 
 ---
 
@@ -435,8 +438,135 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`GET /tags`](http-api.md#tags)
-- CLI-эквивалент: [`mnemos tags`](cli-reference.md#tags)
+- HTTP-эквивалент: [`GET /tags`](http-api.md#get-tags--список-тегов-с-количеством)
+
+---
+
+## `mnemos_tags`
+
+Сгруппированные массовые операции над тегами: переименование префикса, удаление или добавление тегов. Диспетчеризация по действию (`action: enum`) — сгруппированный пилотный инструмент (#97); каждое действие идёт через один и тот же безопасный путь записи (обычный `UPDATE`, FTS5-индекс остаётся консистентным), по умолчанию работает как предпросмотр (`dry_run: true`) и идемпотентно.
+
+### Входные параметры
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|--------------|---------- |
+| `action` | string | **да** | — | `rename`, `remove` или `add`. |
+| `from_prefix` | string | для `rename` | — | Исходный префикс, напр. `gcw:`. Должен заканчиваться на `:`. |
+| `to_prefix` | string | для `rename` | — | Целевой префикс, напр. `mnemos:`. Должен заканчиваться на `:`. |
+| `tags` | string[] | для `remove` / `add` | — | Теги для удаления или добавления. Обязательны для этих двух действий. |
+| `subtypes` | string[] | нет | — | Опциональный белый список подтипов для переименования (только `rename`). |
+| `wildcard` | boolean | нет | `false` | Только `remove`: считать каждый элемент `tags` префиксом и снимать все совпадающие теги `prefix*` вместо точного совпадения. `rename` построен на префиксах по своей природе. |
+| `dry_run` | boolean | нет | `true` | Предпросмотр без записи. |
+| `project` | string | нет | — | Ограничить сканирование slug проекта. |
+| `agent` | string | нет | — | Ограничить сканирование slug агента. |
+| `invalid_subtypes_to_legacy` | boolean | нет | `false` | Только `rename`: переименовывать невалидные подтипы в `<to_prefix>legacy` вместо пропуска. |
+
+> **Безопасность контракта.** Итоговый набор тегов повторно валидируется в strict-режиме для каждой записи: снятие последнего тега `project:` / `agent:` / `mnemos:` (или иное нарушение контракта) отклоняется по конкретной записи с записью в `errors`, а не портит хранилище.
+
+### Вывод
+
+Словарь-отчёт. `changed` считает записи, чей набор тегов реально изменился; `renamed` сохранён для обратной совместимости с вызывающими `mnemos_tags_rename` и зеркалит `changed`:
+
+```json
+{
+  "action": "remove",
+  "scanned": 142,
+  "changed": 9,
+  "removed_tags": ["severity:high"],
+  "wildcard": false,
+  "errors": [],
+  "dry_run": true
+}
+```
+
+`rename` возвращает `{"from_prefix", "to_prefix", "scanned", "renamed", "changed", "skipped_invalid", "errors", "dry_run"}`; `add` возвращает `{"action", "scanned", "changed", "added_tags", "errors", "dry_run"}`.
+
+### Пример вызова
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_tags",
+    "arguments": {
+      "action": "rename",
+      "from_prefix": "gcw:",
+      "to_prefix": "mnemos:",
+      "dry_run": false
+    }
+  }
+}
+```
+
+### Ошибки
+
+| Ошибка | Причина |
+|--------|-------- |
+| `unknown action '<x>'...` | `action` не равен `rename` / `remove` / `add`. |
+| `action='rename' requires 'from_prefix' and 'to_prefix' ...` | Для rename не переданы префиксы. |
+| `tags must be a non-empty list` | `remove` / `add` вызван с пустым списком `tags`. |
+
+### Связанные ресурсы
+
+- Группированный родственник: [`mnemos_tags_rename`](#mnemos_tags_rename) — legacy-алиас для `action: "rename"`
+
+---
+
+## `mnemos_tags_rename`
+
+Массовое переименование тегов `from_prefix:<subtype>` → `to_prefix:<subtype>` по всем существующим записям. Сохранён как **неразрывающий алиас**: вызовы диспетчеризируются в тот же путь rename, что и у [`mnemos_tags`](#mnemos_tags) с `action: "rename"` (случайный ключ `action` в аргументах игнорируется). Безопасно — переименование идёт через обычный `UPDATE`, поэтому FTS5 external-content индекс остаётся консистентным, — и идемпотентно: повторный запуск с теми же аргументами переименовывает 0 записей.
+
+### Входные параметры
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|--------------|---------- |
+| `from_prefix` | string | **да** | — | Исходный префикс, напр. `gcw:`. Должен заканчиваться на `:`. |
+| `to_prefix` | string | **да** | — | Целевой префикс, напр. `mnemos:`. Должен заканчиваться на `:`. |
+| `subtypes` | string[] | нет | — | Опциональный белый список подтипов для переименования. |
+| `dry_run` | boolean | нет | `true` | Предпросмотр без записи. |
+| `project` | string | нет | — | Ограничить slug проекта. |
+| `agent` | string | нет | — | Ограничить slug агента. |
+| `invalid_subtypes_to_legacy` | boolean | нет | `false` | Переименовывать невалидные подтипы в `<to_prefix>legacy` вместо пропуска. |
+
+### Вывод
+
+```json
+{
+  "from_prefix": "gcw:",
+  "to_prefix": "mnemos:",
+  "scanned": 142,
+  "renamed": 0,
+  "changed": 0,
+  "skipped_invalid": 3,
+  "errors": [],
+  "dry_run": true
+}
+```
+
+### Пример вызова
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_tags_rename",
+    "arguments": {
+      "from_prefix": "gcw:",
+      "to_prefix": "mnemos:",
+      "invalid_subtypes_to_legacy": true
+    }
+  }
+}
+```
+
+### Связанные ресурсы
+
+- Группированный инструмент: [`mnemos_tags`](#mnemos_tags) — `action: "rename"` — тот же путь кода
+- HTTP-эквивалент: `POST /tags/rename` (реализован в API; пока не описан в [http-api.md](http-api.md))
 
 ---
 
@@ -489,9 +619,9 @@ Mnemos синтезирует части в единую запись Markdown �
 ### Связанные ресурсы
 
 - CLI-эквивалент: [`mnemos add --url <URL>`](cli-reference.md#add)
-- HTTP-эквивалент: [`POST /memories` с ручным контентом](http-api.md#create-memory)
-- HTTP-эквивалент: [`POST /ingest-url`](http-api.md#ingest-url)
-- Безопасность: [security.md](../admin/security.md#ssrf-guard)
+- HTTP-эквивалент: [`POST /memories` с ручным контентом](http-api.md#post-memories--создать-запись-create-memory)
+- HTTP-эквивалент: [`POST /ingest-url`](http-api.md#post-ingest-url--получить-и-сохранить-веб-страницу)
+- Безопасность: [security.md](../admin/security.md#2-защита-от-ssrf-memorymanager_validate_url)
 
 ---
 
@@ -540,8 +670,7 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`POST /watch/start`](http-api.md#watch-start)
-- CLI-эквивалент: [`mnemos watch start`](cli-reference.md#watch-start)
+- HTTP-эквивалент: [`POST /watch/start`](http-api.md#post-watchstart--запустить-файловый-наблюдатель)
 
 ---
 
@@ -561,8 +690,7 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`POST /watch/stop`](http-api.md#watch-stop)
-- CLI-эквивалент: [`mnemos watch stop`](cli-reference.md#watch-stop)
+- HTTP-эквивалент: [`POST /watch/stop`](http-api.md#post-watchstop--остановить-файловый-наблюдатель)
 
 ---
 
@@ -588,8 +716,7 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`GET /watch/status`](http-api.md#watch-status)
-- CLI-эквивалент: [`mnemos watch status`](cli-reference.md#watch-status)
+- HTTP-эквивалент: [`GET /watch/status`](http-api.md#get-watchstatus--статус-наблюдателя)
 
 ---
 
@@ -655,8 +782,7 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`GET /auto-collect`](http-api.md#auto-collect)
-- CLI-эквивалент: [`mnemos auto-collect-status`](cli-reference.md#auto-collect-status)
+- HTTP-эквивалент: [`GET /auto-collect`](http-api.md#get-auto-collect--вектор-сигналов-компакции)
 
 ---
 
@@ -675,8 +801,8 @@ Mnemos синтезирует части в единую запись Markdown �
 ```json
 {
   "status": "ok",
-  "version": "0.1.0",
-  "data_dir": "/home/you/.mnemos",
+  "version": "4.0.0",
+  "data_dir": "/home/you/.mnemos/data",
   "vault_path": "/home/you/.mnemos/vault",
   "total": 142,
   "by_status": {"raw": 5, "processing": 0, "processed": 12, "published": 120, "archived": 5},
@@ -686,8 +812,63 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`GET /metrics`](http-api.md#metrics)
+- HTTP-эквивалент: [`GET /metrics`](http-api.md#get-metrics)
 - CLI-эквивалент: [`mnemos stats`](cli-reference.md#stats)
+
+---
+
+## `mnemos_reprocess`
+
+Ручной запуск конвейера знаний для обработки очереди записей `raw` / `processing` в `published` знание: cluster → synthesize → quality gate → publish. Используйте, когда `mnemos_stats` показывает большую `queue_depth`, или после массового импорта.
+
+### Входные параметры
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|--------------|---------- |
+| `project` | string | нет | — | Ограничить проход slug проекта. |
+| `agent` | string | нет | — | Ограничить проход slug агента. |
+| `limit` | integer | нет | `100` | Максимум рассматриваемых записей. |
+
+### Вывод
+
+Словарь-сводка конвейера:
+
+```json
+{
+  "clusters": 3,
+  "synthesized": 3,
+  "published": 5,
+  "failed_quality_gate": 1,
+  "single_promoted": 2,
+  "stuck_rescued": 0,
+  "published_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+  "refined": 4,
+  "refined_noop": 1,
+  "refine_failed": 0,
+  "quarantined": 0
+}
+```
+
+Записи, не образовавшие кластер, продвигаются поодиночке (`single_promoted`), поэтому очередь разбирается даже при уникальности большинства записей.
+
+### Пример вызова
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_reprocess",
+    "arguments": { "project": "mnemos", "limit": 200 }
+  }
+}
+```
+
+### Связанные ресурсы
+
+- HTTP-эквивалент: [`POST /process`](http-api.md#post-process--запустить-end-to-end-пайплайн)
+- CLI-эквивалент: [`mnemos processor run`](cli-reference.md#processor)
 
 ---
 
@@ -736,8 +917,7 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`POST /compress`](http-api.md#compress)
-- CLI-эквивалент: [`mnemos compress`](cli-reference.md#compress)
+- HTTP-эквивалент: [`POST /compress`](http-api.md#post-compress--сжать-контент)
 
 ---
 
@@ -803,8 +983,7 @@ Mnemos синтезирует части в единую запись Markdown �
 
 ### Связанные ресурсы
 
-- HTTP-эквивалент: [`POST /retrieve`](http-api.md#retrieve)
-- CLI-эквивалент: [`mnemos retrieve`](cli-reference.md#retrieve)
+- HTTP-эквивалент: [`POST /retrieve`](http-api.md#post-retrieve--извлечь-оригинал-из-ccr-кэша)
 
 ---
 
@@ -886,6 +1065,72 @@ cache_aligner:
 
 - Архитектура: [overview.md#cachealigner-p1-5](../architecture/overview.md#cachealigner-p1-5)
 - Референс конфига: [config.example.yaml](../../../config.example.yaml)
+
+---
+
+## `mnemos_filter`
+
+Запустить или обновить контекстный фильтр (M10) для существующей записи и вернуть её `clean_content`. Полезно, когда автофильтр был выключен при приёме или нужно перефильтровать с другим профилем.
+
+Инструмент — **issue-ограниченный** двойник обслуживающего примитива: в контекст фильтруются только записи `published` / `processed` (`raw` / `processing` / `archived` отказывают по fail-closed), опциональный slug проекта вызывающего при несовпадении тоже отказывает, а возвращаемый `clean_content` сканируется на секреты — refuse-режим полностью отбрасывает контент, redact-режим возвращает отредактированную копию со счётчиками.
+
+### Входные параметры
+
+| Поле | Тип | Обязательное | По умолчанию | Описание |
+|------|-----|--------------|--------------|---------- |
+| `memory_id` | string | **да** | — | Id записи для фильтрации. |
+| `profile` | string | нет | автоопределение | Профиль контекстного фильтра. См. [context-filter.md#профили](context-filter.md#профили). |
+| `budget` | integer | нет | — | Токенный бюджет для обрезки. |
+| `project` | string | нет | — | Slug проекта вызывающего — запись должна принадлежать ему (несовпадение отказывает). Опустите для семантики оператора. |
+
+### Вывод
+
+```json
+{
+  "memory_id": "550e8400-e29b-41d4-a716-446655440000",
+  "profile": "terminal",
+  "clean_content": "...filtered text...",
+  "stats": { "...": "статистика конвейера фильтра" },
+  "redactions": 0
+}
+```
+
+При `redactions` > 0 ответ также содержит `redacted_patterns` (только имена шаблонов — совпавшие значения никогда не возвращаются).
+
+### Пример вызова
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 12,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_filter",
+    "arguments": {
+      "memory_id": "550e8400-e29b-41d4-a716-446655440000",
+      "profile": "terminal"
+    }
+  }
+}
+```
+
+### Ошибки
+
+Полезная нагрузка ошибки содержит поле `reason`:
+
+| `reason` | Причина |
+|----------|---------|
+| `not_found` | Записи с таким id нет. |
+| `status_gate` | Статус записи не `published` / `processed` (или она в карантине). |
+| `project_scope` | Запись не принадлежит проекту `project` вызывающего. |
+| `no_content` | У записи нет контента для фильтрации. |
+| `refused` | Сканер секретов отказал в выдаче контента (контент не возвращается). |
+
+### Связанные ресурсы
+
+- [context-filter.md](context-filter.md) — профили, этапы конвейера, поведение автофильтра (список профилей живёт там — здесь не дублируется)
+- HTTP-эквивалент: [`POST /filter/{memory_id}`](http-api.md#post-filtermemory_id--применить-5-этапный-контекстный-фильтр)
+- CLI-эквивалент: [`mnemos filter`](cli-reference.md#filter)
 
 ---
 
@@ -1281,7 +1526,7 @@ output_style:
   "errors": [],
   "warnings": [],
   "format_version": "1.0",
-  "mnemos_version": "2.12.1"
+  "mnemos_version": "4.0.0"
 }
 ```
 
@@ -1507,9 +1752,9 @@ stateDiagram-v2
 
 | Метод | Путь | Маппится на |
 |--------|------|---------|
-| `GET` | `/api/v1/memories/{memory_id}/workflow` | `workflow_get` (404 если память отсутствует) |
-| `POST` | `/api/v1/memories/{memory_id}/workflow` | `workflow_set` (тело: `to`, `actor`, `reason`, `force`; `409` при нарушении guardrail) |
-| `DELETE` | `/api/v1/memories/{memory_id}/workflow` | `workflow_set(... to="withdrawn")` — **отмена / withdraw** (терминально, необратимо). Завершает workflow в `withdrawn`; блокировка очищается как побочный эффект достижения терминального состояния. query-параметр `actor` обязателен; `force` переопределяет чужую блокировку. |
+| `GET` | `/memories/{memory_id}/workflow` | `workflow_get` (404 если память отсутствует) |
+| `POST` | `/memories/{memory_id}/workflow` | `workflow_set` (тело: `to`, `actor`, `reason`, `force`; `409` при нарушении guardrail) |
+| `DELETE` | `/memories/{memory_id}/workflow` | `workflow_set(... to="withdrawn")` — **отмена / withdraw** (терминально, необратимо). Завершает workflow в `withdrawn`; блокировка очищается как побочный эффект достижения терминального состояния. query-параметр `actor` обязателен; `force` переопределяет чужую блокировку. |
 
 `DELETE` — это **отмена / withdraw** — завершает workflow в терминальном состоянии `withdrawn` (дальнейшие переходы невозможны). Это **не** «релиз блокировки в возобновляемое состояние»: у конечного автомата нет ребра обратно в `open`, поэтому память не возвращается в возобновляемое состояние. Чтобы **завершить** работу штатно, используйте `POST` с `to=done`.
 
@@ -1528,8 +1773,8 @@ stateDiagram-v2
 - [cli-reference.md](cli-reference.md) — те же возможности через CLI
 - [tag-contract.md](tag-contract.md) — схема M2, соблюдаемая `mnemos_add`
 - [security.md](../admin/security.md) — защита от SSRF, безопасность секретов
-- [обзор архитектуры](../architecture/overview.md#mcp-server) — жизненный цикл сервера
+- [обзор архитектуры](../architecture/overview.md#mcp-сервер) — жизненный цикл сервера
 
 ---
 
-_Последнее обновление: 2026-06-16_
+_Последнее обновление: 2026-09-05_

@@ -69,7 +69,7 @@ Mnemos применяет структурированную схему тего
 
 Тег добавляется автоматически **сканером секретов на write-path**
 (Слой 1 defence-in-depth федерации, см.
-[Security — Federation defence-in-depth](../admin/security.md#federation-defence-in-depth)).
+[Security — Federation defence-in-depth](../admin/security.md#11-federation-defence-in-depth)).
 Когда `mnemos_add` (или HTTP `POST /memories`, или `ingest_url`, или
 `ingest_path_scoped_rules`) получает контент, совпадающий с известным паттерном
 секрета (AWS-ключи, GitHub-токены, Slack-токены, OpenAI/Anthropic-ключи,
@@ -118,7 +118,7 @@ base64-последовательности), сканер:
 
 - Отсутствие обязательных тегов выдаёт предупреждение, но **не** вызывает исключение.
 - Несколько тегов `project:` / `agent:` всё равно вызывают исключение (всегда неоднозначно).
-- Используется командой `mnemos migrate-from-ai-brain`.
+- Используется командой `mnemos migrate from-ai-brain`.
 
 ---
 
@@ -291,12 +291,14 @@ dry_run}`; `add` — `{action, scanned, changed, added_tags, errors, dry_run}`.
 
 В ai-brain обязательной схемы тегов не было. Процесс миграции:
 
-1. Запустите `mnemos migrate-from-ai-brain` — копирует SQLite из ai-brain в хранилище Mnemos.
+1. Запустите `mnemos migrate from-ai-brain` — копирует SQLite из ai-brain в хранилище Mnemos.
 2. Существующие записи без `project:` / `agent:` получают добавленный тег `mnemos:legacy`
    и сохраняются с `strict_tags=False`.
-3. Запустите `mnemos tags-validate` для получения списка записей с неполным контрактом.
-4. Отредактируйте записи вручную или выполните `mnemos tags-validate --auto-patch` для
-   применения умолчаний по возможности (`project:unknown`, `agent:unknown`).
+3. Проверьте контракт командой `mnemos tags validate` (полный обход vault
+   пока не подключён — для просмотра записей используйте `mnemos stats`
+   или `GET /memories`, см. [cli-reference.md](cli-reference.md#tags-validate)).
+4. Отредактируйте записи вручную, задав best-effort-умолчания
+   (`project:unknown`, `agent:unknown`).
 5. Переключите `strict_tag_contract=True` в `~/.mnemos/config.yaml` после очистки.
 
 ---

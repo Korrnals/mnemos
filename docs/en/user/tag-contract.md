@@ -68,7 +68,7 @@ exchange** — both batch export and mediated pull (federation).
 
 The tag is added automatically by the **write-path secrets scanner**
 (Layer 1 of the federation defence-in-depth, see
-[Security — Federation defence-in-depth](../admin/security.md#federation-defence-in-depth)).
+[Security — Federation defence-in-depth](../admin/security.md#11-federation-defence-in-depth)).
 When `mnemos_add` (or the HTTP `POST /memories`, or `ingest_url`, or
 `ingest_path_scoped_rules`) receives content that matches a known secret
 pattern (AWS keys, GitHub tokens, Slack tokens, OpenAI/Anthropic keys,
@@ -116,7 +116,7 @@ renamed to `mnemos:no-federate` because the same exclusion must cover
 
 - Missing required tags emit a warning but do **not** raise.
 - Multiple `project:` / `agent:` tags still raise (always ambiguous).
-- Used by `mnemos migrate-from-ai-brain` CLI command.
+- Used by `mnemos migrate from-ai-brain` CLI command.
 
 ---
 
@@ -284,12 +284,14 @@ invalid `mnemos:` subtype, adding a malformed slug, or adding a tag without a
 
 ai-brain had no required tag schema. Migrating:
 
-1. Run `mnemos migrate-from-ai-brain` — copies ai-brain SQLite to Mnemos store.
+1. Run `mnemos migrate from-ai-brain` — copies ai-brain SQLite to Mnemos store.
 2. Existing entries without `project:` / `agent:` get tag `mnemos:legacy` appended
    and are stored with `strict_tags=False`.
-3. Run `mnemos tags-validate` to list all entries with incomplete contract.
-4. Edit entries manually or run `mnemos tags-validate --auto-patch` to apply
-   best-effort defaults (`project:unknown`, `agent:unknown`).
+3. Check the contract with `mnemos tags validate` (the full vault scan is
+   not yet wired in — inspect entries via `mnemos stats` or `GET /memories`
+   meanwhile, see [cli-reference.md](cli-reference.md#tags-validate)).
+4. Edit entries manually to apply best-effort defaults
+   (`project:unknown`, `agent:unknown`).
 5. Flip `strict_tag_contract=True` in `~/.mnemos/config.yaml` once clean.
 
 ---

@@ -5,7 +5,7 @@
 > **Статус**: Реализовано в Mnemos M16
 > **Аудитория**: AI-агенты / MCP orchestrator
 > **Base URL**: `http://localhost:8787/v1/` (loopback по умолчанию)
-> **Исходная спецификация**: `docs/a2a/mnemos-requirements.md`
+> **Исходная спецификация**: [ADR-0007 — A2A Sessions API v1](../../project/adr/0007-a2a-sessions-api-v1.md)
 
 Mnemos предоставляет 5 HTTP-эндпоинтов для уровня A2A-маршрутизации. Они
 дают агентам персистентный backend для сессий переписки и истории отдельных шагов,
@@ -342,7 +342,7 @@ plaintext-копия каждого шага на диске и write-ампли
 | Успешный `2xx` | Использовать возвращённый `context_pointer` для адресации шага в последующих шагах. |
 
 Mnemos сам не реализует эти повторы — это задача MCP-слоя. Полный контракт
-см. в `docs/a2a/mnemos-requirements.md`.
+см. в [ADR-0007 — A2A Sessions API v1](../../project/adr/0007-a2a-sessions-api-v1.md).
 
 ---
 

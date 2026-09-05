@@ -49,10 +49,12 @@ The test matrix covers six behaviours:
 | 5 | Idempotent import — re-importing the same compact payload skips existing records | `mnemos sync import` twice, expect `records_imported=0, records_skipped=N` on the second run |
 | 6 | Full roundtrip — pulled records are searchable on A after import | `mnemos search` finds the imported record on peer A |
 
-The five trigger codes (`EXHAUSTIVE`, `ALREADY_EXHAUSTED`, `REFUSED`,
-`RATE_LIMITED`, `TRUNCATED`) are defined in
+The five trigger codes (`EXHAUSTIVE`, `ALREADY_EXHAUSTED`, `PARTIAL`,
+`REFUSED`, `OFFLINE_LITE`) are defined in
 `src/mnemos/trigger_codes.py` and documented in
-[`federation.md`](federation.md) §2.
+[`federation.md`](federation.md) §2. (Rate limiting is an HTTP `429`
+response, not a trigger code; the response body still carries
+`trigger_code=REFUSED`.)
 
 ---
 
@@ -60,11 +62,19 @@ The five trigger codes (`EXHAUSTIVE`, `ALREADY_EXHAUSTED`, `REFUSED`,
 
 | Requirement | Detail |
 | --- | --- |
-| mnemos version | v2.12.1+ on **both** hosts (the mediated-pull endpoint and the non-loopback startup guard both landed in the v2.12 line). |
+| mnemos version | v2.12.1+ on **both** hosts (the mediated-pull endpoint and the non-loopback startup guard both landed in the v2.12 line); current release: 4.0.0. |
 | Peer B config | `federation.enabled: true` (or `federation.shared_projects` non-empty — the server treats an empty `shared_projects` as federation disabled). |
 | Peer B peers | Peer A is configured in `federation.peers` on peer B with `bearer_token_env`, `allowed_projects`, `allowed_types`, `rate_limit_per_minute`. See [`federation.md`](federation.md) §1. |
 | SSH access | For the cross-host test, the operator has SSH access to peer B's host (used to forward peer B's loopback port to the laptop). |
-| Loopback bind | mnemos v2.12.0 startup guard `_check_non_loopback_auth` (in `src/mnemos/api/main.py`) exits non-zero if a non-loopback bind is attempted without `auth_enabled=true` + `totp_enabled=true` + `behind_tls_proxy=true`. The test binds to loopback and tunnels over SSH so the full auth stack is not required for the test. |
+| Loopback bind | The startup guard `_check_non_loopback_auth` (in `src/mnemos/api/main.py`) exits non-zero if a non-loopback bind is attempted without `auth_enabled=true` + `totp_enabled=true` + `behind_tls_proxy=true`. The test binds to loopback and tunnels over SSH so the full auth stack is not required for the test. |
+
+> **Store isolation.** mnemos resolves its config in a fixed order —
+> explicit `--config` flag → `MNEMOS_CONFIG` env var → `./config.yaml` →
+> `~/.mnemos/config.yaml` (`find_config_file` in `src/mnemos/config.py`).
+> There is **no** `MNEMOS_HOME` variable. To run an isolated instance,
+> write a per-instance `config.yaml` (own `mnemos.data_dir` /
+> `mnemos.vault_path`) and point `MNEMOS_CONFIG` at it — every command
+> below uses that pattern.
 
 ### Why loopback + SSH tunnel for testing
 
@@ -94,11 +104,12 @@ echo "MNEMOS_FED_PEER_MNEMOS_A_TOKEN=$TEST_TOKEN"
 ## 3. Single-host smoke test
 
 The single-host smoke test runs two mnemos instances on the same
-machine, in different `MNEMOS_HOME` directories, and walks the
-export → import → search → re-import idempotency loop. It does **not**
-exercise the live `POST /api/v1/federation/pull` endpoint — that is
-the cross-host test in §4. The smoke test verifies the compact payload
-format and the `mnemos sync` CLI.
+machine — each pointed at its own store through a per-instance config
+file selected by `MNEMOS_CONFIG` — and walks the export → import →
+search → re-import idempotency loop. It does **not** exercise the live
+`POST /api/v1/federation/pull` endpoint — that is the cross-host test
+in §4. The smoke test verifies the compact payload format and the
+`mnemos sync` CLI.
 
 A companion script `scripts/smoke-federation.sh` automates the steps
 below. It is being added in parallel with this guide; if it is not yet
@@ -106,47 +117,65 @@ present in your checkout, run the steps manually.
 
 ### Steps
 
-1. **Create two `MNEMOS_HOME` directories.**
+1. **Create two isolated instance configs.**
+
+   Each instance gets its own directory with a `config.yaml` pointing
+   `mnemos.data_dir` / `mnemos.vault_path` inside it:
 
    ```bash
-   export MNEMOS_HOME_A=/tmp/mnemos-fed-a
-   export MNEMOS_HOME_B=/tmp/mnemos-fed-b
-   mkdir -p "$MNEMOS_HOME_A" "$MNEMOS_HOME_B"
+   export MNEMOS_CONF_A=/tmp/mnemos-fed-a/config.yaml
+   export MNEMOS_CONF_B=/tmp/mnemos-fed-b/config.yaml
+   for inst in a b; do
+     mkdir -p "/tmp/mnemos-fed-$inst/data" "/tmp/mnemos-fed-$inst/vault"
+     cat > "/tmp/mnemos-fed-$inst/config.yaml" <<EOF
+   mnemos:
+     data_dir: /tmp/mnemos-fed-$inst/data
+     vault_path: /tmp/mnemos-fed-$inst/vault
+   EOF
+   done
    ```
+
+   Every command in the rest of this section runs with
+   `MNEMOS_CONFIG="$MNEMOS_CONF_A"` (peer A) or `"$MNEMOS_CONF_B"`
+   (peer B) in the environment.
 
 2. **Seed peer B with a test memory.**
 
+   The content is positional; project and agent slugs travel inside the
+   comma-separated `--tags` value (the tag contract):
+
    ```bash
-   MNEMOS_HOME=$MNEMOS_HOME_B mnemos add \
-     --content "Test decision: federation pull uses POST /api/v1/federation/pull" \
-     --tags "project:cross-memory-test,agent:hermes-test,mnemos:decision" \
-     --project cross-memory-test \
-     --agent hermes-test
+   MNEMOS_CONFIG="$MNEMOS_CONF_B" mnemos add \
+     "Test decision: federation pull uses POST /api/v1/federation/pull" \
+     --tags "project:cross-memory-test,agent:hermes-test,mnemos:decision"
    ```
 
 3. **Export a compact payload from peer B.**
 
    ```bash
-   MNEMOS_HOME=$MNEMOS_HOME_B mnemos sync export \
+   MNEMOS_CONFIG="$MNEMOS_CONF_B" mnemos sync export \
      --shared-projects cross-memory-test \
      --output /tmp/mnemos-fed-payload.json
    ```
 
 4. **Import the payload into peer A.**
 
+   The source file is a positional argument:
+
    ```bash
-   MNEMOS_HOME=$MNEMOS_HOME_A mnemos sync import \
-     --source /tmp/mnemos-fed-payload.json
+   MNEMOS_CONFIG="$MNEMOS_CONF_A" mnemos sync import \
+     /tmp/mnemos-fed-payload.json
    ```
 
-   Expect `records_imported=1, records_skipped=0`.
+   Expect `Imported: 1 records` and `skipped: 0`.
 
 5. **Verify the record is searchable on peer A.**
 
+   The query is a positional argument too:
+
    ```bash
-   MNEMOS_HOME=$MNEMOS_HOME_A mnemos search \
-     --query "federation pull" \
-     --project cross-memory-test
+   MNEMOS_CONFIG="$MNEMOS_CONF_A" mnemos search \
+     "federation pull" --project cross-memory-test
    ```
 
    The test decision from step 2 should appear in the results.
@@ -154,11 +183,11 @@ present in your checkout, run the steps manually.
 6. **Re-import the same payload — verify idempotency.**
 
    ```bash
-   MNEMOS_HOME=$MNEMOS_HOME_A mnemos sync import \
-     --source /tmp/mnemos-fed-payload.json
+   MNEMOS_CONFIG="$MNEMOS_CONF_A" mnemos sync import \
+     /tmp/mnemos-fed-payload.json
    ```
 
-   Expect `records_imported=0, records_skipped=1`. The `sync import`
+   Expect `Imported: 0 records` and `skipped: 1`. The `sync import`
    command merges idempotently by record `id`
    (`fed:<source_agent>:<uuid>` prefix); existing records are skipped,
    never overwritten (see `src/mnemos/cli/sync.py`).
@@ -166,7 +195,7 @@ present in your checkout, run the steps manually.
 7. **Clean up.**
 
    ```bash
-   rm -rf "$MNEMOS_HOME_A" "$MNEMOS_HOME_B" /tmp/mnemos-fed-payload.json
+   rm -rf /tmp/mnemos-fed-a /tmp/mnemos-fed-b /tmp/mnemos-fed-payload.json
    ```
 
 ---
@@ -182,7 +211,7 @@ remote host (peer B, the `ai-agent` machine). It exercises the live
 ```mermaid
 flowchart LR
   LAP[Peer A<br/>laptop<br/>loopback :18101] -- SSH tunnel --> SSH[peer-b-host<br/>SSH -L 18101 → 127.0.0.1:8101]
-  SSH --> PB[Peer B mnemos serve<br/>loopback :8101<br/>MNEMOS_HOME=~/.mnemos]
+  SSH --> PB[Peer B mnemos serve<br/>loopback :8101<br/>default config ~/.mnemos/config.yaml]
 ```
 
 ### a. Start the test `mnemos serve` on peer B (remote host)
@@ -193,7 +222,7 @@ satisfies the startup guard, and the SSH tunnel is the only way in.
 
 ```bash
 # On peer B (remote host)
-MNEMOS_HOME=~/.mnemos mnemos serve --port 8101
+mnemos serve --port 8101
 ```
 
 If `config.yaml` on peer B has `api.auth_enabled: true`, override it
@@ -207,17 +236,14 @@ Still on peer B, add a test record in a project that will be in peer
 A's `allowed_projects`:
 
 ```bash
-MNEMOS_HOME=~/.mnemos mnemos add \
-  --content "Cross-host test decision: mediated pull verified 2026-07-27" \
-  --tags "project:cross-memory-test,agent:hermes-test,mnemos:decision" \
-  --project cross-memory-test \
-  --agent hermes-test
+mnemos add \
+  "Cross-host test decision: mediated pull verified 2026-07-27" \
+  --tags "project:cross-memory-test,agent:hermes-test,mnemos:decision"
 ```
 
 ### c. Configure peer A in `federation.peers` on peer B
 
-Edit peer B's `config.yaml` (under `MNEMOS_HOME=~/.mnemos/config.yaml`)
-to add peer A. The token value lives in the named env var, never in
+Edit peer B's `~/.mnemos/config.yaml` to add peer A. The token value lives in the named env var, never in
 the config file.
 
 ```yaml
@@ -247,8 +273,7 @@ Restart `mnemos serve` with the token in the environment:
 
 ```bash
 # On peer B (remote host)
-MNEMOS_FED_PEER_MNEMOS_A_TOKEN=<token-from-§2> \
-MNEMOS_HOME=~/.mnemos mnemos serve --port 8101
+MNEMOS_FED_PEER_MNEMOS_A_TOKEN=<token-from-§2> mnemos serve --port 8101
 ```
 
 The server reads the token from the env var named in
@@ -393,17 +418,15 @@ jq '{format_version: "mnemos.federation.v1", records: .records}' \
   /tmp/pull-response.json > /tmp/compact-payload.json
 
 # Import into peer A's mnemos
-MNEMOS_HOME=~/.mnemos mnemos sync import --source /tmp/compact-payload.json
+mnemos sync import /tmp/compact-payload.json
 ```
 
-Expect `records_imported=1, records_skipped=0`.
+Expect `Imported: 1 records` and `skipped: 0`.
 
 Then verify the record is searchable on peer A:
 
 ```bash
-MNEMOS_HOME=~/.mnemos mnemos search \
-  --query "mediated pull verified" \
-  --project cross-memory-test
+mnemos search "mediated pull verified" --project cross-memory-test
 ```
 
 The imported record should appear, with provenance from peer B
@@ -412,10 +435,10 @@ The imported record should appear, with provenance from peer B
 ### l. Idempotency — re-import the same payload
 
 ```bash
-MNEMOS_HOME=~/.mnemos mnemos sync import --source /tmp/compact-payload.json
+mnemos sync import /tmp/compact-payload.json
 ```
 
-Expect `records_imported=0, records_skipped=1`. The `sync import`
+Expect `Imported: 0 records` and `skipped: 1`. The `sync import`
 command merges idempotently by record `id`; existing records are
 skipped, never overwritten.
 
@@ -435,17 +458,15 @@ skipped, never overwritten.
    exported, `unset MNEMOS_FED_PEER_MNEMOS_A_TOKEN`).
 4. Remove the `mnemos-A` peer entry from peer B's `config.yaml`, or
    replace it with the production config.
-5. Optionally delete the test memory on peer B:
-
-   ```bash
-   MNEMOS_HOME=~/.mnemos mnemos delete --project cross-memory-test --agent hermes-test
-   ```
-
-   (Use the `mnemos delete` flags appropriate to your version; the goal
-   is to remove the `cross-memory-test` seed so it does not leak into
-   a later production pull.)
-6. Remove the local artifacts: `rm /tmp/pull-response.json
-   /tmp/compact-payload.json`.
+5. Optionally withdraw the test memory on peer B. There is no
+   `mnemos delete` CLI verb — the supported path is the workflow
+   withdrawal endpoint (`DELETE /memories/{memory_id}/workflow`,
+   status → `withdrawn`); find the id with `mnemos search`. In
+   practice the record can also simply stay: it lives in the
+   `cross-memory-test` project, which no production peer lists in
+   `allowed_projects`, so it cannot leak into a later production pull.
+6. Remove the local artifacts:
+   `rm /tmp/pull-response.json /tmp/compact-payload.json`.
 
 ---
 

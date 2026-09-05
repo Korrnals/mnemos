@@ -16,7 +16,7 @@ every pull request targeting `main`, and on a weekly drift check
 | Job | Runner | Purpose |
 |---|---|---|
 | `verify` | `ubuntu-latest`, Python 3.11 / 3.12 / 3.13 matrix | Lint + format + mypy + bandit + pip-audit + pytest + coverage |
-| `build-container` | `ubuntu-latest` (rootless buildah) | Smoke-test the `Containerfile` builds and the image can start Python |
+| `build-container` | `ubuntu-latest` (rootless buildah) | Smoke-test the `Containerfile` builds and `mnemos --help` works in-image |
 
 The `verify` job is the **required status check** for `main` (see
 [Branch protection](#branch-protection)).
@@ -28,7 +28,7 @@ The `verify` job is the **required status check** for `main` (see
 Run the same gates locally before pushing to save CI minutes:
 
 ```bash
-cd /var/home/abyss/LABs/AI/mnemos
+cd /path/to/mnemos   # repo root
 source .venv/bin/activate
 
 ruff check src/ tests/                                # lint
@@ -176,11 +176,8 @@ runners. Steps:
 3. `buildah from --name mnemos-test mnemos:test` — starts a container
 4. `buildah run mnemos-test -- python --version` — smoke test
 
-> ⚠️ The `Containerfile` is mid-rebrand: it still references
-> `ai-brain` / `ai_brain`. The smoke step therefore runs a vanilla
-> `python --version` instead of `mnemos --help`. Once the
-> rebrand lands (see repo memory), update the smoke step in
-> `.github/workflows/ci.yml` to invoke the CLI.
+> The smoke step runs `mnemos --help` (plus a Python version print) inside
+> the built image, so it validates the CLI entrypoint, not just the base image.
 
 If the container job fails, inspect the log for:
 
@@ -251,10 +248,12 @@ before merging.
 
 ## Out of scope (today)
 
-- **CD / deploy** — release job (`redhat-actions/buildah-build` →
-  GHCR → `softprops/action-gh-release`) is scaffolded in
-  `ci.yml` but not exercised yet. Will be wired in a follow-up
-  slice once the container rebrand lands.
+- **CD / deploy** — the release pipeline lives in
+  [`.github/workflows/release.yml`](../../../../.github/workflows/release.yml):
+  a `v*.*.*` tag builds the wheel/sdist and attaches them to the GitHub
+  Release, and pushes `ghcr.io/korrnals/mnemos:$VERSION` + `:latest`.
+  PyPI upload is run separately per [`pypi-publish.md`](pypi-publish.md);
+  container use is covered by [`container-deployment.md`](container-deployment.md).
 - **Self-hosted runner** — not needed at this scale. GitHub-hosted
   `ubuntu-latest` is fast enough and the concurrency group keeps
   costs in check.

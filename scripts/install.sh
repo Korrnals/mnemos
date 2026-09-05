@@ -7,7 +7,7 @@
 #   curl -fsSL .../install.sh | bash -s -- --venv ~/.mnemos-venv --extra mcp,ollama
 #
 # Flags:
-#   --version VERSION   Mnemos version to install (default: latest from GitHub Releases)
+#   --version VERSION   Mnemos version to install (default: latest from PyPI)
 #   --extra EXTRAS      Comma-separated extras: mcp,ollama,openai,anthropic,gemini,dev,all (default: mcp)
 #   --venv PATH         Create a venv at PATH and install there (default: ~/.mnemos/venv)
 #   --no-venv           Install into the current Python (system/user), no venv
@@ -99,9 +99,9 @@ fi
 
 # ── Resolve version ───────────────────────────────────────────────
 if [[ -z "$VERSION" ]]; then
-  info "Detecting latest Mnemos release…"
-  VERSION="$(curl -fsSL "https://api.github.com/repos/Korrnals/mnemos/releases/latest" 2>/dev/null \
-    | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/' || true)"
+  info "Detecting latest Mnemos version on PyPI…"
+  VERSION="$(curl -fsSL "https://pypi.org/pypi/mnemos-memory-server/json" 2>/dev/null \
+    | "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["info"]["version"])' 2>/dev/null || true)"
   [[ -z "$VERSION" ]] && die "Could not detect latest version. Specify --version manually."
 fi
 info "Installing Mnemos v${VERSION} (extras: ${EXTRAS})"
@@ -152,8 +152,12 @@ if [[ "$CONTAINER" == true ]]; then
   exit 0
 fi
 
-# ── Build wheel URL ───────────────────────────────────────────────
-WHEEL_URL="https://github.com/Korrnals/mnemos/releases/download/v${VERSION}/mnemos_memory_server-${VERSION}-py3-none-any.whl"
+# ── Build package spec (PyPI is the primary distribution channel) ─
+PKG_SPEC="mnemos-memory-server"
+if [[ -n "$EXTRAS" ]]; then
+  PKG_SPEC="${PKG_SPEC}[${EXTRAS}]"
+fi
+PKG_SPEC="${PKG_SPEC}==${VERSION}"
 
 # ── Create venv (unless --no-venv) ────────────────────────────────
 if [[ "$NO_VENV" == false ]]; then
@@ -169,14 +173,13 @@ if [[ "$NO_VENV" == false ]]; then
 fi
 
 # ── Install ───────────────────────────────────────────────────────
-EXTRA_BRACKET="[${EXTRAS}]"
-info "Installing mnemos${EXTRA_BRACKET} from ${WHEEL_URL}…"
+info "Installing ${PKG_SPEC} from PyPI…"
 
 if [[ "$USE_UV" == true ]]; then
-  uv pip install --reinstall --no-cache "${WHEEL_URL}${EXTRA_BRACKET}"
+  uv pip install --reinstall "${PKG_SPEC}"
 else
   pip install --upgrade pip
-  pip install --force-reinstall --no-cache-dir "${WHEEL_URL}${EXTRA_BRACKET}"
+  pip install --upgrade "${PKG_SPEC}"
 fi
 
 # ── Resolve the mnemos binary ─────────────────────────────────────

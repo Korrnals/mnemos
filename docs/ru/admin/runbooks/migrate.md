@@ -21,7 +21,7 @@
 Всегда запускайте dry-run первым, чтобы увидеть, что будет перенесено:
 
 ```bash
-mnemos migrate-from-ai-brain --dry-run
+mnemos migrate from-ai-brain --dry-run
 ```
 
 Вывод показывает:
@@ -32,7 +32,7 @@ mnemos migrate-from-ai-brain --dry-run
 ## Полная миграция
 
 ```bash
-mnemos migrate-from-ai-brain
+mnemos migrate from-ai-brain
 ```
 
 Действия:
@@ -51,7 +51,7 @@ mnemos migrate-from-ai-brain
 После миграции просмотрите и перетегируйте важные записи:
 
 ```bash
-mnemos search "project:legacy" --limit 50
+mnemos search legacy --tags project:legacy --limit 50
 ```
 
 ## Миграция тегов `gcw:` → `mnemos:`

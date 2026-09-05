@@ -2,107 +2,87 @@
 
 **🌐 Language / Язык:** English · [Русский](../../ru/user/getting-started.md)
 
-> Complete first-run guide for Mnemos — from install to your first memory, search, and agent recall.
+> Complete first-run guide for Mnemos — from a one-line install to your first memory, first search, and a connected agent harness.
 
-This page walks you through a working Mnemos install, your first memory, your first search, and your first MCP / HTTP server start. Every command in this document is runnable on a clean Linux / macOS / WSL2 box.
+Mnemos is on PyPI — no cloning, no building, no venv knowledge required. This page walks you through the whole first run. Every command is runnable on a clean Linux / macOS / WSL2 box.
 
 For higher-level context, see [architecture overview](../architecture/overview.md). For every CLI subcommand, see [cli-reference.md](cli-reference.md). For every MCP tool, see [mcp-tools.md](mcp-tools.md). For every HTTP endpoint, see [http-api.md](http-api.md).
 
 ---
 
-## Prerequisites
-
-Mnemos needs Python 3.11 or newer and `git`. We recommend `uv` for fast, isolated installs.
-
-| Tool | Version | Why |
-|------|---------|-----|
-| Python | ≥ 3.11 | Pydantic v2, modern type hints, StrEnum |
-| `uv` | latest | Fast, hermetic Python package manager |
-| `git` | any | To clone the repo (skip if installing from PyPI) |
-| `make` | any | Convenience targets: `make verify`, `make test` |
-
-> **OS notes.** Mnemos is developed on Linux (Arch, Fedora, Ubuntu 22.04+) and is regularly smoke-tested on macOS. Windows works through WSL2. The systemd unit in `contrib/systemd/` is Linux-only.
-
-> **Hardware.** The default embedding model (`mnema-embed-v1`, ~30 MB, bundled — nothing is downloaded) runs comfortably on a single CPU core. No GPU is required. A 2 vCPU / 2 GB VM is enough for personal use.
-
----
-
-## Install
+## Install (one command)
 
 ```bash
-git clone https://github.com/Korrnals/mnemos.git
-cd mnemos
-uv venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
+pip install "mnemos-memory-server[mcp]"
 ```
 
-If you don't have `uv`:
+That is the whole install:
+
+- **`mnemos-memory-server`** is the PyPI package — the memory & knowledge server, the `mnemos` CLI, the MCP server, and the REST API in one wheel.
+- **`[mcp]`** adds the MCP SDK — keep it; the MCP server (`mnemos mcp-server`) is the primary integration surface for agent harnesses.
+- **Nothing else is downloaded, ever.** The default embedding model (`mnema-embed-v1`, ~30 MB) is bundled inside the wheel — search works fully offline, on CPU, with no API keys.
+
+> ⚠️ **The package name is `mnemos-memory-server`.** `pip install mnemos` installs an *unrelated* project that owns the `mnemos` name on PyPI.
+
+### Isolated variant (recommended for harness wiring)
+
+Harnesses launch the `mnemos` command from `PATH`. A tool install puts it there without touching your project environments:
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+uv tool install "mnemos-memory-server[mcp]"
+# or
+pipx install "mnemos-memory-server[mcp]"
 ```
 
-The `[dev]` extra adds `pytest`, `ruff`, `mypy`, `bandit`, and `pip-audit` so you can run the full verification suite.
+### Scripted variant (zero decisions)
 
-### Install options
+The installer creates an isolated venv at `~/.mnemos/venv`, drops a `mnemos` launcher into `~/.local/bin`, and offers to wire VS Code MCP and deploy the integration pack right in the same run:
 
-`pip install -e ".[dev]"` — the `.` is the package itself (`mnemos`); `[dev]` and `[mcp]` are **optional extras**. You are not missing a package name.
+```bash
+curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
+```
+
+### Other install options
 
 | Method | Command |
 |--------|---------|
-| Editable dev (recommended for contributors) | `pip install -e ".[dev,mcp]"` |
-| From source, versioned | `pip install ".[mcp]"` |
-| Released wheel | `pip install https://github.com/Korrnals/mnemos/releases/download/v2.1.0/mnemos-2.1.0-py3-none-any.whl` |
-| Container | `podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 --env MNEMOS_API__TOTP_MASTER_KEY=<key> ghcr.io/korrnals/mnemos:2.1.0` — see [container-deployment.md](../admin/runbooks/container-deployment.md) |
+| Pin a version | `pip install "mnemos-memory-server[mcp]==4.0.0"` |
+| Container one-liner | `… install.sh \| bash -s -- --container` — see [container-deployment.md](../admin/runbooks/container-deployment.md) |
+| From source (contributors) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` |
 
-### Optional LLM provider extras
+<details>
+<summary><strong>Optional extras</strong> — external LLM providers, only if you need them</summary>
 
-Mnemos can call external LLMs for synthesis (M4) and the context filter (M10). Install only what you need:
-
-```bash
-uv pip install -e ".[ollama]"     # local Ollama
-uv pip install -e ".[openai]"     # OpenAI / Azure OpenAI
-uv pip install -e ".[anthropic]"   # Anthropic Claude
-uv pip install -e ".[gemini]"     # Google Gemini
-```
-
-The default provider is `ollama` pointing at `http://localhost:11434`. See [architecture overview](../architecture/overview.md#llm-providers) for the full provider matrix.
-
----
-
-## Verify
-
-Run the full verification gate. All five steps must be green before you start.
+Mnemos calls external LLMs for pipeline synthesis (M4) and enrichment — never for storing or searching. Install only what you need:
 
 ```bash
-make verify
+uv pip install "mnemos-memory-server[ollama]"      # local Ollama (default provider)
+uv pip install "mnemos-memory-server[openai]"      # OpenAI / Azure OpenAI
+uv pip install "mnemos-memory-server[anthropic]"   # Anthropic Claude
+uv pip install "mnemos-memory-server[gemini]"      # Google Gemini
 ```
 
-The `verify` target runs, in order:
+The default provider is `ollama` pointing at `http://localhost:11434`. See [config.example.yaml](../../../config.example.yaml) for the full provider list.
 
-| Step | Tool | What it checks |
-|------|------|----------------|
-| 1 | `ruff` | Lint (PEP-8, import order, common bugs) |
-| 2 | `pytest` | Test suite (unit + integration) |
-| 3 | `bandit` | Security lint (M9) |
-| 4 | `pip-audit` | Dependency CVE scan (M15) |
-| 5 | reminder | Prints the pinned CVE reminder |
+</details>
 
-A clean run ends with `✅ All verification checks passed`.
+### Prerequisites
 
-If `pip-audit` complains about a pinned CVE, see [dependency-updates runbook](../admin/runbooks/dependency-updates.md) for the weekly-review workflow.
+| Tool | Version | Why |
+|------|---------|-----|
+| Python | ≥ 3.11 | Runtime floor (`pip` handles it — no manual venv needed) |
+| `uv` or `pipx` | latest | Optional, for the isolated tool install |
+
+> **OS notes.** Mnemos is developed on Linux (Arch, Fedora, Ubuntu 22.04+) and is regularly smoke-tested on macOS. Windows works through WSL2. The systemd unit in `contrib/systemd/` is Linux-only.
+
+> **Hardware.** The bundled `mnema-embed-v1` runs comfortably on a single CPU core. No GPU. A 2 vCPU / 2 GB VM is enough for personal use.
 
 ---
 
 ## First memory (CLI)
 
-The CLI uses Typer and prints a Rich-formatted table. Add your first entry:
-
 ```bash
-mnemos add --content "Hello world" --tags project:test agent:getting-started mnemos:learning
+mnemos add "Hello world" --tags project:test agent:getting-started mnemos:learning
 ```
 
 Expected output:
@@ -113,33 +93,22 @@ Expected output:
 
 Mnemos automatically:
 
-1. **Wrote the entry to SQLite** at `~/.mnemos/mnemos.db`.
+1. **Wrote the entry to SQLite** at `~/.mnemos/data/mnemos.db` (created on first run).
 2. **Mirrored it to your Obsidian vault** at `~/.mnemos/vault/` as a markdown file with YAML frontmatter.
-3. **Validated the tag contract** — `project:test` + `agent:getting-started` + `mnemos:learning` is a valid M2 trio. If you skip one, you get `❌ Tag contract violation: ...` instead.
+3. **Validated the tag contract** — `project:test` + `agent:getting-started` + `mnemos:learning` is a valid trio. Skip one and you get `❌ Tag contract violation: ...` instead.
 
 The tag contract is documented in [tag-contract.md](tag-contract.md). The short version: every memory needs **exactly one** `project:<slug>`, **exactly one** `agent:<slug>`, and **at least one** `mnemos:<subtype>` (e.g. `mnemos:learning`, `mnemos:bug-pattern`, `mnemos:decision`).
 
-> **Note.** Newly added memories start in the `raw` state. The background processor (running in both MCP and HTTP API modes since v2.7.8) automatically clusters, synthesises, quality-gates, and publishes them. The vector search index only includes `published` memories. If you need to rebuild the vector index for all published memories, run `mnemos reindex` (CLI) or `POST /reindex` (HTTP API).
+> **Note.** Newly added memories start in the `raw` state. The background processor (running in both MCP and HTTP API modes) automatically clusters, synthesises, quality-gates, and publishes them. The vector search index only includes `published` memories. To rebuild it manually: `mnemos reindex` (CLI) or `POST /reindex` (HTTP API).
 
 ---
 
 ## First search
 
-Hybrid search combines SQLite FTS5 with vector similarity and merges the rankings using Reciprocal Rank Fusion (RRF).
+Hybrid search combines SQLite FTS5 full-text with vector similarity and merges the rankings using Reciprocal Rank Fusion (RRF):
 
 ```bash
 mnemos search "hello"
-```
-
-Expected output (Rich table):
-
-```text
-┏━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Score ┃ Title      ┃ Tags                                  ┃ Status   ┃
-┡━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ 1.000 │ Hello world│ project:test, agent:getting-started, │ raw      │
-│       │            │ mnemos:learning                          │          │
-└───────┴────────────┴──────────────────────────────────────┴──────────┘
 ```
 
 Useful flags:
@@ -153,46 +122,29 @@ For programmatic access with more options (vector weight, raw content, tag filte
 
 ---
 
-## First agent recall
+## Connect your harness (MCP)
 
-`recall` returns recent memories. Filter by agent to get only what one specific Copilot agent saved (M3):
+The MCP server is the primary integration surface: your agent harness spawns `mnemos mcp-server` over stdio and gets the full `mnemos_*` tool set. Pick your harness:
 
-```bash
-mnemos recall --agent getting-started
-```
+| Harness | Fastest path |
+|---------|--------------|
+| VS Code Copilot | `curl -fsSL …/scripts/mcp-setup.sh \| bash`, then reload the window |
+| Claude Code | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
+| Cursor | paste one line into `~/.cursor/mcp.json` |
+| OpenCode | paste one block into `~/.config/opencode/opencode.json` |
+| Codex / Windsurf | one TOML / JSON block each |
+| ZCode, pi, Hermes Agent | `mnemos integration setup --target zcode` / `--target pi` / `--target hermes` |
+| Anything else | [adapter-template.md](../../../integrations/adapter-template.md) |
 
-Expected output (Rich list):
-
-```text
-Hello world  (550e8400…)
-  tags: project:test, agent:getting-started, mnemos:learning
-```
-
-Combine with `--project` to scope further:
-
-```bash
-mnemos recall --agent getting-started --project test --limit 5
-```
-
-This is the same data the MCP tool [`mnemos_agent_recall`](mcp-tools.md#mnemos_agent_recall) exposes to Copilot agents.
-
----
-
-## Run the MCP server
-
-The MCP server speaks stdio JSON-RPC — VS Code Copilot talks to it directly. **It is the primary integration surface for AI agents.**
-
-> The `mcp` package is an optional extra — install it first with `pip install -e ".[mcp]"` (or `uv pip install -e ".[mcp]"`).
+**The full copy-paste instructions for every harness live on one page: [Connect Mnemos to any harness](../../../integrations/mcp-presets.md).** The behavioral layer — instructions, skills, and prompt mode that make agents actually *use* the memory — is a separate one-pass step:
 
 ```bash
-mnemos mcp-server
+mnemos integration setup
 ```
 
-The process blocks on stdin/stdout; it does not bind any TCP port. Stop it with `Ctrl+C`.
+See the [integration guide](integration-guide.md) for targets and flags.
 
-### VS Code `mcp.json` snippet
-
-Add this to your VS Code `mcp.json` (User or Workspace):
+Manual VS Code reference — user- or workspace-scope `mcp.json`:
 
 ```jsonc
 {
@@ -200,76 +152,69 @@ Add this to your VS Code `mcp.json` (User or Workspace):
     "mnemos": {
       "type": "stdio",
       "command": "mnemos",
-      "args": ["mcp-server"],
-      "env": {
-        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos/data",
-        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/.mnemos/vault"
-      }
+      "args": ["mcp-server"]
     }
   }
 }
 ```
 
-After saving, VS Code lists the `mnemos_*` tools in the Copilot Chat "tools" picker. See [mcp-tools.md](mcp-tools.md) for the full tool catalogue.
-
-> **Tip — auto-collect mode.** Set `MNEMOS_AUTO_COLLECT=1` in the env above to make Mnemos nag your agent to call `mnemos_save_context` every ~6 tool calls. See [mcp-tools.md#auto-collect](mcp-tools.md#auto-collect-mode) for the trade-offs.
+> **Tip — auto-collect mode.** Set `MNEMOS_AUTO_COLLECT=1` in the server's `env` block to make Mnemos nudge your agent to call `mnemos_save_context` every ~6 tool calls. See [mcp-tools.md#auto-collect-mode](mcp-tools.md#auto-collect-mode) for the trade-offs.
 
 ---
 
-## Run the HTTP API
+## Run the HTTP API (optional)
 
-For agent-to-agent (A2A) traffic and custom clients, start the HTTP server:
+For non-MCP clients, dashboards, and A2A traffic:
 
 ```bash
-mnemos serve --host 127.0.0.1 --port 8000
+mnemos serve --host 127.0.0.1 --port 8787
 ```
 
 | Endpoint | Purpose |
 |----------|---------|
-| `http://127.0.0.1:8000/health` | Liveness check |
-| `http://127.0.0.1:8000/metrics` | Stats (Prometheus-style) |
-| `http://127.0.0.1:8000/docs` | Swagger UI |
-| `http://127.0.0.1:8000/redoc` | ReDoc |
-| `http://127.0.0.1:8000/openapi.json` | OpenAPI 3.1 schema |
-| `http://127.0.0.1:8000/v1/sessions` | A2A sessions API (M16) |
+| `http://127.0.0.1:8787/health` | Liveness check |
+| `http://127.0.0.1:8787/metrics` | Stats (Prometheus-style) |
+| `http://127.0.0.1:8787/docs` | Swagger UI |
+| `http://127.0.0.1:8787/v1/sessions` | A2A sessions API (M16) |
 
-> **Security.** The default bind is `127.0.0.1`. Do not expose this port to a network without putting a reverse proxy with authentication in front. Mnemos is not designed as a public service — see [security.md](../admin/security.md) for the threat model.
+> **Security.** The default bind is `127.0.0.1`. Do not expose this port without a reverse proxy with authentication in front — see [security.md](../admin/security.md).
 
 Smoke-test it:
 
 ```bash
-curl -s http://127.0.0.1:8000/health | jq
+curl -s http://127.0.0.1:8787/health | jq
 # {"status":"ok"}
 ```
 
-See [http-api.md](http-api.md) for every endpoint, request body, and response shape.
+---
+
+## Verify your installation
+
+```bash
+mnemos doctor
+```
+
+runs health checks over the store, config, MCP transport, and known harness registrations — and prints one PASS/WARN/FAIL line per check. `mnemos doctor --fix` auto-resolves the common warnings (stale integration files, unwired agents, missing MCP registration).
+
+To run the full development gate (contributors only): clone the repo, `uv pip install -e ".[dev,mcp]"`, then `make verify` — ruff + mypy `--strict` + bandit + pip-audit + the test suite. If `pip-audit` complains about a pinned CVE, see the [dependency-updates runbook](../admin/runbooks/dependency-updates.md).
 
 ---
 
 ## Migrate from legacy ai-brain
 
-If you have an existing legacy `ai-brain` install (`~/.ai-brain/ai_brain.db` + `~/brain-vault/`), Mnemos can import it in one command.
-
-### Dry-run first
+If you have an existing legacy `ai-brain` install (`~/.ai-brain/ai_brain.db` + `~/brain-vault/`), Mnemos imports it in one command. Dry-run first:
 
 ```bash
-mnemos migrate-from-ai-brain --dry-run
+mnemos migrate from-ai-brain --dry-run
 ```
 
-This prints a summary (no writes). Read the output, confirm the counts match your expectation, then run for real:
+Read the summary, then run for real:
 
 ```bash
-mnemos migrate-from-ai-brain
+mnemos migrate from-ai-brain
 ```
 
-The migrator:
-
-- Translates legacy `source: telegram` → `source: mcp`, and similar for every source type.
-- **Patches the tag contract** — every legacy entry gets `project:legacy`, `agent:unknown`, `mnemos:legacy` added.
-- Preserves `status: raw / processing / processed / published / archived`.
-- Migrates the `content_ru` / `content_en` columns into `metadata` (no data loss).
-
-> **Path overrides.** Use `--source PATH` and `--vault PATH` to point at a non-default location, e.g. an exported ai-brain tarball.
+The migrator translates legacy source types, patches the tag contract (`project:legacy`, `agent:unknown`, `mnemos:legacy`), preserves entry statuses, and migrates the `content_ru` / `content_en` columns into `metadata` (no data loss). Use `--source PATH` and `--vault PATH` for non-default locations.
 
 ---
 
@@ -279,15 +224,15 @@ Mnemos reads `config.yaml` from the current directory or `~/.mnemos/config.yaml`
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
+| `mnemos.data_dir` | `~/.mnemos/data` | SQLite store + vector index |
 | `mnemos.vault_path` | `~/.mnemos/vault` | Obsidian mirror |
-| `mnemos.data_dir` | `~/.mnemos/data` | SQLite + vector index |
-| `mnemos.strict_tag_contract` | `true` | Enforce M2 contract (set `false` only for legacy imports) |
-| `embedding.provider` | `nano` | `nano` (mnema-embed-v1, bundled local model) / `onnx` / `ollama` / `sentence-transformers` |
-| `search.hybrid_alpha` | `0.7` | Weight of vector leg in RRF (0.0 = pure FTS, 1.0 = pure vector) |
+| `mnemos.strict_tag_contract` | `true` | Enforce the tag contract (set `false` only for legacy imports) |
+| `embedding.provider` | `nano` | `nano` (mnema-embed-v1, bundled) / `onnx` / `ollama` / `sentence-transformers` |
+| `search.hybrid_alpha` | `0.7` | Weight of the vector leg in RRF (0.0 = pure FTS, 1.0 = pure vector) |
 | `api.host` / `api.port` | `127.0.0.1` / `8787` | `mnemos serve` defaults |
-| `llm.provider` / `llm.model` | `ollama` / `qwen2.5:3b` | M4 synthesis & M10 context filter |
+| `llm.provider` / `llm.model` | `ollama` / `qwen2.5:3b` | Pipeline synthesis & context filter |
 
-Any of these can be overridden by env vars (`MNEMOS_*`, with `__` for nesting). Example:
+Any of these can be overridden by env vars (`MNEMOS_*`, with `__` for nesting):
 
 ```bash
 MNEMOS_SEARCH__HYBRID_ALPHA=0.5 mnemos search "deployment"
@@ -295,8 +240,7 @@ MNEMOS_SEARCH__HYBRID_ALPHA=0.5 mnemos search "deployment"
 
 ### Logging
 
-Mnemos logs to `~/.mnemos/logs/mnemos.log` by default (rotating, 10 MB × 3 files).
-Configure via `config.yaml`:
+Mnemos logs to `~/.mnemos/logs/mnemos.log` by default (rotating, 10 MB × 3 files):
 
 ```yaml
 logging:
@@ -306,42 +250,34 @@ logging:
   backup_count: 3
 ```
 
-CLI: `mnemos serve --verbose` for DEBUG level, `mnemos serve --log-file /path/to/log` to override.
+CLI: `mnemos --verbose serve` for DEBUG level, `mnemos serve --log-file /path/to/log` to override.
 
 ---
 
 ## Troubleshooting
 
-### `make verify` fails on `pip-audit`
+### `mnemos` command not found
 
-You probably hit a pinned CVE in a transitive dependency. The policy is to **pin the fixed version directly** (see the pins in `pyproject.toml`) and keep the failure visible until the pin lands. See [dependency-updates runbook](../admin/runbooks/dependency-updates.md) for the workflow. (Historical note: the loudest such case was `CVE-2026-45829` in `chromadb 1.5.9` — chromadb was removed from the runtime entirely in NM-1c, taking its CVEs with it.)
+If you installed with plain `pip` into a venv, the venv must be active. Prefer the isolated install (`uv tool` / `pipx` / `install.sh`) — it puts `mnemos` on `PATH` in every shell (`~/.local/bin`; add it to `PATH` if your distro does not).
 
-### First model download is slow
+### `mnemos mcp-server` fails with an import error about `mcp`
 
-The default embedding model (`mnema-embed-v1`) ships inside the package — there is no download and the first start is as fast as any other. A download delay means you switched to an external provider (`onnx`, `sentence-transformers`): those fetch their model from Hugging Face on first use; subsequent starts are instant. To pre-warm:
-
-```bash
-python -c "from mnemos.embeddings import create_embedding_provider; from mnemos.config import load_settings; create_embedding_provider(load_settings().embedding).embed('warm up')"
-```
+The `[mcp]` extra is missing: `pip install "mnemos-memory-server[mcp]"`.
 
 ### Search returns only "raw" entries
 
-The vector search index only includes `published` memories. Newly added memories default to `raw`. Either run the pipeline (`POST /process`) or set `status: "published"` on creation. The CLI does not expose a `--status` flag yet — use the HTTP API for now.
+The vector index only includes `published` memories; new entries start `raw` and are published by the background processor. To publish immediately, set `status: "published"` on creation via the HTTP API, or let the pipeline run.
 
 ### `sqlite3.OperationalError: database is locked`
 
-Another `mnemos` process (CLI, MCP, or HTTP) holds the write lock. SQLite uses WAL mode but only one writer is allowed at a time. Close the other process, or wait for its transaction to commit (default busy-timeout is 5 s).
+Another `mnemos` process (CLI, MCP, or HTTP) holds the write lock. SQLite uses WAL mode but only one writer is allowed at a time. Close the other process, or wait for its transaction to commit (default busy-timeout is 5 s). For multi-harness setups, give each harness its own data dir — see the one-owner-per-store note in the [integration guide](integration-guide.md).
 
-### MCP server starts but no tools appear in Copilot
+### MCP server runs but no tools appear in the harness
 
-1. Check `mcp.json` parses (no trailing commas, valid JSONC).
-2. Restart VS Code after editing `mcp.json`.
-3. Check the **Output → Model Context Protocol** channel for stderr from `mnemos mcp-server`.
-4. Run `mnemos mcp-server` standalone to see Python tracebacks directly.
-
-### `mnemos` command not found
-
-Your virtualenv is not active. Run `source .venv/bin/activate` (or the equivalent on your shell) before invoking `mnemos`. If you installed system-wide with `pipx`, the binary is in `~/.local/bin/mnemos`.
+1. Check the harness config parses (valid JSONC / TOML, no trailing commas).
+2. Restart the harness after editing its config.
+3. Probe the wire directly: `printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0.0.0"}}}\n' | mnemos mcp-server` — a JSON-RPC reply with `"serverInfo":{"name":"mnemos"...}` means the server side is fine.
+4. Run `mnemos doctor` — the MCP transport and registration checks point at the broken link.
 
 ---
 
@@ -349,16 +285,17 @@ Your virtualenv is not active. Run `source .venv/bin/activate` (or the equivalen
 
 | If you want to… | Read |
 |-----------------|------|
+| Connect a specific harness (VS Code, Claude Code, Cursor, OpenCode, Codex, Windsurf, pi, Hermes…) | [Connect Mnemos to any harness](../../../integrations/mcp-presets.md) |
+| Deploy the behavioral pack (instructions / skills / prompts / agent wiring) | [integration-guide.md](integration-guide.md) |
 | See every CLI subcommand | [cli-reference.md](cli-reference.md) |
-| See every MCP tool Copilot can call | [mcp-tools.md](mcp-tools.md) |
+| See every MCP tool | [mcp-tools.md](mcp-tools.md) |
 | See every HTTP endpoint | [http-api.md](http-api.md) |
 | Understand the system shape | [architecture overview](../architecture/overview.md) |
 | Read the tag schema | [tag-contract.md](tag-contract.md) |
-| Read the A2A sessions contract | [a2a-sessions.md](../architecture/a2a-sessions.md) |
 | Run an operational task | [admin/runbooks/install.md](../admin/runbooks/install.md) |
 | Review security boundaries | [security.md](../admin/security.md) |
 | See why a decision was made | [project/adr/](../../project/adr/) |
 
 ---
 
-_Last updated: 2026-06-16_
+_Last updated: 2026-09-05_

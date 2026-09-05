@@ -237,7 +237,8 @@ Mnemos использует **непрозрачные bearer-токены** (п
 записывается только PBKDF2-HMAC-SHA256 дайджест каждого токена (600 000
 итераций, фиксированная соль `mnemos.api.auth.fernet.v1`). Открытый текст
 показывается однократно при создании и никогда не хранится. Похищенный
-`~/.mnemos/auth.db` или конфигурационный файл содержат только хэш, а не
+`~/.mnemos/data/mnemos.db` (где дайджесты токенов хранятся вместе с
+памятями) или конфигурационный файл содержат только хэш, а не
 пригодный к использованию bearer-токен.
 
 ### 9.2 TOTP второй фактор
@@ -417,7 +418,7 @@ flowchart TB
 | Слой | Где | Когда | Что делает | Статус |
 |------|-----|-------|-----------|--------|
 | **1. Сканер на write-path** | `mnemos_add` / `POST /memories` / `ingest_url` / `ingest_path_scoped_rules` | На каждой записи | Запускает `detect_secrets(content)`. Если секрет обнаружен и запись ещё не несёт `mnemos:no-federate`, тег добавляется автоматически. Логирует только имена паттернов + счётчики — никогда сырые значения. | ✅ Выпущено (#86) |
-| **2. Background scanner** | MCP-сервер, фоновая задача | Настраиваемый интервал (`federation.no_federate_scan_interval_hours`, default 6ч) | Пересканирует весь корпус для false negatives, пропущенных на write-path. Переиспользует `detect_secrets` без изменений (DRY — один источник паттернов). | 🔮 Будущее (#89) |
+| **2. Background scanner** | MCP-сервер, фоновая задача | Настраиваемый интервал (`scanner.interval_hours`, default 6ч) | Пересканирует весь корпус для false negatives, пропущенных на write-path. Переиспользует `detect_secrets` без изменений (DRY — один источник паттернов). Ручной запуск: `mnemos scanner run`. | ✅ Выпущено (#89) |
 | **3. Moderation pipeline** | Sync export (Phase 0) / Pull (Phase 2) | На каждом sync export / pull | Финальная защита — запускает `moderate()` на выходе через `build_compact_payload()`. Даже если тег `no-federate` отсутствует, pipeline санитизирует контент (redact) или отказывает в записи. | ✅ Выпущено (#85 parts 1, 2a, 2b) |
 
 ### 11.1 Модуль детектора секретов
@@ -442,7 +443,7 @@ key, database connection strings, и high-entropy base64-последовате�
 
 ### 11.2 Тег `mnemos:no-federate`
 
-См. [Tag Contract — `mnemos:no-federate`](../user/tag-contract.md#mnemosno-federate--federation-exclusion-marker)
+См. [Tag Contract — `mnemos:no-federate`](../user/tag-contract.md#mnemosno-federate--маркер-исключения-из-федерации)
 для жизненного цикла тега (авто-добавление, идемпотентность, удаление с
 подтверждением, re-detection guard). Тег — это **маркер исключения** в
 пространстве имён подтипов `mnemos:`, НЕ когнитивная категория.

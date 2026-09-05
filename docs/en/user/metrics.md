@@ -37,7 +37,7 @@ dashboard.
 
 ```json
 {
-  "version": "2.0.0",
+  "version": "4.0.0",
   "timestamp": "2026-06-20T14:30:00+00:00",
   "volume": {
     "memories_total": 1248,

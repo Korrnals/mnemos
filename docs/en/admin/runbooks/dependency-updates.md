@@ -34,7 +34,7 @@ the fix version, as in the entries above. Pins must use a range with an upper bo
 ## Daily/weekly quick check
 
 ```bash
-cd /var/home/abyss/LABs/AI/mnemos
+cd /path/to/mnemos   # repo root
 source .venv/bin/activate
 make security
 ```
@@ -47,7 +47,7 @@ Expected outcomes:
 ## Full dependency refresh
 
 ```bash
-cd /var/home/abyss/LABs/AI/mnemos
+cd /path/to/mnemos   # repo root
 source .venv/bin/activate
 make update-deps
 ```

@@ -7,8 +7,8 @@
 > restarts, and context compression.
 
 One page, three honest sections: what works out of the box, what is partial,
-and what is planned. Statuses reflect the v3.0.0 codebase (owner-approved map,
-2026-08-31).
+and what is planned. Statuses reflect the v4.0.0 codebase (owner-approved map
+2026-08-31, updated 2026-09-05: packaging shipped, benchmark stands landed).
 
 ---
 
@@ -28,6 +28,8 @@ Connect — and it is there. No extra wiring required for anything in this table
 | **Publication model v3.0.0** | An entry is visible immediately after save; background refinement swaps in the refined version seamlessly; dangerous content is quarantined with a neutral retraction ([ADR-0019](../project/adr/0019-optimistic-publication-async-refinement.md)) |
 | **Self-protection** | Injection and secret detectors on input and publication; every output is scanned; a full audit trail tied to each entry |
 | **Auto-pipeline** | A background processor: clustering, deduplication, quality gate, publication |
+| **Bundled embedding model** | `mnema-embed-v1` (~30 MB int8 ONNX) ships inside the wheel — hybrid vector search works fully offline, on CPU, with no downloads and no API keys |
+| **Packaging & delivery** | PyPI [`mnemos-memory-server`](https://pypi.org/project/mnemos-memory-server/) (wheel bundles the integration pack and the model), npm `pi-mnemos` + aliases, GHCR image `ghcr.io/korrnals/mnemos`, one-line installer script, benchmark framework S1–S4 in-repo |
 
 ## Partial — core exists, completeness in progress
 
@@ -35,13 +37,11 @@ Connect — and it is there. No extra wiring required for anything in this table
 |------|--------|
 | **Autonomy (~90%)** | Storage, search, context assembly, and protection run on their own. Hook discipline in an arbitrary harness comes from the deployed instructions and skills (soft automation), not hard wiring. Hard wiring exists in the Hermes adapter and partially in zcode; a generic hook mechanism for any harness is planned |
 | **Enrichment by an LLM ("brain")** | The pipeline runs; clustering, deduplication, and the quality gate are real. Qualitative text enrichment is currently a deterministic stub; an LLM provider plugs into the reserved interface point (planned) |
-| **Delivery** | wheel / sdist are built by the release pipeline. Binary artifacts in releases and PyPI / npm publishing are in progress |
 
 ## Planned
 
 | Feature | Scope |
 |---------|-------|
-| **Benchmark stands (S1–S4)** | Measuring speed, quality, connectivity, and availability ([ADR-0020](../project/adr/0020-benchmark-framework.md)) |
 | **Memory graph** | Links between entries, citation cascades ([ADR-0017](../project/adr/0017-memory-system-evolution-roadmap.md)) |
 | **Cross-device federation** | A persistent exchange channel between devices; today the exchange is batch, via files ([ADR-0017](../project/adr/0017-memory-system-evolution-roadmap.md)) |
 | **Multi-principal** | Memory of several owners with isolation |
@@ -62,7 +62,8 @@ Connect — and it is there. No extra wiring required for anything in this table
 ---
 
 _Source: owner-approved feature map (2026-08-31), cross-checked against the
-v3.0.0 codebase — 26 tools registered in `src/mnemos/mcp_server.py`, skill pack
-in `integrations/skills/`, pipeline stages in `src/mnemos/pipeline/`._
+v4.0.0 codebase — 26 tools registered in `src/mnemos/mcp_server.py`, skill pack
+in `integrations/skills/`, pipeline stages in `src/mnemos/pipeline/`,
+benchmark stands in `benchmarks/`. Updated 2026-09-05._
 
-_Last updated: 2026-08-31_
+_Last updated: 2026-09-05_

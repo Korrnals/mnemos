@@ -65,15 +65,19 @@ Deploys instructions, skills, and prompt mode to the default target
 ### Per-target
 
 ```bash
-mnemos integration setup --target vscode-copilot   # default
-mnemos integration setup --target claude-code       # Claude Code
-mnemos integration setup --target cursor            # Cursor
-mnemos integration setup --target zcode             # ZCode agent
-mnemos integration setup --target agents            # universal AGENTS.md standard
+mnemos integration setup --target copilot           # VS Code Copilot ~/.copilot/ (default)
+mnemos integration setup --target generic-copilot   # VS Code prompt mode ~/.config/Code/User/prompts/
+mnemos integration setup --target cursor            # Cursor ~/.cursor/
+mnemos integration setup --target zcode             # ZCode (native skills + MCP config)
+mnemos integration setup --target agents            # ~/.agents standard — Claude Code, Codex, Cursor, …
+mnemos integration setup --target pi                # Pi coding agent (bridge extension)
+mnemos integration setup --target hermes            # Hermes Agent (native plugin)
+mnemos integration setup --target all               # every detected target
 ```
 
-See `mnemos integration setup --help` for the full target list. Targets are defined
-in `integrations/targets.yaml` (managed by Stream A).
+Target names come from `integrations/targets.yaml`; `--help` lists them for
+your install. Claude Code / Codex have no dedicated target — they read the
+`agents` target natively.
 
 ### Universal targets: ZCode and the AGENTS.md standard
 
@@ -131,9 +135,10 @@ target environment launches mnemos through a wrapper or a different path.
 
 | Target | Instructions → | Skills → | Prompts → |
 |--------|----------------|----------|-----------|
-| `vscode-copilot` | `~/.copilot/instructions/` | `~/.copilot/skills/` | `~/.config/Code/User/prompts/` |
-| `claude-code` | `~/.claude/instructions/` | `~/.claude/skills/` | `~/.claude/prompts/` |
-| `cursor` | `~/.cursor/instructions/` | `~/.cursor/skills/` | `~/.cursor/prompts/` |
+| `copilot` | `~/.copilot/instructions/` | `~/.copilot/skills/` | — |
+| `generic-copilot` | — | — | `~/.config/Code/User/prompts/` |
+| `cursor` | `~/.cursor/rules/` | — | — |
+| `hermes` | `~/.hermes/skills/` | `~/.hermes/skills/` (+ plugin in `~/.hermes/plugins/mnemos/`) | — |
 | `zcode` | — | `~/.zcode/skills/<name>/SKILL.md` | MCP in `~/.zcode/cli/config.json` |
 | `agents` | — | `~/.agents/skills/<name>/SKILL.md` | MCP in `~/.agents/mcp.json` |
 | `pi` | — | `~/.pi/agent/skills/<name>/SKILL.md` | bridge: `~/.pi/agent/extensions/mnemos-mcp.ts` |
@@ -470,7 +475,7 @@ The tools (`mnemos_*`) appear in the agent's tool list once the MCP server is
 registered in the client's MCP configuration. Agent MCP wiring (above)
 ensures the `tools:` frontmatter actually grants those tools to each agent.
 
-For VS Code Copilot Chat, see [getting-started.md](getting-started.md#run-the-mcp-server)
+For VS Code Copilot Chat, see [getting-started.md](getting-started.md#connect-your-harness-mcp)
 for MCP server setup. Once connected, the instructions and skills in this
 package tell the agent *when* and *how* to call those tools.
 
@@ -489,6 +494,9 @@ block) per harness, always the same stdio wire (ADR-0017 D1):
 | Claude Code | `claude mcp add` | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
 | Codex | `~/.codex/config.toml` | `[mcp_servers.mnemos]` TOML block |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | same JSON line as Cursor |
+| OpenCode | `~/.config/opencode/opencode.json` | `"mnemos": { "type": "local", "command": ["mnemos", "mcp-server"] }` inside `mcp` |
+| VS Code Copilot | user/workspace `mcp.json` | `mcp-setup.sh` or the `servers` JSON block |
+| ZCode / `~/.agents` tools | `mnemos integration setup --target zcode` / `--target agents` | scripted, additive merge |
 
 Full copy-paste lines (plus fresh-setup shell one-liners and env tuning):
 [`integrations/mcp-presets.md`](../../../integrations/mcp-presets.md).

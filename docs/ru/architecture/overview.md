@@ -35,7 +35,7 @@ MCP-сервер и Obsidian-совместимый vault. Web UI заплани
 │                    FastAPI (Core API)                    │
 │            GET/POST /memories, /search, /ingest         │
 ├─────────────────────────────────────────────────────────┤
-│                    ЯДРО (brain_core)                     │
+│            ЯДРО (MemoryManager, manager.py)             │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ │
 │  │MemoryManager │ │ SearchEngine │ │IngestionPipeline │ │
 │  │  CRUD ops    │ │ hybrid search│ │  parse & embed   │ │
@@ -78,7 +78,7 @@ MCP-сервер и Obsidian-совместимый vault. Web UI заплани
 - Embedding-провайдер настраивается через конфиг
 - Кэширование эмбеддингов для избежания повторных вычислений
 
-### 3. Ядро (brain_core)
+### 3. Ядро (`MemoryManager`, `manager.py`)
 
 #### MemoryManager
 - CRUD для записей памяти (create, read, update, delete)
@@ -269,25 +269,23 @@ mnemos mcp-server                                  # запуск MCP-серве
 
 #### REST API (FastAPI)
 ```
-POST   /api/v1/memories          — создать запись
-GET    /api/v1/memories           — список (с пагинацией)
-GET    /api/v1/memories/{id}      — получить запись
-PUT    /api/v1/memories/{id}      — обновить
-DELETE /api/v1/memories/{id}      — удалить
-POST   /api/v1/search             — гибридный поиск
-POST   /api/v1/ingest             — загрузка/парсинг
-GET    /api/v1/tags               — список тегов
-POST   /api/v1/sync               — переиндексация
-GET    /api/v1/health              — healthcheck
+POST   /memories                 — создать запись
+GET    /memories                 — список (с пагинацией)
+GET    /memories/{id}            — получить запись
+POST   /search                   — гибридный поиск
+POST   /ingest-url               — загрузка/парсинг URL
+GET    /tags                     — список тегов
+POST   /reindex                  — переиндексация
+GET    /health                   — healthcheck
 ```
 
 #### MCP-сервер
-Инструменты для Copilot/LLM-агентов:
-- `brain_search` — семантический поиск по памяти
-- `brain_add` — добавить новую запись
-- `brain_get` — получить запись по ID
-- `brain_list_tags` — список тегов
-- `brain_ingest_url` — загрузить веб-страницу
+Инструменты для Copilot/LLM-агентов (полный каталог — в [mcp-tools.md](../user/mcp-tools.md)):
+- `mnemos_search` — гибридный (семантический + полнотекстовый) поиск по памяти
+- `mnemos_add` — добавить новую запись
+- `mnemos_recall_context` — собрать блок контекста сессии
+- `mnemos_list_tags` — список тегов
+- `mnemos_ingest_url` — загрузить веб-страницу
 
 #### Web UI (запланирован — mnemos-eyes)
 
@@ -361,25 +359,29 @@ api:
   port: 8787
 
 mcp:
-  transport: stdio                   # stdio | sse
+  transport: stdio                   # stdio — единственный реализованный транспорт
 ```
 
 ---
 
 ## Путь развития
 
-### Фаза 1 — MVP ✦ (текущая)
+> Снимок исходного плана. Фазы 1–2 (кроме PDF/DOCX-парсинга) реализованы;
+> текущая версия Mnemos — 4.0.0. Актуальный план — в
+> [PLAN.md](../../../PLAN.md).
+
+### Фаза 1 — MVP (реализована)
 - [x] Архитектура и модели данных
-- [ ] Core: MemoryManager + ChromaDB + SQLite
-- [ ] Embedding layer (sentence-transformers)
-- [ ] Гибридный поиск
-- [ ] CLI (add, search, list, tags)
-- [ ] Obsidian vault sync (read/write)
-- [ ] REST API (FastAPI)
+- [x] Core: MemoryManager + SQLite + векторное хранилище (`vectors.db`)
+- [x] Embedding layer (встроенная `mnema-embed-v1`)
+- [x] Гибридный поиск
+- [x] CLI (add, search, recall, tags)
+- [x] Obsidian vault sync (read/write)
+- [x] REST API (FastAPI)
 
 ### Фаза 2 — Интеграции
-- [ ] MCP-сервер для Copilot
-- [ ] Web scraping (ingest URLs)
+- [x] MCP-сервер для Copilot
+- [x] Web scraping (ingest URLs)
 - [ ] PDF/DOCX парсинг
 
 ### Фаза 3 — Продвинутые фичи
@@ -388,7 +390,7 @@ mcp:
 - [ ] Граф связей между записями
 - [ ] Автосаммаризация длинных документов
 - [ ] Периодическая консолидация (merge похожих записей)
-- [ ] Экспорт/импорт
+- [x] Экспорт/импорт
 
 ### Фаза 4 — Масштабирование
 - [ ] Миграция на PostgreSQL + pgvector (опционально)

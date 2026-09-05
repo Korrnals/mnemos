@@ -40,7 +40,7 @@ Mnemos поставляется с `Containerfile` (совместим с OCI, p
 Собрать локальный образ с версией из исходников:
 
 ```bash
-podman build -t localhost/mnemos:2.7.8 -f Containerfile .
+podman build -t localhost/mnemos:4.0.0 -f Containerfile .
 ```
 
 `Containerfile` использует `python:3.12-slim` в качестве базового образа, устанавливает `.[mcp]`,
@@ -73,8 +73,8 @@ make build-image
 
 ```bash
 podman login ghcr.io
-podman tag localhost/mnemos:2.7.8 ghcr.io/korrnals/mnemos:2.7.8
-podman push ghcr.io/korrnals/mnemos:2.7.8
+podman tag localhost/mnemos:4.0.0 ghcr.io/korrnals/mnemos:4.0.0
+podman push ghcr.io/korrnals/mnemos:4.0.0
 podman push ghcr.io/korrnals/mnemos:latest
 ```
 
@@ -165,9 +165,9 @@ embedding:
 Скачать готовый образ и сразу запустить:
 
 ```bash
-podman pull ghcr.io/korrnals/mnemos:2.7.8
+podman pull ghcr.io/korrnals/mnemos:4.0.0
 podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 \
-  --env MNEMOS_API__TOTP_MASTER_KEY=<your-key> ghcr.io/korrnals/mnemos:2.7.8
+  --env MNEMOS_API__TOTP_MASTER_KEY=<your-key> ghcr.io/korrnals/mnemos:4.0.0
 ```
 
 В образ встроен `config.container.yaml` как `/app/config.yaml` — отдельное монтирование
