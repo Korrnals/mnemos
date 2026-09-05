@@ -345,7 +345,8 @@ def setup_cmd(
         typer.Option(
             "--target",
             "-t",
-            help="Target harness: all | copilot | generic-copilot | cursor (default: all detected)",
+            help="Target harness: all | any name in targets.yaml, e.g. copilot, cursor, "
+            "hermes, zcode, agents, pi, opencode (default: all detected)",
         ),
     ] = "all",
     dry_run: Annotated[
