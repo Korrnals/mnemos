@@ -8,9 +8,13 @@
 
 ---
 
-Mnemos is a standalone memory & knowledge MCP server — it gives AI agents real long-term memory that persists across sessions, restarts, and context compression.
+Mnemos is a standalone memory & knowledge server — it gives AI agents real long-term memory that persists across sessions, restarts, and context compression.
 
-Mnemos — автономный MCP-сервер памяти и знаний: даёт AI-агентам настоящую долгосрочную память, которая сохраняется между сессиями, перезапусками и сжатием контекста.
+Install from PyPI: `pip install "mnemos-memory-server[mcp]"` · First run: [Getting Started](en/user/getting-started.md) · Connect a harness: [MCP presets](../integrations/mcp-presets.md)
+
+Mnemos — автономный сервер памяти и знаний: даёт AI-агентам настоящую долгосрочную память, которая сохраняется между сессиями, перезапусками и сжатием контекста.
+
+Установка с PyPI: `pip install "mnemos-memory-server[mcp]"` · Первый запуск: [Начало работы](ru/user/getting-started.md) · Подключение харнеса: [MCP-пресеты](../integrations/mcp-presets.md)
 
 ---
 

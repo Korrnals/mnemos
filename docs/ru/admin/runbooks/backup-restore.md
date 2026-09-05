@@ -29,7 +29,7 @@ tar czf mnemos-backup-$(date +%Y%m%d).tar.gz \
 tar xzf mnemos-backup-20260115.tar.gz -C /
 
 # Или выборочное восстановление
-cp mnemos-backup-20260115/.mnemos/mnemos.db ~/.mnemos/data/
+cp mnemos-backup-20260115/.mnemos/data/mnemos.db ~/.mnemos/data/
 rsync -a mnemos-backup-20260115/.mnemos/vault/ ~/.mnemos/vault/
 ```
 
@@ -38,10 +38,10 @@ rsync -a mnemos-backup-20260115/.mnemos/vault/ ~/.mnemos/vault/
 Mnemos автоматически создаёт резервные копии БД перед миграциями:
 
 ```bash
-ls ~/.mnemos/*.backup-*
-# ~/.mnemos/mnemos.db.backup-20260115-143022
+ls ~/.mnemos/data/*.backup-*
+# ~/.mnemos/data/mnemos.db.backup-20260115-143022
 
-cp ~/.mnemos/mnemos.db.backup-20260115-143022 ~/.mnemos/mnemos.db
+cp ~/.mnemos/data/mnemos.db.backup-20260115-143022 ~/.mnemos/data/mnemos.db
 ```
 
 ## Экспорт / Импорт
@@ -50,8 +50,8 @@ cp ~/.mnemos/mnemos.db.backup-20260115-143022 ~/.mnemos/mnemos.db
 
 ```bash
 python -c "
-import json, sqlite3
-conn = sqlite3.connect('~/.mnemos/mnemos.db')
+import json, os, sqlite3
+conn = sqlite3.connect(os.path.expanduser('~/.mnemos/data/mnemos.db'))
 rows = conn.execute('SELECT * FROM memories').fetchall()
 print(json.dumps([dict(r) for r in rows], indent=2, default=str))
 " > mnemos-export.json

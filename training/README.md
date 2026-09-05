@@ -61,12 +61,12 @@ python3 training/dataset/prepare_dataset.py \
   --out-dir training/data --seed 42
 
 # с приватной выгрузкой локального стора владельца (данные не выходят с машины)
-python3 training/dataset/prepare_dataset.py --from-mnemos-dir ~/.local/share/mnemos
+python3 training/dataset/prepare_dataset.py --from-mnemos-dir ~/.mnemos/data
 
 # прямо из живой SQLite-базы мнемоса (read-only, только поле content;
 # опциональный фильтр по project:-тегам)
 python3 training/dataset/prepare_dataset.py \
-  --from-mnemos-db ~/.local/share/mnemos/mnemos.db \
+  --from-mnemos-db ~/.mnemos/data/mnemos.db \
   --mnemos-db-projects "project-mnemos,project-atlas" \
   --mnemos-db-limit 20000
 

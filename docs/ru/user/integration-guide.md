@@ -67,15 +67,19 @@ mnemos integration setup
 ### По цели
 
 ```bash
-mnemos integration setup --target vscode-copilot   # по умолчанию
-mnemos integration setup --target claude-code       # Claude Code
-mnemos integration setup --target cursor            # Cursor
-mnemos integration setup --target zcode             # агент ZCode
-mnemos integration setup --target agents            # универсальный стандарт AGENTS.md
+mnemos integration setup --target copilot           # VS Code Copilot ~/.copilot/ (по умолчанию)
+mnemos integration setup --target generic-copilot   # промпт-режим VS Code ~/.config/Code/User/prompts/
+mnemos integration setup --target cursor            # Cursor ~/.cursor/
+mnemos integration setup --target zcode             # ZCode (нативные скиллы + конфиг MCP)
+mnemos integration setup --target agents            # стандарт ~/.agents — Claude Code, Codex, Cursor, …
+mnemos integration setup --target pi                # агент Pi (бридж-расширение)
+mnemos integration setup --target hermes            # Hermes Agent (нативный плагин)
+mnemos integration setup --target all               # все обнаруженные цели
 ```
 
-Полный список целей — `mnemos integration setup --help`. Цели определены в
-`integrations/targets.yaml` (управляется Stream A).
+Имена целей берутся из `integrations/targets.yaml`; `--help` выводит список для
+вашей установки. У Claude Code / Codex нет отдельных целей — они нативно читают
+цель `agents`.
 
 ### Универсальные цели: ZCode и стандарт AGENTS.md
 
@@ -137,11 +141,13 @@ mnemos integration setup --target zcode \
 
 | Цель | Инструкции → | Скиллы → | Промпты → |
 |------|--------------|----------|-----------|
-| `vscode-copilot` | `~/.copilot/instructions/` | `~/.copilot/skills/` | `~/.config/Code/User/prompts/` |
-| `claude-code` | `~/.claude/instructions/` | `~/.claude/skills/` | `~/.claude/prompts/` |
-| `cursor` | `~/.cursor/instructions/` | `~/.cursor/skills/` | `~/.cursor/prompts/` |
+| `copilot` | `~/.copilot/instructions/` | `~/.copilot/skills/` | — |
+| `generic-copilot` | — | — | `~/.config/Code/User/prompts/` |
+| `cursor` | `~/.cursor/rules/` | — | — |
+| `hermes` | `~/.hermes/skills/` | `~/.hermes/skills/` (+ плагин в `~/.hermes/plugins/mnemos/`) | — |
 | `zcode` | — | `~/.zcode/skills/<имя>/SKILL.md` | MCP в `~/.zcode/cli/config.json` |
 | `agents` | — | `~/.agents/skills/<имя>/SKILL.md` | MCP в `~/.agents/mcp.json` |
+| `pi` | — | `~/.pi/agent/skills/<имя>/SKILL.md` | бридж: `~/.pi/agent/extensions/mnemos-mcp.ts` |
 
 ---
 
@@ -482,7 +488,7 @@ MCP-сервера в конфигурации клиента. Подключе�
 (выше) гарантирует, что фронтматтер `tools:` реально выдаёт эти инструменты
 каждому агенту.
 
-Для VS Code Copilot Chat см. [getting-started.md](getting-started.md#run-the-mcp-server)
+Для VS Code Copilot Chat см. [getting-started.md](getting-started.md#подключите-ваш-харнес-mcp)
 по настройке MCP-сервера. После подключения инструкции и скиллы из этого пакета
 говорят агенту *когда* и *как* вызывать эти инструменты.
 
@@ -501,6 +507,17 @@ MCP-сервера в конфигурации клиента. Подключе�
 | Claude Code | `claude mcp add` | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
 | Codex | `~/.codex/config.toml` | TOML-блок `[mcp_servers.mnemos]` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | та же JSON-строка, что для Cursor |
+| OpenCode | `~/.config/opencode/opencode.json` | `"mnemos": { "type": "local", "command": ["mnemos", "mcp-server"] }` внутри `mcp` |
+| VS Code Copilot | `mcp.json` уровня user/workspace | `mcp-setup.sh` или JSON-блок `servers` |
+| ZCode / инструменты `~/.agents` | `mnemos integration setup --target zcode` / `--target agents` | скриптово, аддитивное слияние |
+
+Для OpenCode файл можно создать целиком одной shell-строкой (перезапишет существующий
+конфиг; иначе вставьте строку из таблицы в объект `mcp` — обратите внимание на тип
+`"local"` и команду-**массив**, это диалект самого OpenCode):
+
+```bash
+mkdir -p ~/.config/opencode && echo '{"$schema":"https://opencode.ai/config.json","mcp":{"mnemos":{"type":"local","command":["mnemos","mcp-server"]}}}' > ~/.config/opencode/opencode.json
+```
 
 Полные строки для копирования (плюс shell-однострочники для чистой установки
 и настройку env): [`integrations/mcp-presets.md`](../../../integrations/mcp-presets.md).

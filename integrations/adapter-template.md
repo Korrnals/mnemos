@@ -56,7 +56,7 @@ frontmatter. Minimum read-write core:
 | `mnemos_save_context` | checkpoint before compaction / session end |
 | `mnemos_stats` | store health at a glance |
 
-Full surface (23 tools): [mcp-tools.md](../docs/en/user/mcp-tools.md).
+Full surface (26 tools): [mcp-tools.md](../docs/en/user/mcp-tools.md).
 
 Then give the agent one behavioural rule (adapt the wording to your
 harness's instruction channel — system prompt, rules file, AGENTS.md):

@@ -2,107 +2,106 @@
 
 **🌐 Language / Язык:** [English](../../en/user/getting-started.md) · Русский
 
-> Полное руководство для первого запуска Mnemos — от установки до первого воспоминания, поиска и отзыва агентом.
+> Полное руководство первого запуска Mnemos — от установки одной командой до
+> первой записи, первого поиска и подключённого агентского харнеса.
 
-Эта страница проведёт вас через рабочую установку Mnemos, создание первой записи, первый поиск и первый запуск MCP/HTTP-сервера. Каждая команда здесь выполнима на чистом Linux / macOS / WSL2.
+Mnemos опубликован на PyPI — без клонирования, сборки и знания venv. Эта страница
+проводит вас через весь первый запуск. Каждая команда выполнима на чистой Linux /
+macOS / WSL2-машине.
 
-Для общего контекста см. [обзор архитектуры](../architecture/overview.md). Для справки по каждому субкоманде CLI — [cli-reference.md](cli-reference.md). По каждому MCP-инструменту — [mcp-tools.md](mcp-tools.md). По каждому HTTP-эндпоинту — [http-api.md](http-api.md).
+Для общего контекста см. [обзор архитектуры](../architecture/overview.md). Справочник
+по всем подкомандам CLI — [cli-reference.md](cli-reference.md). По каждому
+MCP-инструменту — [mcp-tools.md](mcp-tools.md). По каждому HTTP-эндпоинту —
+[http-api.md](http-api.md).
 
 ---
 
-## Предварительные требования
+## Установка (одна команда)
 
-Mnemos требует Python 3.11 или новее и `git`. Рекомендуем `uv` для быстрой изолированной установки.
+```bash
+pip install "mnemos-memory-server[mcp]"
+```
+
+Это вся установка:
+
+- **`mnemos-memory-server`** — пакет на PyPI: сервер памяти и знаний, CLI `mnemos`,
+  MCP-сервер и REST API в одном wheel.
+- **`[mcp]`** добавляет MCP SDK — оставьте: MCP-сервер (`mnemos mcp-server`) —
+  основная поверхность интеграции для агентских харнесов.
+- **Больше ничего не скачивается. Никогда.** Модель эмбеддингов по умолчанию
+  (`mnema-embed-v1`, ~30 МБ) встроена в wheel — поиск работает полностью офлайн,
+  на CPU, без API-ключей.
+
+> ⚠️ **Имя пакета — `mnemos-memory-server`.** `pip install mnemos` устанавливает
+> *не связанный* проект, которому принадлежит имя `mnemos` на PyPI.
+
+### Изолированный вариант (рекомендуется для подключения харнесов)
+
+Харнесы запускают команду `mnemos` из `PATH`. Tool-установка кладёт её туда,
+не трогая проектные окружения:
+
+```bash
+uv tool install "mnemos-memory-server[mcp]"
+# или
+pipx install "mnemos-memory-server[mcp]"
+```
+
+### Скриптовый вариант (без решений)
+
+Установщик создаёт изолированный venv в `~/.mnemos/venv`, кладёт лаунчер `mnemos`
+в `~/.local/bin` и в том же запуске предлагает настроить VS Code MCP и развернуть
+integration-пак:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
+```
+
+### Другие варианты установки
+
+| Метод | Команда |
+|-------|---------|
+| Зафиксировать версию | `pip install "mnemos-memory-server[mcp]==4.0.0"` |
+| Контейнер одной командой | `… install.sh \| bash -s -- --container` — см. [container-deployment.md](../admin/runbooks/container-deployment.md) |
+| Из исходников (контрибьюторам) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` |
+
+<details>
+<summary><strong>Опциональные экстры</strong> — внешние LLM-провайдеры, только если нужны</summary>
+
+Mnemos вызывает внешние LLM для синтеза в конвейере (M4) и дообработки — никогда
+для хранения или поиска. Устанавливайте только нужное:
+
+```bash
+uv pip install "mnemos-memory-server[ollama]"      # локальный Ollama (провайдер по умолчанию)
+uv pip install "mnemos-memory-server[openai]"      # OpenAI / Azure OpenAI
+uv pip install "mnemos-memory-server[anthropic]"   # Anthropic Claude
+uv pip install "mnemos-memory-server[gemini]"      # Google Gemini
+```
+
+Провайдер по умолчанию — `ollama`, указывающий на `http://localhost:11434`.
+Полную матрицу провайдеров см. в [config.example.yaml](../../../config.example.yaml).
+
+</details>
+
+### Предварительные требования
 
 | Инструмент | Версия | Зачем |
 |------------|--------|-------|
-| Python | ≥ 3.11 | Pydantic v2, современные type hints, StrEnum |
-| `uv` | последняя | Быстрый, герметичный пакетный менеджер Python |
-| `git` | любая | Клонирование репозитория (пропустить при установке из PyPI) |
-| `make` | любая | Вспомогательные цели: `make verify`, `make test` |
+| Python | ≥ 3.11 | Минимальная среда выполнения (решается через `pip` — ручной venv не нужен) |
+| `uv` или `pipx` | последняя | Опционально, для изолированной tool-установки |
 
-> **Замечание об ОС.** Mnemos разрабатывается на Linux (Arch, Fedora, Ubuntu 22.04+) и регулярно проходит smoke-тест на macOS. Windows работает через WSL2. Юнит systemd в `contrib/systemd/` только для Linux.
+> **Замечание об ОС.** Mnemos разрабатывается на Linux (Arch, Fedora, Ubuntu 22.04+)
+> и регулярно проходит smoke-тест на macOS. Windows работает через WSL2. Юнит systemd
+> в `contrib/systemd/` — только для Linux.
 
-> **Железо.** Модель эмбеддингов по умолчанию (`mnema-embed-v1`, ~30 МБ, встроена в пакет — ничего не скачивается) комфортно работает на одном ядре CPU. GPU не требуется. VM с 2 vCPU / 2 ГБ ОЗУ достаточно для личного использования.
-
----
-
-## Установка
-
-```bash
-git clone https://github.com/Korrnals/mnemos.git
-cd mnemos
-uv venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
-```
-
-Если `uv` не установлен:
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-Экстра `[dev]` добавляет `pytest`, `ruff`, `mypy`, `bandit` и `pip-audit` для запуска полного набора проверок.
-
-### Опции установки
-
-`pip install -e ".[dev]"` — точка `.` и есть сам пакет (`mnemos`); `[dev]` и `[mcp]` — **опциональные экстры**. Имя пакета в команде не отсутствует.
-
-| Метод | Команда |
-|-------|--------|
-| Editable dev (рекомендуется для контрибьюторов) | `pip install -e ".[dev,mcp]"` |
-| Из исходников, версионированный | `pip install ".[mcp]"` |
-| Released wheel | `pip install https://github.com/Korrnals/mnemos/releases/download/v2.1.0/mnemos-2.1.0-py3-none-any.whl` |
-| Контейнер | `podman run -d -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 --env MNEMOS_API__TOTP_MASTER_KEY=<key> ghcr.io/korrnals/mnemos:2.1.0` — см. [container-deployment.md](../admin/runbooks/container-deployment.md) |
-
-### Опциональные экстры LLM-провайдеров
-
-Mnemos умеет вызывать внешние LLM для синтеза (M4) и контекстного фильтра (M10). Устанавливайте только нужное:
-
-```bash
-uv pip install -e ".[ollama]"     # локальный Ollama
-uv pip install -e ".[openai]"     # OpenAI / Azure OpenAI
-uv pip install -e ".[anthropic]"   # Anthropic Claude
-uv pip install -e ".[gemini]"     # Google Gemini
-```
-
-Провайдер по умолчанию — `ollama`, указывающий на `http://localhost:11434`. Полную матрицу провайдеров см. в [обзоре архитектуры](../architecture/overview.md#llm-providers).
-
----
-
-## Проверка
-
-Запустите полный набор проверок. Все пять шагов должны завершиться зелёным.
-
-```bash
-make verify
-```
-
-Цель `verify` выполняет по порядку:
-
-| Шаг | Инструмент | Что проверяет |
-|-----|-----------|---------------|
-| 1 | `ruff` | Линтинг (PEP-8, порядок импортов, типичные ошибки) |
-| 2 | `pytest` | Набор тестов (unit + integration) |
-| 3 | `bandit` | Security-линтинг (M9) |
-| 4 | `pip-audit` | Сканирование CVE в зависимостях (M15) |
-| 5 | напоминание | Выводит напоминание о закреплённых CVE |
-
-Чистый прогон завершается строкой `✅ All verification checks passed`.
-
-Если `pip-audit` сообщает о закреплённой CVE, см. [runbook по обновлению зависимостей](../admin/runbooks/dependency-updates.md) для еженедельного рабочего процесса.
+> **Железо.** Встроенная `mnema-embed-v1` комфортно работает на одном ядре CPU.
+> GPU не требуется. VM с 2 vCPU / 2 ГБ ОЗУ достаточно для личного использования.
 
 ---
 
 ## Первая запись (CLI)
 
-CLI построен на Typer и выводит таблицы через Rich. Добавьте первую запись:
-
 ```bash
-mnemos add --content "Hello world" --tags project:test agent:getting-started mnemos:learning
+mnemos add "Hello world" --tags project:test agent:getting-started mnemos:learning
 ```
 
 Ожидаемый вывод:
@@ -113,33 +112,30 @@ mnemos add --content "Hello world" --tags project:test agent:getting-started mne
 
 Mnemos автоматически:
 
-1. **Записал запись в SQLite** по пути `~/.mnemos/data/mnemos.db`.
-2. **Отразил её в Obsidian-vault** `~/.mnemos/vault/` как markdown-файл с YAML-фронтматером.
-3. **Проверил контракт тегов** — `project:test` + `agent:getting-started` + `mnemos:learning` — корректная тройка M2. Если пропустить один из тегов, вы получите `❌ Tag contract violation: ...` вместо подтверждения.
+1. **Записал запись в SQLite** по пути `~/.mnemos/data/mnemos.db` (создаётся при первом запуске).
+2. **Отразил её в Obsidian-vault** `~/.mnemos/vault/` как markdown-файл с YAML-фронтматтером.
+3. **Проверил контракт тегов** — `project:test` + `agent:getting-started` + `mnemos:learning` —
+   корректная тройка. Пропустите один из тегов, и вместо подтверждения получите
+   `❌ Tag contract violation: ...`.
 
-Контракт тегов описан в [tag-contract.md](tag-contract.md). Коротко: каждая запись требует **ровно одного** `project:<slug>`, **ровно одного** `agent:<slug>` и **хотя бы одного** `mnemos:<subtype>` (например, `mnemos:learning`, `mnemos:bug-pattern`, `mnemos:decision`).
+Контракт тегов описан в [tag-contract.md](tag-contract.md). Коротко: каждая запись требует
+**ровно одного** `project:<slug>`, **ровно одного** `agent:<slug>` и **хотя бы одного**
+`mnemos:<subtype>` (например, `mnemos:learning`, `mnemos:bug-pattern`, `mnemos:decision`).
 
-> **Замечание.** Только что добавленные записи получают статус `raw`. Фоновый процессор (работает в режимах MCP и HTTP API начиная с v2.7.8) автоматически кластеризует, синтезирует, проверяет качество и публикует их. Индекс векторного поиска включает только записи в статусе `published`. Если нужно перестроить векторный индекс для всех опубликованных записей, выполните `mnemos reindex` (CLI) или `POST /reindex` (HTTP API).
+> **Замечание.** Только что добавленные записи получают статус `raw`. Фоновый процессор
+> (работает в режимах MCP и HTTP API) автоматически кластеризует, синтезирует, проверяет
+> качество и публикует их. Индекс векторного поиска включает только записи в статусе
+> `published`. Перестроить его вручную: `mnemos reindex` (CLI) или `POST /reindex` (HTTP API).
 
 ---
 
 ## Первый поиск
 
-Гибридный поиск объединяет FTS5 SQLite с векторным сходством и объединяет ранжирование через Reciprocal Rank Fusion (RRF).
+Гибридный поиск объединяет полнотекстовый FTS5 SQLite с векторным сходством
+и сливает ранжирования через Reciprocal Rank Fusion (RRF):
 
 ```bash
 mnemos search "hello"
-```
-
-Ожидаемый вывод (таблица Rich):
-
-```text
-┏━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Score ┃ Title      ┃ Tags                                  ┃ Status   ┃
-┡━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ 1.000 │ Hello world│ project:test, agent:getting-started, │ raw      │
-│       │            │ mnemos:learning                          │          │
-└───────┴────────────┴──────────────────────────────────────┴──────────┘
 ```
 
 Полезные флаги:
@@ -147,52 +143,41 @@ mnemos search "hello"
 | Флаг | Действие |
 |------|---------|
 | `--limit N` / `-l N` | Максимум результатов (по умолчанию 10) |
-| `--project P` / `-p P` | Ограничить одним проектом |
+| `--project P` / `-p P` | Ограничить slug'ом проекта |
 
-Для программного доступа с расширенными опциями (вес вектора, сырой контент, фильтр по тегам) используйте HTTP API — см. [http-api.md#search](http-api.md#search).
-
----
-
-## Первый отзыв агентом
-
-`recall` возвращает последние записи. Фильтр по агенту выбирает только то, что сохранил конкретный Copilot-агент (M3):
-
-```bash
-mnemos recall --agent getting-started
-```
-
-Ожидаемый вывод (список Rich):
-
-```text
-Hello world  (550e8400…)
-  tags: project:test, agent:getting-started, mnemos:learning
-```
-
-Комбинируйте с `--project` для дополнительного сужения:
-
-```bash
-mnemos recall --agent getting-started --project test --limit 5
-```
-
-Это те же данные, которые MCP-инструмент [`mnemos_agent_recall`](mcp-tools.md#mnemos_agent_recall) передаёт Copilot-агентам.
+Для программного доступа с расширенными опциями (вес вектора, сырой контент, фильтр
+по тегам) используйте HTTP API — см. [http-api.md#search](http-api.md#post-search--гибридный-поиск).
 
 ---
 
-## Запуск MCP-сервера
+## Подключите ваш харнес (MCP)
 
-MCP-сервер говорит на stdio JSON-RPC — VS Code Copilot взаимодействует с ним напрямую. **Это основная точка интеграции для AI-агентов.**
+MCP-сервер — основная поверхность интеграции: ваш агентский харнес порождает
+`mnemos mcp-server` по stdio и получает полный набор инструментов `mnemos_*`.
+Выберите свой харнес:
 
-> Пакет `mcp` — опциональная зависимость. Сначала установите её: `pip install -e ".[mcp]"` (или `uv pip install -e ".[mcp]"`).
+| Харнесс | Самый быстрый путь |
+|---------|--------------------|
+| VS Code Copilot | `curl -fsSL …/scripts/mcp-setup.sh \| bash`, затем перезагрузить окно |
+| Claude Code | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
+| Cursor | вставить одну строку в `~/.cursor/mcp.json` |
+| OpenCode | вставить один блок в `~/.config/opencode/opencode.json` |
+| Codex / Windsurf | по одному TOML / JSON блоку |
+| ZCode, pi, Hermes Agent | `mnemos integration setup --target zcode` / `--target pi` / `--target hermes` |
+| Всё остальное | [adapter-template.md](../../../integrations/adapter-template.md) |
+
+**Полные инструкции для копирования для каждого харнесса собраны на одной странице:
+[Подключите Mnemos к любому харнесу](../../../integrations/mcp-presets.md).** Поведенческий
+слой — инструкции, скиллы и режим промпта, из-за которых агенты реально *пользуются*
+памятью, — отдельный шаг в один проход:
 
 ```bash
-mnemos mcp-server
+mnemos integration setup
 ```
 
-Процесс блокируется на stdin/stdout; TCP-порт не занимает. Остановить через `Ctrl+C`.
+Таргеты и флаги — в [руководстве по интеграции](integration-guide.md).
 
-### Сниппет для `mcp.json` в VS Code
-
-Добавьте в `mcp.json` VS Code (User или Workspace):
+Ручная справка для VS Code — `mcp.json` уровня user или workspace:
 
 ```jsonc
 {
@@ -200,26 +185,109 @@ mnemos mcp-server
     "mnemos": {
       "type": "stdio",
       "command": "mnemos",
-      "args": ["mcp-server"],
-      "env": {
-        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos/data",
-        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/.mnemos/vault"
-      }
+      "args": ["mcp-server"]
     }
   }
 }
 ```
 
-После сохранения VS Code отобразит инструменты `mnemos_*` в панели «tools» Copilot Chat. Полный каталог инструментов — в [mcp-tools.md](mcp-tools.md).
-
-> **Подсказка — режим auto-collect.** Установите `MNEMOS_AUTO_COLLECT=1` в env выше, чтобы Mnemos напоминал агенту вызывать `mnemos_save_context` каждые ~6 вызовов инструментов. См. [mcp-tools.md#auto-collect-mode](mcp-tools.md#auto-collect-mode) для компромиссов.
+> **Подсказка — режим автосбора.** Установите `MNEMOS_AUTO_COLLECT=1` в блоке `env`
+> сервера, чтобы Mnemos предлагал агенту вызывать `mnemos_save_context` каждые ~6
+> вызовов инструментов. О компромиссах см. [mcp-tools.md#auto-collect-mode](mcp-tools.md#режим-auto-collect).
 
 ---
 
-## Логирование
+## Запуск HTTP API (опционально)
 
-Mnemos пишет логи в `~/.mnemos/logs/mnemos.log` по умолчанию (ротация, 10 МБ × 3 файла).
-Настройка через `config.yaml`:
+Для не-MCP клиентов, дашбордов и A2A-трафика:
+
+```bash
+mnemos serve --host 127.0.0.1 --port 8787
+```
+
+| Эндпоинт | Назначение |
+|----------|-----------|
+| `http://127.0.0.1:8787/health` | Проверка живости |
+| `http://127.0.0.1:8787/metrics` | Статистика (в стиле Prometheus) |
+| `http://127.0.0.1:8787/docs` | Swagger UI |
+| `http://127.0.0.1:8787/v1/sessions` | A2A sessions API (M16) |
+
+> **Безопасность.** Значение по умолчанию — привязка к `127.0.0.1`. Не выставляйте
+> порт наружу без обратного прокси с аутентификацией — см. [security.md](../admin/security.md).
+
+Быстрая проверка:
+
+```bash
+curl -s http://127.0.0.1:8787/health | jq
+# {"status":"ok"}
+```
+
+---
+
+## Проверьте установку
+
+```bash
+mnemos doctor
+```
+
+прогоняет проверки здоровья по хранилищу, конфигу, MCP-транспорту и известным
+регистрациям харнесов — и печатает по строке PASS/WARN/FAIL на каждую проверку.
+`mnemos doctor --fix` автоматически устраняет типовые предупреждения (устаревшие
+файлы интеграции, неподключённые агенты, отсутствующая регистрация MCP).
+
+Полный девелоперский гейт (только для контрибьюторов): клонируйте репозиторий,
+`uv pip install -e ".[dev,mcp]"`, затем `make verify` — ruff + mypy `--strict` +
+bandit + pip-audit + набор тестов. Если `pip-audit` жалуется на закреплённую CVE,
+см. [ранбук по обновлению зависимостей](../admin/runbooks/dependency-updates.md).
+
+---
+
+## Миграция с legacy ai-brain
+
+Если у вас есть старая установка `ai-brain` (`~/.ai-brain/ai_brain.db` +
+`~/brain-vault/`), Mnemos импортирует её одной командой. Сначала dry-run:
+
+```bash
+mnemos migrate from-ai-brain --dry-run
+```
+
+Прочитайте сводку, затем запускайте по-настоящему:
+
+```bash
+mnemos migrate from-ai-brain
+```
+
+Мигратор переводит легаси-типы источников, исправляет контракт тегов
+(`project:legacy`, `agent:unknown`, `mnemos:legacy`), сохраняет статусы записей
+и переносит колонки `content_ru` / `content_en` в `metadata` (без потери данных).
+Для нестандартных расположений используйте `--source PATH` и `--vault PATH`.
+
+---
+
+## Конфигурация
+
+Mnemos читает `config.yaml` из текущего каталога или `~/.mnemos/config.yaml`.
+Полная схема — в [config.example.yaml](../../../config.example.yaml). Самые полезные ручки:
+
+| Параметр | По умолчанию | Назначение |
+|----------|--------------|-----------|
+| `mnemos.data_dir` | `~/.mnemos/data` | Хранилище SQLite + векторный индекс |
+| `mnemos.vault_path` | `~/.mnemos/vault` | Зеркало Obsidian |
+| `mnemos.strict_tag_contract` | `true` | Принуждать контракт тегов (`false` — только для легаси-импортов) |
+| `embedding.provider` | `nano` | `nano` (mnema-embed-v1, встроенная) / `onnx` / `ollama` / `sentence-transformers` |
+| `search.hybrid_alpha` | `0.7` | Вес векторной ноги в RRF (0.0 = чистый FTS, 1.0 = чистый вектор) |
+| `api.host` / `api.port` | `127.0.0.1` / `8787` | Значения по умолчанию для `mnemos serve` |
+| `llm.provider` / `llm.model` | `ollama` / `qwen2.5:3b` | Синтез конвейера и контекстный фильтр |
+
+Любой из них переопределяется переменными окружения (`MNEMOS_*`, `__` — разделитель вложенности):
+
+```bash
+MNEMOS_SEARCH__HYBRID_ALPHA=0.5 mnemos search "deployment"
+```
+
+### Логирование
+
+Mnemos пишет логи в `~/.mnemos/logs/mnemos.log` по умолчанию (ротация, 10 МБ × 3 файла):
 
 ```yaml
 logging:
@@ -229,4 +297,63 @@ logging:
   backup_count: 3
 ```
 
-CLI: `mnemos serve --verbose` для уровня DEBUG, `mnemos serve --log-file /path/to/log` для переопределения пути.
+CLI: `mnemos --verbose serve` для уровня DEBUG, `mnemos serve --log-file /path/to/log`
+для переопределения пути.
+
+---
+
+## Устранение неполадок
+
+### Команда `mnemos` не найдена
+
+Если ставили обычным `pip` в venv — venv должен быть активирован. Предпочитайте
+изолированную установку (`uv tool` / `pipx` / `install.sh`) — она кладёт `mnemos`
+в `PATH` в каждом шелле (`~/.local/bin`; добавьте каталог в `PATH`, если ваш
+дистрибутив этого не делает).
+
+### `mnemos mcp-server` падает с ошибкой импорта `mcp`
+
+Отсутствует экстра `[mcp]`: `pip install "mnemos-memory-server[mcp]"`.
+
+### Поиск возвращает только «raw» записи
+
+Векторный индекс включает только записи в статусе `published`; новые записи
+стартуют как `raw` и публикуются фоновым процессором. Чтобы опубликовать сразу,
+задайте `status: "published"` при создании через HTTP API — или дайте конвейеру
+отработать.
+
+### `sqlite3.OperationalError: database is locked`
+
+Другой процесс `mnemos` (CLI, MCP или HTTP) держит блокировку записи. SQLite
+использует WAL-режим, но писатель в каждый момент один. Закройте другой процесс
+или дождитесь коммита его транзакции (таймаут по умолчанию — 5 с). Для
+мульти-харнесных установок выдайте каждому харнесу свой data dir — см. замечание
+«один владелец на хранилище» в [руководстве по интеграции](integration-guide.md).
+
+### MCP-сервер работает, но инструменты не появляются в харнесе
+
+1. Проверьте, что конфиг харнеса парсится (валидный JSONC / TOML, без висячих запятых).
+2. Перезапустите харнес после правки конфига.
+3. Проверьте провод напрямую: `printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0.0.0"}}}\n' | mnemos mcp-server` — JSON-RPC-ответ с `"serverInfo":{"name":"mnemos"...}` означает, что серверная сторона в порядке.
+4. Запустите `mnemos doctor` — проверки MCP-транспорта и регистраций укажут на сломанное звено.
+
+---
+
+## Куда идти дальше
+
+| Если хотите… | Читайте |
+|--------------|---------|
+| Подключить конкретный харнес (VS Code, Claude Code, Cursor, OpenCode, Codex, Windsurf, pi, Hermes…) | [Подключите Mnemos к любому харнесу](../../../integrations/mcp-presets.md) |
+| Развернуть поведенческий пакет (инструкции / скиллы / промпты / wiring агентов) | [integration-guide.md](integration-guide.md) |
+| Посмотреть все подкоманды CLI | [cli-reference.md](cli-reference.md) |
+| Посмотреть все MCP-инструменты | [mcp-tools.md](mcp-tools.md) |
+| Посмотреть все HTTP-эндпоинты | [http-api.md](http-api.md) |
+| Понять устройство системы | [обзор архитектуры](../architecture/overview.md) |
+| Прочитать схему тегов | [tag-contract.md](tag-contract.md) |
+| Выполнить операционную задачу | [admin/runbooks/install.md](../admin/runbooks/install.md) |
+| Пересмотреть границы безопасности | [security.md](../admin/security.md) |
+| Узнать, почему принято то или иное решение | [project/adr/](../../project/adr/) |
+
+---
+
+_Последнее обновление: 2026-09-05_

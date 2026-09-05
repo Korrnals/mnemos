@@ -39,7 +39,7 @@ Mnemos использует **прямые pin'ы** для уязвимых тр
 ## Ежедневная/еженедельная быстрая проверка
 
 ```bash
-cd /var/home/abyss/LABs/AI/mnemos
+cd /path/to/mnemos   # корень репозитория
 source .venv/bin/activate
 make security
 ```
@@ -52,7 +52,7 @@ make security
 ## Полное обновление зависимостей
 
 ```bash
-cd /var/home/abyss/LABs/AI/mnemos
+cd /path/to/mnemos   # корень репозитория
 source .venv/bin/activate
 make update-deps
 ```

@@ -168,40 +168,52 @@ cron-синхронизацию безопасной для повторных �
 Cron-ready shell-шаблон, объединяющий экспорт → перенос → импорт. Задай
 переменные окружения и запусти. Без конфигурации не исполняется.
 
-Обязательные переменные:
+Обязательные переменные (при отсутствии любой скрипт завершается с кодом 2):
 
 | Переменная | Назначение |
 |------------|------------|
-| `SOURCE_MNEMOS_DIR` | Путь к исходному репо mnemos (с `.venv`). |
-| `TARGET_MNEMOS_DIR` | Путь к целевому репо mnemos (с `.venv`). |
-| `SHARED_PROJECTS` | Список slug'ов проектов через пробел. |
+| `MNEMOS_SYNC_PEER_HOST` | Host peer-узла B (цель). |
+| `MNEMOS_SYNC_PEER_SSH_KEY` | Приватный ключ ed25519 на A для rsync-отправки. |
+| `MNEMOS_SYNC_PEER_IMPORT_SSH_KEY` | Приватный ключ ed25519 на A для запуска импорта. |
+| `MNEMOS_SYNC_LOCAL_EXPORT_DIR` | Локальная директория, куда пишется экспорт. |
+| `MNEMOS_SYNC_REMOTE_IMPORT_DIR` | Директория на B, куда rsync доставляет payload. |
+| `MNEMOS_SYNC_SHARED_PROJECTS` | Slug'и проектов для синхронизации, через запятую. |
+| `MNEMOS_SYNC_ENCRYPT` | `true` / `false`. |
+| `MNEMOS_SYNC_PASSPHRASE_ENV` | ИМЯ переменной окружения с парольной фразой. |
 
 Опциональные переменные:
 
 | Переменная | По умолчанию | Назначение |
 |------------|--------------|------------|
-| `ENCRYPT` | `0` | `1` для шифрования экспорта. |
-| `MNEMOS_EXPORT_PASSPHRASE` | — | Требуется при `ENCRYPT=1`. |
-| `TRANSFER_METHOD` | `cp` | `rsync` / `scp` / `cp`. |
-| `TRANSFER_DEST_HOST` | — | Целевой хост для `rsync`/`scp`. |
-| `SYNC_FILE` | `/tmp/mnemos-sync-<ts>.json` | Путь файла экспорта. |
-| `DRY_RUN` | `0` | `1` для end-to-end dry-run. |
-| `SOURCE_CONFIG` / `TARGET_CONFIG` | discovery | Путь `config.yaml` для каждой стороны. |
+| `MNEMOS_SYNC_PEER_USER` | `mnemos-sync` | ssh-пользователь на B. |
+| `MNEMOS_SYNC_DRY_RUN` | — | `1` — только логировать команды, без записей и ssh. |
+| `MNEMOS_SYNC_SOURCE_CONFIG` | discovery | Путь к `config.yaml` на A. |
+| `MNEMOS_SYNC_REMOTE_FILE` | `mnemos-sync-<ts>.json` | Имя файла payload на B. |
+| `MNEMOS_SYNC_MNEMOS_BIN` | auto-discover | Путь к CLI `mnemos` на A. |
 
-Пример crontab (почасовая зашифрованная синхронизация на peer через scp):
+Путь к CLI `mnemos` на B (`MNEMOS_SYNC_REMOTE_MNEMOS_BIN`) задаётся на B в
+`/etc/mnemos/sync.env` — на A он не нужен, обёртка `mnemos-import-wrapper` на B
+находит бинарник сама. Парольная фраза никогда не передаётся в командной строке:
+на A она читается из переменной, имя которой задано в `MNEMOS_SYNC_PASSPHRASE_ENV`,
+на B независимо прописывается в окружении systemd.
+
+Пример crontab (почасовая зашифрованная синхронизация на peer-хост):
 
 ```cron
-0 * * * * SOURCE_MNEMOS_DIR=/opt/mnemos-a TARGET_MNEMOS_DIR=/opt/mnemos-b \
-          SHARED_PROJECTS="project-umbra project-mnemos" \
-          MNEMOS_EXPORT_PASSPHRASE="$PASS" ENCRYPT=1 \
-          TRANSFER_METHOD=scp TRANSFER_DEST_HOST=peer.example.com \
-          /opt/mnemos-a/scripts/sync-peers.sh >> /var/log/mnemos-sync.log 2>&1
+0 * * * * MNEMOS_SYNC_PEER_HOST=peer.example.com \
+          MNEMOS_SYNC_PEER_SSH_KEY=/etc/mnemos/sync_ed25519 \
+          MNEMOS_SYNC_PEER_IMPORT_SSH_KEY=/etc/mnemos/sync_import_ed25519 \
+          MNEMOS_SYNC_LOCAL_EXPORT_DIR=/var/lib/mnemos/sync \
+          MNEMOS_SYNC_REMOTE_IMPORT_DIR=/var/lib/mnemos/incoming \
+          MNEMOS_SYNC_SHARED_PROJECTS="project-umbra,project-mnemos" \
+          MNEMOS_SYNC_ENCRYPT=true MNEMOS_SYNC_PASSPHRASE_ENV=MNEMOS_EXPORT_PASSPHRASE \
+          /opt/mnemos/scripts/sync-peers.sh >> /var/log/mnemos-sync.log 2>&1
 ```
 
-Для `rsync`/`scp` на удалённый peer скрипт выводит точную команду
-`mnemos sync import`, которую нужно запустить на peer (он не может
-ssh-ить и запустить целевой venv сам). Для `cp` (локальная синхронизация
-на том же хосте) скрипт выполняет шаг импорта напрямую.
+Перенос — rsync поверх ssh, на B ограничен обёрткой `rsync-wrapper.sh`; запуск
+импорта на B защищён обёрткой `mnemos-import-wrapper.sh` (обе — в
+`contrib/systemd/`). Тот же скрипт — это `ExecStart` юнита
+`contrib/systemd/mnemos-sync.service`, который подхватывает `/etc/mnemos/sync.env`.
 
 ---
 
@@ -231,7 +243,7 @@ Audit-лог — операционный след: какие проекты с
 синхронизации. Тег автоматически добавляется при записи сканером Layer 1
 (#86), когда детектируется секретный паттерн; владелец может снять его
 с явным подтверждением через `MemoryManager.remove_no_federate()`. См.
-[Tag Contract — `mnemos:no-federate`](./tag-contract.md#mnemosno-federate--federation-exclusion-marker)
+[Tag Contract — `mnemos:no-federate`](./tag-contract.md#mnemosno-federate--маркер-исключения-из-федерации)
 для полного lifecycle.
 
 Даже без тега moderation-pipeline (Layer 3) прогоняет каждую запись при
@@ -245,5 +257,5 @@ secrets/PII — defence-in-depth, чтобы один пропущенный с�
 
 - [Export & Import](./export-import.md) — полные бэкапы (JSON / SQLite).
 - [Security — Federation defence-in-depth](../admin/security.md#11-federation-defence-in-depth) — трёхслойная модель.
-- [Tag Contract — `mnemos:no-federate`](./tag-contract.md#mnemosno-federate--federation-exclusion-marker) — маркер исключения.
+- [Tag Contract — `mnemos:no-federate`](./tag-contract.md#mnemosno-federate--маркер-исключения-из-федерации) — маркер исключения.
 - [MCP Tools](./mcp-tools.md) — `mnemos_export` / `mnemos_import` MCP-инструменты (MCP-поверхность для полного export/import).

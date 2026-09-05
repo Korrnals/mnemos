@@ -6,9 +6,9 @@
 
 Mnemos is a single-tenant memory/knowledge service for AI agents (primarily Copilot agents in VS Code, via MCP). It is forked from `ai-brain` and retains its core stack:
 
-- **Runtime**: Python 3.11+, FastAPI HTTP API, Typer CLI, MCP server (stdio + optional SSE).
-- **Storage**: SQLite (FTS5) for raw + processing + processed, ChromaDB (vector) only for `published` knowledge units, Obsidian-compatible vault on disk for human-readable mirror.
-- **Embeddings**: local ONNX (MiniLM-class) — privacy + offline.
+- **Runtime**: Python 3.11+, FastAPI HTTP API, Typer CLI, MCP server (stdio).
+- **Storage**: SQLite (FTS5) for raw + processing + processed, SQLite + NumPy vector store (`vectors.db`) only for `published` knowledge units, Obsidian-compatible vault on disk for human-readable mirror.
+- **Embeddings**: bundled `mnema-embed-v1` ONNX model (default `nano` provider, shipped at `src/mnemos/models/mnema-embed-v1/`) — privacy + offline, no external vector DB.
 - **Packaging**: rootless `podman` container; systemd quadlet units; user-level install option.
 
 ### Conceptual layers
@@ -84,13 +84,13 @@ flowchart TB
 | `tags` | array<string> | validated by `TagContract` |
 | `project` | string | denormalised from `project:*` tag |
 | `agent` | string | denormalised from `agent:*` tag |
-| `status` | enum | `raw \| processing \| processed \| published` |
+| `status` | enum | `raw \| processing \| processed \| published \| archived` |
 | `quality_score` | float? | populated by synthesis / quality-gate |
 | `confidence` | float? | populated by synthesis |
 | `source_coverage` | int? | distinct source URLs / paths in cluster |
 | `cluster_id` | string? | set during clustering |
 | `derived_from` | array<uuid> | provenance for `processed`/`published` |
-| `embedding_id` | string? | ChromaDB id when published |
+| `embedding_id` | string? | Vector id in `vectors.db` when published |
 | `raw_content` | text? | immutable source payload (logs/stdout/html/etc.) |
 | `clean_content` | text? | filtered projection used for recall/model input |
 | `filter_profile` | string? | `log|terminal|code|docs|web|default` |
@@ -180,27 +180,26 @@ classDiagram
 
 ### MCP tools (stable names — integration plugins reference these)
 
-| tool | purpose |
+The MCP surface is **26 tools** (`mcp_server.py` `list_tools()`). The v1-era table of 11 is superseded; the current contract, grouped:
+
+| Group | Tools |
 |---|---|
-| `mnemos_add` | write a memory (validated by TagContract) |
-| `mnemos_search` | hybrid search (FTS + vector + RRF) over `published` |
-| `mnemos_recall_context` | session-init: most recent N for a project |
-| `mnemos_agent_recall` | filter by `agent:` (+ optional project / query) — **new in Mnemos** |
-| `mnemos_save_context` | checkpoint-style write with auto-tagged `mnemos:checkpoint` |
-| `mnemos_list_recent` | recency-ordered listing |
-| `mnemos_list_tags` | tag directory |
-| `mnemos_ingest_url` | URL ingest → raw |
-| `mnemos_watch_start/stop/status` | vault watcher control |
-| `mnemos_auto_collect_status` | compaction-signal report |
-| `mnemos_stats` | health + counters |
+| Memory operations | `mnemos_add`, `mnemos_search`, `mnemos_agent_recall`, `mnemos_recall_context`, `mnemos_save_context`, `mnemos_list_recent`, `mnemos_list_tags`, `mnemos_ingest_url` |
+| Context assembly & hooks | `mnemos_assemble_context`, `mnemos_context_rewrite`, `mnemos_hooks`, `mnemos_filter`, `mnemos_compress`, `mnemos_retrieve`, `mnemos_align_prefix` |
+| Tags & workflow | `mnemos_tags`, `mnemos_tags_rename`, `mnemos_workflow` |
+| Import / export | `mnemos_export`, `mnemos_import` |
+| Watcher | `mnemos_watch_start`, `mnemos_watch_stop`, `mnemos_watch_status` |
+| Stats & pipeline | `mnemos_stats`, `mnemos_auto_collect_status`, `mnemos_reprocess` |
+
+Full per-tool reference — input schemas, output shapes, JSON-RPC examples: [docs/en/user/mcp-tools.md](docs/en/user/mcp-tools.md).
 
 ### HTTP API
 
-Mirrors MCP tools (`POST /memories`, `GET /recall/...`, `GET /search`, etc.) plus pipeline endpoints `POST /process`, `POST /synthesize`, `POST /publish`, `GET /memories?status=`, `GET /traces`, `GET /metrics`.
+Mirrors MCP tools (`POST /memories`, `GET /recall/agent/{name}`, `POST /search`, etc.) plus pipeline endpoints `POST /process`, `POST /synthesize`, `POST /publish/{memory_id}`, `GET /memories?status=`, `GET /traces`, `GET /metrics`.
 
 ### CLI
 
-`mnemos add`, `mnemos search`, `mnemos recall --agent <x>`, `mnemos cluster`, `mnemos synthesize`, `mnemos publish`, `mnemos tags validate`, `mnemos migrate-from-ai-brain`, `mnemos dlq list/retry/discard`, `mnemos watch --include-rules`.
+`mnemos add`, `mnemos search`, `mnemos recall --agent <x>`, `mnemos tags validate`, `mnemos migrate from-ai-brain`. Pipeline and DLQ operations (cluster, synthesize, publish, dlq retry/discard) are exposed over HTTP (`POST /process`, `POST /synthesize`, `POST /publish/{id}`, `/dlq/*`) and via `mnemos processor run`, not as dedicated CLI verbs.
 
 ## 4. Knowledge pipeline (M4) — the core architectural addition
 
@@ -292,14 +291,14 @@ Declarative YAML rules (`~/.mnemos/policies.yaml`):
 - Per-project overrides.
 
 Reliability primitives:
-- **Idempotency** — synthesis is keyed on `hash(cluster_id, prompt_version, model_version)`. Repeats return cached result. This is also the v1 stand-in for the deferred Cache Center.
-- **DLQ** — failed synthesis lives here; manual `mnemos dlq retry/discard`.
+- **Idempotency** — synthesis is keyed on `hash(cluster_id, prompt_version, model_version)`. Repeats return cached result.
+- **DLQ** — failed synthesis lives here; inspected and retried over HTTP (`GET /dlq`, `POST /dlq/{id}/retry`, `DELETE /dlq/{id}`).
 - **Retry** — exponential backoff with jitter; capped attempts.
 
 ## 6. Recall & ranking
 
 - **FTS5**: SQLite full-text index over `content` + `tags`.
-- **Vector**: ChromaDB on `published` only.
+- **Vector**: SQLite + NumPy (`vectors.db`) on `published` only.
 - **Fusion**: Reciprocal Rank Fusion (RRF) of the two result lists.
 - **Per-agent recall** (M3): pre-filter by `agent:<slug>` (+ optional `project:<slug>`) before search; index covers `(tag_value, project_value)`.
 - **File-context boost** (M8): when a `current_file_path` is provided, rules with matching `applyTo:` glob are pinned to the top.
@@ -327,7 +326,7 @@ This makes path-scoped rules first-class searchable knowledge instead of inert i
 ## 9. Security & operational posture
 
 - **Rootless podman** by default. MCP server bound to localhost / unix-socket; HTTP API loopback only unless explicitly bound.
-- **Secrets**: provider API keys via env vars (`MNEMOS_ANTHROPIC_API_KEY`, …) read once at startup; never written to logs.
+- **Secrets**: provider API keys via env vars (`MNEMOS_LLM__ANTHROPIC_API_KEY`, …) read once at startup; never written to logs.
 - **URL ingest sanitisation**: strip credentials from URLs before storing.
 - **Explainability**: only short `rationale_summary` (≤200 chars), never raw LLM chain-of-thought.
 - **Filter safety**: Context Filter never removes source data; raw payload remains retrievable for audit/debug.
@@ -336,96 +335,108 @@ This makes path-scoped rules first-class searchable knowledge instead of inert i
 
 ## 10. Migration & deprecation
 
-- `mnemos migrate-from-ai-brain` (M13): SQLite + vault import; lax tag mode for legacy data; backup first; dry-run flag.
+- `mnemos migrate from-ai-brain` (M13): SQLite + vault import; lax tag mode for legacy data; backup first; dry-run flag.
 - ai-brain (M14): README header marks it `DEPRECATED`; tag `final-v0.2.x`; main branch frozen.
 
 ## 11. Module layout (Python)
 
-> **Note**: Uses `src/` layout (inherited from ai-brain) to keep the Python package off `sys.path` by default and prevent accidental shadowing.
+> **Note**: Uses `src/` layout (inherited from ai-brain) to keep the Python package off `sys.path` by default and prevent accidental shadowing. Tree rebuilt from `src/mnemos/`; one-line purposes come from the module docstrings.
 
 ```
 pyproject.toml
 src/
   mnemos/
     __init__.py
-    config.py            # env + YAML config
-    models.py            # Memory, TagContract, Trace, Cluster
-    manager.py           # MemoryManager — CRUD + search orchestrator
-    storage/
-      __init__.py
-      sqlite_store.py    # SQLite FTS5 + pipeline state
-      vector_store.py    # ChromaDB (published-only)
-      vault.py           # Obsidian markdown mirror
-    llm/
-      __init__.py
-      base.py            # provider abstraction
-      anthropic.py
-      openai.py
-      azure_openai.py
-      ollama.py
-      gemini.py
-    embeddings/
-      __init__.py
-      onnx_local.py      # local ONNX MiniLM (privacy + offline)
-    pipeline/
-      __init__.py
-      cluster.py
-      synthesize.py
-      quality_gate.py
-      publish.py
-    policy/
-      __init__.py
-      scheduler.py
-      triggers.py
-      engine.py          # YAML rule evaluation
-      dlq.py
-    filter/
-      __init__.py
-      dedup.py
-      noise.py
-      extract.py
-      compress.py
-      tokens.py
-    recall/
-      __init__.py
-      fts.py
-      vector.py
-      rrf.py
-      agent_recall.py
-    watchers/
-      __init__.py
-      vault.py
-      path_scoped.py
-    traces.py            # explainability layer
-    auto_collect.py      # compaction signals
-    mcp_server.py
-    api/
-      __init__.py
-      main.py            # FastAPI
-      routes/
-    cli/
-      __init__.py
-      main.py            # Typer
-      migrate.py
-docs/
-  tag-contract.md
-  pipeline.md
-  policies.md
-  runbooks/
-tests/
-  __init__.py
-  test_tag_contract.py
-  test_agent_recall.py
-  test_pipeline.py
-  test_policy_engine.py
-  test_traces.py
-  test_compaction_detection.py
-  test_path_scoped_rules.py
-  test_migration.py
-  test_recall.py
-  test_filter.py
-  ...
+    config.py            # env + YAML settings; legacy env-name aliases (#139)
+    models.py            # Memory, TagContract, Trace data models
+    manager.py           # MemoryManager — core CRUD + search orchestrator
+    mcp_server.py        # MCP server over stdio — 26 mnemos_* tools
+    sdk.py               # MnemosSDK — thin typed facade over MemoryManager
+    workflow.py          # workflow lifecycle state machine for memories (#96)
+    traces.py            # explainability / trace layer (M6)
+    auto_collect.py      # compaction detection signals (M7)
+    logging_setup.py     # logging configuration
+    train_entry.py       # `mnemos-train` console entry point (ADR-0021 NM track)
+
+    api/                 # FastAPI HTTP API
+      main.py            #   app + routes
+      auth.py            #   auth router (T-AUTH, ADR-0014)
+      auth_store.py      #   tokens / sessions / challenges storage
+      middleware.py      #   ASGI auth middleware
+      rate_limit.py      #   slowapi rate-limiter singleton
+      client_ip.py       #   trusted client-IP resolution
+      federation.py      #   federation mediated-pull endpoint (Phase 2)
+    cli/                 # Typer CLI
+      main.py            #   entry point + core subcommands
+      doctor.py          #   `mnemos doctor` health checks + auto-fix
+      completion.py      #   `mnemos completion` shell completion installer
+      integration.py     #   `mnemos integration` deployment layer
+      agent_wiring.py    #   agent MCP wiring helpers
+      export.py / export_cmd.py    # export logic + Typer wrapper
+      import_.py / import_cmd.py   # import logic + Typer wrapper
+      sync.py / sync_cmd.py        # federation batch sync + Typer wrapper
+      scanner_cmd.py     #   `mnemos scanner` manual trigger + status
+      logs.py            #   `mnemos logs` trace viewer
+      migrate.py         #   ai-brain migration logic
+      _manager.py        #   shared get_manager() helper
+      util.py            #   shared CLI utilities
+
+    storage/             # SQLite, vector store, Obsidian vault
+      sqlite_store.py    #   SQLite FTS5 + traces + pipeline state
+      vector_store.py    #   SQLite + NumPy vectors, published-only
+      vault.py           #   Obsidian markdown mirror
+    pipeline/            # knowledge pipeline (M4)
+      cluster.py         #   embedding-similarity clustering
+      synthesize.py      #   LLM draft synthesis (idempotent by hash)
+      quality_gate.py    #   publish thresholds
+      publish.py         #   publish to published + vector index
+      refine.py          #   async refinement of pending rows (ADR-0019 B2a)
+    policy/              # declarative rules (M5)
+      scheduler.py       #   APScheduler cron / interval
+      triggers.py        #   event hooks on status change
+      engine.py          #   YAML rule evaluation
+      dlq.py             #   Dead-Letter Queue
+    recall/              # hybrid recall engine (FTS5 + vector + RRF)
+    filter/              # Context Filter (M10)
+      pipeline.py        #   5-stage filter: dedup → noise → extract → compress → tokens
+    embeddings/          # embedding providers (bundled mnema-embed-v1 nano)
+    models/
+      mnema-embed-v1/    # bundled ONNX embedding model (model.onnx, tokenizer.json, manifest.json)
+    llm/                 # LLM provider abstraction
+      base.py            #   provider interface
+    sessions/            # A2A Sessions API (M16)
+      api.py             #   FastAPI router
+      store.py           #   SQLite-backed session store
+      models.py          #   Pydantic models
+      summary.py         #   extractive summary helpers
+    watchers/            # file watchers
+      path_scoped.py     #   .github/instructions/*.instructions.md rules (M8)
+    adapters/
+      hermes.py          # Hermes Agent adapter (ADR-0017 D1 contract, #125)
+
+    assemble.py          # assemble_context provider contract (ADR-0017 D1 / ADR-0018, #125)
+    context_rewrite.py   # on_context_rewrite lifecycle event (ADR-0018, #125)
+    hooks.py             # server-side lifecycle hooks (#125)
+    ccr.py               # P1-4 CCR reversible compression (compress-cache-retrieve)
+    cache_aligner.py     # P1-5 CacheAligner — prefix stabilization for KV caches
+    danger_detectors.py  # danger detectors — positive-signal set (ADR-0019 Phase A)
+    secrets_detector.py  # secret pattern detection (federation Layer 1)
+    scanner.py           # background secrets scanner (federation Layer 2)
+    scanner_runtime.py   # process-wide scanner singleton
+    moderation.py        # moderation pipeline (federation Layer 3)
+    compact.py           # compact federation exchange format (Phase 0, #85)
+    audit.py             # federation sync audit log (append-only JSONL)
+    trigger_codes.py     # federation mediated-pull trigger codes
+    federation_client.py # federation client (A-side) — mediated pull transport
+    federation_server.py # federation server (B-side) — mediated pull endpoint
+    federation_a2a.py    # federation A2A handler — mediated pull over A2A
+    federation_access_log.py  # federation access log (B-side audit)
+    mesh_client.py       # mnemos-mesh gRPC client (Unix-socket transport, #105)
+    mesh_server.py       # MnemosCore gRPC server on Unix socket (#105)
+    _mesh_gen.py         # import shim for gRPC-generated stubs
 ```
+
+`tests/` mirrors the modules; user-facing documentation lives under `docs/en/` and `docs/ru/`.
 
 ### M1 Git bootstrap commands (run once in mnemos/ dir)
 
@@ -453,7 +464,7 @@ git commit -m "chore(m1): fork from ai-brain; add Mnemos planning documents"
 
 ## 12. Out of scope for v1 (explicit)
 
-- **Cache Center** (M11) — deferred to v2.
+- **Cache Center** (M11) — *shipped under different names.* The original v1 deferral is resolved: reversible compression landed as **CCR** (`src/mnemos/ccr.py` — compress → cache original in `ccr_cache` by SHA-256 → retrieve via marker; tools `mnemos_compress` / `mnemos_retrieve`; `ccr` config section) and prefix stabilization as the **CacheAligner** (`src/mnemos/cache_aligner.py` — relocate dynamic spans for byte-stable prefixes; tool `mnemos_align_prefix`; `cache_aligner` config section). Both are wired into `mnemos_assemble_context` (optional CCR expansion + alignment stage). Nothing of the original Cache Center vision remains open.
 - **New Web UI from scratch** — if ai-brain has one, we extend; if not, Swagger + mkdocs only.
 - **Multi-tenant / multi-user auth** — Mnemos is single-tenant by design.
 - **Cloud-managed embeddings** — local ONNX only.
@@ -560,6 +571,8 @@ flowchart TD
 ```
 
 ### MCP tools → MemoryManager
+
+> Diagram shows the v1 core subset; the current 26-tool surface is grouped in §3 and detailed in [docs/en/user/mcp-tools.md](docs/en/user/mcp-tools.md).
 
 ```mermaid
 flowchart LR

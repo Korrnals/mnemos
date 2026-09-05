@@ -18,7 +18,7 @@ mnemos serve --host 127.0.0.1 --port 8000
 
 > **Привязка по умолчанию — `127.0.0.1`.** Не открывайте этот порт в публичную сеть без обратного прокси с аутентификацией. Модель угроз — в [security.md](../admin/security.md).
 
-> **Аутентификация** — когда `api.auth_enabled=true`, все маршруты кроме `/health`, `/auth/login`, `/auth/verify`, `/docs`, `/redoc` и `/openapi.json` требуют валидного сессионного токена (заголовок `Authorization: Bearer <session>` или куки `mnemos_session`; заголовок имеет приоритет). Для получения сессии используйте `POST /auth/login`. См. раздел [Аутентификация](#authentication) ниже.
+> **Аутентификация** — когда `api.auth_enabled=true`, все маршруты кроме `/health`, `/auth/login`, `/auth/verify`, `/docs`, `/redoc` и `/openapi.json` требуют валидного сессионного токена (заголовок `Authorization: Bearer <session>` или куки `mnemos_session`; заголовок имеет приоритет). Для получения сессии используйте `POST /auth/login`. См. раздел [Аутентификация](#аутентификация-authentication) ниже.
 
 > **CORS** — отключён по умолчанию. При `api.cors_enabled=true` CORS middleware регистрируется крайним слоем, чтобы OPTIONS preflight-запросы отвечались до проверки аутентификации. Укажите явный список разрешённых origins в `cors_allow_origins`; комбинация `["*"]` с `cors_allow_credentials=true` отклоняется при старте.
 
@@ -165,8 +165,8 @@ Liveness probe.
 ```json
 {
   "status": "ok",
-  "version": "0.1.0",
-  "data_dir": "/home/you/.mnemos",
+  "version": "4.0.0",
+  "data_dir": "/home/you/.mnemos/data",
   "vault_path": "/home/you/.mnemos/vault",
   "total": 142,
   "by_status": {"raw": 5, "processing": 0, "processed": 12, "published": 120, "archived": 5},
@@ -205,6 +205,23 @@ curl -s http://127.0.0.1:8000/tags
 ]
 ```
 
+### `POST /tags/rename` — массовое переименование префикса тегов
+
+Переименовывает все теги вида `from_prefix:<subtype>` → `to_prefix:<subtype>` (кейс миграции GCW → mnemos). Зеркалирует MCP-инструмент `mnemos_tags_rename` и CLI-команду `mnemos tags rename`. Безопасно по построению: обычный `UPDATE` (FTS5-индекс external content остаётся консистентным), и `dry_run` по умолчанию `true` — ничего не пишется, пока вызывающий явно не передаст `dry_run: false`.
+
+**Тело запроса**
+
+| Поле | Тип | По умолчанию | Описание |
+|------|-----|--------------|----------|
+| `from_prefix` | string | — | Исходный префикс (напр. `gcw`). |
+| `to_prefix` | string | — | Целевой префикс (напр. `mnemos`). |
+| `subtypes` | string[] \| null | `null` | Опциональный whitelist подтипов для переименования. |
+| `dry_run` | bool | `true` | Предпросмотр без записи. |
+| `project` / `agent` | string \| null | `null` | Ограничить переименование одним проектом / агентом. |
+| `invalid_subtypes_to_legacy` | bool | `false` | Переименовывать невалидные подтипы в `<to_prefix>legacy` вместо пропуска. |
+
+**Ответ 200** — отчёт о переименовании (предпросмотр или применённое), включая счётчик `changed`.
+
 ---
 
 ## CRUD записей
@@ -213,7 +230,7 @@ curl -s http://127.0.0.1:8000/tags
 
 Контракт тегов M2 соблюдается на стороне сервера. Эндпоинт извлекает `project` и `agent` из тегов и сохраняет их как денормализованные столбцы для быстрой фильтрации.
 
-**Тело запроса** — см. [MemoryCreate](../architecture/overview.md#data-model)
+**Тело запроса** — см. [MemoryCreate](../architecture/overview.md#структура-данных)
 
 | Поле | Тип | Обязательное | По умолчанию | Описание |
 |------|-----|--------------|-------------|---------- |
@@ -228,7 +245,7 @@ curl -s http://127.0.0.1:8000/tags
 | `metadata` | object | нет | `{}` | Произвольное хранилище ключей/значений. |
 | `category` | string | нет | — | Произвольная метка категории. |
 
-**Ответ 201** — полный объект [`Memory`](#memory-schema).
+**Ответ 201** — полный объект [`Memory`](#схема-memory-memory-schema).
 
 **Пример**
 
@@ -280,7 +297,7 @@ curl -s -X POST http://127.0.0.1:8000/memories \
 |-----|-----|-------------|---------- |
 | `include_raw` | bool | `false` | При true включает `raw_content`. |
 
-**Ответ 200** — полный объект [`Memory`](#memory-schema).
+**Ответ 200** — полный объект [`Memory`](#схема-memory-memory-schema).
 
 **Ответ 404** — `{"detail": "Memory <id> not found"}`.
 
@@ -300,13 +317,46 @@ curl -s http://127.0.0.1:8000/memories/550e8400-e29b-41d4-a716-446655440000
 | `project` | string | — | Ограничить проектом. |
 | `limit` | int | `20` | Максимум строк. Жёсткий cap `500`. |
 
-**Ответ 200** — массив объектов [`Memory`](#memory-schema) (без `raw_content`).
+**Ответ 200** — массив объектов [`Memory`](#схема-memory-memory-schema) (без `raw_content`).
 
 **Пример**
 
 ```bash
 curl -s "http://127.0.0.1:8000/memories?project=mnemos&limit=10"
 ```
+
+---
+
+## Жизненный цикл workflow
+
+Три маршрута управляют state-машиной workflow записи (`open → in-progress → blocked / resolved / done / withdrawn`; `blocked → done` запрещён, терминальные состояния финальны). Каждый переход попадает в audit-лог.
+
+### `GET /memories/{memory_id}/workflow` — текущий статус
+
+Возвращает текущий статус workflow и владельца блокировки. `workflow_status` нормализуется в `open`, если workflow записи никогда не задавали. `404`, если записи не существует.
+
+### `POST /memories/{memory_id}/workflow` — переход статуса
+
+**Тело запроса**
+
+| Поле | Тип | По умолчанию | Описание |
+|------|-----|--------------|----------|
+| `to` | string | — | Целевой статус (`open`, `in-progress`, `blocked`, `resolved`, `done`, `withdrawn`). |
+| `actor` | string | — | Идентификатор вызывающего (обязателен; попадает в audit-лог). |
+| `reason` | string | `""` | Свободная причина (обязательна при `force=true`). |
+| `force` | bool | `false` | Перекрыть блокировку другого актора. |
+
+Нарушения state-машины / guardrail'ов возвращают `409`. Менеджер — единственный источник истины, валидация на маршруте не дублируется.
+
+### `DELETE /memories/{memory_id}/workflow` — отзыв (отмена)
+
+`DELETE` — это **отмена**: workflow завершается в `withdrawn` — терминальном, необратимом состоянии; блокировка снимается как побочный эффект, но запись не возвращается в возобновляемое состояние.
+
+| Query-параметр | Тип | По умолчанию | Описание |
+|----------------|-----|--------------|----------|
+| `actor` | string | — | Обязателен (`422` при отсутствии). |
+| `reason` | string | `"DELETE withdraw"` | Свободная причина. |
+| `force` | bool | `false` | Перекрыть чужую блокировку. |
 
 ---
 

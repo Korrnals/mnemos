@@ -1,15 +1,20 @@
 # Federation — Phase 1 prerequisites (per-peer ACL + trigger codes + access log)
 
-This page documents the three Phase 1 federation prerequisites that
-landed on the **mnemos** side (Python config + two new modules). Phase 1
-is preparation for Phase 2 (live pull) — these pieces are defined but
-not yet wired into a request path.
+This page documents the federation prerequisites on the **mnemos**
+side — per-peer ACL, the trigger-codes enum, and the federation access
+log — and remains the reference for the `PeerConfig` field set and the
+trigger-code contract. The mediated-pull request path itself is live:
+`handle_pull` in `src/mnemos/federation_server.py` serves
+`POST /api/v1/federation/pull`, and the end-to-end verification guide is
+[`federation-testing.md`](federation-testing.md). The original rollout
+was staged (Phase 1: config + enums + log; Phase 2: the server), so
+some sections below keep the Phase 1/Phase 2 wording.
 
-- **What Phase 1 adds:** per-peer ACL config, trigger codes enum,
-  federation access log.
-- **What Phase 1 does NOT add:** a federation server, a federation
-  client, gRPC, protobuf, mTLS handshake code. Those are Phase 2 (and
-  the Go binary lives in a separate repo, `mnemos-mesh`).
+- **Config + contract (this page):** per-peer ACL config, trigger codes
+  enum, federation access log.
+- **Live request path:** `src/mnemos/federation_server.py` (B side) and
+  `src/mnemos/api/federation.py` (route adapter). The external Go peer
+  binary lives in a separate repo, `mnemos-mesh`.
 - **References:** ArchCom contract 2026-07-17
   (`.archcom/sessions/2026-07-17-federation-contract.md` §3.2, §6, §9,
   §10), ADR-0016 (`docs/project/adr/0016-federation-threat-model.md`).
@@ -157,7 +162,7 @@ Phase 1 ships the config shape, the enum, and the log. Phase 2 will:
    access log for `ALREADY_EXHAUSTED`, and returns the sanitized
    response with a `TriggerCode`.
 2. Build the federation client (A-side) that sends a pull request,
-   receives the `TriggerCode`, and dispatches — `is_terminal` / /
+   receives the `TriggerCode`, and dispatches — `is_terminal` /
    `should_fallback_to_local` decide whether to use the answer, refine
    it, or fall back to local `mnemos_search`.
 
@@ -166,7 +171,7 @@ repo (`mnemos-mesh`) and is out of scope for this page.
 
 ## 5. See also
 
-- [ADR-0016 — Federation threat model](../project/adr/0016-federation-threat-model.md)
+- [ADR-0016 — Federation threat model](../../project/adr/0016-federation-threat-model.md)
 - [Security — Federation defence-in-depth](security.md#11-federation-defence-in-depth)
 - [Federation — Batch Sync (Phase 0)](../user/sync.md)
 - ArchCom contract 2026-07-17 (`.archcom/sessions/2026-07-17-federation-contract.md`)

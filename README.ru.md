@@ -11,6 +11,8 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/mnemos-memory-server/"><img src="https://img.shields.io/pypi/v/mnemos-memory-server?label=pypi&color=3776ab" alt="PyPI"></a>
+  <a href="https://www.npmjs.com/package/pi-mnemos"><img src="https://img.shields.io/npm/v/pi-mnemos?label=npm&color=cb3837" alt="npm"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-3776ab" alt="Python"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-Apache_2.0-blue" alt="License: Apache-2.0"></a>
   <a href="https://github.com/Korrnals/mnemos/releases"><img src="https://img.shields.io/github/v/release/Korrnals/mnemos?label=version&color=blueviolet" alt="Version"></a>
@@ -38,9 +40,9 @@
 | Область | Что даёт |
 |---------|----------|
 | **Универсальное подключение** | MCP-сервер (26 инструментов, stdio) + REST API — любой харнесс с поддержкой MCP подключается одной строкой ([инструменты](docs/ru/user/mcp-tools.md) · [HTTP](docs/ru/user/http-api.md)) |
-| **Готовые интеграции** | zcode, стандарт `~/.agents` (Claude / Codex / Continue / Qwen и др.), pi — через [`mnemos integration`](docs/ru/user/integration-guide.md): таргеты развёртывания, однострочные MCP-пресеты, доктор мульти-харнесов |
+| **Готовые интеграции** | VS Code Copilot, Claude Code, Cursor, Codex, Windsurf, OpenCode, ZCode, pi, Hermes Agent — однострочные MCP-пресеты для всех, [нативные таргеты развёртывания](docs/ru/user/integration-guide.md) для большинства, доктор мульти-харнесов (`mnemos doctor`) |
 | **Пакет скиллов** | 14+ скиллов памяти деплоятся в харнесы |
-| **Гибкая память** | Гибридный поиск (полнотекстовый + векторный, слияние ранжирования), [теги-контракт](docs/ru/user/tag-contract.md), память по агентам и проектам, профили [контекстного фильтра](docs/ru/user/context-filter.md), сжатие CCR — экономия 70–90% токенов, оригиналы сохраняются |
+| **Гибкая память** | Гибридный поиск (полнотекстовый + векторный, слияние ранжирования) поверх встроенной офлайн-модели `mnema-embed-v1`, [теги-контракт](docs/ru/user/tag-contract.md), память по агентам и проектам, профили [контекстного фильтра](docs/ru/user/context-filter.md), сжатие CCR — экономия 70–90% токенов, оригиналы сохраняются |
 | **Сборка контекста** | `assemble_context`: поиск → сжатие → фильтр → скан секретов → выравнивание кэша → бюджет токенов, провенанс каждого блока |
 | **Мост контекста** | `on_context_rewrite` — при сжатии истории харнессом оригинал без потерь доступен по требованию |
 | **Хуки жизненного цикла** | `pre_llm_call` (впрыск контекста перед запросом модели), `on_session_start`, `post_tool_call` (авто-сжатие выводов инструментов) |
@@ -48,73 +50,48 @@
 | **Автозащита** | Детекторы инъекций / секретов на входе и публикации, скан каждой выдачи, полный аудит с привязкой к записи |
 | **Автоконвейер** | Фоновый обработчик: кластеризация, дедупликация, гейт качества, публикация |
 
-Автономность для произвольного харнесса, LLM-дообогащение и публикация пакетов
-(PyPI / npm) — частично; полная честная карта: [docs/ru/features.md](docs/ru/features.md).
+Автономность для произвольного харнесса и LLM-дообогащение — частично; полная
+честная карта: [docs/ru/features.md](docs/ru/features.md).
 
 ---
 
 ## 🚀 Быстрый старт
 
-Четыре шага до рабочего хранилища памяти, подключённого к VS Code Copilot.
+Четыре шага до рабочего хранилища памяти, подключённого к вашему агентскому харнесу.
 
 ### 1 · Установка
+
+Mnemos опубликован на PyPI — одна команда, ничего больше скачивать не нужно
+(модель эмбеддингов встроена в пакет, работает офлайн):
+
+```bash
+pip install "mnemos-memory-server[mcp]"
+```
+
+Изолированный вариант — кладёт CLI `mnemos` в `PATH`, не трогая проектные
+окружения (харнесы запускают `mnemos` из `PATH`, так что это естественный выбор):
+
+```bash
+uv tool install "mnemos-memory-server[mcp]"    # или: pipx install "mnemos-memory-server[mcp]"
+```
+
+> ⚠️ Имя пакета на PyPI — **`mnemos-memory-server`**. `pip install mnemos` устанавливает
+> *не связанный* проект, которому принадлежит имя `mnemos`.
+
+<details>
+<summary><strong>🛠️ Другие способы установки</strong> — скрипт-установщик, из исходников, готовый wheel или контейнер</summary>
+
+<br>
+
+**Скрипт-установщик** — создаёт изолированный venv в `~/.mnemos/venv`, кладёт лаунчер `mnemos`
+в `~/.local/bin` (**активировать venv не нужно**) и в том же запуске предлагает настроить VS Code MCP:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
 ```
 
-Установщик делает всё за вас — знание Python или venv не требуется:
-
-- создаёт изолированное окружение в `~/.mnemos/venv`;
-- кладёт лаунчер `mnemos` в `~/.local/bin`, чтобы CLI работал в любом шелле (**активировать venv не нужно**);
-- тут же предлагает настроить интеграцию VS Code MCP (или сделайте это позже — см. шаг 3).
-
 > Нужен неинтерактивный запуск? Добавьте `--mcp` / `--no-mcp`, чтобы выбрать заранее, например
 > `… | bash -s -- --mcp`.
-
-### 2 · Запись и поиск
-
-```bash
-mnemos add "Первая запись — Mnemos помнит между сессиями" \
-  --tags project:mnemos,agent:tech-writer,mnemos:learning
-
-mnemos search "помнит между сессиями"
-```
-
-Это весь цикл: **записал, нашёл, не потерял.** Каждая запись несёт
-[контракт тегов](docs/ru/user/tag-contract.md) (`project:` / `agent:` / `mnemos:`), чтобы память оставалась упорядоченной.
-
-### 3 · Подключение к VS Code (MCP)
-
-Если во время установки вы ответили **да** — всё готово, просто перезагрузите окно VS Code.
-Чтобы настроить вручную или на другой машине:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash
-```
-
-Затем **перезагрузите окно VS Code** (`Ctrl+Shift+P → Reload Window`). Инструменты `mnemos_*` появятся
-в палитре инструментов Copilot, и агенты смогут вызывать `mnemos_add` / `mnemos_search` напрямую.
-
-### 4 · Установка поведенческих инструкций
-
-```bash
-mnemos integration setup
-```
-
-Развёртывает инструкции использования памяти, скилы и режим промпта в ваш
-агентский харнес (Copilot `~/.copilot/`, обычный Copilot, Cursor). Агенты теперь
-*знают когда и как* использовать память Mnemos — а не просто имеют инструменты.
-
-Добавьте `--wire-agents --all`, чтобы в том же проходе выдать инструменты
-`mnemos/*` во фронтматтер Copilot-агентов. См. [руководство по интеграции](docs/ru/user/integration-guide.md#подключение-mcp-инструментов-к-агентам)
-по флагам wiring и [руководство по контекстному фильтру](docs/ru/user/context-filter.md)
-— пятиступенчатый очиститель шума, который запускается автоматически при каждом `mnemos_add`.
-
-<details>
-<summary><strong>🛠️ Другие способы установки</strong> — из исходников, готовый wheel или контейнер</summary>
-
-<br>
 
 **Из исходников** (для разработки):
 
@@ -122,7 +99,7 @@ mnemos integration setup
 git clone https://github.com/Korrnals/mnemos.git
 cd mnemos
 uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+uv pip install -e ".[dev,mcp]"
 ```
 
 **Готовый wheel** (зафиксировать конкретную версию):
@@ -143,6 +120,55 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 Полное руководство — [container-deployment.md](docs/ru/admin/runbooks/container-deployment.md).
 
 </details>
+
+### 2 · Запись и поиск
+
+```bash
+mnemos add "Первая запись — Mnemos помнит между сессиями" \
+  --tags project:mnemos,agent:tech-writer,mnemos:learning
+
+mnemos search "помнит между сессиями"
+```
+
+Это весь цикл: **записал, нашёл, не потерял.** Каждая запись несёт
+[контракт тегов](docs/ru/user/tag-contract.md) (`project:` / `agent:` / `mnemos:`), чтобы память оставалась упорядоченной.
+
+### 3 · Подключите ваш харнес (MCP)
+
+Любой харнесс с поддержкой MCP подключается по одному и тому же однострочнику —
+**полные инструкции для копирования для каждого харнесса собраны на одной странице:
+[Подключите Mnemos к любому харнесу](integrations/mcp-presets.md)**.
+
+Конкретно для VS Code Copilot скриптовый путь безопасно вливается в ваш `mcp.json`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash
+```
+
+Затем **перезагрузите окно VS Code** (`Ctrl+Shift+P → Reload Window`). Инструменты `mnemos_*` появятся
+в палитре инструментов Copilot, и агенты смогут вызывать `mnemos_add` / `mnemos_search` напрямую.
+Claude Code, Cursor, OpenCode, Codex, Windsurf, ZCode, pi и Hermes получают свои пресеты
+на той же странице.
+
+### 4 · Установка поведенческих инструкций
+
+```bash
+mnemos integration setup
+```
+
+Развёртывает инструкции использования памяти, скиллы и режим промпта в ваш
+агентский харнес — нативные таргеты для Copilot `~/.copilot/`, обычного Copilot,
+Cursor, Hermes Agent `~/.hermes/`, плюс два универсальных таргета: `zcode`
+(нативные скиллы `~/.zcode/` + конфиг MCP), `agents` (стандарт AGENTS.md
+`~/.agents/` — нативно читается Claude Code, Codex, Cursor и другими) и `pi`
+(бридж-расширение). Агенты теперь *знают когда и как* использовать память
+Mnemos — а не просто имеют инструменты. Используйте `--home <dir>` для установки
+в home другого окружения (например, контейнера).
+
+Добавьте `--wire-agents --all`, чтобы в том же проходе выдать инструменты
+`mnemos/*` во фронтматтер Copilot-агентов. См. [руководство по интеграции](docs/ru/user/integration-guide.md#подключение-mcp-инструментов-к-агентам)
+по флагам wiring и [руководство по контекстному фильтру](docs/ru/user/context-filter.md)
+— пятиступенчатый очиститель шума, который запускается автоматически при каждом `mnemos_add`.
 
 <details>
 <summary><strong>🐳 Запуск готового образа напрямую (GHCR)</strong></summary>
@@ -306,7 +332,8 @@ MCP-поверхность также предоставляет **A2A Sessions 
 | Страница | Содержание |
 |------|----------------|
 | [docs/README.md](docs/README.md) | Главная страница документации — выбор языка (EN / RU) |
-| [getting-started.md](docs/ru/user/getting-started.md) | Первый запуск: установка → первая запись → первый поиск → MCP / HTTP |
+| [getting-started.md](docs/ru/user/getting-started.md) | Первый запуск: установка → первая запись → первый поиск → подключение харнеса |
+| [mcp-presets.md](integrations/mcp-presets.md) | Подключение Mnemos к любому харнесу — однострочные MCP-пресеты (VS Code, Claude Code, Cursor, OpenCode, Codex, Windsurf, pi, Hermes) |
 | [architecture/overview.md](docs/ru/architecture/overview.md) | Архитектура, модель данных, конечные автоматы, границы безопасности |
 | [cli-reference.md](docs/ru/user/cli-reference.md) | Все подкоманды `mnemos` с флагами, значениями по умолчанию, примерами |
 | [mcp-tools.md](docs/ru/user/mcp-tools.md) | Все инструменты `mnemos_*` для VS Code Copilot |
@@ -335,6 +362,7 @@ Mnemos работает с любым харнессом, говорящим п�
 | Cursor | `cursor` | [пресет](integrations/mcp-presets.md#cursor) | ✓ |
 | Codex | через `agents` | [пресет](integrations/mcp-presets.md#codex) | ✓ |
 | Windsurf | — | [пресет](integrations/mcp-presets.md#windsurf) | ✓ |
+| OpenCode | — | [пресет](integrations/mcp-presets.md#opencode) | ✓ |
 | ZCode | `zcode` | — | ✓ |
 | Любой харнесс стандарта AGENTS.md | `agents` | — | ✓ |
 | [Hermes Agent](https://hermes-agent.nousresearch.com/) | `hermes` (нативный `MemoryProvider` плагин) | — | — |
@@ -374,5 +402,5 @@ Git-workflow: `feat/*` → `dev-<этап>` → `release/X.Y.Z` → `main`; `mai
 
 <p align="center">
   <sub><strong>Воспроизведите зелёное состояние:</strong> <code>make verify</code> запускает полный
-  quality gate — ruff + mypy --strict + bandit + pip-audit + 802 тестов. Если зелёно — готово к публикации.</sub>
+  quality gate — ruff + mypy --strict + bandit + pip-audit + 2300+ тестов. Если зелёно — готово к публикации.</sub>
 </p>

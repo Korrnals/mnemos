@@ -8,7 +8,7 @@ Mnemos speaks the [Model Context Protocol](https://modelcontextprotocol.io/) (MC
 
 The server is defined in `src/mnemos/mcp_server.py`. Every tool below is registered with the `@server.list_tools()` decorator and dispatched by `call_tool()`.
 
-For a quick start on wiring it into VS Code, see [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server). For programmatic access, the same capabilities are also available over HTTP — see [http-api.md](http-api.md). For the tag schema enforced by most tools, see [tag-contract.md](tag-contract.md).
+For a quick start on wiring it into VS Code, see [getting-started.md#run-the-mcp-server](getting-started.md#connect-your-harness-mcp). For programmatic access, the same capabilities are also available over HTTP — see [http-api.md](http-api.md). For the tag schema enforced by most tools, see [tag-contract.md](tag-contract.md).
 
 ---
 
@@ -38,6 +38,7 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_list_recent`](#mnemos_list_recent) | List recent entries | no |
 | [`mnemos_list_tags`](#mnemos_list_tags) | List all tags with counts | no |
 | [`mnemos_tags`](#mnemos_tags) *(pilot #97)* | Grouped bulk tag ops: rename / remove / add (`action: enum`) | no |
+| [`mnemos_tags_rename`](#mnemos_tags_rename) | Bulk rename tag prefixes across memories (e.g. `gcw:` → `mnemos:`); dry-run by default | no |
 | [`mnemos_workflow`](#mnemos_workflow) *(#96)* | Workflow lifecycle: set / get / history (`action: enum`) | no |
 | [`mnemos_ingest_url`](#mnemos_ingest_url) | Fetch and save a web page | yes |
 | [`mnemos_watch_start`](#mnemos_watch_start) | Start a background file watcher | no |
@@ -47,11 +48,13 @@ The server does not bind any port. Stop it with `Ctrl+C` or by sending EOF on st
 | [`mnemos_compress`](#mnemos_compress) | Reversible compression (CCR) — cache original, embed marker | no |
 | [`mnemos_retrieve`](#mnemos_retrieve) | Retrieve a CCR-cached original or FTS5 snippets | no |
 | [`mnemos_align_prefix`](#mnemos_align_prefix) | CacheAligner — relocate dynamic content for prefix cache stability | no |
+| [`mnemos_filter`](#mnemos_filter) | Run / refresh the context filter on an existing memory (secret-scanned `clean_content`) | no |
 | [`mnemos_assemble_context`](#mnemos_assemble_context) *(#125)* | ADR-0017 D1 — assemble the pre-LLM-call context block (recall → CCR → filter → scan → align → budget) | no |
 | [`mnemos_context_rewrite`](#mnemos_context_rewrite) *(#125)* | ADR-0018 — `on_context_rewrite` lifecycle event: report a context rewrite, the original lands in LTM (idempotent, version-less) | no |
 | [`mnemos_hooks`](#mnemos_hooks) *(#125)* | ADR-0017 D1 / ADR-0018 lifecycle hooks — grouped `action:enum` tool: `pre_llm_call` / `on_session_start` / `post_tool_call` (autocompression, opt-in) | no |
 | [`mnemos_export`](#mnemos_export) | Export memories to a file (JSON or SQLite snapshot) | no |
 | [`mnemos_import`](#mnemos_import) | Import memories from an export file (merge or restore) | no |
+| [`mnemos_reprocess`](#mnemos_reprocess) | Manually run the knowledge pipeline over queued raw/processing entries | no |
 | [`mnemos_stats`](#mnemos_stats) | Health counters and key paths | no |
 
 ---
@@ -104,12 +107,12 @@ Create a new memory entry. The MCP layer enforces the Mnemos tag contract ([M2](
 | Error | Cause |
 |-------|-------|
 | `❌ Tag contract violation: ...` | Missing `project:`, `agent:`, or `mnemos:` tag. |
-| `❌ Error: ...` | SQLite write failure, vault write failure, or embed failure (the latter is non-fatal — see [architecture overview](../architecture/overview.md#vector-store)). |
+| `❌ Error: ...` | SQLite write failure, vault write failure, or embed failure (the latter is non-fatal — see [architecture overview](../architecture/overview.md#1-storage-layer)). |
 
 ### Related
 
 - Tag schema: [tag-contract.md](tag-contract.md)
-- HTTP equivalent: [`POST /memories`](http-api.md#create-memory)
+- HTTP equivalent: [`POST /memories`](http-api.md#post-memories--create-memory)
 - CLI equivalent: [`mnemos add`](cli-reference.md#add)
 
 ---
@@ -232,7 +235,7 @@ When `query` is omitted, the tool returns recent entries (recency-ordered). When
 
 ### Related
 
-- HTTP equivalent: [`GET /recall/agent/{name}`](http-api.md#agent-recall)
+- HTTP equivalent: [`GET /recall/agent/{name}`](http-api.md#get-recallagentname--agent-recall)
 - CLI equivalent: [`mnemos recall --agent <slug>`](cli-reference.md#recall)
 
 ---
@@ -297,8 +300,8 @@ In **auto-collect mode** (`MNEMOS_AUTO_COLLECT=1`), a `## 🔄 Auto-Collect Mode
 ### Related
 
 - `mnemos_save_context` — the matching writer
-- [architecture.md#session-context](../architecture/overview.md#session-context)
-- HTTP equivalent: [`POST /context/recall`](http-api.md#context-recall)
+- [architecture.md](../architecture/overview.md)
+- HTTP equivalent: [`POST /context/recall`](http-api.md#post-contextrecall--recall-session-context)
 
 ---
 
@@ -348,8 +351,8 @@ Mnemos synthesises the parts into a single Markdown memory tagged with `project:
 ### Related
 
 - `mnemos_recall_context` — the matching reader
-- Auto-collect mode: [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server)
-- HTTP equivalent: [`POST /context/save`](http-api.md#context-save)
+- Auto-collect mode: [mcp-tools.md#auto-collect-mode](#auto-collect-mode)
+- HTTP equivalent: [`POST /context/save`](http-api.md#post-contextsave--save-a-session-checkpoint)
 
 ---
 
@@ -395,8 +398,8 @@ List the most recent memory entries, oldest-last.
 
 ### Related
 
-- HTTP equivalent: [`GET /memories`](http-api.md#list-recent)
-- CLI equivalent: [`mnemos list`](cli-reference.md#list)
+- HTTP equivalent: [`GET /memories`](http-api.md#get-memories--list-recent)
+- CLI equivalent: [`mnemos recall`](cli-reference.md#recall)
 
 ---
 
@@ -436,7 +439,134 @@ None.
 ### Related
 
 - HTTP equivalent: [`GET /tags`](http-api.md#tags)
-- CLI equivalent: [`mnemos tags`](cli-reference.md#tags)
+
+---
+
+## `mnemos_tags`
+
+Grouped bulk tag operations across memories: rename a prefix, remove tags, or add tags. Action-based dispatch — the grouped pilot tool (#97); every action goes through the same safe write path (plain `UPDATE`, so the FTS5 index stays consistent), previews by default (`dry_run: true`) and is idempotent.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `action` | string | **yes** | — | `rename`, `remove`, or `add`. |
+| `from_prefix` | string | for `rename` | — | Source prefix, e.g. `gcw:`. Must end with `:`. |
+| `to_prefix` | string | for `rename` | — | Target prefix, e.g. `mnemos:`. Must end with `:`. |
+| `tags` | string[] | for `remove` / `add` | — | Tags to remove or add. Required for those two actions. |
+| `subtypes` | string[] | no | — | Optional whitelist of subtypes to rename (`rename` only). |
+| `wildcard` | boolean | no | `false` | `remove` only: treat each entry in `tags` as a prefix and strip every matching `prefix*` tag instead of exact matches. `rename` is prefix-based by design. |
+| `dry_run` | boolean | no | `true` | Preview without writing. |
+| `project` | string | no | — | Scope the scan to a project slug. |
+| `agent` | string | no | — | Scope the scan to an agent slug. |
+| `invalid_subtypes_to_legacy` | boolean | no | `false` | `rename` only: rename invalid subtypes to `<to_prefix>legacy` instead of skipping them. |
+
+> **Contract safety.** The resulting tag set is re-validated in strict mode per memory: removing the last `project:` / `agent:` / `mnemos:` tag (or otherwise breaking the contract) is rejected per memory with an error entry instead of corrupting the store.
+
+### Output
+
+A report dict. `changed` counts memories whose tag set actually changed; `renamed` is kept for back-compat with `mnemos_tags_rename` callers and mirrors `changed`:
+
+```json
+{
+  "action": "remove",
+  "scanned": 142,
+  "changed": 9,
+  "removed_tags": ["severity:high"],
+  "wildcard": false,
+  "errors": [],
+  "dry_run": true
+}
+```
+
+`rename` returns `{"from_prefix", "to_prefix", "scanned", "renamed", "changed", "skipped_invalid", "errors", "dry_run"}`; `add` returns `{"action", "scanned", "changed", "added_tags", "errors", "dry_run"}`.
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_tags",
+    "arguments": {
+      "action": "rename",
+      "from_prefix": "gcw:",
+      "to_prefix": "mnemos:",
+      "dry_run": false
+    }
+  }
+}
+```
+
+### Errors
+
+| Error | Cause |
+|-------|-------|
+| `unknown action '<x>'...` | `action` is not `rename` / `remove` / `add`. |
+| `action='rename' requires 'from_prefix' and 'to_prefix' ...` | Missing prefixes for the rename action. |
+| `tags must be a non-empty list` | `remove` / `add` called with an empty `tags` list. |
+
+### Related
+
+- Grouped sibling: [`mnemos_tags_rename`](#mnemos_tags_rename) — legacy alias for `action: "rename"`
+
+---
+
+## `mnemos_tags_rename`
+
+Bulk rename tags matching `from_prefix:<subtype>` → `to_prefix:<subtype>` across existing memories. Kept as a **non-breaking alias**: calls are dispatched to the same rename path as [`mnemos_tags`](#mnemos_tags) with `action: "rename"` (a stray `action` key in the arguments is ignored). Safe — the rename goes through a plain `UPDATE` so the FTS5 external-content index stays consistent — and idempotent: a second run with the same arguments renames 0 memories.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `from_prefix` | string | **yes** | — | Source prefix, e.g. `gcw:`. Must end with `:`. |
+| `to_prefix` | string | **yes** | — | Target prefix, e.g. `mnemos:`. Must end with `:`. |
+| `subtypes` | string[] | no | — | Optional whitelist of subtypes to rename. |
+| `dry_run` | boolean | no | `true` | Preview without writing. |
+| `project` | string | no | — | Scope to a project slug. |
+| `agent` | string | no | — | Scope to an agent slug. |
+| `invalid_subtypes_to_legacy` | boolean | no | `false` | Rename invalid subtypes to `<to_prefix>legacy` instead of skipping them. |
+
+### Output
+
+```json
+{
+  "from_prefix": "gcw:",
+  "to_prefix": "mnemos:",
+  "scanned": 142,
+  "renamed": 0,
+  "changed": 0,
+  "skipped_invalid": 3,
+  "errors": [],
+  "dry_run": true
+}
+```
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_tags_rename",
+    "arguments": {
+      "from_prefix": "gcw:",
+      "to_prefix": "mnemos:",
+      "invalid_subtypes_to_legacy": true
+    }
+  }
+}
+```
+
+### Related
+
+- Grouped tool: [`mnemos_tags`](#mnemos_tags) — `action: "rename"` is the same code path
+- HTTP equivalent: `POST /tags/rename` (implemented in the API; not yet covered in [http-api.md](http-api.md))
 
 ---
 
@@ -489,9 +619,9 @@ Fetch a web page, extract its main content (via `trafilatura`), and save it as a
 ### Related
 
 - CLI equivalent: [`mnemos add --url <URL>`](cli-reference.md#add)
-- HTTP equivalent: [`POST /memories` with manual content](http-api.md#create-memory)
-- HTTP equivalent: [`POST /ingest-url`](http-api.md#ingest-url)
-- Security: [security.md](../admin/security.md#ssrf-guard)
+- HTTP equivalent: [`POST /memories` with manual content](http-api.md#post-memories--create-memory)
+- HTTP equivalent: [`POST /ingest-url`](http-api.md#post-ingest-url--fetch-and-save-a-web-page)
+- Security: [security.md](../admin/security.md#2-ssrf-prevention-memorymanager_validate_url)
 
 ---
 
@@ -540,8 +670,7 @@ Start a background file watcher. New and modified files under the watched paths 
 
 ### Related
 
-- HTTP equivalent: [`POST /watch/start`](http-api.md#watch-start)
-- CLI equivalent: [`mnemos watch start`](cli-reference.md#watch-start)
+- HTTP equivalent: [`POST /watch/start`](http-api.md#post-watchstart--start-the-file-watcher)
 
 ---
 
@@ -561,8 +690,7 @@ None.
 
 ### Related
 
-- HTTP equivalent: [`POST /watch/stop`](http-api.md#watch-stop)
-- CLI equivalent: [`mnemos watch stop`](cli-reference.md#watch-stop)
+- HTTP equivalent: [`POST /watch/stop`](http-api.md#post-watchstop--stop-the-file-watcher)
 
 ---
 
@@ -588,8 +716,7 @@ None.
 
 ### Related
 
-- HTTP equivalent: [`GET /watch/status`](http-api.md#watch-status)
-- CLI equivalent: [`mnemos watch status`](cli-reference.md#watch-status)
+- HTTP equivalent: [`GET /watch/status`](http-api.md#get-watchstatus--watcher-status)
 
 ---
 
@@ -655,8 +782,7 @@ Tool descriptions also change (with `🔄 [AUTO-COLLECT] MANDATORY:` prefixes) s
 
 ### Related
 
-- HTTP equivalent: [`GET /auto-collect`](http-api.md#auto-collect)
-- CLI equivalent: [`mnemos auto-collect-status`](cli-reference.md#auto-collect-status)
+- HTTP equivalent: [`GET /auto-collect`](http-api.md#get-auto-collect--compaction-signal-vector)
 
 ---
 
@@ -675,7 +801,7 @@ Same shape as the CLI `mnemos stats` command — see [cli-reference.md#stats](cl
 ```json
 {
   "status": "ok",
-  "version": "0.1.0",
+  "version": "4.0.0",
   "data_dir": "/home/you/.mnemos/data",
   "vault_path": "/home/you/.mnemos/vault",
   "total": 142,
@@ -686,8 +812,63 @@ Same shape as the CLI `mnemos stats` command — see [cli-reference.md#stats](cl
 
 ### Related
 
-- HTTP equivalent: [`GET /metrics`](http-api.md#metrics)
+- HTTP equivalent: [`GET /metrics`](http-api.md#get-metrics)
 - CLI equivalent: [`mnemos stats`](cli-reference.md#stats)
+
+---
+
+## `mnemos_reprocess`
+
+Manually trigger the knowledge pipeline to process queued `raw` / `processing` entries into `published` knowledge: cluster → synthesize → quality gate → publish. Use when `mnemos_stats` shows a large `queue_depth`, or after bulk import.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `project` | string | no | — | Restrict the pass to a project slug. |
+| `agent` | string | no | — | Restrict the pass to an agent slug. |
+| `limit` | integer | no | `100` | Maximum entries considered. |
+
+### Output
+
+The pipeline summary dict:
+
+```json
+{
+  "clusters": 3,
+  "synthesized": 3,
+  "published": 5,
+  "failed_quality_gate": 1,
+  "single_promoted": 2,
+  "stuck_rescued": 0,
+  "published_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+  "refined": 4,
+  "refined_noop": 1,
+  "refine_failed": 0,
+  "quarantined": 0
+}
+```
+
+Memories that do not form a cluster are promoted individually (`single_promoted`) so the queue drains even when most entries are unique.
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_reprocess",
+    "arguments": { "project": "mnemos", "limit": 200 }
+  }
+}
+```
+
+### Related
+
+- HTTP equivalent: [`POST /process`](http-api.md#post-process--run-end-to-end-pipeline)
+- CLI equivalent: [`mnemos processor run`](cli-reference.md#processor)
 
 ---
 
@@ -736,8 +917,7 @@ Compress a 30K-line build log → ~900 chars in the context window. When the LLM
 
 ### Related
 
-- HTTP equivalent: [`POST /compress`](http-api.md#compress)
-- CLI equivalent: [`mnemos compress`](cli-reference.md#compress)
+- HTTP equivalent: [`POST /compress`](http-api.md#post-compress--compress-content)
 
 ---
 
@@ -803,8 +983,7 @@ If the hash is absent from the cache (e.g. evicted by TTL or LRU), `found` is `f
 
 ### Related
 
-- HTTP equivalent: [`POST /retrieve`](http-api.md#retrieve)
-- CLI equivalent: [`mnemos retrieve`](cli-reference.md#retrieve)
+- HTTP equivalent: [`POST /retrieve`](http-api.md#post-retrieve--retrieve-a-ccr-cached-original)
 
 ---
 
@@ -886,6 +1065,72 @@ A kind whose toggle is `false` is added to the skip set and stays in-place (not 
 
 - Architecture: [overview.md#cachealigner-p1-5](../architecture/overview.md#cachealigner-p1-5)
 - Config reference: [config.example.yaml](../../../config.example.yaml)
+
+---
+
+## `mnemos_filter`
+
+Run or refresh the Context Filter (M10) on an existing memory and return its `clean_content`. Useful when auto-filter was off at ingest, or to re-filter with a different profile.
+
+The tool is the **issuance-gated** twin of the maintenance primitive: only `published` / `processed` memories are filterable into context (`raw` / `processing` / `archived` refuse fail-closed), an optional caller `project` scope fails closed on mismatch, and the returned `clean_content` is secret-scanned — refuse mode drops the content entirely, redact mode returns the redacted copy plus counts.
+
+### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `memory_id` | string | **yes** | — | ID of the memory to filter. |
+| `profile` | string | no | auto-detected | Context Filter profile. See [context-filter.md#profiles](context-filter.md#profiles). |
+| `budget` | integer | no | — | Token budget for truncation. |
+| `project` | string | no | — | Caller project slug — the memory must belong to it (mismatch fails closed). Omit for operator semantics. |
+
+### Output
+
+```json
+{
+  "memory_id": "550e8400-e29b-41d4-a716-446655440000",
+  "profile": "terminal",
+  "clean_content": "...filtered text...",
+  "stats": { "...": "filter pipeline stats" },
+  "redactions": 0
+}
+```
+
+When `redactions` > 0 the response also carries `redacted_patterns` (pattern names only — matched values are never echoed).
+
+### Example call
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 12,
+  "method": "tools/call",
+  "params": {
+    "name": "mnemos_filter",
+    "arguments": {
+      "memory_id": "550e8400-e29b-41d4-a716-446655440000",
+      "profile": "terminal"
+    }
+  }
+}
+```
+
+### Errors
+
+Error payloads carry a `reason` field:
+
+| `reason` | Cause |
+|----------|-------|
+| `not_found` | No memory with this id. |
+| `status_gate` | Memory status is not `published` / `processed` (or is quarantined). |
+| `project_scope` | Memory does not belong to the caller's `project`. |
+| `no_content` | Memory has no content to filter. |
+| `refused` | The secret scan refused the echoed content (no content is returned). |
+
+### Related
+
+- [context-filter.md](context-filter.md) — profiles, pipeline stages, auto-filter behaviour (the profile list lives there — not duplicated here)
+- HTTP equivalent: [`POST /filter/{memory_id}`](http-api.md#post-filtermemory_id--apply-the-5-stage-context-filter)
+- CLI equivalent: [`mnemos filter`](cli-reference.md#filter)
 
 ---
 
@@ -1281,7 +1526,7 @@ Import validation (#86) is inherited automatically: schema drift, oversized cont
   "errors": [],
   "warnings": [],
   "format_version": "1.0",
-  "mnemos_version": "2.12.1"
+  "mnemos_version": "4.0.0"
 }
 ```
 
@@ -1507,9 +1752,9 @@ The same lifecycle is exposed over HTTP, nested under the memory (not a top-leve
 
 | Method | Path | Maps to |
 |--------|------|---------|
-| `GET` | `/api/v1/memories/{memory_id}/workflow` | `workflow_get` (404 if memory missing) |
-| `POST` | `/api/v1/memories/{memory_id}/workflow` | `workflow_set` (body: `to`, `actor`, `reason`, `force`; `409` on guardrail violation) |
-| `DELETE` | `/api/v1/memories/{memory_id}/workflow` | `workflow_set(... to="withdrawn")` — **cancel / withdraw** (terminal, irreversible). Ends the workflow in `withdrawn`; the lock is cleared as a side effect of reaching a terminal state. `actor` query param required; `force` overrides a foreign lock. |
+| `GET` | `/memories/{memory_id}/workflow` | `workflow_get` (404 if memory missing) |
+| `POST` | `/memories/{memory_id}/workflow` | `workflow_set` (body: `to`, `actor`, `reason`, `force`; `409` on guardrail violation) |
+| `DELETE` | `/memories/{memory_id}/workflow` | `workflow_set(... to="withdrawn")` — **cancel / withdraw** (terminal, irreversible). Ends the workflow in `withdrawn`; the lock is cleared as a side effect of reaching a terminal state. `actor` query param required; `force` overrides a foreign lock. |
 
 `DELETE` is a **cancel / withdraw** — it ends the workflow in the terminal `withdrawn` state (no further transitions possible). It is **not** a lock-release-to-resumable: the state machine has no edge back to `open`, so the memory is not returned to a resumable state. To **finish** work normally, use `POST` with `to=done`.
 
@@ -1532,4 +1777,4 @@ The same lifecycle is exposed over HTTP, nested under the memory (not a top-leve
 
 ---
 
-_Last updated: 2026-06-16_
+_Last updated: 2026-09-05_

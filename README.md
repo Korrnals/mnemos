@@ -11,6 +11,8 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/mnemos-memory-server/"><img src="https://img.shields.io/pypi/v/mnemos-memory-server?label=pypi&color=3776ab" alt="PyPI"></a>
+  <a href="https://www.npmjs.com/package/pi-mnemos"><img src="https://img.shields.io/npm/v/pi-mnemos?label=npm&color=cb3837" alt="npm"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-3776ab" alt="Python"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/license-Apache_2.0-blue" alt="License: Apache-2.0"></a>
   <a href="https://github.com/Korrnals/mnemos/releases"><img src="https://img.shields.io/github/v/release/Korrnals/mnemos?label=version&color=blueviolet" alt="Version"></a>
@@ -38,9 +40,9 @@ One local server — and a connected agent harness gets the full memory stack.
 | Area | What you get |
 |------|--------------|
 | **Universal connectivity** | MCP server (26 tools, stdio) + REST API — any MCP-capable harness connects in one line ([tools](docs/en/user/mcp-tools.md) · [HTTP](docs/en/user/http-api.md)) |
-| **Ready integrations** | zcode, the `~/.agents` standard (Claude / Codex / Continue / Qwen and more), pi — via [`mnemos integration`](docs/en/user/integration-guide.md): deploy targets, one-line MCP presets, multi-harness doctor |
+| **Ready integrations** | VS Code Copilot, Claude Code, Cursor, Codex, Windsurf, OpenCode, ZCode, pi, Hermes Agent — one-line MCP presets for all of them, [native deploy targets](docs/en/user/integration-guide.md) for most, multi-harness doctor (`mnemos doctor`) |
 | **Skill pack** | 14+ memory skills deployed into your harnesses |
-| **Flexible memory** | Hybrid search (full-text + vector, rank fusion), [tag contract](docs/en/user/tag-contract.md), per-agent / per-project memory, [context-filter](docs/en/user/context-filter.md) profiles, CCR compression — 70–90% token savings, originals kept |
+| **Flexible memory** | Hybrid search (full-text + vector, rank fusion) over the bundled offline model `mnema-embed-v1`, [tag contract](docs/en/user/tag-contract.md), per-agent / per-project memory, [context-filter](docs/en/user/context-filter.md) profiles, CCR compression — 70–90% token savings, originals kept |
 | **Context assembly** | `assemble_context`: search → compress → filter → secret scan → cache align → token budget, per-block provenance |
 | **Context bridge** | `on_context_rewrite` — when the harness compacts history, the lossless original stays available on demand |
 | **Lifecycle hooks** | `pre_llm_call` context injection, `on_session_start`, `post_tool_call` auto-compression of tool outputs |
@@ -48,79 +50,43 @@ One local server — and a connected agent harness gets the full memory stack.
 | **Self-protection** | Injection / secret detectors on input and publication, every output scanned, full per-entry audit |
 | **Auto-pipeline** | Background processor: clustering, deduplication, quality gate, publication |
 
-Autonomy for an arbitrary harness, LLM-driven enrichment, and package
-publishing (PyPI / npm) are partial — the full, honest map lives in
-[docs/en/features.md](docs/en/features.md).
+Autonomy for an arbitrary harness and LLM-driven enrichment are partial — the
+full, honest map lives in [docs/en/features.md](docs/en/features.md).
 
 ---
 
 ## 🚀 Quick start
 
-Four steps to a working memory store, wired into VS Code Copilot.
+Four steps to a working memory store, wired into your agent harness.
 
 ### 1 · Install
+
+Mnemos is on PyPI — one command, nothing else to download (the embedding model is bundled, works offline):
+
+```bash
+pip install "mnemos-memory-server[mcp]"
+```
+
+Isolated variant — puts the `mnemos` CLI on `PATH` without touching your project environments (harnesses launch `mnemos` from `PATH`, so this is the natural fit):
+
+```bash
+uv tool install "mnemos-memory-server[mcp]"    # or: pipx install "mnemos-memory-server[mcp]"
+```
+
+> ⚠️ The PyPI name is **`mnemos-memory-server`**. `pip install mnemos` installs an unrelated project that owns the `mnemos` name.
+
+<details>
+<summary><strong>🛠️ Other ways to install</strong> — installer script, from source, released wheel, or container one-liner</summary>
+
+<br>
+
+**Installer script** — creates an isolated venv at `~/.mnemos/venv`, drops a `mnemos` launcher into `~/.local/bin` (**no venv activation needed**), and offers to wire VS Code MCP in the same run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
 ```
 
-The installer does everything for you — no Python or venv knowledge required:
-
-- creates an isolated environment at `~/.mnemos/venv`;
-- drops a `mnemos` launcher into `~/.local/bin`, so the CLI just works in any shell (**no venv activation needed**);
-- offers to wire up VS Code MCP integration right there (or run it later — see step 3).
-
-> Prefer a non-interactive run? Add `--mcp` / `--no-mcp` to decide up front, e.g.
-> `… | bash -s -- --mcp`.
-
-### 2 · Write &amp; recall
-
-```bash
-mnemos add "First memory — Mnemos remembers across sessions" \
-  --tags project:mnemos,agent:tech-writer,mnemos:learning
-
-mnemos search "remembers across sessions"
-```
-
-That's the whole loop: **write, find, never lose it.** Every entry carries a
-[tag contract](docs/en/user/tag-contract.md) (`project:` / `agent:` / `mnemos:`) so memories stay organised.
-
-### 3 · Connect VS Code (MCP)
-
-If you answered **yes** during install, you're already done — just reload your VS Code window.
-To set it up manually, or on another machine:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash
-```
-
-Then **reload the VS Code window** (`Ctrl+Shift+P → Reload Window`). The `mnemos_*` tools appear in
-Copilot's tool picker, and your agents can call `mnemos_add` / `mnemos_search` directly.
-
-### 4 · Deploy behavioral instructions
-
-```bash
-mnemos integration setup
-```
-
-This deploys memory-usage instructions, skills, and a prompt mode to your
-agent harness (Copilot `~/.copilot/`, generic Copilot, Cursor, and Hermes Agent
-`~/.hermes/`), plus two universal targets: `zcode` (native `~/.zcode/` skills +
-MCP config) and `agents` (the AGENTS.md standard `~/.agents/` — read natively
-by ZCode, Claude Code, Codex, Cursor and friends). Agents will now *know when
-and how* to use Mnemos memory — not just have the tools available. Use
-`--home <dir>` to install into another environment's home (e.g. a container).
-
-Add `--wire-agents --all` to also grant `mnemos/*` tools to Copilot agent
-frontmatter in the same pass. See the
-[integration guide](docs/en/user/integration-guide.md#agent-mcp-wiring)
-for wiring flags and the [context filter guide](docs/en/user/context-filter.md)
-for the five-stage noise stripper that runs automatically on every `mnemos_add`.
-
-<details>
-<summary><strong>🛠️ Other ways to install</strong> — from source, released wheel, or container one-liner</summary>
-
-<br>
+> Prefer a non-interactive run? Add `--mcp` / `--no-mcp` to decide up front, e.g. `… | bash -s -- --mcp`.
 
 **From source** (for development):
 
@@ -128,7 +94,7 @@ for the five-stage noise stripper that runs automatically on every `mnemos_add`.
 git clone https://github.com/Korrnals/mnemos.git
 cd mnemos
 uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+uv pip install -e ".[dev,mcp]"
 ```
 
 **Released wheel** (pin a specific version):
@@ -149,6 +115,57 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 See the full [container deployment guide](docs/en/admin/runbooks/container-deployment.md).
 
 </details>
+
+### 2 · Write &amp; recall
+
+```bash
+mnemos add "First memory — Mnemos remembers across sessions" \
+  --tags project:mnemos,agent:tech-writer,mnemos:learning
+
+mnemos search "remembers across sessions"
+```
+
+That's the whole loop: **write, find, never lose it.** Every entry carries a
+[tag contract](docs/en/user/tag-contract.md) (`project:` / `agent:` / `mnemos:`) so memories stay organised.
+
+### 3 · Connect your harness (MCP)
+
+Any MCP-capable harness connects over the same one-liner — **full copy-paste
+instructions for every harness live on one page:
+[Connect Mnemos to any harness](integrations/mcp-presets.md)**.
+
+For VS Code Copilot specifically, the scripted path merges into your `mcp.json`
+safely:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash
+```
+
+Then **reload the VS Code window** (`Ctrl+Shift+P → Reload Window`). The `mnemos_*` tools appear in
+Copilot's tool picker, and your agents can call `mnemos_add` / `mnemos_search` directly.
+Claude Code, Cursor, OpenCode, Codex, Windsurf, ZCode, pi, and Hermes each get
+their preset on the same page.
+
+### 4 · Deploy behavioral instructions
+
+```bash
+mnemos integration setup
+```
+
+This deploys memory-usage instructions, skills, and a prompt mode to your
+agent harness — native targets for Copilot `~/.copilot/`, generic Copilot,
+Cursor, Hermes Agent `~/.hermes/`, plus two universal targets: `zcode` (native
+`~/.zcode/` skills + MCP config), `agents` (the AGENTS.md standard `~/.agents/`
+— read natively by Claude Code, Codex, Cursor and friends), and `pi` (bridge
+extension). Agents will now *know when and how* to use Mnemos memory — not
+just have the tools available. Use `--home <dir>` to install into another
+environment's home (e.g. a container).
+
+Add `--wire-agents --all` to also grant `mnemos/*` tools to Copilot agent
+frontmatter in the same pass. See the
+[integration guide](docs/en/user/integration-guide.md#agent-mcp-wiring)
+for wiring flags and the [context filter guide](docs/en/user/context-filter.md)
+for the five-stage noise stripper that runs automatically on every `mnemos_add`.
 
 <details>
 <summary><strong>🐳 Run the pre-built image directly (GHCR)</strong></summary>
@@ -312,7 +329,8 @@ gods' benefit. They were for the songs.
 | Page | What it covers |
 |------|----------------|
 | [docs/README.md](docs/README.md) | Documentation landing — language picker (EN / RU) |
-| [getting-started.md](docs/en/user/getting-started.md) | First run: install → first memory → first search → MCP / HTTP |
+| [getting-started.md](docs/en/user/getting-started.md) | First run: install → first memory → first search → connect your harness |
+| [mcp-presets.md](integrations/mcp-presets.md) | Connect Mnemos to any harness — one-line MCP presets (VS Code, Claude Code, Cursor, OpenCode, Codex, Windsurf, pi, Hermes) |
 | [architecture/overview.md](docs/en/architecture/overview.md) | System shape, data model, state machines, security boundaries |
 | [cli-reference.md](docs/en/user/cli-reference.md) | Every `mnemos` subcommand with flags, defaults, examples |
 | [mcp-tools.md](docs/en/user/mcp-tools.md) | Every `mnemos_*` tool exposed to VS Code Copilot |
@@ -341,6 +359,7 @@ pick the strongest one your harness supports:
 | Cursor | `cursor` | [preset](integrations/mcp-presets.md#cursor) | ✓ |
 | Codex | via `agents` | [preset](integrations/mcp-presets.md#codex) | ✓ |
 | Windsurf | — | [preset](integrations/mcp-presets.md#windsurf) | ✓ |
+| OpenCode | — | [preset](integrations/mcp-presets.md#opencode) | ✓ |
 | ZCode | `zcode` | — | ✓ |
 | Any AGENTS.md-standard harness | `agents` | — | ✓ |
 | [Hermes Agent](https://hermes-agent.nousresearch.com/) | `hermes` (native `MemoryProvider` plugin) | — | — |
@@ -380,5 +399,5 @@ Git workflow: `feat/*` → `dev-<stage>` → `release/X.Y.Z` → `main`; `main` 
 
 <p align="center">
   <sub><strong>Reproduce the green state:</strong> <code>make verify</code> runs the full quality gate
-  — ruff + mypy --strict + bandit + pip-audit + 867 tests. If it's green, the change is good to ship.</sub>
+  — ruff + mypy --strict + bandit + pip-audit + 2300+ tests. If it's green, the change is good to ship.</sub>
 </p>

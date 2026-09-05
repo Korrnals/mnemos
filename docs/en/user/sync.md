@@ -168,40 +168,52 @@ A cron-ready shell template that wires export → transfer → import
 together. Set the env vars, then run it. Not executable without
 configuration.
 
-Required env vars:
+Required env vars (the script refuses to run — exit 2 — if any is missing):
 
 | Var | Purpose |
 |-----|---------|
-| `SOURCE_MNEMOS_DIR` | Path to the source mnemos repo (with `.venv`). |
-| `TARGET_MNEMOS_DIR` | Path to the target mnemos repo (with `.venv`). |
-| `SHARED_PROJECTS` | Space-separated project slugs to sync. |
+| `MNEMOS_SYNC_PEER_HOST` | Peer (target) host B. |
+| `MNEMOS_SYNC_PEER_SSH_KEY` | ed25519 private key on A for the rsync push. |
+| `MNEMOS_SYNC_PEER_IMPORT_SSH_KEY` | ed25519 private key on A for the import trigger. |
+| `MNEMOS_SYNC_LOCAL_EXPORT_DIR` | Local dir where the export payload is written. |
+| `MNEMOS_SYNC_REMOTE_IMPORT_DIR` | Dir on B where rsync delivers the payload. |
+| `MNEMOS_SYNC_SHARED_PROJECTS` | Comma-separated project slugs to sync. |
+| `MNEMOS_SYNC_ENCRYPT` | `true` / `false`. |
+| `MNEMOS_SYNC_PASSPHRASE_ENV` | NAME of the env var holding the passphrase. |
 
 Optional env vars:
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `ENCRYPT` | `0` | `1` to encrypt the export. |
-| `MNEMOS_EXPORT_PASSPHRASE` | — | Required when `ENCRYPT=1`. |
-| `TRANSFER_METHOD` | `cp` | `rsync` / `scp` / `cp`. |
-| `TRANSFER_DEST_HOST` | — | Target host for `rsync`/`scp`. |
-| `SYNC_FILE` | `/tmp/mnemos-sync-<ts>.json` | Export file path. |
-| `DRY_RUN` | `0` | `1` for end-to-end dry-run. |
-| `SOURCE_CONFIG` / `TARGET_CONFIG` | discovery | Per-side `config.yaml` paths. |
+| `MNEMOS_SYNC_PEER_USER` | `mnemos-sync` | ssh user on B. |
+| `MNEMOS_SYNC_DRY_RUN` | — | `1` logs commands only, no writes / ssh. |
+| `MNEMOS_SYNC_SOURCE_CONFIG` | discovery | Per-side `config.yaml` path on A. |
+| `MNEMOS_SYNC_REMOTE_FILE` | `mnemos-sync-<ts>.json` | Basename of the payload on B. |
+| `MNEMOS_SYNC_MNEMOS_BIN` | auto-discover | Path to the `mnemos` CLI on A. |
 
-Crontab example (hourly encrypted sync to a peer host over scp):
+The `mnemos` CLI path on B (`MNEMOS_SYNC_REMOTE_MNEMOS_BIN`) is set on B in
+`/etc/mnemos/sync.env` — A does not need it, the `mnemos-import-wrapper` on B
+resolves the binary. The passphrase is never passed on the command line: on A
+it is read from the env var named by `MNEMOS_SYNC_PASSPHRASE_ENV`, on B it is
+provisioned independently in the systemd environment.
+
+Crontab example (hourly encrypted sync to a peer host):
 
 ```cron
-0 * * * * SOURCE_MNEMOS_DIR=/opt/mnemos-a TARGET_MNEMOS_DIR=/opt/mnemos-b \
-          SHARED_PROJECTS="project-umbra project-mnemos" \
-          MNEMOS_EXPORT_PASSPHRASE="$PASS" ENCRYPT=1 \
-          TRANSFER_METHOD=scp TRANSFER_DEST_HOST=peer.example.com \
-          /opt/mnemos-a/scripts/sync-peers.sh >> /var/log/mnemos-sync.log 2>&1
+0 * * * * MNEMOS_SYNC_PEER_HOST=peer.example.com \
+          MNEMOS_SYNC_PEER_SSH_KEY=/etc/mnemos/sync_ed25519 \
+          MNEMOS_SYNC_PEER_IMPORT_SSH_KEY=/etc/mnemos/sync_import_ed25519 \
+          MNEMOS_SYNC_LOCAL_EXPORT_DIR=/var/lib/mnemos/sync \
+          MNEMOS_SYNC_REMOTE_IMPORT_DIR=/var/lib/mnemos/incoming \
+          MNEMOS_SYNC_SHARED_PROJECTS="project-umbra,project-mnemos" \
+          MNEMOS_SYNC_ENCRYPT=true MNEMOS_SYNC_PASSPHRASE_ENV=MNEMOS_EXPORT_PASSPHRASE \
+          /opt/mnemos/scripts/sync-peers.sh >> /var/log/mnemos-sync.log 2>&1
 ```
 
-For `rsync`/`scp` transfers to a remote peer, the script prints the
-exact `mnemos sync import` command to run on the peer (it cannot ssh in
-and run the target venv itself). For `cp` (local same-host sync), the
-script runs the import step directly.
+Transfer is rsync over ssh, restricted on B by `rsync-wrapper.sh`; the import
+trigger on B is guarded by `mnemos-import-wrapper.sh` (both under
+`contrib/systemd/`). The same script is the `ExecStart` of
+`contrib/systemd/mnemos-sync.service`, which loads `/etc/mnemos/sync.env`.
 
 ---
 

@@ -2,7 +2,9 @@
 # scripts/smoke-federation.sh — local federation smoke test.
 #
 # Verifies the full Phase 0 federation roundtrip on a single host using
-# two isolated mnemos-home directories:
+# two isolated mnemos instances (per-instance config.yaml selected via
+# the MNEMOS_CONFIG env var — the only instance-selection mechanism the
+# app understands; see find_config_file in src/mnemos/config.py):
 #
 #   1. Seed peer B with a clean decision memory.
 #   2. Export B's memories as a compact federation payload.
@@ -24,22 +26,26 @@ command -v jq >/dev/null 2>&1 || { echo "FATAL: jq not on PATH"; exit 1; }
 TMPDIR="$(mktemp -d -t mnemos-smoke-XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-HOME_A="$TMPDIR/homeA"
-HOME_B="$TMPDIR/homeB"
-mkdir -p "$HOME_A" "$HOME_B"
+CONF_A="$TMPDIR/instance-a/config.yaml"
+CONF_B="$TMPDIR/instance-b/config.yaml"
+for inst_dir in "$TMPDIR/instance-a" "$TMPDIR/instance-b"; do
+  mkdir -p "$inst_dir/data" "$inst_dir/vault"
+  printf 'mnemos:\n  data_dir: %s/data\n  vault_path: %s/vault\n' \
+    "$inst_dir" "$inst_dir" > "$inst_dir/config.yaml"
+done
 
 PROJECT="smoke-fed"
 AGENT_B="smoke-b"
 PAYLOAD="$TMPDIR/compact.json"
 
 echo "1. Seed peer B with a clean decision memory"
-MNEMOS_HOME="$HOME_B" "$MNEMOS_BIN" add \
-  "Smoke test: mnemos federation v2.12.1 verified via local roundtrip." \
+MNEMOS_CONFIG="$CONF_B" "$MNEMOS_BIN" add \
+  "Smoke test: mnemos federation verified via local roundtrip." \
   --tags "project:$PROJECT,agent:$AGENT_B,mnemos:decision" \
   --title "Federation smoke seed" >/dev/null
 
 echo "2. Export B's memories as a compact federation payload"
-MNEMOS_HOME="$HOME_B" "$MNEMOS_BIN" sync export \
+MNEMOS_CONFIG="$CONF_B" "$MNEMOS_BIN" sync export \
   --output "$PAYLOAD" \
   --shared-projects "$PROJECT" >/dev/null
 
@@ -48,21 +54,24 @@ RECORD_COUNT=$(jq '.records | length' "$PAYLOAD")
 echo "   exported $RECORD_COUNT record(s)"
 
 echo "3. Import the payload into peer A"
-IMPORT_OUT="$(MNEMOS_HOME="$HOME_A" "$MNEMOS_BIN" sync import "$PAYLOAD" 2>&1)"
-IMPORTED=$(echo "$IMPORT_OUT" | grep -oE 'Imported: [0-9]+' | grep -oE '[0-9]+')
+IMPORT_OUT="$(MNEMOS_CONFIG="$CONF_A" "$MNEMOS_BIN" sync import "$PAYLOAD" 2>&1)"
+IMPORTED=$(echo "$IMPORT_OUT" | grep -oE 'Imported: [0-9]+' | grep -oE '[0-9]+' || true)
+IMPORTED="${IMPORTED:-0}"
 [[ "$IMPORTED" -ge 1 ]] || { echo "FAIL: import did not import any record"; echo "$IMPORT_OUT"; exit 1; }
 echo "   imported $IMPORTED record(s)"
 
 echo "4. Search on A — imported record must be findable"
-SEARCH_OUT="$(MNEMOS_HOME="$HOME_A" "$MNEMOS_BIN" search "federation smoke" --limit 3 2>&1)"
+SEARCH_OUT="$(MNEMOS_CONFIG="$CONF_A" "$MNEMOS_BIN" search "federation smoke" --limit 3 2>&1)"
 echo "$SEARCH_OUT" | grep -q "Federation smoke seed" \
   || { echo "FAIL: imported record not found in search"; echo "$SEARCH_OUT"; exit 1; }
 echo "   search found the imported record"
 
 echo "5. Re-import the same payload — idempotent (skip, no duplicate)"
-REIMPORT_OUT="$(MNEMOS_HOME="$HOME_A" "$MNEMOS_BIN" sync import "$PAYLOAD" 2>&1)"
-REIMPORTED=$(echo "$REIMPORT_OUT" | grep -oE 'Imported: [0-9]+' | grep -oE '[0-9]+')
-SKIPPED=$(echo "$REIMPORT_OUT" | grep -oE 'skipped: [0-9]+' | grep -oE '[0-9]+')
+REIMPORT_OUT="$(MNEMOS_CONFIG="$CONF_A" "$MNEMOS_BIN" sync import "$PAYLOAD" 2>&1)"
+REIMPORTED=$(echo "$REIMPORT_OUT" | grep -oE 'Imported: [0-9]+' | grep -oE '[0-9]+' || true)
+REIMPORTED="${REIMPORTED:-0}"
+SKIPPED=$(echo "$REIMPORT_OUT" | grep -oE 'skipped: [0-9]+' | grep -oE '[0-9]+' || true)
+SKIPPED="${SKIPPED:-0}"
 [[ "$REIMPORTED" -eq 0 ]] || { echo "FAIL: re-import duplicated records"; echo "$REIMPORT_OUT"; exit 1; }
 [[ "$SKIPPED" -ge 1 ]] || { echo "FAIL: re-import did not skip existing"; echo "$REIMPORT_OUT"; exit 1; }
 echo "   re-import idempotent: imported=$REIMPORTED, skipped=$SKIPPED"

@@ -1,20 +1,44 @@
-# Mnemos MCP presets — one-line configs for major harnesses
+# Connect Mnemos to any harness — one-line MCP presets
 
 **🌐 Language / Язык:** English · [Русский](../docs/ru/user/integration-guide.md#однострочные-mcp-пресеты)
 
-One line (or one paste block) per harness. Every preset connects the harness to
-the Mnemos MCP server over stdio — the same wire ADR-0017 D1 standardised on:
-command `mnemos`, args `["mcp-server"]`.
+Every MCP-capable harness connects to Mnemos over the same stdio wire
+(ADR-0017 D1): command `mnemos`, args `["mcp-server"]`. Below — one line
+(or one paste block) per harness. Pick yours and you are done.
 
-**Prerequisite:** `mnemos` is on `PATH`:
+**Prerequisite — install Mnemos (one command):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
+pip install "mnemos-memory-server[mcp]"
 ```
+
+> The `mcp` extra ships the MCP SDK — it is what makes `mnemos mcp-server`
+> work, so keep it. Isolated variant (installs the `mnemos` CLI on `PATH`
+> without touching your project environments): `uv tool install
+> "mnemos-memory-server[mcp]"` or `pipx install "mnemos-memory-server[mcp]"`.
+
+> ⚠️ The PyPI name is **`mnemos-memory-server`**. `pip install mnemos` installs
+> an unrelated project that owns the `mnemos` name on PyPI.
 
 No environment variables are required: the server defaults to
 `~/.mnemos/data` (store) and `~/.mnemos/vault` (Obsidian mirror) and creates
 both on first run. See [Tuning](#tuning) for custom locations.
+
+---
+
+## Which connection path for my harness?
+
+Three levels — pick the strongest one your harness supports:
+
+| Level | Harnesses | How |
+|-------|-----------|-----|
+| **1 · Native target** | VS Code Copilot, Cursor, Hermes Agent, ZCode, pi, any `~/.agents`-standard tool | `mnemos integration setup --target <name>` — deploys the skill pack *and* registers the MCP server in one pass |
+| **2 · One-line preset** | Cursor, Claude Code, Codex, Windsurf, OpenCode, VS Code | paste one block from this page |
+| **3 · Adapter template** | anything else that speaks MCP stdio | [adapter-template.md](adapter-template.md) — Connect / Expose / Configure |
+
+The full behavioral-deployment mechanics (instructions, skills, prompt mode,
+agent wiring) live in the
+[integration guide](../docs/en/user/integration-guide.md).
 
 ---
 
@@ -90,6 +114,25 @@ existing `mcp_config.json`; otherwise paste the line above into `mcpServers`):
 mkdir -p ~/.codeium/windsurf && echo '{"mcpServers":{"mnemos":{"type":"stdio","command":"mnemos","args":["mcp-server"]}}}' > ~/.codeium/windsurf/mcp_config.json
 ```
 
+## OpenCode
+
+Config file: `~/.config/opencode/opencode.json` (global) or `opencode.json`
+in the project root. Paste inside the top-level `mcp` object (note the
+`"local"` type and the command **array** — OpenCode's own dialect):
+
+```json
+"mnemos": { "type": "local", "command": ["mnemos", "mcp-server"] }
+```
+
+Fresh setup — create the whole file in one shell line (overwrites an existing
+config; otherwise paste the line above into `mcp`):
+
+```bash
+mkdir -p ~/.config/opencode && echo '{"$schema":"https://opencode.ai/config.json","mcp":{"mnemos":{"type":"local","command":["mnemos","mcp-server"]}}}' > ~/.config/opencode/opencode.json
+```
+
+Restart OpenCode — the `mnemos_*` tools appear in the tools list.
+
 ## Pi
 
 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
@@ -119,13 +162,55 @@ Note: Pi also reads `~/.agents/skills/`; when both the `pi` and `agents`
 targets are deployed, prefer `--target pi` to avoid duplicate skill
 listings.
 
-## VS Code Copilot (reference)
+## VS Code Copilot
 
-The scripted path — merges into user- or workspace-scope `mcp.json` safely:
+Scripted path — merges into user- or workspace-scope `mcp.json` safely, never
+overwrites your other servers:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash
 ```
+
+Then **reload the VS Code window** (`Ctrl+Shift+P → Reload Window`).
+
+Manual path — add to VS Code **User** `mcp.json` (`~/.config/Code/User/mcp.json`
+on Linux/macOS) or the workspace `.vscode/mcp.json`:
+
+```jsonc
+{
+  "servers": {
+    "mnemos": { "type": "stdio", "command": "mnemos", "args": ["mcp-server"] }
+  }
+}
+```
+
+The `mnemos_*` tools appear in the Copilot Chat tools picker.
+
+## ZCode · Claude Code · Codex · Cursor — the `~/.agents` standard
+
+One install covers every harness that reads the standard locations:
+
+```bash
+mnemos integration setup --target agents   # skills + MCP for the ~/.agents standard
+mnemos integration setup --target zcode    # ZCode-native skills + MCP config
+```
+
+`agents` deploys the skill pack to `~/.agents/skills/<name>/SKILL.md` and
+registers the MCP server in `~/.agents/mcp.json` (additive merge — existing
+servers survive). The `zcode` target does the same for `~/.zcode/`.
+
+## Hermes Agent
+
+Hermes does not use the stdio preset — it embeds Mnemos **in-process** through
+a native `MemoryProvider` plugin (no server process at all):
+
+```bash
+pip install mnemos-memory-server
+mnemos integration setup --target hermes
+```
+
+Full walkthrough: [Hermes section of the integration
+guide](../docs/en/user/integration-guide.md#hermes-agent).
 
 ---
 

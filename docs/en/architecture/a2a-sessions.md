@@ -5,7 +5,7 @@
 > **Status**: Implemented in Mnemos M16
 > **Audience**: AI agents / MCP orchestrator
 > **Base URL**: `http://localhost:8787/v1/` (loopback by default)
-> **Source spec**: `docs/a2a/mnemos-requirements.md`
+> **Source spec**: [ADR-0007 — A2A Sessions API v1](../../project/adr/0007-a2a-sessions-api-v1.md)
 
 Mnemos exposes 5 HTTP endpoints for the A2A routing layer. They give
 agents a persistent backend for conversation sessions and per-step turn
@@ -342,7 +342,7 @@ ones. Up to 5 decisions are returned, in the order they appear.
 | Successful `2xx`  | Use the returned `context_pointer` to address the turn in later steps. |
 
 Mnemos itself does not implement these retries — that's the MCP
-layer's job. See `docs/a2a/mnemos-requirements.md` for the full contract.
+layer's job. See [ADR-0007 — A2A Sessions API v1](../../project/adr/0007-a2a-sessions-api-v1.md) for the full contract.
 
 ---
 

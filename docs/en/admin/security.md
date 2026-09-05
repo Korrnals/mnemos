@@ -235,7 +235,8 @@ Mnemos uses **opaque bearer tokens** (prefix `mnk_`, 256-bit random via
 `secrets.token_urlsafe(32)`). Only the PBKDF2-HMAC-SHA256 digest of each
 token is written to disk or SQLite (600 000 iterations, fixed salt
 `mnemos.api.auth.fernet.v1`). The plaintext is shown once at creation and
-never stored. A stolen `~/.mnemos/auth.db` or config file yields only the
+never stored. A stolen `~/.mnemos/data/mnemos.db` (where token digests
+live alongside memories) or config file yields only the
 hash, not a usable bearer string.
 
 ### 9.2 TOTP second factor
@@ -424,7 +425,7 @@ flowchart TB
 | Layer | Where | When | What it does | Status |
 |-------|-------|------|-------------|--------|
 | **1. Write-path scanner** | `mnemos_add` / `POST /memories` / `ingest_url` / `ingest_path_scoped_rules` | On every write | Runs `detect_secrets(content)`. If a secret is detected and the record does not already carry `mnemos:no-federate`, the tag is auto-added. Logs pattern names + counts only — never raw matched values. | ✅ Shipped (#86) |
-| **2. Background scanner** | MCP server, background job | Configurable interval (`federation.no_federate_scan_interval_hours`, default 6h) | Re-scans the whole corpus for false negatives missed at write time. Re-uses `detect_secrets` unchanged (DRY — one source of truth for patterns). | 🔮 Future (#89) |
+| **2. Background scanner** | MCP server, background job | Configurable interval (`scanner.interval_hours`, default 6h) | Re-scans the whole corpus for false negatives missed at write time. Re-uses `detect_secrets` unchanged (DRY — one source of truth for patterns). Manual trigger: `mnemos scanner run`. | ✅ Shipped (#89) |
 | **3. Moderation pipeline** | Sync export (Phase 0) / Pull (Phase 2) | On every sync export / pull | Final defense — runs `moderate()` on output via `build_compact_payload()`. Even if the `no-federate` tag is missing, the pipeline sanitizes the content (redact) or refuses the record. | ✅ Shipped (#85 parts 1, 2a, 2b) |
 
 ### 11.1 Secrets detector module

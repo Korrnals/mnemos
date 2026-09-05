@@ -165,8 +165,8 @@ Prometheus-style metrics (M5 observability). Currently returns the same shape as
 ```json
 {
   "status": "ok",
-  "version": "0.1.0",
-  "data_dir": "/home/you/.mnemos",
+  "version": "4.0.0",
+  "data_dir": "/home/you/.mnemos/data",
   "vault_path": "/home/you/.mnemos/vault",
   "total": 142,
   "by_status": {"raw": 5, "processing": 0, "processed": 12, "published": 120, "archived": 5},
@@ -204,6 +204,23 @@ curl -s http://127.0.0.1:8000/tags
   {"tag": "mnemos:learning", "count": 41}
 ]
 ```
+
+### `POST /tags/rename` — bulk rename a tag prefix
+
+Renames every tag matching `from_prefix:<subtype>` → `to_prefix:<subtype>` (the GCW → mnemos migration case). Mirrors the `mnemos_tags_rename` MCP tool and `mnemos tags rename` CLI. Safe by construction: plain `UPDATE` (the FTS5 external-content index stays consistent), and `dry_run` defaults to `true` — nothing is written unless the caller passes `dry_run: false`.
+
+**Request body**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `from_prefix` | string | — | Source prefix (e.g. `gcw`). |
+| `to_prefix` | string | — | Target prefix (e.g. `mnemos`). |
+| `subtypes` | string[] \| null | `null` | Optional whitelist of subtypes to rename. |
+| `dry_run` | bool | `true` | Preview without writing. |
+| `project` / `agent` | string \| null | `null` | Scope the rename to one project / agent. |
+| `invalid_subtypes_to_legacy` | bool | `false` | Rename invalid subtypes to `<to_prefix>legacy` instead of skipping. |
+
+**Response 200** — the rename report (preview or applied), including the `changed` count.
 
 ---
 
@@ -310,9 +327,40 @@ curl -s "http://127.0.0.1:8000/memories?project=mnemos&limit=10"
 
 ---
 
-## Search
+## Workflow lifecycle
 
-### `POST /search` — hybrid search
+Three routes drive a memory's workflow state machine (`open → in-progress → blocked / resolved / done / withdrawn`; `blocked → done` is forbidden, terminal states are final). Every transition is recorded in the audit log.
+
+### `GET /memories/{memory_id}/workflow` — current status
+
+Returns the current workflow status and lock owner. `workflow_status` is normalised to `open` when the memory never had its workflow set. `404` when the memory does not exist.
+
+### `POST /memories/{memory_id}/workflow` — transition status
+
+**Request body**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `to` | string | — | Target status (`open`, `in-progress`, `blocked`, `resolved`, `done`, `withdrawn`). |
+| `actor` | string | — | Caller identity (required; recorded in the audit log). |
+| `reason` | string | `""` | Free-form reason (required when `force=true`). |
+| `force` | bool | `false` | Override a lock held by another actor. |
+
+State-machine / guardrail violations return `409`. The manager is the single source of truth — no validation is duplicated at the route.
+
+### `DELETE /memories/{memory_id}/workflow` — withdraw (cancel)
+
+`DELETE` is a **cancel**: the workflow ends in `withdrawn` — a terminal, irreversible state; the lock is cleared as a side effect, but the memory is not returned to a resumable state.
+
+| Query param | Type | Default | Description |
+|-------------|------|---------|-------------|
+| `actor` | string | — | Required (`422` when missing). |
+| `reason` | string | `"DELETE withdraw"` | Free-form. |
+| `force` | bool | `false` | Override a foreign lock. |
+
+---
+
+## Search
 
 RRF fusion of FTS5 and vector legs. Only `published` memories are searched by default.
 

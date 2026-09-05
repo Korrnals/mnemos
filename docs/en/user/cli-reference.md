@@ -23,11 +23,27 @@ mnemos [GLOBAL-OPTIONS] SUBCOMMAND [SUBCOMMAND-OPTIONS] [ARGS]
 | [`add`](#add) | Create a new memory entry |
 | [`search`](#search) | Hybrid FTS5 + vector search |
 | [`recall`](#recall) | List recent memories, optionally per agent / per project |
-| [`tags-validate`](#tags-validate) | Validate the tag contract across a vault |
+| [`tags validate`](#tags-validate) | Validate the tag contract across a vault |
+| [`workflow`](#workflow) | Memory workflow lifecycle: `get` / `set` / `history` |
 | [`stats`](#stats) | Show health counters |
+| [`fts`](#fts) | FTS5 index management (`rebuild`) |
+| [`processor`](#processor) | Background pipeline control: `status` / `run` / `start` / `stop` |
+| [`reindex`](#reindex) | Re-embed all published memories into the vector index |
+| [`filter`](#filter) | Run the Context Filter on a memory |
 | [`serve`](#serve) | Start the HTTP API server (FastAPI / Uvicorn) |
 | [`mcp-server`](#mcp-server) | Start the MCP stdio server for VS Code Copilot |
-| [`migrate-from-ai-brain`](#migrate-from-ai-brain) | One-shot import from a legacy `ai-brain` install |
+| [`migrate from-ai-brain`](#migrate-from-ai-brain) | One-shot import from a legacy `ai-brain` install |
+| [`auth`](#auth) | API bearer tokens (`auth token`) and TOTP 2FA (`auth totp`) |
+| [`integration`](integration-guide.md) | Deploy / verify the integration layer (dedicated page) |
+| [`completion`](#completion) | Install shell completion (bash / zsh / fish) |
+| [`doctor`](#doctor) | Diagnose the installation (paths, config, database, vault) |
+| [`export`](export-import.md) | Export memories to a JSON / SQLite backup (dedicated page) |
+| [`import`](export-import.md) | Import memories from an export file (dedicated page) |
+| [`logs`](#logs) | View pipeline traces |
+| [`sync`](sync.md) | Federation batch sync export / import (dedicated page) |
+| [`scanner`](#scanner) | Background secrets scanner: `run` / `status` |
+
+> The `tags` group also provides `tags normalize` and `tags rename` (bulk prefix rename with dry-run); `migrate tags` is a deprecated alias for `mnemos tags rename --from gcw: --to mnemos: --no-dry-run`.
 
 ---
 
@@ -45,10 +61,10 @@ mnemos --help
 mnemos add --help
 ```
 
-There are no other global flags — Mnemos does not have a `verbose` switch; bump Python's logging instead:
+The only other global flags are `--version / -V` (print the version) and `--verbose / -v` (DEBUG logging for `mnemos serve` and `mnemos mcp-server`). To change the log level permanently, set `logging.level` in the config file or the corresponding env var:
 
 ```bash
-MNEMOS_LOG_LEVEL=DEBUG mnemos search "test"
+MNEMOS_LOGGING__LEVEL=DEBUG mnemos serve
 ```
 
 ---
@@ -60,9 +76,11 @@ All settings are env-overridable via the `MNEMOS_` prefix. Nested keys use `__` 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `MNEMOS_CONFIG` | — | Path to `config.yaml` |
-| `MNEMOS_DATA_DIR` | `~/.mnemos/data` | SQLite DB + vector index |
-| `MNEMOS_VAULT__VAULT_PATH` | `~/.mnemos/vault` | Obsidian mirror directory |
-| `MNEMOS_STRICT_TAG_CONTRACT` | `true` | Enforce M2 tag schema |
+| `MNEMOS_MNEMOS__DATA_DIR` | `~/.mnemos/data` | SQLite DB + vector index (canonical form) |
+| `MNEMOS_DATA_DIR` *(legacy alias)* | `~/.mnemos/data` | Legacy alias for `MNEMOS_MNEMOS__DATA_DIR` |
+| `MNEMOS_MNEMOS__VAULT_PATH` | `~/.mnemos/vault` | Obsidian mirror directory (canonical form) |
+| `MNEMOS_VAULT__VAULT_PATH` *(legacy alias)* | `~/.mnemos/vault` | Legacy alias for `MNEMOS_MNEMOS__VAULT_PATH` |
+| `MNEMOS_MNEMOS__STRICT_TAG_CONTRACT` | `true` | Enforce M2 tag schema |
 | `MNEMOS_API__HOST` | `127.0.0.1` | Default for `mnemos serve` |
 | `MNEMOS_API__PORT` | `8787` | Default for `mnemos serve` |
 | `MNEMOS_SEARCH__HYBRID_ALPHA` | `0.7` | Vector weight in RRF fusion |
@@ -70,7 +88,9 @@ All settings are env-overridable via the `MNEMOS_` prefix. Nested keys use `__` 
 | `MNEMOS_LLM__PROVIDER` | `ollama` | LLM for synthesis + context filter |
 | `MNEMOS_LLM__MODEL` | `qwen2.5:3b` | LLM model name |
 | `MNEMOS_AUTO_COLLECT` | `0` | Set `1` to enable MCP auto-collect mode |
-| `MNEMOS_LOG_LEVEL` | `INFO` | Python logging level |
+| `MNEMOS_LOGGING__LEVEL` | `INFO` | Python logging level |
+
+> **Legacy aliases.** `MNEMOS_DATA_DIR` and `MNEMOS_VAULT__VAULT_PATH` predate the nested `MNEMOS_MNEMOS__*` naming and are kept for compatibility (#139). Both forms work. On conflict the canonical env name — and an explicit value in the config file — wins over the legacy alias; the alias only fills the gap that would otherwise fall through to the default.
 
 ---
 
@@ -91,6 +111,7 @@ mnemos add [CONTENT] [OPTIONS]
 | `--url / -u` | — | Fetch and ingest a URL. Requires tags. |
 | `--source / -s` | `cli` | Memory source enum: `manual`, `web`, `file`, `mcp`, `obsidian`, `cli`, `rule`, `synthesized`. |
 | `--type` | `note` | Memory type: `note`, `fact`, `snippet`, `bookmark`, `conversation`, `session_context`. |
+| `--dry-run` | `false` | Validate tags and preview context-filter stats without saving. |
 | `--config / -c` | — | Path to `config.yaml`. |
 
 > **Tag contract.** Every entry must have `project:<slug>`, `agent:<slug>`, and at least one `mnemos:<subtype>`. The CLI enforces this in strict mode (the default). See [tag-contract.md](tag-contract.md) for the full schema.
@@ -99,7 +120,7 @@ mnemos add [CONTENT] [OPTIONS]
 
 ```bash
 # Inline content
-mnemos add --content "Use uv, not pip" --tags project:mnemos agent:tech-writer mnemos:learning
+mnemos add "Use uv, not pip" --tags project:mnemos agent:tech-writer mnemos:learning
 
 # With a title
 mnemos add "Always validate SQL with parameterized queries" \
@@ -132,9 +153,12 @@ mnemos search QUERY [OPTIONS]
 | `QUERY` (positional) | — | Natural-language search string. |
 | `--limit / -l` | `10` | Maximum results. |
 | `--project / -p` | — | Restrict to a single project slug. |
+| `--tags / -T` | — | Comma-separated tags to filter by. |
+| `--include-raw / --published-only` | `--include-raw` | Include `raw`/`processing` entries (default), or restrict to `published` knowledge. |
+| `--status` | — | Filter by status (`raw`/`processing`/`processed`/`published`/`archived`); takes precedence over `--include-raw`. |
 | `--config / -c` | — | Path to `config.yaml`. |
 
-The score is the fused RRF score, with 0.0 = no match and 1.0 = top hit. Searches only consider `published` memories (the default vector index scope).
+The score is the fused RRF score, with 0.0 = no match and 1.0 = top hit. By default raw entries are searched too — a just-added memory stays `raw` until the knowledge pipeline publishes it; use `--published-only` to restrict results to the vector-index scope.
 
 ### Examples
 
@@ -149,7 +173,7 @@ mnemos search "CVE" --project mnemos --limit 20
 mnemos search "decision" --limit 50
 ```
 
-For tag-filtered or raw-content search, use the HTTP API `POST /search` (see [http-api.md#search](http-api.md#search)).
+For richer query power over HTTP, use the API `POST /search` (see [http-api.md#search](http-api.md#search)).
 
 ---
 
@@ -185,12 +209,12 @@ mnemos recall --agent sre --project mnemos --limit 25
 
 ---
 
-## `tags-validate`
+## `tags validate`
 
 Validate the Mnemos tag contract across an existing Mnemos vault directory. Reports entries that violate the M2 schema.
 
 ```text
-mnemos tags-validate VAULT_PATH
+mnemos tags validate VAULT_PATH
 ```
 
 | Argument | Description |
@@ -202,8 +226,67 @@ mnemos tags-validate VAULT_PATH
 ### Example
 
 ```bash
-mnemos tags-validate ~/.mnemos/vault
+mnemos tags validate ~/.mnemos/vault
 ```
+
+---
+
+## `workflow`
+
+Manage the workflow lifecycle of a memory through the server-enforced state machine (`open`, `in-progress`, `blocked`, `resolved`, `done`, `withdrawn`). The state machine and its guardrails live in `MemoryManager`; the CLI only translates violations into a red error line and exit code 1.
+
+### `workflow get`
+
+Show the current workflow status and lock owner for a memory.
+
+```text
+mnemos workflow get MEMORY_ID
+```
+
+### `workflow set`
+
+Transition a memory's workflow status.
+
+```text
+mnemos workflow set MEMORY_ID --to STATUS --actor ACTOR [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `MEMORY_ID` (positional) | — | Target memory id. |
+| `--to` | — (required) | Target status: `open`, `in-progress`, `blocked`, `resolved`, `done`, `withdrawn`. |
+| `--actor` | — (required) | Free-form actor id (Phase 1 weak identity). |
+| `--reason` | `""` | Human-readable reason. Required with `--force`. |
+| `--force` | `false` | Override a lock held by another actor (requires `--reason`). |
+| `--config / -c` | — | Path to `config.yaml`. |
+
+### `workflow history`
+
+Show the workflow transition audit log for a memory (newest first).
+
+```text
+mnemos workflow history MEMORY_ID [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `MEMORY_ID` (positional) | — | Target memory id. |
+| `--limit` | `50` | Max rows to show (newest first). |
+| `--config / -c` | — | Path to `config.yaml`. |
+
+### Example
+
+```bash
+ID=550e8400-e29b-41d4-a716-446655440000
+
+mnemos workflow set "$ID" --to in-progress --actor tech-writer
+mnemos workflow get "$ID"
+mnemos workflow history "$ID" --limit 20
+```
+
+### Related
+
+- MCP tool: [`mnemos_workflow`](mcp-tools.md#mnemos_workflow)
 
 ---
 
@@ -224,7 +307,7 @@ mnemos stats [OPTIONS]
 | Key | Meaning |
 |-----|---------|
 | `status` | Always `ok` (liveness signal) |
-| `version` | Mnemos version (currently `0.1.0`) |
+| `version` | Mnemos version (currently `4.0.0`) |
 | `data_dir` | Resolved data directory |
 | `vault_path` | Resolved vault directory |
 | `total` | Total memory count (any status) |
@@ -236,13 +319,123 @@ mnemos stats [OPTIONS]
 ```bash
 mnemos stats
 # status: ok
-# version: 0.1.0
+# version: 4.0.0
 # data_dir: /home/you/.mnemos/data
 # vault_path: /home/you/.mnemos/vault
 # total: 142
 # by_status: {'raw': 5, 'processing': 0, 'processed': 12, 'published': 120, 'archived': 5}
 # vectors: 120
 ```
+
+---
+
+## `fts`
+
+FTS5 index management. One action is currently defined: `rebuild`.
+
+```text
+mnemos fts ACTION
+```
+
+| Argument | Description |
+|----------|-------------|
+| `ACTION` (positional) | `rebuild` — rebuild the FTS5 index and report the number of rows indexed. Any other value exits with an error. |
+
+### Example
+
+```bash
+mnemos fts rebuild
+# ✓ FTS5 index rebuilt: 142 rows indexed
+```
+
+---
+
+## `processor`
+
+Background processor (knowledge pipeline) management: inspect the queue, run a manual pass, or start / stop the background loop.
+
+```text
+mnemos processor ACTION
+```
+
+| Argument | Description |
+|----------|-------------|
+| `ACTION` (positional) | `status` — queue depth, last processed timestamp, running flag. `run` — one synchronous pipeline pass (cluster → synthesize → quality gate → publish). `start` — start the background processor. `stop` — stop it. |
+
+The `run` summary reports `clusters`, `synthesized`, `published`, and `failed_quality_gate` counts.
+
+### Example
+
+```bash
+mnemos processor run
+#   clusters: 3
+#   synthesized: 3
+#   published: 2
+#   failed_quality_gate: 1
+```
+
+### Related
+
+- HTTP equivalent: [`POST /process`](http-api.md#post-process--run-end-to-end-pipeline)
+
+---
+
+## `reindex`
+
+Rebuild the vector index for all published memories — re-embeds every `published` entry and upserts it into `vectors.db`. Use after enabling embeddings or switching embedding models.
+
+```text
+mnemos reindex [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--batch-size / -b` | `100` | Batch size for embedding. |
+| `--config / -c` | — | Path to `config.yaml`. |
+
+### Example
+
+```bash
+mnemos reindex --batch-size 50
+#   total: 120
+#   indexed: 120
+#   failed: 0
+```
+
+---
+
+## `filter`
+
+Run the Context Filter (M10) on a memory and print the clean content plus reduction stats. With `--all`, re-runs the filter over every memory and reports aggregate counts.
+
+```text
+mnemos filter [MEMORY_ID] [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `MEMORY_ID` (positional) | — | Memory to filter. Omit when using `--all`. |
+| `--profile / -p` | auto-detected | `log`, `terminal`, `code`, `docs`, `web`, or `default`. |
+| `--budget / -b` | — | Token budget for truncation. |
+| `--all` | `false` | Re-run the filter on ALL memories; existing `clean_content` is overwritten with fresh filter output. |
+| `--config / -c` | — | Path to `config.yaml`. |
+
+> Re-filtering with a different profile produces different `clean_content`. The filter is idempotent only when the same profile is used.
+
+### Example
+
+```bash
+mnemos filter 550e8400-e29b-41d4-a716-446655440000 --profile terminal
+# ✓ Filtered: 550e8400-e29b-41d4-a716-446655440000
+#   profile: terminal
+#   clean_content:
+#   ...
+```
+
+### Related
+
+- [context-filter.md](context-filter.md) — profiles, pipeline stages, auto-filter behaviour
+- MCP tool: [`mnemos_filter`](mcp-tools.md#mnemos_filter)
 
 ---
 
@@ -258,6 +451,7 @@ mnemos serve [OPTIONS]
 |--------|---------|-------------|
 | `--host` | `settings.api.host` (127.0.0.1) | Bind address. |
 | `--port` | `settings.api.port` (8787) | Bind port. |
+| `--log-file` | — | Override the config log-file path; passing it enables file logging. |
 | `--config / -c` | — | Path to `config.yaml`. |
 
 The server uses `uvicorn[standard]` (HTTP/1.1 + WebSockets). The number of workers comes from `settings.runtime.uvicorn_workers`.
@@ -275,6 +469,9 @@ mnemos serve --host 0.0.0.0 --port 8000
 
 # Custom config
 mnemos serve --host 127.0.0.1 --port 9000 --config /etc/mnemos/config.yaml
+
+# Enable file logging without touching the config file
+mnemos serve --log-file ~/.mnemos/logs/serve.log
 ```
 
 The full HTTP API surface is documented in [http-api.md](http-api.md). The Swagger UI is served at `http://HOST:PORT/docs`.
@@ -319,22 +516,22 @@ MNEMOS_AUTO_COLLECT=1 mnemos mcp-server
 }
 ```
 
-See [mcp-tools.md](mcp-tools.md) for the full tool list and [getting-started.md#run-the-mcp-server](getting-started.md#run-the-mcp-server) for the VS Code wiring.
+See [mcp-tools.md](mcp-tools.md) for the full tool list and [getting-started.md#run-the-mcp-server](getting-started.md#connect-your-harness-mcp) for the VS Code wiring.
 
 ---
 
-## `migrate-from-ai-brain`
+## `migrate from-ai-brain`
 
 One-shot migration from a legacy `ai-brain` install (M13).
 
 ```text
-mnemos migrate-from-ai-brain [OPTIONS]
+mnemos migrate from-ai-brain [OPTIONS]
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--source` | `~/.mnemos` | Mnemos data directory (must contain `mnemos.db`). |
-| `--vault` | `~/.mnemos/vault` | Mnemos vault directory (Obsidian mirror). |
+| `--source` | `~/.ai-brain` | Legacy ai-brain data directory (must contain `ai_brain.db`). |
+| `--vault` | `~/brain-vault` | Legacy ai-brain vault directory (Obsidian mirror). |
 | `--dry-run` | `false` | Show what would be migrated, write nothing. |
 | `--config / -c` | — | Path to `config.yaml`. |
 
@@ -350,13 +547,13 @@ The migrator:
 
 ```bash
 # Dry run first (recommended)
-mnemos migrate-from-ai-brain --dry-run
+mnemos migrate from-ai-brain --dry-run
 
 # Real run with default paths
-mnemos migrate-from-ai-brain
+mnemos migrate from-ai-brain
 
 # From a tarball restore
-mnemos migrate-from-ai-brain --source /tmp/restore/.ai-brain --vault /tmp/restore/brain-vault
+mnemos migrate from-ai-brain --source /tmp/restore/.ai-brain --vault /tmp/restore/brain-vault
 ```
 
 Output is a one-line summary:
@@ -370,9 +567,75 @@ If you see `Errors: N`, the `summary.errors` list (printed to stderr at DEBUG le
 
 ---
 
+## `auth`
+
+Manage API auth tokens and TOTP 2FA (ADR-0014). Two sub-groups: `auth token` (bearer tokens) and `auth totp` (second factor). Token secrets are stored hashed in the SQLite DB next to your memories.
+
+### `auth token create`
+
+Mint a new bearer token and print it **once**.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--name / -n` | — | Human-readable label. |
+| `--expires / -e` | — | ISO-8601 expiry, e.g. `2027-01-01`. Naive dates are normalised to UTC. |
+| `--no-totp` | `false` | Create a token usable directly as a bearer without the login/verify/session flow (sets `totp_required=false`). By default tokens require TOTP. |
+| `--config / -c` | — | Path to `config.yaml`. |
+
+### `auth token list`
+
+List all tokens — IDs and metadata only, never secrets.
+
+### `auth token revoke TOKEN_ID`
+
+Permanently revoke a token (positional `TOKEN_ID` argument).
+
+### `auth totp`
+
+| Subcommand | Required options | Purpose |
+|------------|------------------|---------|
+| `enroll` | `--token-id` | Generate a TOTP secret and print the provisioning URI + optional ASCII QR. Requires `MNEMOS_API__TOTP_MASTER_KEY` to encrypt the secret. |
+| `disable` | `--token-id` | Remove the TOTP secret from a token (disables 2FA for it). |
+| `test` | `--token-id`, `--code` | Verify a 6-digit code against the enrolled secret (operator smoke-test). |
+
+### Example
+
+```bash
+mnemos auth token create --name "laptop" --expires 2027-01-01
+# ✓ Token created:
+#   token_id : 7c9e6679-7425-40de-944b-e07fc1f90ae7
+#   bearer   : <plaintext token — store it now, it will not be shown again>
+```
+
+---
+
+## `completion`
+
+Install shell completion for the `mnemos` CLI. With no arguments it auto-detects the current shell from `$SHELL`, writes the completion script to `~/.mnemos/completion/mnemos.<shell>`, and adds a single guarded `source` line to your rc file (`~/.bashrc` / `~/.zshrc`; fish auto-sources its completions directory). Idempotent — re-running does not duplicate the source line and migrates away the old `eval`-based format.
+
+```text
+mnemos completion [SHELL] [OPTIONS]
+```
+
+| Argument / Option | Default | Description |
+|-------------------|---------|-------------|
+| `SHELL` (positional) | auto from `$SHELL` | `bash`, `zsh`, or `fish`. |
+| `--show-instructions` | `false` | Print manual install steps for all supported shells; no files modified. |
+
+### Example
+
+```bash
+mnemos completion bash
+# ✓ Installed bash completion → /home/you/.mnemos/completion/mnemos.bash
+#   Source line added to /home/you/.bashrc
+#   Restart your shell or run: source /home/you/.bashrc
+```
+
+---
+
 ## `doctor`
 
-Diagnose the Mnemos installation — checks paths, config, database, and vault.
+Run Mnemos health checks: config, data dir, vault, SQLite DB, vector store, MCP server registration, integration layer, agent wiring, tag contract.
 
 ```text
 mnemos doctor [OPTIONS]
@@ -380,8 +643,14 @@ mnemos doctor [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--json` | `false` | Emit results as JSON (for scripting / CI) instead of a table. |
+| `--fix` | `false` | Auto-fix WARN-level checks (stale integration, unwired agents, missing MCP registration). FAIL-level checks are not auto-fixable. |
+| `--dry-run` | `false` | With `--fix`: preview what would be fixed without executing. |
 | `--paths` | `false` | Print all resolved paths (data dir, vault, logs, cache, completion) and exit. |
-| `--config / -c` | — | Path to `config.yaml`. |
+
+Exit codes: `0` = all checks pass, `1` = one or more checks failed, `2` = warnings only.
+
+> `doctor` does not take `--config`; it reads the config from `$MNEMOS_CONFIG` or the default search path (`./config.yaml`, `~/.mnemos/config.yaml`).
 
 ### `doctor --paths`
 
@@ -399,6 +668,91 @@ mnemos doctor --paths
 
 Use this to verify the consolidated `~/.mnemos/` layout after upgrade or migration.
 
+### `doctor --fix` and `--dry-run`
+
+With `--fix`, WARN-level checks are repaired in place (stale integration → `integration update`, unwired agents → `integration setup --wire-agents --all`, missing MCP registration → MCP setup); the affected checks are then re-run and the new status reported. Combine with `--dry-run` to preview the fixes without executing them. `--json --fix` reports the `fixed` / `fix_skipped` lists in the JSON payload.
+
+```bash
+# Preview only
+mnemos doctor --fix --dry-run
+
+# Apply fixes
+mnemos doctor --fix
+
+# CI: machine-readable verdict, no fixes
+mnemos doctor --json
+```
+
+---
+
+## `logs`
+
+View pipeline traces (M6 explainability layer) — a compact table over the append-only `traces` table.
+
+```text
+mnemos logs [OPTIONS]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--task / -t` | — | Filter by task label (`cluster`, `synthesize`, `publish`, `recall`). |
+| `--project / -p` | — | Filter by project slug. |
+| `--limit / -l` | `50` | Maximum number of traces to show. |
+| `--since` | — | Only traces after this ISO date (e.g. `2026-06-01`). |
+| `--follow / -f` | `false` | Poll every 2 s and print new rows (`tail -f` style). Stop with `Ctrl+C`. |
+| `--config / -c` | — | Path to `config.yaml`. |
+
+### Example
+
+```bash
+mnemos logs --task cluster --project mnemos --limit 20
+
+# Watch the pipeline live
+mnemos logs --follow
+```
+
+### Related
+
+- HTTP equivalent: [`GET /traces`](http-api.md#get-traces--list-pipeline-traces)
+
+---
+
+## `scanner`
+
+Background secrets scanner — Layer 2 of the federation defence-in-depth. The scanner periodically re-scans the corpus for secrets missed at write time and auto-tags hits `mnemos:no-federate` so they are excluded from all external exchange. These subcommands are the manual trigger and status view.
+
+### `scanner run`
+
+Run one scanner pass synchronously and print the summary.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--full` | `false` | Force a full corpus scan (ignore the incremental boundary). Default is incremental: only records modified since the last successful scan. |
+| `--config / -c` | — | Path to `config.yaml`. |
+
+The summary reports `records_scanned`, `records_tagged`, `records_skipped`, `duration_sec`, matched pattern names with counts (never raw values), and the timestamp.
+
+### `scanner status`
+
+Print the scanner's current state — enabled, running, configured interval and incremental mode, last scan timestamp, cumulative records tagged, next scheduled run.
+
+### Example
+
+```bash
+mnemos scanner run --full
+# ✓ Scan complete (full)
+#   records_scanned: 142
+#   records_tagged:   0
+#   records_skipped:  2
+#   duration_sec:     1.83
+#   patterns_matched: (none)
+#   timestamp:        2026-09-05T12:00:00+00:00
+```
+
+### Related
+
+- [sync.md](sync.md#mnemosno-federate-exclusion) — what `mnemos:no-federate` excludes
+
 ---
 
 ## Exit codes
@@ -407,7 +761,7 @@ Use this to verify the consolidated `~/.mnemos/` layout after upgrade or migrati
 |------|---------|
 | 0 | Success |
 | 1 | User error (missing argument, invalid tag, etc.) |
-| 2 | Uvicorn / stdio server bootstrap failure |
+| 2 | `mnemos doctor`: one or more checks warn, nothing is broken |
 
 The CLI does not return non-zero for "no results" — `mnemos search` exits 0 with an empty table.
 
@@ -418,10 +772,11 @@ The CLI does not return non-zero for "no results" — `mnemos search` exits 0 wi
 - [getting-started.md](getting-started.md) — first-run walkthrough
 - [mcp-tools.md](mcp-tools.md) — the same capabilities exposed over MCP
 - [http-api.md](http-api.md) — the same capabilities exposed over HTTP
+- [context-filter.md](context-filter.md) — filter profiles used by `add --dry-run` and `filter`
 - [tag-contract.md](tag-contract.md) — the tag schema enforced here
 - [runbooks/migrate.md](../admin/runbooks/migrate.md) — operational migration guide
 - [architecture overview](../architecture/overview.md) — system shape
 
 ---
 
-_Last updated: 2026-06-16_
+_Last updated: 2026-09-05_

@@ -16,7 +16,7 @@ CI workflow (`.github/workflows/ci.yml`) запускается при кажд�
 | Job | Runner | Назначение |
 |---|---|---|
 | `verify` | `ubuntu-latest`, матрица Python 3.11 / 3.12 / 3.13 | Lint + format + mypy + bandit + pip-audit + pytest + coverage |
-| `build-container` | `ubuntu-latest` (rootless buildah) | Smoke-тест сборки `Containerfile` и запуска Python внутри образа |
+| `build-container` | `ubuntu-latest` (rootless buildah) | Smoke-тест сборки `Containerfile` и работы `mnemos --help` внутри образа |
 
 Job `verify` является **обязательной status check** для `main` (см.
 [Защита веток](#защита-веток)).
@@ -28,7 +28,7 @@ Job `verify` является **обязательной status check** для `
 Запускайте те же проверки локально перед push, чтобы не тратить минуты CI:
 
 ```bash
-cd /var/home/abyss/LABs/AI/mnemos
+cd /path/to/mnemos   # корень репозитория
 source .venv/bin/activate
 
 ruff check src/ tests/                                # lint
@@ -170,12 +170,10 @@ Docker, чтобы избежать привилегированного кон�
 1. `apt-get install buildah`
 2. `buildah bud -t mnemos:test .` — сборка `Containerfile`
 3. `buildah from --name mnemos-test mnemos:test` — запуск контейнера
-4. `buildah run mnemos-test -- python --version` — smoke-тест
+4. `buildah run mnemos-test -- mnemos --help` — smoke-тест (плюс вывод версии Python)
 
-> ⚠️ `Containerfile` находится в процессе переименования: всё ещё ссылается на
-> `ai-brain` / `ai_brain`. Поэтому smoke-шаг запускает просто `python --version`
-> вместо `mnemos --help`. После завершения ребрендинга (см. repo memory) обновите
-> smoke-шаг в `.github/workflows/ci.yml` для вызова CLI.
+> Smoke-шаг запускает `mnemos --help` внутри собранного образа, поэтому проверяет
+> CLI-точку входа, а не только базовый образ.
 
 При падении контейнерного job'а проверьте лог на:
 
@@ -240,9 +238,12 @@ python -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"
 
 ## Вне области (сейчас)
 
-- **CD / deploy** — release job (`redhat-actions/buildah-build` → GHCR →
-  `softprops/action-gh-release`) заготовлен в `ci.yml`, но пока не активирован.
-  Будет подключён в следующем slice после завершения ребрендинга контейнера.
+- **CD / deploy** — release-pipeline живёт в
+  [`.github/workflows/release.yml`](../../../../.github/workflows/release.yml):
+  тег `v*.*.*` собирает wheel/sdist и прикрепляет их к GitHub Release, а также
+  пушит `ghcr.io/korrnals/mnemos:$VERSION` + `:latest`. Заливка на PyPI —
+  отдельный шаг по [`pypi-publish.md`](pypi-publish.md); использование
+  контейнера — в [`container-deployment.md`](container-deployment.md).
 - **Self-hosted runner** — не нужен в текущем масштабе. GitHub-hosted
   `ubuntu-latest` достаточно быстр, а concurrency group держит затраты под
   контролем.

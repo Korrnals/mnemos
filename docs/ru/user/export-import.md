@@ -317,7 +317,7 @@ attachment; filename="mnemos-export.<suffix>"`. Суффикс зависит о
   "errors": [],
   "warnings": [],
   "format_version": "1.0",
-  "mnemos_version": "2.0.0"
+  "mnemos_version": "4.0.0"
 }
 ```
 

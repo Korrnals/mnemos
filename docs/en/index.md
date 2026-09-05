@@ -2,15 +2,51 @@
 
 **🌐 Language / Язык:** English · [Русский](../ru/index.md)
 
-> Mnemos is a standalone memory & knowledge MCP server for AI agents. It gives every agent real long-term memory — structured, searchable, governed by a strict tag contract — that persists across sessions, restarts, and context compression.
+> Mnemos is a standalone memory & knowledge server for AI agents. It gives every agent real long-term memory — structured, searchable, governed by a strict tag contract — that persists across sessions, restarts, and context compression. One local server, three control surfaces (MCP / CLI / HTTP), and any MCP-capable harness connects in one line.
 
 ---
 
-## Connect mnemos as an MCP server
+## Install (one command)
 
-**MCP is the primary integration surface.** This is how VS Code Copilot, Hermes Agent, and other MCP-aware tools talk to Mnemos.
+Mnemos is on **PyPI**:
 
-### What is implemented
+```bash
+pip install "mnemos-memory-server[mcp]"
+```
+
+The default embedding model (`mnema-embed-v1`, ~30 MB) is bundled in the wheel — search works fully offline, on CPU, no API keys, nothing downloaded. Isolated variant: `uv tool install "mnemos-memory-server[mcp]"` or `pipx install "mnemos-memory-server[mcp]"`.
+
+> ⚠️ The PyPI name is **`mnemos-memory-server`** — `pip install mnemos` installs an unrelated project.
+
+npm (pi extension): `pi-mnemos` · `mnemos-pi` · `@korrlabs/mnemospi` · `@korrlabs/mnemos-pi`. Container: `ghcr.io/korrnals/mnemos`.
+
+---
+
+## Connect your harness
+
+**MCP is the primary integration surface.** Any MCP-capable harness talks to Mnemos over the same stdio wire. The full copy-paste instructions for every harness live on one page: **[Connect Mnemos to any harness](../../integrations/mcp-presets.md)**.
+
+| Harness | Fastest path |
+|---------|--------------|
+| VS Code Copilot | `curl -fsSL …/scripts/mcp-setup.sh \| bash` — or the one-paste `mcp.json` block on the presets page |
+| Claude Code | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
+| Cursor | one line into `~/.cursor/mcp.json` |
+| OpenCode | one block into `~/.config/opencode/opencode.json` |
+| Codex | one TOML block into `~/.codex/config.toml` |
+| Windsurf | same JSON line as Cursor, in `~/.codeium/windsurf/mcp_config.json` |
+| ZCode / pi | `mnemos integration setup --target zcode` / `--target pi` |
+| Hermes Agent | native in-process plugin — `mnemos integration setup --target hermes` |
+| Anything else | [adapter-template.md](../../integrations/adapter-template.md) — Connect / Expose / Configure |
+
+To also deploy the **behavioral layer** (memory instructions, 14+ skills, prompt mode, agent wiring) so agents *know when and how* to use memory:
+
+```bash
+mnemos integration setup
+```
+
+Targets, flags, and the full deploy map: [integration-guide.md](user/integration-guide.md).
+
+### MCP server properties
 
 | Property | Value |
 |----------|-------|
@@ -18,51 +54,11 @@
 | Server name | `mnemos` |
 | Transport | stdio — no TCP port |
 | Tool prefix | `mnemos_` |
-| Source | `src/mnemos/mcp_server.py` |
-
-### Install the MCP extra
-
-The `mcp` package is an **optional extra** — it is not in the base or `[dev]` install:
-
-```bash
-pip install -e ".[mcp]"
-# or
-uv pip install -e ".[mcp]"
-```
-
-### Start the server
-
-```bash
-mnemos mcp-server
-```
-
-The process blocks on stdin/stdout. Stop with `Ctrl+C` or EOF on stdin.
-
-### VS Code `mcp.json` snippet
-
-Add to your VS Code **User** or **Workspace** `mcp.json`:
-
-```jsonc
-{
-  "servers": {
-    "mnemos": {
-      "type": "stdio",
-      "command": "mnemos",
-      "args": ["mcp-server"],
-      "env": {
-        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos/data",
-        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/.mnemos/vault"
-      }
-    }
-  }
-}
-```
-
-After saving, the `mnemos_*` tools appear in the Copilot Chat "tools" picker.
+| Start it | `mnemos mcp-server` |
 
 ### Auto-collect mode
 
-Set `MNEMOS_AUTO_COLLECT=1` in the env block above to make Mnemos prompt your agent to call `mnemos_save_context` after every ~6 tool calls (proactive checkpoint nagging). See [mcp-tools.md#auto-collect-mode](user/mcp-tools.md#auto-collect-mode) for trade-offs.
+Set `MNEMOS_AUTO_COLLECT=1` in the server's `env` block to make Mnemos prompt your agent to call `mnemos_save_context` after every ~6 tool calls (proactive checkpoint nagging). See [mcp-tools.md#auto-collect-mode](user/mcp-tools.md#auto-collect-mode) for trade-offs.
 
 ### 26 MCP tools (`mnemos_` prefix)
 
@@ -97,8 +93,6 @@ Set `MNEMOS_AUTO_COLLECT=1` in the env block above to make Mnemos prompt your ag
 
 Full catalogue with input schemas, examples, and HTTP equivalents: **[user/mcp-tools.md](user/mcp-tools.md)**
 
-VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/getting-started.md#run-the-mcp-server)**
-
 ---
 
 ## Where to start
@@ -106,20 +100,21 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 | If you are… | Read |
 |-------------|------|
 | Setting Mnemos up for the first time | [user/getting-started.md](user/getting-started.md) |
-| Wiring Mnemos into VS Code Copilot | [user/getting-started.md#run-the-mcp-server](user/getting-started.md#run-the-mcp-server) |
+| Connecting a specific harness | [Connect Mnemos to any harness](../../integrations/mcp-presets.md) |
 | Looking for a specific command / flag | [user/cli-reference.md](user/cli-reference.md) |
 | Looking for a specific MCP tool | [user/mcp-tools.md](user/mcp-tools.md) |
 | Building an HTTP client | [user/http-api.md](user/http-api.md) |
 | Trying to understand the system shape | [architecture/overview.md](architecture/overview.md) |
-| Diagnosing a problem | [admin/runbooks/install.md](admin/runbooks/install.md) |
+| Diagnosing a problem | [user/getting-started.md#troubleshooting](user/getting-started.md#troubleshooting) |
 
 ---
 
 ## User docs
 
-- [Feature Map](features.md) — what works out of the box, what is partial, what is planned (v3.0.0).
-- [Getting Started](user/getting-started.md) — install → first memory → first search → MCP / HTTP.
-- [MCP Tools Reference](user/mcp-tools.md) — every `mnemos_*` tool exposed to VS Code Copilot.
+- [Feature Map](features.md) — what works out of the box, what is partial, what is planned (v4.0.0).
+- [Getting Started](user/getting-started.md) — install → first memory → first search → connect your harness.
+- [Integration Guide](user/integration-guide.md) — behavioral layer, deploy targets, agent MCP wiring, Hermes plugin.
+- [MCP Tools Reference](user/mcp-tools.md) — every `mnemos_*` tool.
 - [HTTP API Reference](user/http-api.md) — every endpoint, request / response shape, error code.
 - [CLI Reference](user/cli-reference.md) — every `mnemos` subcommand with flags, defaults, and examples.
 - [Tag Contract](user/tag-contract.md) — the M2 schema enforced on every memory (`project:`, `agent:`, `mnemos:`).
@@ -143,14 +138,14 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 ## Architecture
 
 - [System Overview](architecture/overview.md) — layered design, data model, state machines, security boundaries, operational concerns.
-- [Knowledge Pipeline](architecture/overview.md#state-machines) — how a memory moves from `raw` → `processing` → `processed` → `published` (M4).
+- [Knowledge Pipeline](user/http-api.md#knowledge-pipeline-m4) — how a memory moves from `raw` → `processing` → `processed` → `published` (M4).
 - [A2A Sessions](architecture/a2a-sessions.md) — the agent-to-agent conversation contract (M16).
 
 ---
 
 ## Project (historical, English only)
 
-- [Architecture Decision Records](../project/adr/README.md) — 14 ADRs covering the M1 → M16 evolution.
+- [Architecture Decision Records](../project/adr/README.md) — 22 ADRs covering the M1 → M16 evolution and the v4.0.0 foundation.
 - [Milestones](../project/milestones.md) — milestone ledger with status legend.
 - [Phase completion reports](../project/reports/) — final reports per completed roadmap phase (Phase 0–1: PR #135–#157).
 - [Code Review 2026-06](../project/code-review-2026-06.md) — final code review findings and fixes.
@@ -160,11 +155,11 @@ VS Code wiring walkthrough: **[user/getting-started.md#run-the-mcp-server](user/
 
 ## Repo root
 
-- [README](../../README.md) — top-level project page, status, milestones.
+- [README](../../README.md) — top-level project page.
 - [CHANGELOG](../../CHANGELOG.md) — release notes.
-- [PLAN](../../PLAN.md) — phased implementation plan (M1 → M15).
+- [PLAN](../../PLAN.md) — phased implementation plan.
 - [ARCHITECTURE](../../ARCHITECTURE.md) — high-level architecture summary (one-pager; see [architecture/overview.md](architecture/overview.md) for the full version).
 
 ---
 
-_Last updated: 2026-06-17_
+_Last updated: 2026-09-05_

@@ -2,15 +2,64 @@
 
 **🌐 Language / Язык:** [English](../en/index.md) · Русский
 
-> Mnemos — автономный MCP-сервер памяти и знаний для AI-агентов. Даёт каждому агенту настоящую долгосрочную память: структурированную, доступную для поиска, управляемую строгим контрактом тегов — данные сохраняются между сессиями, перезапусками и сжатием контекста.
+> Mnemos — автономный сервер памяти и знаний для AI-агентов. Даёт каждому агенту
+> настоящую долгосрочную память — структурированную, доступную для поиска,
+> управляемую строгим контрактом тегов, — которая переживает сессии, рестарты
+> и сжатие контекста. Один локальный сервер, три поверхности управления
+> (MCP / CLI / HTTP), и любой харнесс с поддержкой MCP подключается одной строкой.
 
 ---
 
-## Подключить mnemos как MCP-сервер
+## Установка (одна команда)
 
-**MCP — основная точка интеграции.** Именно через неё VS Code Copilot, Hermes Agent и другие MCP-инструменты взаимодействуют с Mnemos.
+Mnemos опубликован на **PyPI**:
 
-### Что реализовано
+```bash
+pip install "mnemos-memory-server[mcp]"
+```
+
+Модель эмбеддингов по умолчанию (`mnema-embed-v1`, ~30 МБ) встроена в wheel —
+поиск работает полностью офлайн, на CPU, без API-ключей и без скачиваний.
+Изолированный вариант: `uv tool install "mnemos-memory-server[mcp]"` или
+`pipx install "mnemos-memory-server[mcp]"`.
+
+> ⚠️ Имя пакета на PyPI — **`mnemos-memory-server`**: `pip install mnemos`
+> устанавливает не связанный проект.
+
+npm (расширение pi): `pi-mnemos` · `mnemos-pi` · `@korrlabs/mnemospi` ·
+`@korrlabs/mnemos-pi`. Контейнер: `ghcr.io/korrnals/mnemos`.
+
+---
+
+## Подключите ваш харнес
+
+**MCP — основная поверхность интеграции.** Любой харнесс с поддержкой MCP
+говорит с Mnemos по одному и тому же stdio-проводу. Полные инструкции для
+копирования для каждого харнесса собраны на одной странице:
+**[Подключите Mnemos к любому харнесу](../../integrations/mcp-presets.md)**.
+
+| Харнесс | Самый быстрый путь |
+|---------|--------------------|
+| VS Code Copilot | `curl -fsSL …/scripts/mcp-setup.sh \| bash` — или блок `mcp.json` в одно действие со страницы пресетов |
+| Claude Code | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
+| Cursor | одна строка в `~/.cursor/mcp.json` |
+| OpenCode | один блок в `~/.config/opencode/opencode.json` |
+| Codex | один TOML-блок в `~/.codex/config.toml` |
+| Windsurf | та же JSON-строка, что для Cursor, в `~/.codeium/windsurf/mcp_config.json` |
+| ZCode / pi | `mnemos integration setup --target zcode` / `--target pi` |
+| Hermes Agent | нативный in-process плагин — `mnemos integration setup --target hermes` |
+| Всё остальное | [adapter-template.md](../../integrations/adapter-template.md) — Connect / Expose / Configure |
+
+Чтобы заодно развернуть **поведенческий слой** (инструкции памяти, 14+ скиллов,
+режим промпта, wiring агентов), чтобы агенты *знали когда и как* пользоваться памятью:
+
+```bash
+mnemos integration setup
+```
+
+Таргеты, флаги и полная карта развёртывания: [integration-guide.md](user/integration-guide.md).
+
+### Свойства MCP-сервера
 
 | Свойство | Значение |
 |----------|---------|
@@ -18,51 +67,14 @@
 | Имя сервера | `mnemos` |
 | Транспорт | stdio — без TCP-порта |
 | Префикс инструментов | `mnemos_` |
-| Исходный код | `src/mnemos/mcp_server.py` |
-
-### Установка MCP-расширения
-
-Пакет `mcp` — **опциональная зависимость**, её нет в базовой или `[dev]`-установке:
-
-```bash
-pip install -e ".[mcp]"
-# или
-uv pip install -e ".[mcp]"
-```
-
-### Запуск сервера
-
-```bash
-mnemos mcp-server
-```
-
-Процесс блокируется на stdin/stdout. Остановить через `Ctrl+C` или EOF на stdin.
-
-### Сниппет для `mcp.json` в VS Code
-
-Добавить в VS Code **User** или **Workspace** `mcp.json`:
-
-```jsonc
-{
-  "servers": {
-    "mnemos": {
-      "type": "stdio",
-      "command": "mnemos",
-      "args": ["mcp-server"],
-      "env": {
-        "MNEMOS_DATA_DIR": "/home/youruser/.mnemos/data",
-        "MNEMOS_VAULT__VAULT_PATH": "/home/youruser/.mnemos/vault"
-      }
-    }
-  }
-}
-```
-
-После сохранения инструменты `mnemos_*` появятся в панели "tools" Copilot Chat.
+| Запуск | `mnemos mcp-server` |
 
 ### Режим автосбора
 
-Установите `MNEMOS_AUTO_COLLECT=1` в блоке `env` выше, чтобы Mnemos напоминал агенту вызывать `mnemos_save_context` каждые ~6 вызовов инструментов (проактивные чекпоинты). Подробнее: [mcp-tools.md#auto-collect-mode](user/mcp-tools.md#auto-collect-mode) *(Wave 2)*.
+Установите `MNEMOS_AUTO_COLLECT=1` в блоке `env` сервера, чтобы Mnemos предлагал
+агенту вызывать `mnemos_save_context` каждые ~6 вызовов инструментов
+(проактивные напоминания о чекпоинтах). О компромиссах:
+[mcp-tools.md#auto-collect-mode](user/mcp-tools.md#режим-auto-collect).
 
 ### 26 MCP-инструментов (префикс `mnemos_`)
 
@@ -95,76 +107,76 @@ mnemos mcp-server
 | `mnemos_import` | Импорт записей из файла экспорта |
 | `mnemos_workflow` | Жизненный цикл workflow записи (open → in-progress → done, blocked / …) |
 
-Полный каталог со схемами ввода и примерами: **[user/mcp-tools.md](user/mcp-tools.md)** *(Wave 2)*
-
-Пошаговое подключение в VS Code: **[user/getting-started.md#run-the-mcp-server](user/getting-started.md#run-the-mcp-server)** *(Wave 2)*
+Полный каталог со схемами ввода, примерами и HTTP-эквивалентами:
+**[user/mcp-tools.md](user/mcp-tools.md)**
 
 ---
 
-## Быстрый старт
+## С чего начать
 
 | Если вы… | Читайте |
 |----------|---------|
-| Устанавливаете Mnemos впервые | [user/getting-started.md](user/getting-started.md) *(Wave 2)* |
-| Подключаете Mnemos к VS Code Copilot | [user/getting-started.md#run-the-mcp-server](user/getting-started.md#run-the-mcp-server) *(Wave 2)* |
-| Ищете конкретную команду / флаг | [user/cli-reference.md](user/cli-reference.md) *(Wave 2)* |
-| Ищете конкретный MCP-инструмент | [user/mcp-tools.md](user/mcp-tools.md) *(Wave 2)* |
-| Разрабатываете HTTP-клиент | [user/http-api.md](user/http-api.md) *(Wave 2)* |
-| Разбираетесь в устройстве системы | [architecture/overview.md](architecture/overview.md) *(Wave 2)* |
-| Диагностируете проблему | [admin/runbooks/install.md](admin/runbooks/install.md) *(Wave 2)* |
-
-> **Wave 2**: полный перевод пользовательской документации запланирован. Ссылки выше ведут на корректные пути в `ru/`-дереве — файлы появятся в следующем волне.
+| Устанавливаете Mnemos впервые | [user/getting-started.md](user/getting-started.md) |
+| Подключаете конкретный харнес | [Подключите Mnemos к любому харнесу](../../integrations/mcp-presets.md) |
+| Ищете конкретную команду / флаг | [user/cli-reference.md](user/cli-reference.md) |
+| Ищете конкретный MCP-инструмент | [user/mcp-tools.md](user/mcp-tools.md) |
+| Разрабатываете HTTP-клиент | [user/http-api.md](user/http-api.md) |
+| Разбираетесь в устройстве системы | [architecture/overview.md](architecture/overview.md) |
+| Диагностируете проблему | [user/getting-started.md#устранение-неполадок](user/getting-started.md#устранение-неполадок) |
 
 ---
 
 ## Документация для пользователей
 
-- [Карта функционала](features.md) — что работает из коробки, что частично, что в плане (v3.0.0).
-- [Начало работы](user/getting-started.md) — установка → первая запись → первый поиск → MCP / HTTP *(Wave 2)*
-- [Справочник MCP-инструментов](user/mcp-tools.md) — все инструменты `mnemos_*` *(Wave 2)*
-- [Справочник HTTP API](user/http-api.md) — все эндпоинты, тела запросов и ответов *(Wave 2)*
-- [Справочник CLI](user/cli-reference.md) — все подкоманды `mnemos` *(Wave 2)*
-- [Контракт тегов](user/tag-contract.md) — схема M2: `project:`, `agent:`, `mnemos:` *(Wave 2)*
+- [Карта функционала](features.md) — что работает из коробки, что частично, что в плане (v4.0.0).
+- [Начало работы](user/getting-started.md) — установка → первая запись → первый поиск → подключение харнеса.
+- [Руководство по интеграции](user/integration-guide.md) — поведенческий слой, таргеты развёртывания, wiring MCP-инструментов к агентам, плагин Hermes.
+- [Справочник MCP-инструментов](user/mcp-tools.md) — все инструменты `mnemos_*`.
+- [Справочник HTTP API](user/http-api.md) — все эндпоинты, форматы запросов и ответов, коды ошибок.
+- [Справочник CLI](user/cli-reference.md) — все подкоманды `mnemos` с флагами, значениями по умолчанию и примерами.
+- [Контракт тегов](user/tag-contract.md) — схема M2, обязательная для каждой записи (`project:`, `agent:`, `mnemos:`).
 - [Контекстный фильтр](user/context-filter.md) — пятиступенчатый очиститель шума (dedup, noise, extract, compress, tokens) с профилями и автофильтром.
 
 ---
 
 ## Администрирование / Эксплуатация
 
-- [Runbook: Установка](admin/runbooks/install.md) *(Wave 2)*
-- [Runbook: Контейнерное развёртывание](admin/runbooks/container-deployment.md) — сборка, залитие, compose, podman, Kubernetes, quadlet.
-- [Runbook: Миграция из ai-brain](admin/runbooks/migrate.md) *(Wave 2)*
-- [Runbook: Резервное копирование и восстановление](admin/runbooks/backup-restore.md) *(Wave 2)*
-- [Runbook: Обновление зависимостей](admin/runbooks/dependency-updates.md) *(Wave 2)*
-- [Runbook: CI/CD](admin/runbooks/ci-cd.md) *(Wave 2)*
-- [Runbook: Публикация в PyPI](admin/runbooks/pypi-publish.md) — доступность имени, wheel-пайплайн, версионные гейты, процедура первой публикации.
-- [Модель безопасности](admin/security.md) — модель угроз, SSRF-защита, аутентификация *(Wave 2)*
+- [Ранбук: Установка](admin/runbooks/install.md) — операционный чеклист первого запуска.
+- [Ранбук: Контейнерное развёртывание](admin/runbooks/container-deployment.md) — сборка, push, compose, podman, Kubernetes, quadlet.
+- [Ранбук: Миграция](admin/runbooks/migrate.md) — импорт из legacy `ai-brain`.
+- [Ранбук: Резервное копирование и восстановление](admin/runbooks/backup-restore.md) — бэкап, восстановление на момент времени.
+- [Ранбук: Обновление зависимостей](admin/runbooks/dependency-updates.md) — разбор CVE + еженедельный обзор.
+- [Ранбук: CI/CD](admin/runbooks/ci-cd.md) — эксплуатация пайплайна GitHub Actions.
+- [Ранбук: Публикация в PyPI](admin/runbooks/pypi-publish.md) — доступность имени, wheel-конвейер, версионные гейты, процедура первой публикации.
+- [Модель безопасности](admin/security.md) — модель угроз, SSRF-защита, гигиена секретов, модель аутентификации.
 
 ---
 
 ## Архитектура
 
-- [Обзор системы](architecture/overview.md) — слоёная архитектура, модель данных, автоматы состояний *(Wave 2)*
-- [Конвейер знаний](architecture/overview.md#state-machines) — `raw` → `processing` → `processed` → `published` (M4) *(Wave 2)*
-- [A2A Sessions](architecture/a2a-sessions.md) — контракт агент-агент (M16) *(Wave 2)*
+- [Обзор системы](architecture/overview.md) — слоистый дизайн, модель данных, автоматы состояний, границы безопасности, эксплуатационные аспекты.
+- [Конвейер знаний](user/http-api.md#пайплайн-знаний-m4) — как запись проходит `raw` → `processing` → `processed` → `published` (M4).
+- [A2A Sessions](architecture/a2a-sessions.md) — контракт разговоров агент-агент (M16).
 
 ---
 
-## Исторические артефакты проекта (только EN)
+## Проект (историческое, только EN)
 
-- [Architecture Decision Records](../project/adr/README.md) — 14 ADR по эволюции M1 → M16
-- [Milestones](../project/milestones.md) — журнал вех с легендой статусов
-- [Отчёты о завершённых этапах](../project/reports/) — итоговые отчёты по фазам дорожной карты (Фазы 0–1: PR #135–#157)
-- [Code Review 2026-06](../project/code-review-2026-06.md) — итоги финального код-ревью
+- [Architecture Decision Records](../project/adr/README.md) — 22 ADR, покрывающие эволюцию M1 → M16 и фундамент v4.0.0.
+- [Milestones](../project/milestones.md) — журнал вех с легендой статусов.
+- [Отчёты о завершённых этапах](../project/reports/) — итоговые отчёты по каждой завершённой фазе дорожной карты (Фазы 0–1: PR #135–#157).
+- [Code Review 2026-06](../project/code-review-2026-06.md) — итоговые находки и исправления финального код-ревью.
+- [Сессии](../project/sessions/) — документы оркестрационных сессий.
 
 ---
 
 ## Корень репозитория
 
-- [README](../../README.md) — главная страница проекта
-- [CHANGELOG](../../CHANGELOG.md) — история релизов
-- [PLAN](../../PLAN.md) — план реализации (M1 → M15)
+- [README](../../README.md) — главная страница проекта.
+- [CHANGELOG](../../CHANGELOG.md) — release notes.
+- [PLAN](../../PLAN.md) — поэтапный план реализации.
+- [ARCHITECTURE](../../ARCHITECTURE.md) — краткое резюме архитектуры (one-pager; полная версия — [architecture/overview.md](architecture/overview.md)).
 
 ---
 
-_Последнее обновление: 2026-06-17_
+_Последнее обновление: 2026-09-05_

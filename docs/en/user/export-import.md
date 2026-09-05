@@ -308,7 +308,7 @@ Upload an export file as multipart form data and import it.
   "errors": [],
   "warnings": [],
   "format_version": "1.0",
-  "mnemos_version": "2.0.0"
+  "mnemos_version": "4.0.0"
 }
 ```
 

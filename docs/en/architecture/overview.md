@@ -35,7 +35,7 @@ and an Obsidian-compatible vault. A Web UI is planned as a separate project
 │                    FastAPI (Core API)                    │
 │            GET/POST /memories, /search, /ingest         │
 ├─────────────────────────────────────────────────────────┤
-│                    CORE (brain_core)                     │
+│            CORE (MemoryManager, manager.py)             │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ │
 │  │MemoryManager │ │ SearchEngine │ │IngestionPipeline │ │
 │  │  CRUD ops    │ │ hybrid search│ │  parse & embed   │ │
@@ -78,7 +78,7 @@ and an Obsidian-compatible vault. A Web UI is planned as a separate project
 - Embedding provider configured via config file
 - Embedding caching to avoid repeated computation
 
-### 3. Core (brain_core)
+### 3. Core (`MemoryManager`, `manager.py`)
 
 #### MemoryManager
 - CRUD for memory entries (create, read, update, delete)
@@ -273,25 +273,23 @@ mnemos mcp-server                                  # start the MCP server (stdio
 
 #### REST API (FastAPI)
 ```
-POST   /api/v1/memories          — create entry
-GET    /api/v1/memories           — list (with pagination)
-GET    /api/v1/memories/{id}      — get entry
-PUT    /api/v1/memories/{id}      — update
-DELETE /api/v1/memories/{id}      — delete
-POST   /api/v1/search             — hybrid search
-POST   /api/v1/ingest             — upload / parse
-GET    /api/v1/tags               — list tags
-POST   /api/v1/sync               — re-index
-GET    /api/v1/health              — healthcheck
+POST   /memories                 — create entry
+GET    /memories                 — list (with pagination)
+GET    /memories/{id}            — get entry
+POST   /search                   — hybrid search
+POST   /ingest-url               — ingest / parse a URL
+GET    /tags                     — list tags
+POST   /reindex                  — re-index
+GET    /health                   — healthcheck
 ```
 
 #### MCP Server
-Tools for Copilot / LLM agents:
-- `brain_search` — semantic search over memory
-- `brain_add` — add a new entry
-- `brain_get` — get entry by ID
-- `brain_list_tags` — list tags
-- `brain_ingest_url` — load a web page
+Tools for Copilot / LLM agents (full catalogue in [mcp-tools.md](../user/mcp-tools.md)):
+- `mnemos_search` — hybrid semantic + full-text search over memory
+- `mnemos_add` — add a new entry
+- `mnemos_recall_context` — recall the session context block
+- `mnemos_list_tags` — list tags
+- `mnemos_ingest_url` — load a web page
 
 #### Web UI (planned — mnemos-eyes)
 
@@ -365,25 +363,29 @@ api:
   port: 8787
 
 mcp:
-  transport: stdio                   # stdio | sse
+  transport: stdio                   # stdio is the only implemented transport
 ```
 
 ---
 
 ## Roadmap
 
-### Phase 1 — MVP ✦ (current)
+> Snapshot of the original plan. Phases 1–2 (except PDF/DOCX parsing) have
+> shipped; Mnemos is at 4.0.0. The authoritative current plan lives in
+> [PLAN.md](../../../PLAN.md).
+
+### Phase 1 — MVP (shipped)
 - [x] Architecture and data models
-- [ ] Core: MemoryManager + ChromaDB + SQLite
-- [ ] Embedding layer (sentence-transformers)
-- [ ] Hybrid search
-- [ ] CLI (add, search, list, tags)
-- [ ] Obsidian vault sync (read/write)
-- [ ] REST API (FastAPI)
+- [x] Core: MemoryManager + SQLite + vector store (`vectors.db`)
+- [x] Embedding layer (bundled `mnema-embed-v1`)
+- [x] Hybrid search
+- [x] CLI (add, search, recall, tags)
+- [x] Obsidian vault sync (read/write)
+- [x] REST API (FastAPI)
 
 ### Phase 2 — Integrations
-- [ ] MCP server for Copilot
-- [ ] Web scraping (ingest URLs)
+- [x] MCP server for Copilot
+- [x] Web scraping (ingest URLs)
 - [ ] PDF/DOCX parsing
 
 ### Phase 3 — Advanced features
@@ -391,8 +393,8 @@ mcp:
 - [ ] Auto-categorisation (LLM-powered)
 - [ ] Relationship graph between entries
 - [ ] Auto-summarisation of long documents
-- [ ] Periodic consolidation (merge similar entries)
-- [ ] Export / Import
+- [x] Periodic consolidation (merge similar entries)
+- [x] Export / Import
 
 ### Phase 4 — Scaling
 - [ ] Migration to PostgreSQL + pgvector (optional)
