@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 
 <!-- version:pip -->
 ```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v4.0.0/mnemos_memory_server-4.0.0-py3-none-any.whl
+pip install https://github.com/Korrnals/mnemos/releases/download/v4.1.0/mnemos_memory_server-4.1.0-py3-none-any.whl
 ```
 <!-- /version:pip -->
 
@@ -74,14 +74,14 @@ podman run -d --name mnemos \
   -v mnemos-vault:/vault \
   -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
 <!-- version:image -->
-  ghcr.io/korrnals/mnemos:4.0.0
+  ghcr.io/korrnals/mnemos:4.1.0
 <!-- /version:image -->
 
 curl -s http://localhost:8787/health | jq
 ```
 
 <!-- version:tags -->
-Теги: `:4.0.0` (фиксированная) · `:latest` (rolling).
+Теги: `:4.1.0` (фиксированная) · `:latest` (rolling).
 <!-- /version:tags -->
 
 Полное руководство: [container-deployment.md](../admin/runbooks/container-deployment.md).
