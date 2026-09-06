@@ -187,7 +187,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
 # benchmarks/reports/generate_report.py: the Russian analysis text mixes
 # Cyrillic and latin identifiers — RUF001's lookalike warnings are noise
 # (same rationale as the synthetic RU corpus files).
-"benchmarks/reports/generate_report.py" = ["RUF001"]
+"benchmarks/reports/generate_report.py" = ["RUF001", "E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
