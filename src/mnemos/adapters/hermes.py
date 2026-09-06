@@ -31,17 +31,23 @@ Where each legacy duty went:
   on every block). The raw ``/search`` prefetch could leak secrets; the
   contract pipeline cannot.
 * sync_turn / on_memory_write / on_session_end writes → ``MnemosSDK.remember``
-  (tag contract validated at the channel BEFORE any write; entries enter the
-  knowledge pipeline at ``raw`` with the write-path secret scan).
+  (tag contract validated at the channel BEFORE any write; the write-path
+  secret scan runs inside ``add``).
 * on_pre_compress (facts lost to Hermes' context compression) → the
   ADR-0018 ``on_context_rewrite`` event via ``MnemosSDK.rewrite`` — the
   original lands in LTM losslessly and idempotently.
-* auto-publish with ``skip_quality_check`` → the EXPLICIT
-  ``publish_on_write`` knob (default on, preserving the legacy deployment
-  posture for LLM-less mnemos where raw entries would otherwise never
-  surface). It calls the first-class ``MemoryManager.publish`` surface —
-  the same one REST ``POST /publish/{id}?skip_quality_check=true`` exposes
-  — and a publish failure is non-fatal (the memory stays stored as raw).
+* auto-publish with ``skip_quality_check`` → GONE (ADR-0019 Phase D).
+  Immediate visibility is honest SERVER semantics since B2b: the adapter
+  writes WITHOUT an explicit ``status`` and the ``mnemos.visibility``
+  policy owns the initial visibility through the fail-closed ingest gate
+  — ``immediate`` (default) publishes clean content at once with
+  ``pipeline_state=pending`` (refused content is stored RAW,
+  zero-loss); ``curated`` holds the row RAW + pending until the refine
+  cycle gates the refined projection. The legacy ``publish_on_write``
+  constructor knob is still ACCEPTED (the Hermes shim passes it) but has
+  no write-path effect: per-adapter visibility flags were explicitly
+  rejected by the ADR-0019 committee — visibility is a server-level
+  default.
 
 What deliberately stays HERE (harness policy, not contract): the
 write-sparingly significance rules (``sync_min_user_chars`` /
@@ -63,7 +69,6 @@ from mnemos.models import (
     AgentRecallQuery,
     Memory,
     MemorySource,
-    MemoryStatus,
     MemoryType,
     validate_tag_contract,
 )
@@ -119,6 +124,16 @@ class HermesMemoryAdapter:
     verb, including the A2 strict-mode CCR issuer context inside
     ``assemble_context`` and the N2 identity mandate of
     ``post_tool_call``.
+
+    Visibility semantics (ADR-0019 Phase D): every write goes out WITHOUT
+    an explicit ``status``, so the server's ``mnemos.visibility`` policy
+    owns the initial visibility through the fail-closed ingest gate
+    (``immediate`` (default): clean content is PUBLISHED at once with
+    ``pipeline_state=pending``; ``curated``: stored RAW + pending until
+    the refine cycle gates the projection). The adapter no longer
+    publishes on its own — the Hermes ``publish_on_write`` bypass is
+    removed; the constructor knob is accepted for shim compatibility
+    only and is a documented no-op.
     """
 
     def __init__(
@@ -149,11 +164,22 @@ class HermesMemoryAdapter:
         self._project = project
         self._agent = agent
         self._auto_sync = auto_sync
-        self._publish_on_write = publish_on_write
         self._sync_min_user_chars = sync_min_user_chars
         self._sync_interval = sync_interval
         self._session = ""
         self._turn_counter = 0
+        # ADR-0019 Phase D: publish_on_write is accepted for shim
+        # compatibility and deliberately NOT stored — it no longer has a
+        # write-path effect. Say so loudly once: an operator flipping it
+        # expects the old auto-publish and must learn the knob moved to
+        # the mnemos.visibility server policy.
+        if not publish_on_write:
+            logger.info(
+                "hermes_adapter: publish_on_write=False is a no-op since "
+                "ADR-0019 Phase D — initial visibility is owned by the "
+                "mnemos.visibility server policy (immediate publishes at "
+                "ingest; curated holds the row raw+pending until refine)"
+            )
         logger.info(
             "hermes_adapter: ready project=%s agent=%s auto_sync=%s publish_on_write=%s",
             project,
@@ -275,7 +301,9 @@ class HermesMemoryAdapter:
         """Store one caller-tagged memory (the ``mnemos_add`` counterpart).
 
         Tags pass through ``MnemosSDK.remember``'s channel validation —
-        contract-breaking tags raise before any write.
+        contract-breaking tags raise before any write. No explicit
+        ``status``: the ``mnemos.visibility`` server policy owns the
+        initial visibility (ADR-0019 Phase D).
         """
         _require_str(content, "content")
         if not tags:
@@ -290,9 +318,8 @@ class HermesMemoryAdapter:
             memory_type=memory_type,
             source=MemorySource.MANUAL,
             metadata=meta,
-            status=MemoryStatus.RAW,
         )
-        return self._maybe_publish(memory)
+        return memory
 
     def sync_turn(
         self,
@@ -323,7 +350,6 @@ class HermesMemoryAdapter:
             tags=[f"project:{self._project}", f"agent:{self._agent}", "mnemos:session"],
             memory_type=MemoryType.CONVERSATION,
             source=MemorySource.MANUAL,
-            status=MemoryStatus.RAW,
             metadata={
                 "channel": _CHANNEL,
                 "session_id": self._session,
@@ -336,7 +362,7 @@ class HermesMemoryAdapter:
             self._project,
             memory.id,
         )
-        return self._maybe_publish(memory)
+        return memory
 
     def mirror_memory_write(
         self,
@@ -363,7 +389,6 @@ class HermesMemoryAdapter:
             tags=[f"project:{self._project}", f"agent:{agent_tag}", f"mnemos:{subtype}"],
             memory_type=MemoryType.FACT,
             source=MemorySource.MANUAL,
-            status=MemoryStatus.RAW,
             metadata={
                 "channel": _CHANNEL,
                 "mirror_of": "hermes-builtin-memory",
@@ -372,7 +397,7 @@ class HermesMemoryAdapter:
             },
         )
         logger.debug("hermes_adapter.mirror_memory_write: target=%s id=%s", target, memory.id)
-        return self._maybe_publish(memory)
+        return memory
 
     def session_end(self, messages: list[dict[str, Any]]) -> Memory | None:
         """Synthesize and store one ``mnemos:session`` summary per session.
@@ -414,7 +439,6 @@ class HermesMemoryAdapter:
             tags=[f"project:{self._project}", f"agent:{self._agent}", "mnemos:session"],
             memory_type=MemoryType.CONVERSATION,
             source=MemorySource.MANUAL,
-            status=MemoryStatus.RAW,
             metadata={
                 "channel": _CHANNEL,
                 "session_id": self._session,
@@ -430,7 +454,7 @@ class HermesMemoryAdapter:
             self._turn_counter,
             len(user_msgs),
         )
-        return self._maybe_publish(memory)
+        return memory
 
     def save_checkpoint(
         self,
@@ -466,11 +490,10 @@ class HermesMemoryAdapter:
             tags=[f"project:{self._project}", f"agent:{self._agent}", "mnemos:checkpoint"],
             memory_type=MemoryType.SESSION_CONTEXT,
             source=MemorySource.MANUAL,
-            status=MemoryStatus.RAW,
             metadata={"channel": _CHANNEL, "session_id": session},
         )
         logger.info("hermes_adapter.save_checkpoint: project=%s id=%s", self._project, memory.id)
-        return self._maybe_publish(memory)
+        return memory
 
     # ── Reads (MnemosSDK.recall / stats — issuance-scanned channels) ────
 
@@ -597,34 +620,3 @@ class HermesMemoryAdapter:
             supersedes=supersedes,
             diff=diff,
         )
-
-    # ── Internals ───────────────────────────────────────────────────────
-
-    def _maybe_publish(self, memory: Memory) -> Memory:
-        """Promote a fresh write to ``published`` when so configured.
-
-        Deployment posture for LLM-less mnemos (the legacy plugin's
-        auto-publish, made explicit): raw entries would never surface in
-        recall without a pipeline backend. Uses the first-class
-        ``publish`` surface with ``skip_quality_check`` — the same one REST
-        exposes. Non-fatal: a failed publish leaves the memory stored as
-        ``raw`` (the pipeline can still advance it); the failure is
-        logged, never swallowed silently. Returns the REFRESHED row on
-        success (the caller's ``Memory`` is the pre-transition snapshot;
-        ``publish`` mutates a copy loaded from the store).
-        """
-        if not self._publish_on_write:
-            return memory
-        try:
-            result = self._sdk.manager.publish(memory.id, skip_quality_check=True)
-        except Exception as exc:
-            logger.warning(
-                "hermes_adapter: publish_on_write failed for %s (stored as raw): %s",
-                memory.id,
-                exc,
-            )
-            return memory
-        if not result.published:
-            return memory
-        refreshed = self._sdk.manager.get(memory.id)
-        return refreshed if refreshed is not None else memory

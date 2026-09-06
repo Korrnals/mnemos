@@ -52,6 +52,7 @@ from mnemos.audit import log_sync_audit
 from mnemos.cli.export import _encrypt, decrypt, is_encrypted
 from mnemos.cli.import_ import (
     DEFAULT_MAX_CONTENT_CHARS,
+    gate_imported_memory,
     validate_import_record,
 )
 from mnemos.compact import COMPACT_SCHEMA, CompactRecord, build_compact_payload
@@ -684,6 +685,18 @@ def run_sync_import(
             project=project,
             agent=agent,
         )
+        # ADR-0019 Phase D / #166: peer-status rows must not land visible
+        # without the publication gate — run the fail-closed danger gate
+        # over the imported projection BEFORE the store write. Refusal →
+        # stored RAW + pipeline_state=NULL (zero-loss, invisible); clean →
+        # peer status kept, pipeline_state=pending (the local refine
+        # queue picks it up). Audited as path=federation-import.
+        memory, admitted = gate_imported_memory(mgr, memory)
+        if not admitted:
+            result.warnings.append(
+                f"record {record.id}: stored RAW — federation-import "
+                "danger-gate refusal (zero-loss, invisible)"
+            )
         try:
             mgr.sqlite.save(memory)
             if memory.status == MemoryStatus.PUBLISHED:

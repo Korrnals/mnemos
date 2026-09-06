@@ -32,7 +32,8 @@ console = Console()
 
 doctor_app = typer.Typer(
     name="doctor",
-    help="Run Mnemos health checks (config, vault, DB, MCP, integration, tags).",
+    help="Run Mnemos health checks (config, vault, DB, pending refine queue, MCP, "
+    "integration, tags).",
     no_args_is_help=False,
 )
 
@@ -320,6 +321,53 @@ def _check_integration() -> CheckResult:
     )
 
 
+def _check_pending_refine(settings: Any) -> CheckResult:
+    """ADR-0019 Phase D — pending-refinement queue diagnostics.
+
+    Rows with ``pipeline_state='pending'`` are advanced only by the
+    BACKGROUND processor (the B2a daemon). The B1 migration backfilled
+    bypass-era PUBLISHED rows as pending, so a CLI-only deployment (no
+    daemon running) can accumulate a queue that never drains — entries
+    stay visible-raw but never refine. This check makes the queue
+    visible. Diagnostics ONLY: the doctor deliberately does not run the
+    processor — it is a server-side service (``mnemos processor start``).
+    """
+    db_path = settings.db_path
+    if not db_path.exists():
+        return CheckResult("Pending refine", CheckStatus.PASS, "no database yet")
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE pipeline_state = 'pending'"
+            ).fetchone()
+            count = int(row[0]) if row else 0
+        finally:
+            conn.close()
+    except sqlite3.OperationalError as exc:
+        if "no such column" in str(exc):
+            # Pre-ADR-0019 schema: the pipeline lifecycle column does not
+            # exist → no optimistic-publication queue by definition.
+            return CheckResult(
+                "Pending refine",
+                CheckStatus.PASS,
+                "pre-ADR-0019 schema (no pipeline lifecycle column)",
+            )
+        return CheckResult("Pending refine", CheckStatus.FAIL, f"scan error: {exc}")
+    except sqlite3.Error as exc:
+        return CheckResult("Pending refine", CheckStatus.FAIL, f"scan error: {exc}")
+    if count:
+        plural = "entry is" if count == 1 else "entries are"
+        return CheckResult(
+            "Pending refine",
+            CheckStatus.WARN,
+            f"{count:,} {plural} awaiting async refinement (pipeline_state=pending) "
+            "— start the background processor: `mnemos processor start` "
+            "(CLI-only deployments have no daemon; the queue never drains on its own)",
+        )
+    return CheckResult("Pending refine", CheckStatus.PASS, "0 entries awaiting refinement")
+
+
 def _check_tag_contract(settings: Any) -> CheckResult:
     """Report tag contract mode + non-conformant entry count (if fast)."""
     strict = settings.mnemos.strict_tag_contract
@@ -478,6 +526,7 @@ _SETTINGS_CHECKS = (
     _check_vault,
     _check_sqlite,
     _check_vector_store,
+    _check_pending_refine,
     _check_tag_contract,
 )
 
@@ -671,8 +720,9 @@ def doctor(
 ) -> None:
     """Run Mnemos health checks and report status.
 
-    Checks: config, data dir, vault, SQLite DB, vector store, MCP server,
-    integration layer, agent wiring, tag contract.
+    Checks: config, data dir, vault, SQLite DB, vector store, pending
+    refinement queue, MCP server, integration layer, agent wiring, tag
+    contract.
 
     Exit codes: 0 = all pass, 1 = one or more failed, 2 = warnings only.
 
