@@ -16,35 +16,27 @@ MCP-инструменту — [mcp-tools.md](mcp-tools.md). По каждому
 
 ---
 
-## Установка (одна команда)
+## Установка
 
-```bash
-pip install "mnemos-memory-server[mcp]"
-```
+Mnemos опубликован на PyPI как **`mnemos-memory-server`**. Выберите строку под ваш сценарий:
 
-Это вся установка:
+| Вы хотите… | Команда | Что получите |
+|-----------|---------|--------------|
+| **Память для агентского харнеса** — обычный случай | `pip install "mnemos-memory-server[mcp]"` | сервер + CLI `mnemos` + REST API + **MCP-сервер, с которым разговаривает ваш харнес** |
+| Команда `mnemos` в `PATH`, проектные окружения не тронуты | `uv tool install "mnemos-memory-server[mcp]"` — или `pipx install "mnemos-memory-server[mcp]"` | то же самое, изолированно |
+| Только CLI и REST, без агентского харнеса | `pip install mnemos-memory-server` | сервер + CLI + REST API (без MCP) |
+| Плюс внешнее LLM-дообогащение | `pip install "mnemos-memory-server[mcp,ollama]"` — также `openai`, `anthropic`, `gemini` | + SDK выбранного провайдера |
 
-- **`mnemos-memory-server`** — пакет на PyPI: сервер памяти и знаний, CLI `mnemos`,
-  MCP-сервер и REST API в одном wheel.
-- **`[mcp]`** добавляет MCP SDK — оставьте: MCP-сервер (`mnemos mcp-server`) —
-  основная поверхность интеграции для агентских харнесов.
-- **Больше ничего не скачивается. Никогда.** Модель эмбеддингов по умолчанию
-  (`mnema-embed-v1`, ~30 МБ) встроена в wheel — поиск работает полностью офлайн,
-  на CPU, без API-ключей.
+> **Что значит `[mcp]`.** Квадратные скобки выбирают pip-*экстру* — опциональную группу
+> зависимостей. Базовый пакет уже содержит всё для хранения и поиска памяти: модель
+> эмбеддингов `mnema-embed-v1` (~30 МБ) встроена в wheel, поэтому поиск работает полностью
+> офлайн, на CPU, без загрузок и без API-ключей. `[mcp]` добавляет MCP SDK, на котором
+> работает `mnemos mcp-server`, — а MCP — это то, чем подключается любой агентский харнес,
+> поэтому он и рекомендован по умолчанию. Кавычки защищают скобки от того, чтобы шелл
+> принял их за glob.
 
-> ⚠️ **Имя пакета — `mnemos-memory-server`.** `pip install mnemos` устанавливает
-> *не связанный* проект, которому принадлежит имя `mnemos` на PyPI.
-
-### Изолированный вариант (рекомендуется для подключения харнесов)
-
-Харнесы запускают команду `mnemos` из `PATH`. Tool-установка кладёт её туда,
-не трогая проектные окружения:
-
-```bash
-uv tool install "mnemos-memory-server[mcp]"
-# или
-pipx install "mnemos-memory-server[mcp]"
-```
+> ⚠️ **Не перепутайте имя.** `pip install mnemos` (без `-memory-server`) устанавливает
+> посторонний проект, которому принадлежит это имя на PyPI.
 
 ### Скриптовый вариант (без решений)
 
@@ -56,13 +48,13 @@ integration-пак:
 curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
 ```
 
-### Другие варианты установки
+### Фиксация версии и другие каналы
 
 | Метод | Команда |
 |-------|---------|
 | Зафиксировать версию | `pip install "mnemos-memory-server[mcp]==4.0.0"` |
 | Контейнер одной командой | `… install.sh \| bash -s -- --container` — см. [container-deployment.md](../admin/runbooks/container-deployment.md) |
-| Из исходников (контрибьюторам) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` |
+| Из исходников (контрибьюторам) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` — см. [CONTRIBUTING.ru.md](../../../CONTRIBUTING.ru.md) |
 
 <details>
 <summary><strong>Опциональные экстры</strong> — внешние LLM-провайдеры, только если нужны</summary>
