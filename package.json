@@ -1,6 +1,6 @@
 {
   "name": "pi-mnemos",
-  "version": "3.2.0",
+  "version": "4.1.0",
   "description": "Mnemos memory & knowledge server — Pi extension. Spawns `mnemos mcp-server` over stdio and exposes every mnemos_* tool as a native Pi tool, plus the mnemos skill pack.",
   "type": "module",
   "license": "Apache-2.0",
@@ -55,5 +55,13 @@
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "pipeline": {
+    "npmPublishNames": [
+      "pi-mnemos",
+      "mnemos-pi",
+      "@korrlabs/mnemospi",
+      "@korrlabs/mnemos-pi"
+    ]
   }
 }
