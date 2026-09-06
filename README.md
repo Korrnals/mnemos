@@ -45,138 +45,57 @@ closing of a window.
 
 ## 🚀 Quick start
 
-Four steps from an empty machine to an agent that remembers across sessions — and knows when to look.
+Three commands from an empty machine to an agent that remembers — and knows when to look.
 
-### 1 · Install
-
-Mnemos ships on PyPI as **`mnemos-memory-server`**. Pick the line that matches how you will use it:
-
-| You want… | Install with | You get |
-|-----------|--------------|---------|
-| **Memory for an agent harness** — the usual case | `pip install "mnemos-memory-server[mcp]"` | server + `mnemos` CLI + REST API + **the MCP server your harness talks to** |
-| The `mnemos` command on `PATH`, project environments untouched | `uv tool install "mnemos-memory-server[mcp]"` — or `pipx install "mnemos-memory-server[mcp]"` | same as above, isolated |
-| CLI and REST only, no agent harness | `pip install mnemos-memory-server` | server + CLI + REST API (no MCP) |
-| External LLM enrichment as well | `pip install "mnemos-memory-server[mcp,ollama]"` — also `openai`, `anthropic`, `gemini` | + the chosen provider SDK |
-
-> **What `[mcp]` means.** Square brackets select a pip *extra* — an optional dependency group. The base
-> package already holds everything needed to store and search memory: the `mnema-embed-v1` embedding
-> model (~30 MB) is bundled, so search works offline with no downloads and no API keys. `[mcp]` adds the
-> MCP SDK that `mnemos mcp-server` runs on — and MCP is how every agent harness connects, which is why
-> it is the default recommendation. The quotes keep your shell from treating the brackets as a glob.
-
-> ⚠️ **Mind the name.** `pip install mnemos` (without `-memory-server`) installs an unrelated project
-> that owns the bare name on PyPI.
-
-<details>
-<summary><strong>Other ways to install</strong> — installer script, from source, released wheel, container</summary>
-
-<br>
-
-**Installer script** — creates an isolated venv at `~/.mnemos/venv`, drops a `mnemos` launcher into `~/.local/bin` (no venv activation ever), and offers to wire VS Code MCP in the same run:
+### 1 · Install the server
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
+pip install "mnemos-memory-server[mcp]"
 ```
 
-Non-interactive: add `--mcp` / `--no-mcp`, e.g. `… | bash -s -- --mcp`.
+One package, everything included: the memory server, the `mnemos` CLI, the REST API, and the
+MCP server your agent harness talks to. The embedding model ships inside — search works fully
+offline, no API keys, nothing downloaded.
 
-**From source** (contributors — see [CONTRIBUTING.md](CONTRIBUTING.md)):
+> ⚠️ Mind the name: `pip install mnemos` (without `-memory-server`) is an unrelated project.
+
+### 2 · Connect your harness — and teach it to use memory
 
 ```bash
-git clone https://github.com/Korrnals/mnemos.git && cd mnemos
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev,mcp]"
+mnemos integration setup
 ```
 
-**Released wheel** (pin a specific version):
+One pass: detects the agent harnesses on your machine, registers the Mnemos MCP server in each
+supported one (VS Code Copilot, Cursor, ZCode, OpenCode, pi, Hermes, and everything reading the
+`~/.agents` standard — Claude Code, Codex and friends), and deploys the **behavioral pack** —
+always-on instructions and memory skills, so the agent recalls at session start, checkpoints
+before its context gets compacted, and treats memory as a priority instead of forgetting the
+tools exist.
 
-<!-- version:pip -->
-```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v4.0.0/mnemos_memory_server-4.0.0-py3-none-any.whl
-```
-<!-- /version:pip -->
+Running a harness that reads nothing standard? One paste block per harness:
+[Connect Mnemos to any harness](integrations/mcp-presets.md).
 
-**Container** — pulls the image, creates volumes, starts on port 8787:
-
-```bash
-export MNEMOS_API__TOTP_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash -s -- --container
-```
-
-Or run the pre-built image directly (published to `ghcr.io/korrnals/mnemos` on every release; works with `docker` too):
+### 3 · Verify — then try it
 
 ```bash
-podman run -d --name mnemos \
-  -p 8787:8787 \
-  -v mnemos-data:/data \
-  -v mnemos-vault:/vault \
-  -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
-<!-- version:image -->
-  ghcr.io/korrnals/mnemos:4.0.0
-<!-- /version:image -->
-
-curl -s http://localhost:8787/health | jq
+mnemos doctor
 ```
 
-<!-- version:tags -->
-Tags: `:4.0.0` (pinned) · `:latest` (rolling).
-<!-- /version:tags -->
-
-Full guide: [container deployment](docs/en/admin/runbooks/container-deployment.md).
-
-</details>
-
-### 2 · Write and find your first memory
+PASS / WARN / FAIL per check: store, config, MCP transport, harness registration (`--fix`
+repairs the common warnings). Then give it a memory:
 
 ```bash
 mnemos add "First memory — Mnemos remembers across sessions" \
   --tags project:mnemos,agent:me,mnemos:learning
-
 mnemos search "remembers across sessions"
 ```
 
-Every entry carries the [tag contract](docs/en/user/tag-contract.md) — one `project:`, one `agent:`,
-at least one `mnemos:` — so memory stays organised no matter how many agents write to it. The store
-lives at `~/.mnemos/data/mnemos.db`, with a human-readable markdown mirror in `~/.mnemos/vault/`.
-
-### 3 · Connect your harness
-
-Every harness speaks to Mnemos over the same stdio wire — `mnemos mcp-server` — so it is one line each:
-
-| Harness | Do this |
-|---------|---------|
-| **VS Code Copilot** | `curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh \| bash`, then reload the window |
-| **Claude Code** | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
-| **Cursor** / **Windsurf** | paste `"mnemos": { "type": "stdio", "command": "mnemos", "args": ["mcp-server"] }` into `mcpServers` of `~/.cursor/mcp.json` / `~/.codeium/windsurf/mcp_config.json` |
-| **OpenCode** | paste `"mnemos": { "type": "local", "command": ["mnemos", "mcp-server"] }` into `mcp` of `~/.config/opencode/opencode.json` |
-| **Codex, ZCode, pi, Hermes, anything else** | one block each on [Connect Mnemos to any harness](integrations/mcp-presets.md) |
-
-Restart the harness — the 26 `mnemos_*` tools appear in its tool list. Probe the wire without a harness:
-
-```bash
-mnemos doctor          # MCP transport, store, config, harness registration — PASS / WARN / FAIL per check
-```
-
-### 4 · Teach the agent to use its memory
-
-Tools alone are passive — an agent that *can* call `mnemos_search` will still forget to. The behavioral
-pack closes that gap: always-on instructions (recall at session start, checkpoint before the context
-gets compacted, tag every write), 14+ memory skills, and a memory-first prompt mode:
-
-```bash
-mnemos integration setup       # detects your harnesses and deploys the pack; --target <name> to pick one
-mnemos integration verify      # every file landed, stamped, well-formed
-```
-
-Coverage today — full pack (instructions + skills, plus the prompt mode for VS Code) for `copilot`,
-`generic-copilot`, `cursor`, `hermes`; skills + MCP registration for `zcode`, `agents` (the `~/.agents`
-standard read by Claude Code, Codex and friends) and `pi`. Always-on instructions for that second group
-are tracked in [#231](https://github.com/Korrnals/mnemos/issues/231). Flags, the deploy map, and agent
-wiring: [integration guide](docs/en/user/integration-guide.md).
-
 That is the whole loop: **write, find, never lose it — and the agent knows when to look.**
 
-> 📘 Guided first run with troubleshooting: [getting-started.md](docs/en/user/getting-started.md).
+> 📘 **Want every detail?** The extended guide covers all install variants (`uv tool`, `pipx`,
+> CLI-only, external LLM extras, installer script, container), per-harness connection
+> walkthroughs, configuration, and troubleshooting:
+> **[Getting Started — the complete first run](docs/en/user/getting-started.md)**.
 
 ---
 

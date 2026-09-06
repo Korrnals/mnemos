@@ -57,6 +57,41 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 | Из исходников (контрибьюторам) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` — см. [CONTRIBUTING.ru.md](../../../CONTRIBUTING.ru.md) |
 
 <details>
+<summary><strong>Готовый wheel и готовый контейнерный образ</strong> — каналы с фиксированной версией</summary>
+
+**Готовый wheel** (зафиксировать конкретную версию):
+
+<!-- version:pip -->
+```bash
+pip install https://github.com/Korrnals/mnemos/releases/download/v4.0.0/mnemos_memory_server-4.0.0-py3-none-any.whl
+```
+<!-- /version:pip -->
+
+**Готовый образ** (публикуется в `ghcr.io/korrnals/mnemos` при каждом релизе; работает и `docker` — замените `podman` на `docker`):
+
+```bash
+export MNEMOS_API__TOTP_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+podman run -d --name mnemos \
+  -p 8787:8787 \
+  -v mnemos-data:/data \
+  -v mnemos-vault:/vault \
+  -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
+<!-- version:image -->
+  ghcr.io/korrnals/mnemos:4.0.0
+<!-- /version:image -->
+
+curl -s http://localhost:8787/health | jq
+```
+
+<!-- version:tags -->
+Теги: `:4.0.0` (фиксированная) · `:latest` (rolling).
+<!-- /version:tags -->
+
+Полное руководство: [container-deployment.md](../admin/runbooks/container-deployment.md).
+
+</details>
+
+<details>
 <summary><strong>Опциональные экстры</strong> — внешние LLM-провайдеры, только если нужны</summary>
 
 Mnemos вызывает внешние LLM для синтеза в конвейере (M4) и дообработки — никогда

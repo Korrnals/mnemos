@@ -45,143 +45,57 @@ AI-агенты забывают всё, когда сессия заканчи�
 
 ## 🚀 Быстрый старт
 
-Четыре шага от пустой машины до агента, который помнит между сессиями — и знает, когда заглянуть в память.
+Три команды от пустой машины до агента, который помнит — и знает, когда заглянуть.
 
-### 1 · Установка
-
-Mnemos опубликован на PyPI как **`mnemos-memory-server`**. Выберите строку под ваш сценарий:
-
-| Вы хотите… | Команда | Что получите |
-|-----------|---------|--------------|
-| **Память для агентского харнеса** — обычный случай | `pip install "mnemos-memory-server[mcp]"` | сервер + CLI `mnemos` + REST API + **MCP-сервер, с которым разговаривает ваш харнес** |
-| Команда `mnemos` в `PATH`, проектные окружения не тронуты | `uv tool install "mnemos-memory-server[mcp]"` — или `pipx install "mnemos-memory-server[mcp]"` | то же самое, изолированно |
-| Только CLI и REST, без агентского харнеса | `pip install mnemos-memory-server` | сервер + CLI + REST API (без MCP) |
-| Плюс внешнее LLM-дообогащение | `pip install "mnemos-memory-server[mcp,ollama]"` — также `openai`, `anthropic`, `gemini` | + SDK выбранного провайдера |
-
-> **Что значит `[mcp]`.** Квадратные скобки выбирают pip-*экстру* — опциональную группу зависимостей.
-> В базовом пакете уже есть всё, что нужно для хранения и поиска памяти: модель эмбеддингов
-> `mnema-embed-v1` (~30 МБ) встроена, поэтому поиск работает офлайн — без загрузок и без API-ключей.
-> `[mcp]` добавляет MCP SDK, на котором работает `mnemos mcp-server`, — а MCP — это то, чем
-> подключается любой агентский харнес, поэтому он и рекомендован по умолчанию. Кавычки защищают
-> скобки от того, чтобы шелл принял их за glob.
-
-> ⚠️ **Не перепутайте имя.** `pip install mnemos` (без `-memory-server`) устанавливает посторонний
-> проект, которому принадлежит это имя на PyPI.
-
-<details>
-<summary><strong>Другие способы установки</strong> — скрипт-установщик, из исходников, готовый wheel, контейнер</summary>
-
-<br>
-
-**Скрипт-установщик** — создаёт изолированный venv в `~/.mnemos/venv`, кладёт лаунчер `mnemos`
-в `~/.local/bin` (активировать venv не нужно никогда) и в том же запуске предлагает настроить VS Code MCP:
+### 1 · Установите сервер
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
+pip install "mnemos-memory-server[mcp]"
 ```
 
-Неинтерактивный запуск: добавьте `--mcp` / `--no-mcp`, например `… | bash -s -- --mcp`.
+Всё в одном пакете: сервер памяти, CLI `mnemos`, REST API и MCP-сервер, с которым разговаривает
+ваш агентский харнес. Модель эмбеддингов встроена — поиск работает полностью офлайн,
+без API-ключей и без загрузок.
 
-**Из исходников** (контрибьюторам — см. [CONTRIBUTING.ru.md](CONTRIBUTING.ru.md)):
+> ⚠️ Не перепутайте имя: `pip install mnemos` (без `-memory-server`) — посторонний проект.
+
+### 2 · Подключите харнес — и научите его пользоваться памятью
 
 ```bash
-git clone https://github.com/Korrnals/mnemos.git && cd mnemos
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev,mcp]"
+mnemos integration setup
 ```
 
-**Готовый wheel** (зафиксировать конкретную версию):
+Один проход: находит агентские харнесы на вашей машине, регистрирует MCP-сервер Mnemos в каждом
+поддерживаемом харнесе (VS Code Copilot, Cursor, ZCode, OpenCode, pi, Hermes и всё, что читает
+стандарт `~/.agents`, — Claude Code, Codex и друзья) и разворачивает **поведенческий пакет** —
+always-on инструкции и скиллы памяти, чтобы агент вспоминал в начале сессии, делал чекпоинт
+до того, как его контекст сожмут, и относился к памяти как к приоритету, а не забывал,
+что инструменты существуют.
 
-<!-- version:pip -->
-```bash
-pip install https://github.com/Korrnals/mnemos/releases/download/v4.0.0/mnemos_memory_server-4.0.0-py3-none-any.whl
-```
-<!-- /version:pip -->
+Харнес, который не читает ничего стандартного? Один блок для копипаста на каждый:
+[Подключите Mnemos к любому харнесу](integrations/mcp-presets.md).
 
-**Контейнер** — скачивает образ, создаёт тома, запускает на порту 8787:
-
-```bash
-export MNEMOS_API__TOTP_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
-curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash -s -- --container
-```
-
-Или запустите готовый образ напрямую — публикуется в `ghcr.io/korrnals/mnemos` при каждом релизе:
+### 3 · Проверьте — и попробуйте
 
 ```bash
-podman run -d --name mnemos \
-  -p 8787:8787 \
-  -v mnemos-data:/data \
-  -v mnemos-vault:/vault \
-  -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
-<!-- version:image -->
-  ghcr.io/korrnals/mnemos:4.0.0
-<!-- /version:image -->
-
-curl -s http://localhost:8787/health | jq
+mnemos doctor
 ```
 
-<!-- version:tags -->
-Теги: `:4.0.0` (фиксированная) · `:latest` (rolling). Работает и с `docker` — замените `podman` на `docker`.
-<!-- /version:tags -->
-
-Полное руководство — [развёртывание в контейнере](docs/ru/admin/runbooks/container-deployment.md).
-
-</details>
-
-### 2 · Первая запись и поиск
+PASS / WARN / FAIL по каждой проверке: хранилище, конфиг, MCP-транспорт, регистрация харнесов
+(`--fix` чинит типовые предупреждения). Затем дайте ему память:
 
 ```bash
 mnemos add "Первая запись — Mnemos помнит между сессиями" \
   --tags project:mnemos,agent:me,mnemos:learning
-
 mnemos search "помнит между сессиями"
 ```
 
-Каждая запись несёт [контракт тегов](docs/ru/user/tag-contract.md) — один `project:`, один `agent:`,
-хотя бы один `mnemos:` — поэтому память остаётся упорядоченной, сколько бы агентов в неё ни писали.
-Хранилище живёт в `~/.mnemos/data/mnemos.db`, а для людей рядом — человекочитаемое markdown-зеркало
-в `~/.mnemos/vault/`.
-
-### 3 · Подключите ваш харнес
-
-Любой харнес разговаривает с Mnemos по одному и тому же stdio-проводу — `mnemos mcp-server` —
-поэтому на каждого нужна одна строка:
-
-| Харнесс | Что сделать |
-|---------|-------------|
-| **VS Code Copilot** | `curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh \| bash`, затем перезагрузите окно |
-| **Claude Code** | `claude mcp add --scope user mnemos -- mnemos mcp-server` |
-| **Cursor** / **Windsurf** | вставьте `"mnemos": { "type": "stdio", "command": "mnemos", "args": ["mcp-server"] }` в `mcpServers` файла `~/.cursor/mcp.json` / `~/.codeium/windsurf/mcp_config.json` |
-| **OpenCode** | вставьте `"mnemos": { "type": "local", "command": ["mnemos", "mcp-server"] }` в `mcp` файла `~/.config/opencode/opencode.json` |
-| **Codex, ZCode, pi, Hermes, всё остальное** | по одному блоку на странице [Подключите Mnemos к любому харнесу](integrations/mcp-presets.md) |
-
-Перезапустите харнес — в списке инструментов появятся 26 инструментов `mnemos_*`. Проверьте провод без харнеса:
-
-```bash
-mnemos doctor          # MCP-транспорт, хранилище, конфиг, регистрация харнесов — PASS / WARN / FAIL по каждой проверке
-```
-
-### 4 · Научите агента пользоваться памятью
-
-Одни инструменты пассивны — агент, который *может* вызвать `mnemos_search`, всё равно будет забывать
-это делать. Пробел закрывает поведенческий пакет: always-on инструкции (recall в начале сессии,
-чекпоинт до того, как контекст сожмут, тег на каждую запись), 14+ скиллов памяти и режим промпта
-«память прежде всего»:
-
-```bash
-mnemos integration setup       # находит ваши харнесы и разворачивает пакет; --target <имя> — выбрать один
-mnemos integration verify      # каждый файл на месте, с меткой и в правильной форме
-```
-
-Покрытие сегодня — полный пакет (инструкции + скиллы, плюс режим промпта для VS Code) для `copilot`,
-`generic-copilot`, `cursor`, `hermes`; скиллы + регистрация MCP для `zcode`, `agents` (стандарт
-`~/.agents`, который читают Claude Code, Codex и друзья) и `pi`. Always-on инструкции для второй
-группы отслеживаются в [#231](https://github.com/Korrnals/mnemos/issues/231). Флаги, карта
-развёртывания и wiring агентов: [руководство по интеграции](docs/ru/user/integration-guide.md).
-
 Это весь цикл: **записал, нашёл, не потерял — и агент знает, когда заглянуть в память.**
 
-> 📘 Пошаговый первый запуск с разбором неполадок: [getting-started.md](docs/ru/user/getting-started.md).
+> 📘 **Хотите каждую деталь?** Расширенный гид покрывает все варианты установки (`uv tool`, `pipx`,
+> только CLI, внешние LLM-экстры, скрипт-установщик, контейнер), пошаговое подключение каждого
+> харнеса, конфигурацию и разбор неполадок:
+> **[Начало работы — полное руководство](docs/ru/user/getting-started.md)**.
 
 ---
 

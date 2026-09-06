@@ -48,6 +48,41 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 | From source (contributors) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` — see [CONTRIBUTING.md](../../../CONTRIBUTING.md) |
 
 <details>
+<summary><strong>Released wheel and pre-built container image</strong> — version-pinned channels</summary>
+
+**Released wheel** (pin a specific version):
+
+<!-- version:pip -->
+```bash
+pip install https://github.com/Korrnals/mnemos/releases/download/v4.0.0/mnemos_memory_server-4.0.0-py3-none-any.whl
+```
+<!-- /version:pip -->
+
+**Pre-built image** (published to `ghcr.io/korrnals/mnemos` on every release; `docker` works too — swap `podman` for `docker`):
+
+```bash
+export MNEMOS_API__TOTP_MASTER_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+podman run -d --name mnemos \
+  -p 8787:8787 \
+  -v mnemos-data:/data \
+  -v mnemos-vault:/vault \
+  -e MNEMOS_API__TOTP_MASTER_KEY="${MNEMOS_API__TOTP_MASTER_KEY}" \
+<!-- version:image -->
+  ghcr.io/korrnals/mnemos:4.0.0
+<!-- /version:image -->
+
+curl -s http://localhost:8787/health | jq
+```
+
+<!-- version:tags -->
+Tags: `:4.0.0` (pinned) · `:latest` (rolling).
+<!-- /version:tags -->
+
+Full guide: [container-deployment.md](../admin/runbooks/container-deployment.md).
+
+</details>
+
+<details>
 <summary><strong>Optional extras</strong> — external LLM providers, only if you need them</summary>
 
 Mnemos calls external LLMs for pipeline synthesis (M4) and enrichment — never for storing or searching. Install only what you need:

@@ -38,7 +38,10 @@ fi
 echo "Syncing README version → $NEW_VERSION"
 
 # ── files to update ──────────────────────────────────────────────────
-FILES=("README.md" "README.ru.md")
+# The version-marker blocks live in the READMEs (compat note) and the extended
+# getting-started guides (wheel + GHCR image + tags) since the README quick start
+# was simplified (PR #233 follow-up).
+FILES=("README.md" "README.ru.md" "docs/en/user/getting-started.md" "docs/ru/user/getting-started.md")
 
 # Strict semver: X.Y.Z only (no pre-release suffix — avoids matching
 # "2.3.0-py3-none-any" as a version with a pre-release part).
