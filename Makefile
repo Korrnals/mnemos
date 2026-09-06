@@ -75,7 +75,7 @@ coverage:
 	pytest --cov=src/mnemos --cov-report=term-missing --cov-fail-under=80 tests/ -q
 
 check-version:
-	@python -c "from mnemos import __version__; from importlib.metadata import version; v = version('mnemos'); assert __version__ == v, f'mismatch: __init__={__version__}, metadata={v}'; print(f'✓ version {v} consistent')"
+	@python scripts/check_version.py
 
 # ── Benchmark stands (ADR-0020) ──────────────────────────────────────────────
 # S1 stays in the local merge gate (deterministic corridors + invariants
