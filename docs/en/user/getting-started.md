@@ -10,29 +10,26 @@ For higher-level context, see [architecture overview](../architecture/overview.m
 
 ---
 
-## Install (one command)
+## Install
 
-```bash
-pip install "mnemos-memory-server[mcp]"
-```
+Mnemos ships on PyPI as **`mnemos-memory-server`**. Pick the line that matches how you will use it:
 
-That is the whole install:
+| You want… | Install with | You get |
+|-----------|--------------|---------|
+| **Memory for an agent harness** — the usual case | `pip install "mnemos-memory-server[mcp]"` | server + `mnemos` CLI + REST API + **the MCP server your harness talks to** |
+| The `mnemos` command on `PATH`, project environments untouched | `uv tool install "mnemos-memory-server[mcp]"` — or `pipx install "mnemos-memory-server[mcp]"` | same as above, isolated |
+| CLI and REST only, no agent harness | `pip install mnemos-memory-server` | server + CLI + REST API (no MCP) |
+| External LLM enrichment as well | `pip install "mnemos-memory-server[mcp,ollama]"` — also `openai`, `anthropic`, `gemini` | + the chosen provider SDK |
 
-- **`mnemos-memory-server`** is the PyPI package — the memory & knowledge server, the `mnemos` CLI, the MCP server, and the REST API in one wheel.
-- **`[mcp]`** adds the MCP SDK — keep it; the MCP server (`mnemos mcp-server`) is the primary integration surface for agent harnesses.
-- **Nothing else is downloaded, ever.** The default embedding model (`mnema-embed-v1`, ~30 MB) is bundled inside the wheel — search works fully offline, on CPU, with no API keys.
+> **What `[mcp]` means.** Square brackets select a pip *extra* — an optional dependency group. The base
+> package already holds everything needed to store and search memory: the `mnema-embed-v1` embedding
+> model (~30 MB) is bundled inside the wheel, so search works fully offline, on CPU, with no downloads
+> and no API keys. `[mcp]` adds the MCP SDK that `mnemos mcp-server` runs on — and MCP is how every
+> agent harness connects, which is why it is the default recommendation. The quotes keep your shell
+> from treating the brackets as a glob.
 
-> ⚠️ **The package name is `mnemos-memory-server`.** `pip install mnemos` installs an *unrelated* project that owns the `mnemos` name on PyPI.
-
-### Isolated variant (recommended for harness wiring)
-
-Harnesses launch the `mnemos` command from `PATH`. A tool install puts it there without touching your project environments:
-
-```bash
-uv tool install "mnemos-memory-server[mcp]"
-# or
-pipx install "mnemos-memory-server[mcp]"
-```
+> ⚠️ **Mind the name.** `pip install mnemos` (without `-memory-server`) installs an unrelated project
+> that owns the bare name on PyPI.
 
 ### Scripted variant (zero decisions)
 
@@ -42,13 +39,13 @@ The installer creates an isolated venv at `~/.mnemos/venv`, drops a `mnemos` lau
 curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/install.sh | bash
 ```
 
-### Other install options
+### Pinning and other channels
 
 | Method | Command |
 |--------|---------|
 | Pin a version | `pip install "mnemos-memory-server[mcp]==4.0.0"` |
 | Container one-liner | `… install.sh \| bash -s -- --container` — see [container-deployment.md](../admin/runbooks/container-deployment.md) |
-| From source (contributors) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` |
+| From source (contributors) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` — see [CONTRIBUTING.md](../../../CONTRIBUTING.md) |
 
 <details>
 <summary><strong>Optional extras</strong> — external LLM providers, only if you need them</summary>
