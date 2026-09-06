@@ -232,6 +232,7 @@ def _check_mcp_server() -> CheckResult:
         (Path.cwd() / ".vscode" / "mcp.json", "VS Code, workspace scope"),
         (Path.home() / ".zcode" / "cli" / "config.json", "ZCode, user scope"),
         (Path.home() / ".agents" / "mcp.json", "AGENTS.md standard (~/.agents)"),
+        (Path.home() / ".config" / "opencode" / "opencode.json", "OpenCode, user scope"),
     ]
     for cfg_path, scope in candidates:
         if not cfg_path.exists():
@@ -242,9 +243,12 @@ def _check_mcp_server() -> CheckResult:
             continue
         servers: dict[str, Any] = {}
         if isinstance(data, dict):
+            mcp = data.get("mcp")
             servers = (
                 data.get("servers")
-                or data.get("mcp", {}).get("servers")
+                or (mcp.get("servers") if isinstance(mcp, dict) else None)
+                # OpenCode maps server names DIRECTLY under "mcp".
+                or (mcp if isinstance(mcp, dict) and mcp else {})
                 or data.get("mcpServers")
                 or {}
             )

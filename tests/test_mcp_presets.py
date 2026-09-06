@@ -8,6 +8,10 @@ fragment against the canonical ADR-0017 D1 stdio entry:
 
     command = "mnemos", args = ["mcp-server"], type = "stdio"
 
+One documented exception: the OpenCode preset uses OpenCode's native local
+server form (`"type": "local"`, a single command argv array) and is
+validated against that contract instead (#231).
+
 Import policy: tests operate on plain files (no ``mnemos`` import), so they
 run identically from any interpreter / install layout. One documented
 exception — ``test_canonical_env_names_and_subtypes_steer_src`` — proves the
@@ -34,6 +38,12 @@ TEMPLATE = REPO_ROOT / "integrations" / "adapter-template.md"
 CANONICAL_COMMAND = "mnemos"
 CANONICAL_ARGS = ["mcp-server"]
 CANONICAL_TYPE = "stdio"
+
+#: The OpenCode local-server contract (its native "mcp" map shape, #231):
+#: one argv array instead of command/args, and type "local" instead of
+#: "stdio".
+CANONICAL_OPENCODE_COMMAND = ["mnemos", "mcp-server"]
+CANONICAL_OPENCODE_TYPE = "local"
 
 #: Harness config paths the presets must keep naming correctly.
 PRESET_CONFIG_PATHS = (
@@ -89,6 +99,13 @@ def assert_json_server_entry(entry: object) -> None:
     assert entry.get("type") == CANONICAL_TYPE
 
 
+def assert_opencode_server_entry(entry: object) -> None:
+    """Assert a parsed OpenCode local server entry matches its contract."""
+    assert isinstance(entry, dict), f"server entry is not an object: {entry!r}"
+    assert entry.get("command") == CANONICAL_OPENCODE_COMMAND
+    assert entry.get("type") == CANONICAL_OPENCODE_TYPE
+
+
 def parse_json_fragment(block: str) -> dict[str, object]:
     """Parse a `"mnemos": {…}` fragment line by wrapping it in an object."""
     payload = json.loads("{" + block.strip() + "}")
@@ -128,18 +145,22 @@ def test_presets_cover_required_harnesses() -> None:
 
 
 def test_presets_json_blocks_match_wire_contract() -> None:
-    """Every JSON block (fragment or full file) carries the canonical entry."""
+    """Every JSON block carries the canonical stdio entry — except the
+    OpenCode preset, which is validated against the native local form."""
     text = PRESETS.read_text(encoding="utf-8")
     blocks = fenced_blocks(text, "json")
-    # Cursor fragment, Claude full file, Windsurf fragment.
-    assert len(blocks) == 3, f"expected 3 JSON blocks in the presets, got {len(blocks)}"
+    # Cursor fragment, Claude full file, Windsurf fragment, OpenCode fragment.
+    assert len(blocks) == 4, f"expected 4 JSON blocks in the presets, got {len(blocks)}"
     for block in blocks:
         stripped = block.strip()
         if stripped.startswith('"'):
             entry = parse_json_fragment(stripped)["mnemos"]
         else:
             entry = dig_server(json.loads(stripped))
-        assert_json_server_entry(entry)
+        if isinstance(entry, dict) and entry.get("type") == CANONICAL_OPENCODE_TYPE:
+            assert_opencode_server_entry(entry)
+        else:
+            assert_json_server_entry(entry)
 
 
 def test_presets_toml_block_matches_wire_contract() -> None:
@@ -241,12 +262,8 @@ def test_readme_compatibility_table_present(readme: str, header: str) -> None:
 
 
 def test_guides_reference_artefacts() -> None:
-    en = (REPO_ROOT / "docs" / "en" / "user" / "integration-guide.md").read_text(
-        encoding="utf-8"
-    )
-    ru = (REPO_ROOT / "docs" / "ru" / "user" / "integration-guide.md").read_text(
-        encoding="utf-8"
-    )
+    en = (REPO_ROOT / "docs" / "en" / "user" / "integration-guide.md").read_text(encoding="utf-8")
+    ru = (REPO_ROOT / "docs" / "ru" / "user" / "integration-guide.md").read_text(encoding="utf-8")
     for text in (en, ru):
         assert "mcp-presets.md" in text
         assert "adapter-template.md" in text
