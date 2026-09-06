@@ -27,9 +27,11 @@ not change the weight class of the install.
 
 The security verdict removed the last objection: the stdio transport adds no
 network perimeter — the HTTP API and auth are already core. Net-new
-transitive dependencies are `httpx-sse`, `jsonschema` (+ `referencing`,
+transitive dependencies were predicted as `httpx-sse`, `jsonschema` (+ `referencing`,
 `rpds-py`), `sse-starlette` — roughly 1 MiB total; the wheel itself does not
-grow. Verified: `mcp` is imported only in `src/mnemos/mcp_server.py`, so
+grow. Post-resolve erratum (actual `uv.lock`): the mcp 2.1.1 tree pulls
+`httpx2`, `httpcore2`, `truststore`, `mcp-types`, `jsonschema`, `sse-starlette`
+— same order of magnitude. Verified: `mcp` is imported only in `src/mnemos/mcp_server.py`, so
 lazy-import isolation is preservable by construction.
 
 ### Committee positions
@@ -80,8 +82,9 @@ Gate: guard test green plus a full `make verify`.
   the reinstall step; artisanal installs with drifting SDK versions end;
   pip-audit and SBOM cover a single profile.
 - **Negative / costs:** the install footprint grows by ~1 MiB of net-new
-  transitive dependencies; the supply-chain surface adds `httpx-sse`,
-  `jsonschema`/`referencing`/`rpds-py`, `sse-starlette`, and their
+  transitive dependencies; the supply-chain surface adds `httpx2`/`httpcore2`/
+  `truststore`/`mcp-types` (post-resolve actuals), `jsonschema`/`referencing`/
+  `rpds-py`, `sse-starlette`, and their
   transitive CVE noise now lands on the core dependency-updates process.
 - **Deferred / accepted residuals:** transitive CVE triage volume is
   accepted under the existing pin-and-audit policy; a deliberately

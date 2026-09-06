@@ -8,7 +8,8 @@
 #
 # Flags:
 #   --version VERSION   Mnemos version to install (default: latest from PyPI)
-#   --extra EXTRAS      Comma-separated extras: mcp,ollama,openai,anthropic,gemini,dev,all (default: mcp)
+#   --extra EXTRAS      Comma-separated extras: ollama,openai,anthropic,gemini,dev,all
+#                       (default: none — the MCP server ships in the base package since 4.1.0)
 #   --venv PATH         Create a venv at PATH and install there (default: ~/.mnemos/venv)
 #   --no-venv           Install into the current Python (system/user), no venv
 #   --uv                Use uv instead of pip (auto-detected if available)
@@ -28,7 +29,7 @@
 set -euo pipefail
 
 VERSION=""
-EXTRAS="mcp"
+EXTRAS=""
 VENV_PATH="${HOME}/.mnemos/venv"
 NO_VENV=false
 USE_UV=false
@@ -228,22 +229,20 @@ setup_mcp() {
 }
 
 MCP_DONE=false
-if [[ "${EXTRAS}" == *mcp* ]]; then
-  case "$MCP_SETUP" in
-    yes) echo ""; setup_mcp; MCP_DONE=true ;;
-    no)  : ;;
-    ask)
-      if [[ -r /dev/tty ]]; then
-        prompt_ask "Set up VS Code MCP integration now? [Y/n]"
-        read -r reply < /dev/tty || reply=""
-        case "$reply" in
-          [Nn]*) info "Skipped MCP setup. You can run it anytime later." ;;
-          *)     setup_mcp; MCP_DONE=true ;;
-        esac
-      fi
-      ;;
-  esac
-fi
+case "$MCP_SETUP" in
+  yes) echo ""; setup_mcp; MCP_DONE=true ;;
+  no)  : ;;
+  ask)
+    if [[ -r /dev/tty ]]; then
+      prompt_ask "Set up VS Code MCP integration now? [Y/n]"
+      read -r reply < /dev/tty || reply=""
+      case "$reply" in
+        [Nn]*) info "Skipped MCP setup. You can run it anytime later." ;;
+        *)     setup_mcp; MCP_DONE=true ;;
+      esac
+    fi
+    ;;
+esac
 
 # ── Optional: agent integration pack (instructions + skills + prompts) ──
 setup_instructions() {
@@ -312,7 +311,7 @@ echo ""
 ok "Try it:"
 printf "    mnemos add 'Hello' --tags project:test,agent:setup,mnemos:learning\n"
 printf "    mnemos search 'Hello'\n"
-if [[ "${EXTRAS}" == *mcp* && "$MCP_DONE" == false ]]; then
+if [[ "$MCP_DONE" == false ]]; then
   echo ""
   info "Enable VS Code MCP integration later:"
   printf "    curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/mcp-setup.sh | bash\n"

@@ -12,6 +12,12 @@ Two contracts are pinned here:
 2. **Core wiring** — the installed distribution declares `mcp` as a base
    requirement (the whole point of ADR-0023), and `mnemos.mcp_server` is
    importable in a bare environment.
+
+Honest limits: the AST scan is a lexical tripwire — it does not catch
+`importlib.import_module("mcp")`, `__import__("mcp")`, dynamically composed
+module names, or `exec`-based imports; the subprocess test partially
+compensates for the CLI entry path. Guard scope is `src/mnemos` (the wheel's
+force-included `scripts/` holds only shell code).
 """
 
 from __future__ import annotations
@@ -29,17 +35,18 @@ def _mcp_import_files() -> list[str]:
     """Return repo-relative names of src files that import the mcp SDK."""
     offenders: list[str] = []
     for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 names = [a.name for a in node.names]
                 if any(n == "mcp" or n.startswith("mcp.") for n in names):
-                    offenders.append(path.name)
+                    offenders.append(rel)
                     break
             elif isinstance(node, ast.ImportFrom):
                 root = (node.module or "").split(".")[0]
                 if root == "mcp":
-                    offenders.append(path.name)
+                    offenders.append(rel)
                     break
     return offenders
 
@@ -98,16 +105,23 @@ def test_distribution_declares_mcp_as_core_requirement() -> None:
     """
     from importlib import metadata
 
+    import pytest
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
     try:
+        dist_version = metadata.version("mnemos-memory-server")
         requires = metadata.requires("mnemos-memory-server") or []
     except metadata.PackageNotFoundError:
-        import pytest
-
         pytest.skip(
-            "stale dist metadata in this environment (editable install predates "
-            "the mnemos-memory-server rename) — reinstall `pip install -e .`"
+            "no mnemos-memory-server dist metadata in this environment — "
+            "reinstall `pip install -e .`"
         )
-    core_requires = [r for r in requires if "; extra ==" not in r]
-    assert any(r.startswith("mcp") for r in core_requires), (
+    if Version(dist_version) < Version("4.1.0"):
+        pytest.skip(
+            f"stale dist metadata {dist_version} predates ADR-0023 — reinstall `pip install -e .`"
+        )
+    core_requires = [Requirement(r).name for r in requires if "; extra ==" not in r]
+    assert "mcp" in core_requires, (
         f"mcp is not a core requirement of the installed dist: {core_requires}"
     )

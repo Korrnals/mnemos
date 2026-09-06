@@ -2,8 +2,7 @@
 
 MCP stub
 --------
-The ``mcp`` package is an optional dependency (``[mcp]`` extra, not
-installed in the standard dev environment). We inject minimal stubs into
+We inject minimal stubs into
 ``sys.modules`` here - before any test file imports ``mnemos.mcp_server`` -
 so that the dispatch / routing tests can run without the real SDK.
 
