@@ -14,12 +14,12 @@
 git clone https://github.com/Korrnals/mnemos.git
 cd mnemos
 uv venv && source .venv/bin/activate
-uv pip install -e ".[dev,mcp]"
+uv pip install -e ".[dev]"
 mnemos --help        # проверка, что всё живо
 ```
 
 - Python **3.11+** (рекомендуется `uv`; обычный `python -m venv` тоже работает).
-- `[dev]` приносит инструментарий quality gate; `[mcp]` — MCP SDK, нужный серверу.
+- `[dev]` приносит инструментарий quality gate. MCP SDK — основная зависимость (ADR-0023); экстра `[mcp]` осталась пустым алиасом совместимости.
 - Внешние LLM-провайдеры — отдельные экстры (`ollama`, `openai`, `anthropic`, `gemini`) —
   ставьте только то, что реально проверяете.
 

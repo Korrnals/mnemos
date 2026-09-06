@@ -201,10 +201,7 @@ class TestStamping:
     def test_stamp_self_heals_stamp_before_frontmatter(self) -> None:
         """A stamp placed *before* the opening ``---`` (the regression that
         caused ``description is required``) must be moved after the block."""
-        broken = (
-            "<!-- mnemos-integration: v1.1.0 -->\n"
-            "---\nname: x\ndescription: y\n---\n# body\n"
-        )
+        broken = "<!-- mnemos-integration: v1.1.0 -->\n---\nname: x\ndescription: y\n---\n# body\n"
         healed = stamp_content(broken, "1.2.0")
         assert healed.startswith("---")
         assert read_stamp(healed) == "1.2.0"
@@ -2105,9 +2102,7 @@ class TestSkillPack:
 
     def test_context_lifecycle_skill_present_and_parses(self) -> None:
         files = self._skill_files()
-        skill = next(
-            (p for p in files if p.name == "mnemos-context-lifecycle.md"), None
-        )
+        skill = next((p for p in files if p.name == "mnemos-context-lifecycle.md"), None)
         assert skill is not None, (
             "issue #209: mnemos-context-lifecycle.md must ship in the skill pack"
         )
@@ -2135,6 +2130,4 @@ class TestSkillPack:
             assert text.startswith("---\n"), f"{path.name}: missing frontmatter"
             fm = text.split("\n---\n", 1)[0]
             assert "name: " in fm, f"{path.name}: frontmatter missing name:"
-            assert "description: " in fm, (
-                f"{path.name}: frontmatter missing description:"
-            )
+            assert "description: " in fm, f"{path.name}: frontmatter missing description:"

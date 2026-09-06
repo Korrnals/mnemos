@@ -179,9 +179,7 @@ class TestVectorStorePredicate:
 
 
 class TestManagerVectorLegScoping:
-    def test_project_scoped_search_returns_only_that_project(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_project_scoped_search_returns_only_that_project(self, manager: MemoryManager) -> None:
         _seed_cross_project(manager)
         results = manager.search("alpha deployment", project=PROJECT_A, limit=10)
         assert results, "in-project same-content rows must surface"
@@ -215,14 +213,9 @@ class TestManagerVectorLegScoping:
         assert stats["cross_project_requests_total"] == before + 1
         # A project-scoped search never increments the cross-project flag.
         manager.search("alpha deployment", project=PROJECT_A, limit=10)
-        assert (
-            manager.search_stats()["cross_project_requests_total"]
-            == before + 1
-        )
+        assert manager.search_stats()["cross_project_requests_total"] == before + 1
 
-    def test_overfetch_does_not_leak_past_limit_after_fusion(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_overfetch_does_not_leak_past_limit_after_fusion(self, manager: MemoryManager) -> None:
         _seed_cross_project(manager)
         results = manager.search("alpha deployment", project=PROJECT_A, limit=3)
         assert 1 <= len(results) <= 3
@@ -248,9 +241,7 @@ class TestAssembleBoundaryDropRemoved:
         for _ in range(3):
             _add(manager, SHARED_CONTENT, project=PROJECT_A)
             _add(manager, SHARED_CONTENT, project=PROJECT_B)
-        result = assemble_context(
-            manager, session="a9-sess", project=PROJECT_A, budget=4096
-        )
+        result = assemble_context(manager, session="a9-sess", project=PROJECT_A, budget=4096)
         assert "project_scoped_out" not in result["stats"]["recall"]
         assert result["blocks"], "same-content rows in-scope must assemble"
         assert all(b["project"] == PROJECT_A for b in result["blocks"])

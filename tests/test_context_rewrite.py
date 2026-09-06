@@ -236,9 +236,7 @@ class TestIdempotency:
         assert second["memory_id"] != first["memory_id"]
         assert second["event_key"] != first["event_key"]
 
-    def test_dedup_redelivery_relinks_edge_idempotently(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_dedup_redelivery_relinks_edge_idempotently(self, manager: MemoryManager) -> None:
         old_id = _add_old_block(manager)
         first = _rewrite(manager, session=SESSION, supersedes=old_id)
         second = _rewrite(manager, session=SESSION, supersedes=old_id)
@@ -250,9 +248,7 @@ class TestIdempotency:
         assert len(edges) == 1
         assert edges[0]["to_memory_id"] == old_id
 
-    def test_deduplicated_receipt_still_carries_marker(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_deduplicated_receipt_still_carries_marker(self, manager: MemoryManager) -> None:
         """Review gap: dedupe + include_marker — the re-delivery receipt
         still carries the CCR marker (the caller may have lost the first
         receipt and re-asks with the marker flag set)."""
@@ -312,9 +308,7 @@ class TestCrossProjectSupersedes:
         )
         return memory.id
 
-    def test_cross_project_target_rejected_no_oracle(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_cross_project_target_rejected_no_oracle(self, manager: MemoryManager) -> None:
         """F2: a foreign-project target is rejected with the SAME message
         template as a nonexistent one — the error must not double as a
         global existence oracle (mirrors P1-a ccr_get semantics)."""
@@ -346,9 +340,7 @@ class TestCrossProjectSupersedes:
 
 
 class TestAdvisoryDiff:
-    def test_stored_as_metadata_not_content_not_echoed(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_stored_as_metadata_not_content_not_echoed(self, manager: MemoryManager) -> None:
         receipt = _rewrite(manager, session=SESSION, diff="was: quarterly → became: monthly")
         stored = manager.sqlite.get(str(receipt["memory_id"]))
         assert stored is not None
@@ -357,9 +349,7 @@ class TestAdvisoryDiff:
         assert stored.content == ORIGINAL_V2, "the ORIGINAL is the content, never the diff"
         assert "diff" not in receipt, "the diff is never echoed in the receipt"
 
-    def test_secret_in_diff_tags_no_federate_verdict_hit(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_secret_in_diff_tags_no_federate_verdict_hit(self, manager: MemoryManager) -> None:
         """The diff is part of the persisted record — a secret there must
         not federate unflagged (its own Layer-1 verdict)."""
         receipt = _rewrite(
@@ -388,9 +378,7 @@ class TestAdvisoryDiff:
 
 
 class TestTagContractAndProvenance:
-    def test_project_agent_tags_and_denormalised_fields(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_project_agent_tags_and_denormalised_fields(self, manager: MemoryManager) -> None:
         receipt = _rewrite(manager, session=SESSION)
         stored = manager.sqlite.get(str(receipt["memory_id"]))
         assert stored is not None
@@ -410,9 +398,7 @@ class TestTagContractAndProvenance:
         assert stored.metadata["rewrite_session"] == SESSION
         assert stored.metadata["rewrite_event_key"] == receipt["event_key"]
 
-    def test_invalid_project_slug_rejected_strict(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_invalid_project_slug_rejected_strict(self, manager: MemoryManager) -> None:
         """strict_tag_contract defaults True — a malformed slug is a clean
         ValueError, not a silently-invalid tag."""
         with pytest.raises(ValueError, match="project:"):
@@ -429,9 +415,7 @@ class TestTagContractAndProvenance:
 
 
 class TestVersionLessShape:
-    def test_receipt_has_no_version_or_ordering_fields(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_receipt_has_no_version_or_ordering_fields(self, manager: MemoryManager) -> None:
         receipt = _rewrite(manager, session=SESSION)
         assert set(receipt) == {
             "status",
@@ -463,9 +447,7 @@ class TestValidation:
             _rewrite(manager, agent="")
 
     @pytest.mark.parametrize("field", ["session", "supersedes", "diff"])
-    def test_blank_optional_strings_rejected(
-        self, manager: MemoryManager, field: str
-    ) -> None:
+    def test_blank_optional_strings_rejected(self, manager: MemoryManager, field: str) -> None:
         with pytest.raises(ValueError, match=f"{field} must be a non-empty string"):
             _rewrite(manager, **{field: "   "})
 
@@ -474,9 +456,7 @@ class TestValidation:
 
 
 class TestRateLimit:
-    def test_over_limit_raises_and_blocks_write(
-        self, tight_manager: MemoryManager
-    ) -> None:
+    def test_over_limit_raises_and_blocks_write(self, tight_manager: MemoryManager) -> None:
         for i in range(3):
             receipt = _rewrite(
                 tight_manager, content=f"distinct block number {i} for the service", session=SESSION
@@ -495,9 +475,7 @@ class TestRateLimit:
         ).fetchone()
         assert rows["n"] == 3, "the blocked event must not write"
 
-    def test_dedup_redelivery_consumes_no_quota(
-        self, tight_manager: MemoryManager
-    ) -> None:
+    def test_dedup_redelivery_consumes_no_quota(self, tight_manager: MemoryManager) -> None:
         """The quota counts STORED events — retry storms of an already
         stored event stay harmless (at-least-once delivery)."""
         _rewrite(tight_manager, content="block alpha for the gateway service", session=SESSION)
@@ -507,33 +485,41 @@ class TestRateLimit:
             )
             assert again["status"] == "deduplicated"
         # Quota still has room for two more DISTINCT events.
-        assert _rewrite(
-            tight_manager, content="block beta for the gateway service", session=SESSION
-        )["status"] == "stored"
-        assert _rewrite(
-            tight_manager, content="block gamma for the gateway service", session=SESSION
-        )["status"] == "stored"
+        assert (
+            _rewrite(tight_manager, content="block beta for the gateway service", session=SESSION)[
+                "status"
+            ]
+            == "stored"
+        )
+        assert (
+            _rewrite(tight_manager, content="block gamma for the gateway service", session=SESSION)[
+                "status"
+            ]
+            == "stored"
+        )
         with pytest.raises(ContextRewriteRateLimitError):
             _rewrite(tight_manager, content="block delta for the gateway service", session=SESSION)
 
-    def test_quota_is_per_project_and_session(
-        self, tight_manager: MemoryManager
-    ) -> None:
+    def test_quota_is_per_project_and_session(self, tight_manager: MemoryManager) -> None:
         for i in range(3):
             _rewrite(tight_manager, content=f"session block number {i}", session=SESSION)
         with pytest.raises(ContextRewriteRateLimitError):
             _rewrite(tight_manager, content="session block number three", session=SESSION)
         # Another session in the same project: its own bucket.
-        assert _rewrite(tight_manager, content="other session block", session="sess-other")[
-            "status"
-        ] == "stored"
+        assert (
+            _rewrite(tight_manager, content="other session block", session="sess-other")["status"]
+            == "stored"
+        )
         # Another project: its own bucket entirely.
-        assert _rewrite(
-            tight_manager,
-            content="other project block",
-            project="crw-other",
-            session=SESSION,
-        )["status"] == "stored"
+        assert (
+            _rewrite(
+                tight_manager,
+                content="other project block",
+                project="crw-other",
+                session=SESSION,
+            )["status"]
+            == "stored"
+        )
 
     def test_session_none_is_its_own_bucket(self, tight_manager: MemoryManager) -> None:
         for i in range(3):
@@ -541,9 +527,10 @@ class TestRateLimit:
         with pytest.raises(ContextRewriteRateLimitError):
             _rewrite(tight_manager, content="sessionless block number three")
         # A sessioned event in the same project is a different bucket.
-        assert _rewrite(tight_manager, content="sessioned block", session=SESSION)[
-            "status"
-        ] == "stored"
+        assert (
+            _rewrite(tight_manager, content="sessioned block", session=SESSION)["status"]
+            == "stored"
+        )
 
     def test_zero_disables_the_limiter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -561,9 +548,7 @@ class TestRateLimit:
             finally:
                 mgr.close()
 
-    def test_mcp_rate_limited_shape(
-        self, tight_manager: MemoryManager, monkeypatch
-    ) -> None:
+    def test_mcp_rate_limited_shape(self, tight_manager: MemoryManager, monkeypatch) -> None:
         monkeypatch.setattr(mcp_mod, "_manager", tight_manager)
         loop = asyncio.new_event_loop()
         for i in range(3):
@@ -621,18 +606,14 @@ class TestRateLimit:
 
 
 class TestSizeCaps:
-    def test_content_over_cap_rejected_no_write(
-        self, tight_manager: MemoryManager
-    ) -> None:
+    def test_content_over_cap_rejected_no_write(self, tight_manager: MemoryManager) -> None:
         with pytest.raises(ValueError, match="content exceeds the rewrite size cap"):
             _rewrite(tight_manager, content="x" * 201, session=SESSION)
         conn = tight_manager.sqlite._get_conn()
         rows = conn.execute("SELECT COUNT(*) AS n FROM memories").fetchone()
         assert rows["n"] == 0
 
-    def test_diff_over_cap_rejected_no_write(
-        self, tight_manager: MemoryManager
-    ) -> None:
+    def test_diff_over_cap_rejected_no_write(self, tight_manager: MemoryManager) -> None:
         with pytest.raises(ValueError, match="diff exceeds the rewrite size cap"):
             _rewrite(tight_manager, diff="d" * 51)
         conn = tight_manager.sqlite._get_conn()
@@ -657,9 +638,7 @@ class TestSizeCaps:
 
 
 class TestRehydrateRoundtrip:
-    def test_raw_invisible_until_pipeline_advances(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_raw_invisible_until_pipeline_advances(self, manager: MemoryManager) -> None:
         receipt = _rewrite(manager, session=SESSION)
         new_id = str(receipt["memory_id"])
 
@@ -675,9 +654,7 @@ class TestRehydrateRoundtrip:
         assert block["status"] == "processed"
         assert block["provenance"].startswith(f"[mnemos:{new_id} project={PROJECT}")
 
-    def test_marker_redeems_through_retrieve_content(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_marker_redeems_through_retrieve_content(self, manager: MemoryManager) -> None:
         receipt = _rewrite(manager, session=SESSION, include_marker=True)
 
         ccr = receipt.get("ccr_marker")
@@ -699,9 +676,7 @@ class TestRehydrateRoundtrip:
 
 
 class TestSecretInOriginal:
-    def test_layer1_tags_no_federate_and_issuance_redacts(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_layer1_tags_no_federate_and_issuance_redacts(self, manager: MemoryManager) -> None:
         secret_original = (
             "Deployment notes for the unobtanium gateway service.\n"
             f"The service authenticates with api key {FAKE_AWS_KEY}\n"
@@ -730,9 +705,7 @@ class TestSecretInOriginal:
 
 
 class TestSurfaces:
-    def test_mcp_tool_stored_and_deduplicated(
-        self, manager: MemoryManager, monkeypatch
-    ) -> None:
+    def test_mcp_tool_stored_and_deduplicated(self, manager: MemoryManager, monkeypatch) -> None:
         monkeypatch.setattr(mcp_mod, "_manager", manager)
         loop = asyncio.new_event_loop()
         args = {"content": ORIGINAL_V2, "project": PROJECT, "agent": AGENT, "session": SESSION}

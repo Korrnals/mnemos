@@ -2,8 +2,7 @@
 
 MCP stub
 --------
-The ``mcp`` package is an optional dependency (``[mcp]`` extra, not
-installed in the standard dev environment). We inject minimal stubs into
+We inject minimal stubs into
 ``sys.modules`` here - before any test file imports ``mnemos.mcp_server`` -
 so that the dispatch / routing tests can run without the real SDK.
 
@@ -11,7 +10,7 @@ The stubs replicate the MCP SDK 2.x contract (#185): ``Server`` registers
 handlers via constructor kwargs (``on_list_tools`` / ``on_call_tool``) and
 the wire types are plain attribute holders.
 
-If the real ``mcp`` package is installed (e.g. via ``pip install -e .[mcp]``)
+If the real ``mcp`` package is installed (a core dependency since 4.1.0)
 the guard ``if "mcp" not in sys.modules`` ensures the stubs are skipped and
 the real implementation is used instead.
 

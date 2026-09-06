@@ -708,9 +708,7 @@ class TestReviewHardening:
         result = manager.deploy("test-agents")
         assert any(f.destination == dest for f in result.files)
 
-    def test_mcp_env_defaults_shared_no_drift(
-        self, manager: IntegrationManager
-    ) -> None:
+    def test_mcp_env_defaults_shared_no_drift(self, manager: IntegrationManager) -> None:
         """Both MCP entry shapes draw env defaults from one helper (P3: dedup)."""
         entry = manager._mcp_entry(None, None)
         entry_oc = manager._mcp_entry_opencode(None, None)

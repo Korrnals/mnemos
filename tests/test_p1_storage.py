@@ -114,6 +114,8 @@ def _clean_log() -> str:
     """Cacheable content with no secret patterns."""
     lines = [f"2026-08-26T11:00:{i % 60:02d}Z INFO worker finished item {i}" for i in range(30)]
     return "\n".join(lines)
+
+
 def _as_legacy_unscanned(mgr: MemoryManager, h: str) -> None:
     """Rewrite a row's scan verdict to NULL (pre-P1-a legacy cache row).
 
@@ -126,8 +128,6 @@ def _as_legacy_unscanned(mgr: MemoryManager, h: str) -> None:
     conn = mgr.sqlite._get_conn()
     conn.execute("UPDATE ccr_cache SET secret_scan_verdict=NULL WHERE hash=?", (h,))
     conn.commit()
-
-
 
 
 def _make_memory(mid: str, content: str = "hello world") -> Memory:

@@ -115,8 +115,7 @@ class TestWindowTruncationFragmentRedacted:
         text = (
             "deploy run quokka-window boundary probe start\n"
             f"{filler}\n"
-            f"service token {FAKE_JWT} rotate monthly\n"
-            + "trailing payload " * 40
+            f"service token {FAKE_JWT} rotate monthly\n" + "trailing payload " * 40
         )
         h = manager.compress_content(text, profile="log", project=PROJECT)["hash"]
         _as_legacy_unscanned(manager, h)
@@ -137,9 +136,9 @@ class TestWindowTruncationFragmentRedacted:
             and FAKE_JWT not in _strip_marks(str(s["snippet"]))
         ]
         assert truncated, "fixture must produce a window-truncated jwt fragment"
-        assert all(
-            detect_secrets(_strip_marks(str(s["snippet"]))) == [] for s in truncated
-        ), "the truncated fragment must evade snippet-text detection"
+        assert all(detect_secrets(_strip_marks(str(s["snippet"]))) == [] for s in truncated), (
+            "the truncated fragment must evade snippet-text detection"
+        )
 
         # Postcondition: the visible fragment is redacted via the
         # original-window mapping; no jwt segment survives anywhere.
@@ -179,24 +178,16 @@ class TestRefuseModeReasons:
     """W3 review F5: refuse-mode forensics name the TRUE cause — a
     localization failure (nothing detected) is not a detection."""
 
-    def test_localization_failure_reason_is_distinct(
-        self, refuse_manager: MemoryManager
-    ) -> None:
+    def test_localization_failure_reason_is_distinct(self, refuse_manager: MemoryManager) -> None:
         """Non-localizable snippet (repeated text) under refuse mode: the
         refusal must NOT claim a detection — the fixed distinct reason
         names the ambiguity; still fail-closed (no snippets, no bump)."""
         line = "worker quokka-repeat processing batch item completed status ok"
         text = "\n".join([line] * 80)
-        h = refuse_manager.compress_content(text, profile="log", project=PROJECT)[
-            "hash"
-        ]
-        before = refuse_manager.sqlite.ccr_get(h, project=PROJECT, bump=False)[
-            "retrieval_count"
-        ]
+        h = refuse_manager.compress_content(text, profile="log", project=PROJECT)["hash"]
+        before = refuse_manager.sqlite.ccr_get(h, project=PROJECT, bump=False)["retrieval_count"]
 
-        result = refuse_manager.retrieve_content(
-            h, query="quokka-repeat", project=PROJECT
-        )
+        result = refuse_manager.retrieve_content(h, query="quokka-repeat", project=PROJECT)
 
         assert result["found"] is True
         assert result["refused"] is True
@@ -205,31 +196,22 @@ class TestRefuseModeReasons:
         )
         assert result["redacted_patterns"] == {"snippet": result["redactions"]}
         assert "snippets" not in result
-        after = refuse_manager.sqlite.ccr_get(h, project=PROJECT, bump=False)[
-            "retrieval_count"
-        ]
+        after = refuse_manager.sqlite.ccr_get(h, project=PROJECT, bump=False)["retrieval_count"]
         assert after == before, "refusal must not bump the retrieval counter"
 
-    def test_real_detection_keeps_detection_reason(
-        self, refuse_manager: MemoryManager
-    ) -> None:
+    def test_real_detection_keeps_detection_reason(self, refuse_manager: MemoryManager) -> None:
         """A genuine intersecting finding under refuse mode keeps the
         detection reason — the F5 split never downgrades a real hit."""
         filler = " ".join(f"filler{i:03d}" for i in range(21))
         text = (
             "deploy run quokka-window boundary probe start\n"
             f"{filler}\n"
-            f"service token {FAKE_JWT} rotate monthly\n"
-            + "trailing payload " * 40
+            f"service token {FAKE_JWT} rotate monthly\n" + "trailing payload " * 40
         )
-        h = refuse_manager.compress_content(text, profile="log", project=PROJECT)[
-            "hash"
-        ]
+        h = refuse_manager.compress_content(text, profile="log", project=PROJECT)["hash"]
         _as_legacy_unscanned(refuse_manager, h)
 
-        result = refuse_manager.retrieve_content(
-            h, query="quokka-window", project=PROJECT
-        )
+        result = refuse_manager.retrieve_content(h, query="quokka-window", project=PROJECT)
 
         assert result["found"] is True
         assert result["refused"] is True
@@ -242,12 +224,8 @@ class TestCleanPathUnchanged:
         """Unique, secret-free content: the snippet is emitted EXACTLY as
         FTS5 produced it (highlight marks intact), zero redactions, and
         the response carries no redacted_patterns key."""
-        text = (
-            "incident quokka-clean postmortem start\n"
-            + "\n".join(
-                f"2026-08-27T11:{i:02d}:00Z INFO unique step {i} of rollout finished"
-                for i in range(40)
-            )
+        text = "incident quokka-clean postmortem start\n" + "\n".join(
+            f"2026-08-27T11:{i:02d}:00Z INFO unique step {i} of rollout finished" for i in range(40)
         )
         h = manager.compress_content(text, profile="log", project=PROJECT)["hash"]
 
@@ -267,9 +245,8 @@ class TestCleanPathUnchanged:
         """The tier-2 scan datum (the cached original threaded through
         ccr.retrieve's snippet mode) is popped by the issuance layer —
         it never crosses the boundary into the response."""
-        text = (
-            "baseline quokka-echo probe start\n"
-            + "\n".join(f"row {i} unique content {i}" for i in range(40))
+        text = "baseline quokka-echo probe start\n" + "\n".join(
+            f"row {i} unique content {i}" for i in range(40)
         )
         h = manager.compress_content(text, profile="log", project=PROJECT)["hash"]
 

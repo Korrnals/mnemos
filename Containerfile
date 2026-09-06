@@ -28,7 +28,7 @@ COPY integrations/ ./integrations/
 # scripts/ is required at build time — force-include ships it inside the wheel
 # as mnemos/scripts/ so `mnemos integration setup` can find mcp-setup.sh.
 COPY scripts/ ./scripts/
-RUN pip install --no-cache-dir ".[mcp]"
+RUN pip install --no-cache-dir "."
 
 # Pre-download ChromaDB's default embedding model (all-MiniLM-L6-v2 ONNX, ~90MB)
 # so vector search works offline out of the box.

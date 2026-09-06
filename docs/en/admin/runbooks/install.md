@@ -11,18 +11,18 @@
 ## Quick install (PyPI)
 
 ```bash
-pip install "mnemos-memory-server[mcp]"
+pip install mnemos-memory-server
 ```
 
-- The `mcp` extra ships the MCP SDK — required for `mnemos mcp-server`.
+- The MCP server ships in the base package — `mnemos mcp-server` works out of the box (ADR-0023).
 - The embedding model (`mnema-embed-v1`) is bundled: no downloads, works offline.
 
 Isolated variant (installs the `mnemos` CLI on `PATH`, project environments untouched):
 
 ```bash
-uv tool install "mnemos-memory-server[mcp]"
+uv tool install mnemos-memory-server
 # or
-pipx install "mnemos-memory-server[mcp]"
+pipx install mnemos-memory-server
 ```
 
 Scripted variant (venv at `~/.mnemos/venv` + launcher in `~/.local/bin` + optional VS Code wiring):
@@ -95,7 +95,7 @@ podman-compose up -d
 ## Upgrade
 
 ```bash
-pip install --upgrade "mnemos-memory-server[mcp]"
+pip install --upgrade mnemos-memory-server
 ```
 
 The store schema is migrated automatically on first start of the new version. Back up

@@ -15,13 +15,13 @@
 Mnemos опубликован на **PyPI**:
 
 ```bash
-pip install "mnemos-memory-server[mcp]"
+pip install mnemos-memory-server
 ```
 
 Модель эмбеддингов по умолчанию (`mnema-embed-v1`, ~30 МБ) встроена в wheel —
 поиск работает полностью офлайн, на CPU, без API-ключей и без скачиваний.
-Изолированный вариант: `uv tool install "mnemos-memory-server[mcp]"` или
-`pipx install "mnemos-memory-server[mcp]"`.
+Изолированный вариант: `uv tool install mnemos-memory-server` или
+`pipx install mnemos-memory-server`.
 
 > ⚠️ Имя пакета на PyPI — **`mnemos-memory-server`**: `pip install mnemos`
 > устанавливает не связанный проект.

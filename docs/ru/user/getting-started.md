@@ -22,18 +22,15 @@ Mnemos опубликован на PyPI как **`mnemos-memory-server`**. Вы�
 
 | Вы хотите… | Команда | Что получите |
 |-----------|---------|--------------|
-| **Память для агентского харнеса** — обычный случай | `pip install "mnemos-memory-server[mcp]"` | сервер + CLI `mnemos` + REST API + **MCP-сервер, с которым разговаривает ваш харнес** |
-| Команда `mnemos` в `PATH`, проектные окружения не тронуты | `uv tool install "mnemos-memory-server[mcp]"` — или `pipx install "mnemos-memory-server[mcp]"` | то же самое, изолированно |
-| Только CLI и REST, без агентского харнеса | `pip install mnemos-memory-server` | сервер + CLI + REST API (без MCP) |
-| Плюс внешнее LLM-дообогащение | `pip install "mnemos-memory-server[mcp,ollama]"` — также `openai`, `anthropic`, `gemini` | + SDK выбранного провайдера |
+| **Всё сразу** — обычный случай: сервер плюс MCP-поверхность, с которой разговаривает харнес | `pip install mnemos-memory-server` | сервер + CLI `mnemos` + REST API + MCP-сервер |
+| Команда `mnemos` в `PATH`, проектные окружения не тронуты | `uv tool install mnemos-memory-server` — или `pipx install mnemos-memory-server` | то же самое, изолированно |
+| Плюс внешнее LLM-дообогащение | `pip install "mnemos-memory-server[ollama]"` — также `openai`, `anthropic`, `gemini` | + SDK выбранного провайдера |
 
-> **Что значит `[mcp]`.** Квадратные скобки выбирают pip-*экстру* — опциональную группу
-> зависимостей. Базовый пакет уже содержит всё для хранения и поиска памяти: модель
-> эмбеддингов `mnema-embed-v1` (~30 МБ) встроена в wheel, поэтому поиск работает полностью
-> офлайн, на CPU, без загрузок и без API-ключей. `[mcp]` добавляет MCP SDK, на котором
-> работает `mnemos mcp-server`, — а MCP — это то, чем подключается любой агентский харнес,
-> поэтому он и рекомендован по умолчанию. Кавычки защищают скобки от того, чтобы шелл
-> принял их за glob.
+> **Один пакет, без экстры.** Начиная с 4.1.0 MCP SDK — основная зависимость (ADR-0023):
+> базовая установка обслуживает агентские харнесы из коробки, а легасная экстра `[mcp]`
+> осталась пустым no-op-алиасом, чтобы старые команды и сниппеты продолжали работать.
+> Модель эмбеддингов `mnema-embed-v1` (~30 МБ) встроена в wheel: поиск работает полностью
+> офлайн, на CPU, без загрузок и без API-ключей.
 
 > ⚠️ **Не перепутайте имя.** `pip install mnemos` (без `-memory-server`) устанавливает
 > посторонний проект, которому принадлежит это имя на PyPI.
@@ -52,9 +49,9 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 
 | Метод | Команда |
 |-------|---------|
-| Зафиксировать версию | `pip install "mnemos-memory-server[mcp]==4.0.0"` |
+| Зафиксировать версию | `pip install mnemos-memory-server==4.1.0` |
 | Контейнер одной командой | `… install.sh \| bash -s -- --container` — см. [container-deployment.md](../admin/runbooks/container-deployment.md) |
-| Из исходников (контрибьюторам) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` — см. [CONTRIBUTING.ru.md](../../../CONTRIBUTING.ru.md) |
+| Из исходников (контрибьюторам) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev]"` — см. [CONTRIBUTING.ru.md](../../../CONTRIBUTING.ru.md) |
 
 <details>
 <summary><strong>Готовый wheel и готовый контейнерный образ</strong> — каналы с фиксированной версией</summary>
@@ -340,7 +337,9 @@ CLI: `mnemos --verbose serve` для уровня DEBUG, `mnemos serve --log-fil
 
 ### `mnemos mcp-server` падает с ошибкой импорта `mcp`
 
-Отсутствует экстра `[mcp]`: `pip install "mnemos-memory-server[mcp]"`.
+Установка сломана либо поверх основного SDK лёг чужой `mcp` 1.x:
+`pip install --force-reinstall mnemos-memory-server` (SDK — основная зависимость с 4.1.0 —
+ADR-0023; после переустановки транспорт подтверждает `mnemos doctor`).
 
 ### Поиск возвращает только «raw» записи
 

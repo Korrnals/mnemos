@@ -45,9 +45,7 @@ class TestParseMrlDims:
     def test_round3_quad_parse(self) -> None:
         assert parse_mrl_dims("64,128,256,384", full_dim=384) == [64, 128, 256, 384]
 
-    @pytest.mark.parametrize(
-        "bad", ["", "384,64", "128,128", "512", "0,64", "abc", "64,,128"]
-    )
+    @pytest.mark.parametrize("bad", ["", "384,64", "128,128", "512", "0,64", "abc", "64,,128"])
     def test_loud_failures(self, bad: str) -> None:
         with pytest.raises(ValueError, match="--mrl-dims"):
             parse_mrl_dims(bad, full_dim=384)
@@ -106,24 +104,18 @@ class TestMrlKdLoss:
         teacher = self.rng.normal(size=(n, dim)).astype(np.float64)
         return student, teacher
 
-    def test_single_dim_mode_equals_plain_kd_loss(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_single_dim_mode_equals_plain_kd_loss(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_torch(monkeypatch)
         student, teacher = self._pair()
         plain = kd_cosine_loss(student, teacher, temperature=0.05)
         mrl = mrl_kd_loss(student, teacher, [384], 0.05)
         assert float(mrl) == pytest.approx(float(plain))
 
-    def test_uniform_quad_is_mean_of_per_dim_losses(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_uniform_quad_is_mean_of_per_dim_losses(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_torch(monkeypatch)
         student, teacher = self._pair()
         dims = [64, 128, 256, 384]
-        per_dim = [
-            float(kd_cosine_loss(student[..., :d], teacher[..., :d], 0.05)) for d in dims
-        ]
+        per_dim = [float(kd_cosine_loss(student[..., :d], teacher[..., :d], 0.05)) for d in dims]
         total = mrl_kd_loss(student, teacher, dims, 0.05)
         assert float(total) == pytest.approx(float(np.mean(per_dim)))
 
@@ -131,9 +123,7 @@ class TestMrlKdLoss:
         _install_fake_torch(monkeypatch)
         student, teacher = self._pair()
         dims = [64, 128, 256, 384]
-        per_dim = [
-            float(kd_cosine_loss(student[..., :d], teacher[..., :d], 0.05)) for d in dims
-        ]
+        per_dim = [float(kd_cosine_loss(student[..., :d], teacher[..., :d], 0.05)) for d in dims]
         total = mrl_kd_loss(student, teacher, dims, 0.05, weights=[4.0, 2.0, 1.0, 1.0])
         assert float(total) == pytest.approx(
             0.5 * per_dim[0] + 0.25 * per_dim[1] + 0.125 * per_dim[2] + 0.125 * per_dim[3]
@@ -227,15 +217,11 @@ class TestLastTokenPool:
         pooled = last_token_pool(hidden, _FakeTensor(np.array(mask)))
         return np.asarray(pooled)
 
-    def test_left_padding_takes_last_position(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_left_padding_takes_last_position(self, monkeypatch: pytest.MonkeyPatch) -> None:
         out = self._run(monkeypatch, mask=[[0, 0, 1, 1]])
         assert out.tolist() == [13.0]
 
-    def test_right_padding_takes_length_minus_one(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_right_padding_takes_length_minus_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
         out = self._run(monkeypatch, mask=[[1, 1, 0, 0]])
         assert out.tolist() == [11.0]
 
@@ -321,7 +307,7 @@ class TestFromMnemosDb:
         )
         conn.execute(
             "INSERT INTO memories (id, content, tags) VALUES ('l1', ?, ?)",
-            ("Legacy row about deploy rotation and secrets hygiene, long enough.", '[]'),
+            ("Legacy row about deploy rotation and secrets hygiene, long enough.", "[]"),
         )
         conn.commit()
         conn.close()
