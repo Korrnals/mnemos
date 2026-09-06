@@ -117,12 +117,14 @@ def _break_mcp_server_import(monkeypatch: pytest.MonkeyPatch, exc: BaseException
 def test_check_mcp_transport_broken_import_is_loud_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A broken import (missing mcp SDK) FAILS with the .[mcp] remediation hint."""
+    """A broken import (missing mcp SDK) FAILS with the reinstall remediation hint."""
     _break_mcp_server_import(monkeypatch, ImportError("No module named 'mcp'"))
     result = _check_mcp_transport()
     assert result.status == CheckStatus.FAIL, result.detail
     assert result.detail.startswith("MCP transport broken:")
-    assert ".[mcp]" in result.detail, "must name the remediation extra"
+    assert "reinstall" in result.detail and "mnemos-memory-server" in result.detail, (
+        "must name the reinstall remediation"
+    )
     assert "mcp>=2.0,<3.0" in result.detail, "must name the SDK floor/cap"
 
 

@@ -9,13 +9,13 @@ Every MCP-capable harness connects to Mnemos over the same stdio wire
 **Prerequisite — install Mnemos (one command):**
 
 ```bash
-pip install "mnemos-memory-server[mcp]"
+pip install mnemos-memory-server
 ```
 
-> The `mcp` extra ships the MCP SDK — it is what makes `mnemos mcp-server`
-> work, so keep it. Isolated variant (installs the `mnemos` CLI on `PATH`
-> without touching your project environments): `uv tool install
-> "mnemos-memory-server[mcp]"` or `pipx install "mnemos-memory-server[mcp]"`.
+> The MCP SDK is a core dependency (ADR-0023) — nothing extra to install.
+> Isolated variant (installs the `mnemos` CLI on `PATH` without touching your
+> project environments): `uv tool install mnemos-memory-server` or
+> `pipx install mnemos-memory-server`.
 
 > ⚠️ The PyPI name is **`mnemos-memory-server`**. `pip install mnemos` installs
 > an unrelated project that owns the `mnemos` name on PyPI.

@@ -50,7 +50,7 @@ Three commands from an empty machine to an agent that remembers — and knows wh
 ### 1 · Install the server
 
 ```bash
-pip install "mnemos-memory-server[mcp]"
+pip install mnemos-memory-server
 ```
 
 One package, everything included: the memory server, the `mnemos` CLI, the REST API, and the

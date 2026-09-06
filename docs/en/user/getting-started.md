@@ -16,17 +16,15 @@ Mnemos ships on PyPI as **`mnemos-memory-server`**. Pick the line that matches h
 
 | You want… | Install with | You get |
 |-----------|--------------|---------|
-| **Memory for an agent harness** — the usual case | `pip install "mnemos-memory-server[mcp]"` | server + `mnemos` CLI + REST API + **the MCP server your harness talks to** |
-| The `mnemos` command on `PATH`, project environments untouched | `uv tool install "mnemos-memory-server[mcp]"` — or `pipx install "mnemos-memory-server[mcp]"` | same as above, isolated |
-| CLI and REST only, no agent harness | `pip install mnemos-memory-server` | server + CLI + REST API (no MCP) |
-| External LLM enrichment as well | `pip install "mnemos-memory-server[mcp,ollama]"` — also `openai`, `anthropic`, `gemini` | + the chosen provider SDK |
+| **Everything** — the usual case: the server plus the MCP surface your agent harness talks to | `pip install mnemos-memory-server` | server + `mnemos` CLI + REST API + the MCP server |
+| The `mnemos` command on `PATH`, project environments untouched | `uv tool install mnemos-memory-server` — or `pipx install mnemos-memory-server` | same as above, isolated |
+| External LLM enrichment as well | `pip install "mnemos-memory-server[ollama]"` — also `openai`, `anthropic`, `gemini` | + the chosen provider SDK |
 
-> **What `[mcp]` means.** Square brackets select a pip *extra* — an optional dependency group. The base
-> package already holds everything needed to store and search memory: the `mnema-embed-v1` embedding
-> model (~30 MB) is bundled inside the wheel, so search works fully offline, on CPU, with no downloads
-> and no API keys. `[mcp]` adds the MCP SDK that `mnemos mcp-server` runs on — and MCP is how every
-> agent harness connects, which is why it is the default recommendation. The quotes keep your shell
-> from treating the brackets as a glob.
+> **One package, nothing extra.** Since 4.1.0 the MCP SDK is a core dependency (ADR-0023) — the base
+> install serves agent harnesses out of the box, and the legacy `[mcp]` extra survives as an empty
+> no-op alias so older commands and snippets keep resolving. The `mnema-embed-v1` embedding model
+> (~30 MB) is bundled inside the wheel: search works fully offline, on CPU, with no downloads and
+> no API keys.
 
 > ⚠️ **Mind the name.** `pip install mnemos` (without `-memory-server`) installs an unrelated project
 > that owns the bare name on PyPI.
@@ -43,9 +41,9 @@ curl -fsSL https://raw.githubusercontent.com/Korrnals/mnemos/main/scripts/instal
 
 | Method | Command |
 |--------|---------|
-| Pin a version | `pip install "mnemos-memory-server[mcp]==4.0.0"` |
+| Pin a version | `pip install mnemos-memory-server==4.1.0` |
 | Container one-liner | `… install.sh \| bash -s -- --container` — see [container-deployment.md](../admin/runbooks/container-deployment.md) |
-| From source (contributors) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev,mcp]"` — see [CONTRIBUTING.md](../../../CONTRIBUTING.md) |
+| From source (contributors) | `git clone https://github.com/Korrnals/mnemos && cd mnemos && uv venv && source .venv/bin/activate && uv pip install -e ".[dev]"` — see [CONTRIBUTING.md](../../../CONTRIBUTING.md) |
 
 <details>
 <summary><strong>Released wheel and pre-built container image</strong> — version-pinned channels</summary>
@@ -294,7 +292,9 @@ If you installed with plain `pip` into a venv, the venv must be active. Prefer t
 
 ### `mnemos mcp-server` fails with an import error about `mcp`
 
-The `[mcp]` extra is missing: `pip install "mnemos-memory-server[mcp]"`.
+The install is broken, or a foreign `mcp` 1.x SDK shadows the bundled core one:
+`pip install --force-reinstall mnemos-memory-server` (the SDK is a core dependency since
+4.1.0 — ADR-0023; `mnemos doctor` confirms the transport afterwards).
 
 ### Search returns only "raw" entries
 

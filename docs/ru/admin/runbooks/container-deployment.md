@@ -43,7 +43,7 @@ Mnemos поставляется с `Containerfile` (совместим с OCI, p
 podman build -t localhost/mnemos:4.0.0 -f Containerfile .
 ```
 
-`Containerfile` использует `python:3.12-slim` в качестве базового образа, устанавливает `.[mcp]`,
+`Containerfile` использует `python:3.12-slim` в качестве базового образа, устанавливает пакет (MCP SDK едет в core),
 копирует `config.container.yaml` как `/app/config.yaml` и задаёт `CMD ["mnemos", "serve"]` на
 порту 8787.
 

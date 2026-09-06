@@ -11,18 +11,18 @@
 ## Быстрая установка (PyPI)
 
 ```bash
-pip install "mnemos-memory-server[mcp]"
+pip install mnemos-memory-server
 ```
 
-- Экстра `mcp` несёт MCP SDK — требуется для `mnemos mcp-server`.
+- MCP-сервер входит в базовый пакет — `mnemos mcp-server` работает из коробки (ADR-0023).
 - Модель эмбеддингов (`mnema-embed-v1`) встроена: без скачиваний, работает офлайн.
 
 Изолированный вариант (кладёт CLI `mnemos` в `PATH`, проектные окружения не затрагиваются):
 
 ```bash
-uv tool install "mnemos-memory-server[mcp]"
+uv tool install mnemos-memory-server
 # или
-pipx install "mnemos-memory-server[mcp]"
+pipx install mnemos-memory-server
 ```
 
 Скриптовый вариант (venv в `~/.mnemos/venv` + лаунчер в `~/.local/bin` +
@@ -99,7 +99,7 @@ podman-compose up -d
 ## Обновление
 
 ```bash
-pip install --upgrade "mnemos-memory-server[mcp]"
+pip install --upgrade mnemos-memory-server
 ```
 
 Схема хранилища мигрирует автоматически при первом запуске новой версии.

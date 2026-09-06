@@ -191,8 +191,9 @@ def _check_mcp_transport() -> CheckResult:
         return CheckResult(
             "MCP transport",
             CheckStatus.FAIL,
-            f"MCP transport broken: {exc}; install with the .[mcp] extra "
-            "(pip install mnemos-memory-server[mcp]) — requires mcp>=2.0,<3.0",
+            f"MCP transport broken: {exc}; reinstall the package "
+            "(pip install --force-reinstall mnemos-memory-server) — mcp>=2.0,<3.0 is a "
+            "core dependency since 4.1.0",
         )
     except AttributeError as exc:
         # Classic 1.x-decorator-on-2.x-SDK (or vice versa) signature break.
@@ -201,14 +202,15 @@ def _check_mcp_transport() -> CheckResult:
             CheckStatus.FAIL,
             f"MCP transport broken: {exc!r} — the installed mcp SDK version "
             "does not match mnemos.mcp_server (expects mcp>=2.0,<3.0); "
-            "reinstall with pip install 'mnemos-memory-server[mcp]'>=2.0 or fix the SDK version",
+            "reinstall the package (pip install --force-reinstall mnemos-memory-server) "
+            "or fix the installed mcp SDK version",
         )
     except Exception as exc:  # doctor reports, doesn't crash
         return CheckResult(
             "MCP transport",
             CheckStatus.FAIL,
             f"MCP transport broken: unexpected {type(exc).__name__}: {exc}; "
-            "install with the .[mcp] extra (mcp>=2.0,<3.0)",
+            "reinstall mnemos-memory-server (mcp>=2.0,<3.0 is core since 4.1.0)",
         )
 
 

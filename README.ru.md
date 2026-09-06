@@ -50,7 +50,7 @@ AI-агенты забывают всё, когда сессия заканчи�
 ### 1 · Установите сервер
 
 ```bash
-pip install "mnemos-memory-server[mcp]"
+pip install mnemos-memory-server
 ```
 
 Всё в одном пакете: сервер памяти, CLI `mnemos`, REST API и MCP-сервер, с которым разговаривает

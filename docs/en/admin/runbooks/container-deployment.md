@@ -43,7 +43,7 @@ Build a versioned local image from the source tree:
 podman build -t localhost/mnemos:4.0.0 -f Containerfile .
 ```
 
-The `Containerfile` uses `python:3.12-slim` as the base, installs `.[mcp]`, copies
+The `Containerfile` uses `python:3.12-slim` as the base, installs the package (the MCP SDK rides in core), copies
 `config.container.yaml` as `/app/config.yaml`, and sets `CMD ["mnemos", "serve"]` on port 8787.
 
 Makefile shortcut (builds `localhost/mnemos:latest`):

@@ -14,12 +14,12 @@ itself, start at the [README](README.md) and the [docs](docs/README.md).
 git clone https://github.com/Korrnals/mnemos.git
 cd mnemos
 uv venv && source .venv/bin/activate
-uv pip install -e ".[dev,mcp]"
+uv pip install -e ".[dev]"
 mnemos --help        # sanity check
 ```
 
 - Python **3.11+** (`uv` recommended; plain `python -m venv` works too).
-- `[dev]` brings the quality-gate toolchain; `[mcp]` brings the MCP SDK the server needs.
+- `[dev]` brings the quality-gate toolchain. The MCP SDK is a core dependency (ADR-0023); the `[mcp]` extra remains as an empty compatibility alias.
 - External LLM providers are separate extras (`ollama`, `openai`, `anthropic`, `gemini`) — install
   only what you exercise.
 

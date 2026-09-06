@@ -11,10 +11,10 @@
 Mnemos is on **PyPI**:
 
 ```bash
-pip install "mnemos-memory-server[mcp]"
+pip install mnemos-memory-server
 ```
 
-The default embedding model (`mnema-embed-v1`, ~30 MB) is bundled in the wheel — search works fully offline, on CPU, no API keys, nothing downloaded. Isolated variant: `uv tool install "mnemos-memory-server[mcp]"` or `pipx install "mnemos-memory-server[mcp]"`.
+The default embedding model (`mnema-embed-v1`, ~30 MB) is bundled in the wheel — search works fully offline, on CPU, no API keys, nothing downloaded. Isolated variant: `uv tool install mnemos-memory-server` or `pipx install mnemos-memory-server`.
 
 > ⚠️ The PyPI name is **`mnemos-memory-server`** — `pip install mnemos` installs an unrelated project.
 
