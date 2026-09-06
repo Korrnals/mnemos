@@ -72,9 +72,7 @@ class TestSamplerOutOfBandStats:
         assert stats["items_in"] == 40
         # The in-band marker still carries the same figure (human-readable
         # legacy) — but it is content, not accounting.
-        marker = next(
-            i for i in compressed if isinstance(i, dict) and i.get("_compressed_marker")
-        )
+        marker = next(i for i in compressed if isinstance(i, dict) and i.get("_compressed_marker"))
         assert marker["dropped"] == 30
 
     def test_apply_filter_carries_json_items_dropped(self) -> None:
@@ -95,12 +93,9 @@ class TestCompressEnvelopeAccounting:
         assert result["cached"] is True
         assert result["dropped_items"] == 30
 
-    def test_no_json_arrays_drops_zero_with_key_present(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_no_json_arrays_drops_zero_with_key_present(self, manager: MemoryManager) -> None:
         text = "\n".join(
-            f"2026-08-27T10:00:{i:02d} INFO processing batch {i} completed"
-            for i in range(120)
+            f"2026-08-27T10:00:{i:02d} INFO processing batch {i} completed" for i in range(120)
         )
         result = manager.compress_content(text, profile="log", project=PROJECT)
         assert result["cached"] is True

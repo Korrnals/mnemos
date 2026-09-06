@@ -107,9 +107,7 @@ class TestVerdictGatedSnippetRefusal:
         assert "snippets" not in result
         assert result["redactions"] == 0
 
-    def test_hit_row_refusal_does_not_bump_retrieval_counter(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_hit_row_refusal_does_not_bump_retrieval_counter(self, manager: MemoryManager) -> None:
         h = _compress(manager, _log_lines(120, secret=FAKE_AWS_KEY))
         manager.retrieve_content(h, query="ERROR", project=PROJECT)
         assert _row(manager, h)["retrieval_count"] == 0
@@ -130,9 +128,7 @@ class TestVerdictGatedSnippetRefusal:
         """Legacy NULL-verdict rows (pre-P1-a caches) snippet as before."""
         h = _compress(manager, _log_lines(120))
         conn = manager.sqlite._get_conn()
-        conn.execute(
-            "UPDATE ccr_cache SET secret_scan_verdict=NULL WHERE hash=?", (h,)
-        )
+        conn.execute("UPDATE ccr_cache SET secret_scan_verdict=NULL WHERE hash=?", (h,))
         conn.commit()
         assert _row(manager, h)["secret_scan_verdict"] is None
 

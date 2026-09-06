@@ -98,13 +98,9 @@ def search_manager() -> MemoryManager:
 
 def _secret_log(secret: str) -> str:
     """Log-like content with one secret line (>100 chars, cacheable)."""
-    lines = [
-        f"2026-08-26T10:00:{i % 60:02d}Z INFO worker processing item {i}"
-        for i in range(20)
-    ]
+    lines = [f"2026-08-26T10:00:{i % 60:02d}Z INFO worker processing item {i}" for i in range(20)]
     lines.append(
-        f"2026-08-26T10:01:00Z CONFIG the unobtanium service "
-        f"authenticates with api key {secret}"
+        f"2026-08-26T10:01:00Z CONFIG the unobtanium service authenticates with api key {secret}"
     )
     lines.append("2026-08-26T10:01:01Z INFO shutdown complete")
     return "\n".join(lines)
@@ -112,10 +108,7 @@ def _secret_log(secret: str) -> str:
 
 def _clean_log() -> str:
     """Cacheable content with no secret patterns."""
-    lines = [
-        f"2026-08-26T11:00:{i % 60:02d}Z INFO worker finished item {i}"
-        for i in range(30)
-    ]
+    lines = [f"2026-08-26T11:00:{i % 60:02d}Z INFO worker finished item {i}" for i in range(30)]
     return "\n".join(lines)
 
 
@@ -300,9 +293,7 @@ class TestStatusGate:
 
     def test_published_and_processed_surface_by_default(self, search_manager):
         published = self._add(search_manager, "unique quokka facts", MemoryStatus.PUBLISHED)
-        processed = self._add(
-            search_manager, "unique yacketty tang facts", MemoryStatus.PROCESSED
-        )
+        processed = self._add(search_manager, "unique yacketty tang facts", MemoryStatus.PROCESSED)
         # Membership (not exact count): the deterministic mock embedder can
         # let the vector leg surface the sibling record with a tiny RRF
         # score — the gate cares about admissibility, not ranking.
@@ -311,6 +302,4 @@ class TestStatusGate:
         yack_hits = search_manager.search("yacketty")
         assert any(r.memory.id == processed.id for r in yack_hits)
         for hits in (quokka_hits, yack_hits):
-            assert all(
-                r.memory.status in CONTEXT_ADMISSIBLE_STATUSES for r in hits
-            )
+            assert all(r.memory.status in CONTEXT_ADMISSIBLE_STATUSES for r in hits)

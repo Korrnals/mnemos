@@ -1195,9 +1195,7 @@ class IntegrationManager:
 
         try:
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write_text(
-                cfg_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-            )
+            _atomic_write_text(cfg_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
         except OSError as exc:
             return False, f"cannot write {cfg_path}: {exc}"
         return True, f"MCP server registered in {cfg_path}"

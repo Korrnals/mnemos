@@ -809,9 +809,7 @@ def serve(
         console.print(
             f"  bind: http://{h}:{p} (loopback only; non-loopback binds require auth + TOTP + TLS)"
         )
-        console.print(
-            f"  data: {settings.mnemos.data_dir}  vault: {settings.mnemos.vault_path}"
-        )
+        console.print(f"  data: {settings.mnemos.data_dir}  vault: {settings.mnemos.vault_path}")
     # Propagate effective bind to the app process so the startup guard and
     # AuthMiddleware see the real host/port (CLI overrides must reach
     # load_settings() inside the worker - finding auth-1).
