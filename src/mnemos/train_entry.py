@@ -36,7 +36,7 @@ def main() -> int:
     except ImportError:
         print(_FAIL_MSG, file=sys.stderr)
         return 3
-    return train_main()
+    return int(train_main())
 
 
 if __name__ == "__main__":

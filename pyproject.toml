@@ -128,6 +128,7 @@ dev = [
     "mypy>=1.11",
     "bandit[toml]>=1.7",
     "pip-audit>=2.7",
+    "types-PyYAML",
 ]
 all = [
     "mnemos-memory-server[anthropic,openai,gemini,azure,ollama,mcp,pdf,docx,dev]",
@@ -228,6 +229,18 @@ follow_imports = "skip"
 ignore_errors = true
 [[tool.mypy.overrides]]
 module = "numpy.*"
+follow_imports = "skip"
+ignore_errors = true
+
+# training/ is anti-scope (ADR-0021): it never ships in the wheel and is not
+# runtime code — type-checking it under --strict only produces noise. Skip
+# following into it; mnemos.train_entry's import resolves as Any.
+[[tool.mypy.overrides]]
+module = "training"
+follow_imports = "skip"
+ignore_errors = true
+[[tool.mypy.overrides]]
+module = "training.*"
 follow_imports = "skip"
 ignore_errors = true
 
