@@ -355,7 +355,7 @@ async def create_memory(data: MemoryCreate) -> Memory:
     return mgr.add(data, project=project, agent=agent)
 
 
-def _operator_context(request: Request) -> bool:
+def _operator_context(request: Request | None) -> bool:
     """ADR-0019 §5 B2b amendment — is this request an OPERATOR context?
 
     ``quarantine_reason`` on the direct-access response is operator-only
@@ -368,6 +368,10 @@ def _operator_context(request: Request) -> bool:
       (``request.state.auth_session`` / ``auth_token`` set) is operator
       context; anything else loses the field (not the response).
     """
+    if request is None:
+        # No injected request ⇒ no admitted session ⇒ not operator context.
+        # (Defensive: FastAPI injects the request in every real call path.)
+        return False
     api_cfg = getattr(request.app.state, "api_config", None)
     if api_cfg is None or not getattr(api_cfg, "auth_enabled", False):
         return True
@@ -379,7 +383,7 @@ def _operator_context(request: Request) -> bool:
 
 
 @app.get("/memories/{memory_id}", response_model=Memory)
-async def get_memory(memory_id: str, include_raw: bool = False, request: Request = None) -> Memory:
+async def get_memory(memory_id: str, request: Request, include_raw: bool = False) -> Memory:
     """Read one memory by id (direct access).
 
     ADR-0019 §5 B2b: a quarantined row answers with the cause-neutral

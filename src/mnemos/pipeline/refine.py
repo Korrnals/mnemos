@@ -113,7 +113,7 @@ def _swap_key(cluster_context: str, processed_content: str) -> str:
 
 def _retry_backoff_sec(attempt: int) -> int:
     """Exponential backoff for lane (a), capped (DLQ convention)."""
-    return min(REFINE_BACKOFF_BASE_SEC * (2 ** (attempt - 1)), REFINE_BACKOFF_CAP_SEC)
+    return int(min(REFINE_BACKOFF_BASE_SEC * (2 ** (attempt - 1)), REFINE_BACKOFF_CAP_SEC))
 
 
 def _revision_hash(text: str) -> str:
