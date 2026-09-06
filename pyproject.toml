@@ -104,7 +104,7 @@ training = [
     "sentence-transformers>=3.0",
 ]
 openvino = [
-    "optimum[openvino]>=1.19",
+    "optimum[openvino]>=2.2.0",
 ]
 mcp = [
     # Empty since ADR-0023 (4.1.0): the MCP SDK moved into core dependencies
