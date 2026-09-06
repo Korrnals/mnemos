@@ -22,6 +22,12 @@ Import validation (ArchCom 2026-07-17 federation contract §3.1, issue #86):
 * **Prompt-injection patterns** — ``[INST]``, ``<|im_start|>``,
   ``"ignore previous instructions"``, ``"system:"``, ``"</s>"`` — logged
   at WARNING (NOT blocked; legitimate content may discuss injection).
+* **Danger gate (ADR-0019 Phase D, #166)** — validation alone does not
+  gate VISIBILITY: every imported row also passes the Phase A
+  publication gate (``path=federation-import``) before the write. A
+  positive danger signal or scanner error stores the row RAW with
+  ``pipeline_state=NULL`` (zero-loss, invisible); a clean row keeps the
+  peer's status and joins the refine queue (``pipeline_state=pending``).
 * **Schema drift** — fields not in the current ``Memory`` schema are
   rejected with a field-level error.
 """
@@ -51,7 +57,7 @@ from mnemos.cli.export import (
 from mnemos.danger_detectors import (
     PROMPT_INJECTION_PATTERNS as _PROMPT_INJECTION_PATTERNS,
 )
-from mnemos.models import Memory, MemoryStatus
+from mnemos.models import Memory, MemoryStatus, PipelineState
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
@@ -61,6 +67,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ImportMode",
     "ImportResult",
+    "gate_imported_memory",
     "run_import",
     "validate_import_payload",
     "validate_import_record",
@@ -372,6 +379,47 @@ def _memory_from_export(entry: dict[str, Any]) -> Memory:
     return Memory.model_validate(payload)
 
 
+# ── Federation-import danger gate (#166, ADR-0019 Phase D) ────────────────────
+
+
+def gate_imported_memory(mgr: MemoryManager, memory: Memory) -> tuple[Memory, bool]:
+    """Run the Phase A danger gate over one imported/federated row (#166).
+
+    The federated write paths (:func:`run_sync_import` in cli/sync.py and
+    :func:`_import_json` here) persist peer-status rows DIRECTLY through
+    ``sqlite.save`` — a PUBLISHED record arriving from peering never met
+    the publication gate, so a secret or injection payload could land
+    visible. This helper routes every such row through the SAME single
+    gate point the server uses (``MemoryManager._publish_gate_detection``
+    — :func:`mnemos.danger_detectors.detect` over the served projection
+    and the title, fail-closed, audited as
+    ``publish gate: … path=federation-import``) and applies the verdict
+    in place:
+
+    * positive signal OR scanner error (fail-closed) → ``status=RAW`` +
+      ``pipeline_state=None``: stored zero-loss, invisible, and OUTSIDE
+      the refine intake (danger-class content must not auto-refine back
+      into visibility);
+    * clean → the peer's status is kept and a NULL ``pipeline_state`` is
+      stamped ``pending`` so the local refine queue picks the row up.
+      Non-NULL peer states (``refined``, ``quarantined``, …) are never
+      clobbered — a peer's quarantine verdict must survive import.
+
+    Returns ``(memory, admitted)`` — the mutated row (the caller saves
+    it) and whether the gate admitted the peer's visibility. Never
+    raises on a detector verdict: ``detect`` returns scanner errors
+    inside its result.
+    """
+    detection = type(mgr)._publish_gate_detection(memory, path="federation-import")
+    if detection.error is not None or detection.positive:
+        memory.status = MemoryStatus.RAW
+        memory.pipeline_state = None
+        return memory, False
+    if memory.pipeline_state is None:
+        memory.pipeline_state = PipelineState.PENDING
+    return memory, True
+
+
 # ── JSON import ───────────────────────────────────────────────────────────────
 
 
@@ -461,8 +509,26 @@ def _import_json(
         existing_mem = mgr.sqlite.get(memory.id)
         if existing_mem is not None:
             if overwrite and not dry_run:
+                was_embedded = existing_mem.status == MemoryStatus.PUBLISHED
+                memory, admitted = gate_imported_memory(mgr, memory)
                 mgr.sqlite.save(memory)
                 result.updated += 1
+                if not admitted:
+                    result.warnings.append(
+                        f"memory {memory.id}: stored RAW — federation-import "
+                        "danger-gate refusal (zero-loss, invisible)"
+                    )
+                    if was_embedded:
+                        # N1 demotion hygiene (mirrors MemoryManager.update):
+                        # the formerly-published row's embed is stale now.
+                        # Non-fatal — the resolve-time status guard already
+                        # keeps the row out of search results.
+                        try:
+                            mgr.vectors.delete(memory.id)
+                        except Exception as exc:
+                            logger.warning(
+                                "stale embed delete on import refusal (non-fatal): %s", exc
+                            )
                 _reembed(mgr, memory)
             else:
                 result.skipped += 1
@@ -470,7 +536,13 @@ def _import_json(
 
         # New memory
         if not dry_run:
+            memory, admitted = gate_imported_memory(mgr, memory)
             mgr.sqlite.save(memory)
+            if not admitted:
+                result.warnings.append(
+                    f"memory {memory.id}: stored RAW — federation-import "
+                    "danger-gate refusal (zero-loss, invisible)"
+                )
             _reembed(mgr, memory)
         result.imported += 1
 

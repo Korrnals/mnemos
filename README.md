@@ -114,7 +114,7 @@ One local server — and a connected agent harness gets the full memory stack.
 | **Lifecycle hooks** | `pre_llm_call` context injection, `on_session_start`, `post_tool_call` auto-compression of tool outputs |
 | **Publication v3.0.0** | Entries visible immediately after save, background refinement with seamless swap, quarantine with neutral retraction |
 | **Self-protection** | Injection / secret detectors on input and publication, every output scanned, full per-entry audit |
-| **Auto-pipeline** | Background processor: clustering, deduplication, quality gate, publication |
+| **Auto-pipeline** | Background processor: clustering, deduplication, quality gate, publication. Entries awaiting refinement sit at `pipeline_state=pending` until the processor runs — in CLI-only deployments (no daemon) start it with `mnemos processor start`; `mnemos doctor` reports the pending-queue depth |
 
 Autonomy for an arbitrary harness and LLM-driven enrichment are partial — the
 full, honest map lives in [docs/en/features.md](docs/en/features.md).
