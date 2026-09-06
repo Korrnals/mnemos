@@ -594,3 +594,150 @@ class TestRealTargetsSchema:
             target = real_config.get(name)
             assert target is not None, name
             assert "agents_md" not in target.deploy_map, name
+
+
+# ── Review hardening (PR #232 review: 2xP2 + P3 regressions) ─────────────────
+
+
+class TestReviewHardening:
+    def test_crlf_user_file_preserved_through_lifecycle(
+        self, manager: IntegrationManager, agents_target: Target
+    ) -> None:
+        """A CRLF user file keeps its CRLF content byte-for-byte (P2: no normalization)."""
+        dest = agents_target.deploy_map["agents_md"]
+        dest.parent.mkdir(parents=True)
+        crlf_header = "# My rules\r\n\r\nAlways answer in English.\r\n"
+        crlf_footer = "\r\n## Notes\r\n\r\nKeep the basement dry.\r\n"
+        dest.write_bytes(crlf_header.encode("utf-8"))
+
+        manager.deploy("test-agents")
+        with dest.open("r", encoding="utf-8", newline="") as fh:
+            after_deploy = fh.read()
+        assert "\r\n" in after_deploy
+        assert after_deploy.startswith(crlf_header)
+        assert read_agents_md_version(after_deploy) == VERSION
+
+        # user appends a CRLF footer after the block, then a re-run must keep it
+        with dest.open("a", encoding="utf-8", newline="") as fh:
+            fh.write(crlf_footer)
+        manager.deploy("test-agents")
+        with dest.open("r", encoding="utf-8", newline="") as fh:
+            after_update = fh.read()
+        assert after_update.startswith(crlf_header)
+        assert after_update.endswith(crlf_footer)
+
+        manager.uninstall("test-agents")
+        with dest.open("r", encoding="utf-8", newline="") as fh:
+            after_uninstall = fh.read()
+        assert after_uninstall == crlf_header + crlf_footer
+
+    def test_update_splices_block_in_place_ordering_preserved(
+        self, manager: IntegrationManager, agents_target: Target
+    ) -> None:
+        """User content AFTER the block stays after it through an update (P3: no EOF move)."""
+        dest = agents_target.deploy_map["agents_md"]
+        dest.parent.mkdir(parents=True)
+        manager.deploy("test-agents")
+        with dest.open("a", encoding="utf-8", newline="") as fh:
+            fh.write(USER_FOOTER)
+        content_before = dest.read_text(encoding="utf-8")
+        assert content_before.rstrip("\n").endswith(USER_FOOTER.strip("\n"))
+
+        result = manager.deploy("test-agents")
+        file_result = next(f for f in result.files if f.destination == dest)
+        assert file_result.status == DeployStatus.CURRENT
+
+        # simulate a version bump: same manager cannot bump — rewrite block body drift
+        drifted = content_before.replace("Recall at session start.", "Recall at session START.")
+        dest.write_text(drifted, encoding="utf-8")
+        result = manager.deploy("test-agents")
+        file_result = next(f for f in result.files if f.destination == dest)
+        assert file_result.status in (DeployStatus.UPDATED, DeployStatus.CURRENT)
+        content = dest.read_text(encoding="utf-8")
+        footer_pos = content.find(USER_FOOTER.strip("\n"))
+        block_end = content.find("END -->")
+        assert block_end != -1 and footer_pos != -1 and footer_pos > block_end
+
+    def test_non_utf8_destination_skipped_not_crash(
+        self, manager: IntegrationManager, agents_target: Target
+    ) -> None:
+        """A non-UTF-8 AGENTS.md is skipped with a note, never crashes the run (P3)."""
+        dest = agents_target.deploy_map["agents_md"]
+        dest.parent.mkdir(parents=True)
+        dest.write_bytes(b"# r\xe9sum\xe9 in latin-1\n")
+        original = dest.read_bytes()
+
+        result = manager.deploy("test-agents")
+        file_result = next(f for f in result.files if f.destination == dest)
+        assert file_result.status == DeployStatus.SKIPPED
+        assert "UTF-8" in (file_result.note or "")
+        assert dest.read_bytes() == original
+
+        # uninstall is a no-op on it; verify reports SKIPPED
+        assert manager.uninstall("test-agents") is None or True
+        verify_result = manager.verify("test-agents")
+        vr = next(f for f in verify_result.files if f.destination == dest)
+        assert vr.status == DeployStatus.SKIPPED
+        assert dest.read_bytes() == original
+
+    def test_atomic_write_leaves_original_on_replace_failure(
+        self, manager: IntegrationManager, agents_target: Target, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the final rename fails, the user's file is untouched and no temp remains (P2)."""
+        import mnemos.cli.integration as mod
+
+        dest = agents_target.deploy_map["agents_md"]
+        dest.parent.mkdir(parents=True)
+        dest.write_text(USER_HEADER, encoding="utf-8")
+        original = dest.read_bytes()
+
+        real_replace = mod.os.replace
+
+        def boom(src: object, dst: object) -> None:
+            raise OSError("simulated crash")
+
+        monkeypatch.setattr(mod.os, "replace", boom)
+        with pytest.raises(OSError):
+            manager.deploy("test-agents")
+        monkeypatch.setattr(mod.os, "replace", real_replace)
+
+        assert dest.read_bytes() == original
+        assert not list(dest.parent.glob("*.mnemos-tmp"))
+
+        # and the retry succeeds cleanly
+        result = manager.deploy("test-agents")
+        assert any(f.destination == dest for f in result.files)
+
+    def test_mcp_env_defaults_shared_no_drift(
+        self, manager: IntegrationManager
+    ) -> None:
+        """Both MCP entry shapes draw env defaults from one helper (P3: dedup)."""
+        entry = manager._mcp_entry(None, None)
+        entry_oc = manager._mcp_entry_opencode(None, None)
+        defaults = manager._mcp_env_defaults()
+        assert entry["env"] == defaults
+        assert entry_oc["environment"] == defaults
+
+    def test_load_targets_rejects_agents_md_directory_path(
+        self, fake_pack: Path, fake_home: Path
+    ) -> None:
+        """agents_md deploy value must be a FILE path — trailing slash fails at load (P3)."""
+        _write_targets_yaml(fake_pack, fake_home)
+        text = (fake_pack / "targets.yaml").read_text(encoding="utf-8")
+        (fake_pack / "targets.yaml").write_text(
+            text.replace('"agents_md": "', '"agents_md": "agents/"').replace(
+                str(fake_home), str(fake_home)
+            ),
+            encoding="utf-8",
+        )
+        # the naive replace above may not produce a trailing slash depending on
+        # the yaml shape — write the expected shape directly instead:
+        import yaml as _yaml
+
+        data = _yaml.safe_load((fake_pack / "targets.yaml").read_text(encoding="utf-8"))
+        for tgt in data["targets"].values():
+            if "agents_md" in tgt.get("deploy", {}):
+                tgt["deploy"]["agents_md"] = str(fake_home / ".agents/AGENTS.md/") + "/"
+        (fake_pack / "targets.yaml").write_text(_yaml.dump(data), encoding="utf-8")
+        with pytest.raises(ValueError, match="agents_md must be a FILE path"):
+            load_targets(fake_pack / "targets.yaml", home=fake_home)

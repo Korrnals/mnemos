@@ -184,8 +184,10 @@ export default function mnemosMcpBridge(pi: ExtensionAPI) {
 	// Standing hint: before_agent_start fires once per system-prompt build;
 	// returning an object with systemPrompt appends our pack to Pi's prompt
 	// (chained across extensions).
-	pi.on("before_agent_start", (event: { systemPrompt: string }) => {
-		return { systemPrompt: event.systemPrompt + "\n\n" + MNEMOS_STANDING_HINT };
+	pi.on("before_agent_start", (event: { systemPrompt?: string }) => {
+		const base = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
+		if (base.includes("mnemos:integration")) return event; // hint already present — never duplicate
+		return { systemPrompt: base + (base ? "\n\n" : "") + MNEMOS_STANDING_HINT };
 	});
 	pi.on("session_start", (_event: unknown, ctx: Parameters<Parameters<typeof pi.on>[1]>[1]) =>
 		connect(ctx as { ui?: { notify: (m: string, l?: string) => void } }),

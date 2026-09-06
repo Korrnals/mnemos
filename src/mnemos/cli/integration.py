@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -66,9 +67,9 @@ STAMP_PATTERN = re.compile(r"<!--\s*mnemos-integration:\s*v(\S+?)\s*-->")
 #: is wrapped in paired BEGIN/END comments and only that region is ever
 #: mutated — user content around it is preserved byte-for-byte.
 AGENTS_MD_BLOCK_RE = re.compile(
-    r"<!--\s*mnemos:integration:v(?P<version>\S+?)\s+BEGIN\s*-->"
+    r"<!--\s*mnemos:integration:v(?P<version>\S+?)\s+BEGIN\s*-->\r?\n"
     r"(?P<body>.*?)"
-    r"<!--\s*mnemos:integration:v(?P<end_version>\S+?)\s+END\s*-->\n?",
+    r"<!--\s*mnemos:integration:v(?P<end_version>\S+?)\s+END\s*-->\r?\n?",
     re.DOTALL,
 )
 
@@ -265,6 +266,12 @@ def load_targets(config_path: Path | None = None, home: Path | None = None) -> T
         deploy_map = {
             kind: _expand(path, home) for kind, path in deploy_raw.items() if isinstance(path, str)
         }
+        agents_md_path = deploy_raw.get(ArtefactKind.AGENTS_MD.value)
+        if isinstance(agents_md_path, str) and agents_md_path.rstrip().endswith("/"):
+            raise ValueError(
+                f"targets.yaml: target '{name}'.deploy.agents_md must be a FILE path "
+                "(the stamped block inside it), not a directory"
+            )
 
         mcp_raw = spec.get("mcp")
         if mcp_raw is not None and not isinstance(mcp_raw, dict):
@@ -361,6 +368,35 @@ def read_stamp(content: str) -> str | None:
 # ── AGENTS.md block engine ────────────────────────────────────────────────────
 
 
+def _read_user_text(dest: Path) -> str:
+    """Read a user-owned text file verbatim (no newline translation).
+
+    ``open(..., newline="")`` keeps ``\r\n`` sequences intact so the
+    never-clobber guarantee holds for CRLF files too. Raises
+    ``UnicodeDecodeError`` for non-UTF-8 content — callers treat that as
+    "not ours, skip" rather than crashing the run.
+    """
+    with dest.open("r", encoding="utf-8", newline="") as fh:
+        return fh.read()
+
+
+def _atomic_write_text(dest: Path, text: str) -> None:
+    """Write ``text`` verbatim (no newline translation), atomically.
+
+    The payload lands in a same-directory temp file first and is moved
+    into place with ``os.replace`` — a crash mid-write can never truncate
+    the user's standing-instructions file.
+    """
+    tmp = dest.with_name(dest.name + ".mnemos-tmp")
+    try:
+        with tmp.open("w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        os.replace(tmp, dest)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
 def render_agents_md_block(content: str, version: str) -> str:
     """Wrap ``content`` in the stamped BEGIN/END block markers.
 
@@ -381,7 +417,10 @@ def strip_agents_md_block(content: str) -> tuple[str, str | None]:
     Returns ``(cleaned_content, version_of_first_removed_block)``. Only
     PAIRED blocks (BEGIN … END, any versions) are removed — an unpaired
     marker (e.g. half a block a user edited away) is left untouched, since
-    removing text without its terminator could eat user content.
+    removing text without its terminator could eat user content. Note the
+    scope: EVERY paired mnemos-marked block is removed, including one a
+    user has quoted inside their own notes — the markers are treated as
+    owned by mnemos.
 
     Everything outside the removed regions is preserved byte-for-byte.
     """
@@ -611,14 +650,23 @@ class IntegrationManager:
         Returns ``(desired_content, existing_block_version)`` where
         ``existing_block_version`` is the version of the block currently in
         the content (``None`` if absent). The user's content is preserved
-        byte-for-byte; a missing trailing newline on the user's last line is
-        repaired (one ``\\n``) only so the injected block never glues onto
+        byte-for-byte, INCLUDING line-ending style. An existing block is
+        replaced IN PLACE — spliced at its exact offset, so instruction
+        ordering relative to user content never changes. Only on first
+        injection is a missing trailing newline on the user's last line
+        repaired (one ``\\n``) so the injected block never glues onto
         user text.
         """
-        base, existing_version = strip_agents_md_block(existing)
-        if base and not base.endswith("\n"):
-            base += "\n"
-        return base + render_agents_md_block(block_body, self.version), existing_version
+        new_block = render_agents_md_block(block_body, self.version)
+        match = AGENTS_MD_BLOCK_RE.search(existing)
+        if match is None:
+            base = existing
+            if base and not base.endswith("\n"):
+                base += "\n"
+            return base + new_block, None
+        # Splice at the old block's exact span — ordering is preserved.
+        desired = existing[: match.start()] + new_block + existing[match.end() :]
+        return desired, match.group("version")
 
     def _deploy_agents_md(self, dest: Path, *, dry_run: bool) -> FileResult:
         """Inject or refresh the stamped block inside a shared AGENTS.md file.
@@ -637,7 +685,15 @@ class IntegrationManager:
                 note="no agents_md pack content shipped",
             )
 
-        existing = dest.read_text(encoding="utf-8") if dest.exists() else ""
+        try:
+            existing = _read_user_text(dest) if dest.exists() else ""
+        except UnicodeDecodeError:
+            return FileResult(
+                source=src,
+                destination=dest,
+                status=DeployStatus.SKIPPED,
+                note="destination is not valid UTF-8 — refusing to touch a file we cannot parse",
+            )
         desired, existing_version = self._assemble_agents_md_file(existing, block_body)
 
         if existing_version is not None and existing == desired:
@@ -651,7 +707,7 @@ class IntegrationManager:
 
         if not dry_run:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(desired, encoding="utf-8")
+            _atomic_write_text(dest, desired)
         return FileResult(
             source=src,
             destination=dest,
@@ -787,7 +843,15 @@ class IntegrationManager:
                 note="no AGENTS.md file — block not deployed",
             )
 
-        existing = dest.read_text(encoding="utf-8")
+        try:
+            existing = _read_user_text(dest)
+        except UnicodeDecodeError:
+            return FileResult(
+                source=source,
+                destination=dest,
+                status=DeployStatus.SKIPPED,
+                note="destination is not valid UTF-8 — cannot verify",
+            )
         deployed_version = read_agents_md_version(existing)
         if deployed_version is None:
             return FileResult(
@@ -978,17 +1042,23 @@ class IntegrationManager:
         return result
 
     def _uninstall_agents_md(self, dest: Path, *, dry_run: bool) -> Path | None:
-        """Remove ONLY the stamped block from a shared AGENTS.md file.
+        """Remove the mnemos block(s) from a shared AGENTS.md file.
 
-        Returns the destination path when a block was found (the removal
-        target), or ``None`` when there is nothing of ours in the file. If
+        Removes every PAIRED mnemos-marked block (any version — markers are
+        treated as owned by mnemos, including one a user has quoted); see
+        :func:`strip_agents_md_block`. Returns the destination path when a
+        block was found (the removal target), or ``None`` when there is
+        nothing of ours in the file. If
         nothing but whitespace remains after the strip, the file itself is
         removed — deploy created it, and whitespace-only content is not user
         content. A file that still carries user content is kept.
         """
         if not dest.exists():
             return None
-        existing = dest.read_text(encoding="utf-8")
+        try:
+            existing = _read_user_text(dest)
+        except UnicodeDecodeError:
+            return None
         cleaned, version = strip_agents_md_block(existing)
         if version is None:
             return None
@@ -996,7 +1066,7 @@ class IntegrationManager:
             if cleaned.strip() == "":
                 dest.unlink()
             else:
-                dest.write_text(cleaned, encoding="utf-8")
+                _atomic_write_text(dest, cleaned)
         return dest
 
     @staticmethod
@@ -1125,8 +1195,8 @@ class IntegrationManager:
 
         try:
             cfg_path.parent.mkdir(parents=True, exist_ok=True)
-            cfg_path.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            _atomic_write_text(
+                cfg_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n"
             )
         except OSError as exc:
             return False, f"cannot write {cfg_path}: {exc}"
@@ -1139,13 +1209,8 @@ class IntegrationManager:
         A pre-existing ``mnemos`` entry keeps its env verbatim, so cross-layout
         installs never clobber tuned paths.
         """
-        bin_path = (
-            mnemos_bin or shutil.which("mnemos") or str(self.home / ".mnemos/venv/bin/mnemos")
-        )
-        env = {
-            "MNEMOS_DATA_DIR": str(self.home / ".mnemos/data"),
-            "MNEMOS_VAULT__VAULT_PATH": str(self.home / ".mnemos/vault"),
-        }
+        bin_path = self._resolve_mnemos_bin(mnemos_bin)
+        env = self._mcp_env_defaults()
         entry = dict(existing) if isinstance(existing, dict) else {}
         raw_env = entry.get("env")
         kept_env: dict[str, Any] = raw_env if isinstance(raw_env, dict) else {}
@@ -1154,6 +1219,17 @@ class IntegrationManager:
         entry["env"] = kept_env
         entry.update({"type": "stdio", "command": bin_path, "args": ["mcp-server"]})
         return entry
+
+    def _resolve_mnemos_bin(self, mnemos_bin: str | None) -> str:
+        """Explicit bin > ``which`` > the installer's well-known venv path."""
+        return mnemos_bin or shutil.which("mnemos") or str(self.home / ".mnemos/venv/bin/mnemos")
+
+    def _mcp_env_defaults(self) -> dict[str, str]:
+        """Env defaults shared by every MCP entry shape (mirror mcp-setup.sh)."""
+        return {
+            "MNEMOS_DATA_DIR": str(self.home / ".mnemos/data"),
+            "MNEMOS_VAULT__VAULT_PATH": str(self.home / ".mnemos/vault"),
+        }
 
     def _mcp_entry_opencode(
         self, mnemos_bin: str | None, existing: dict[str, Any] | None
@@ -1166,13 +1242,8 @@ class IntegrationManager:
         of the ``mcpServers`` formats) and env vars ride the ``environment``
         key. Env defaults mirror :meth:`_mcp_entry`.
         """
-        bin_path = (
-            mnemos_bin or shutil.which("mnemos") or str(self.home / ".mnemos/venv/bin/mnemos")
-        )
-        env = {
-            "MNEMOS_DATA_DIR": str(self.home / ".mnemos/data"),
-            "MNEMOS_VAULT__VAULT_PATH": str(self.home / ".mnemos/vault"),
-        }
+        bin_path = self._resolve_mnemos_bin(mnemos_bin)
+        env = self._mcp_env_defaults()
         entry = dict(existing) if isinstance(existing, dict) else {}
         raw_env = entry.get("environment")
         kept_env: dict[str, Any] = raw_env if isinstance(raw_env, dict) else {}
