@@ -214,10 +214,10 @@ local-ci-build:
 	@bash scripts/local-ci.sh --build
 
 local-release:
-	@bash scripts/local-release.sh
+	@bash scripts/run-release-local.sh
 
 local-release-dry:
-	@bash scripts/local-release.sh --dry-run
+	@bash scripts/run-release-local.sh --dry-run
 
 local-release-no-image:
 	@bash scripts/local-release.sh --no-image
