@@ -473,7 +473,7 @@ class MemoryManager:
             memory: The candidate snapshot (post-update state).
             path: Audit discriminator — ``direct-seed`` / ``ingest`` /
                 ``status-flip`` / ``published-content-edit`` /
-                ``curated-publish``.
+                ``curated-publish`` / ``federation-import``.
             content: Override for the text to scan. The update path
                 passes the NEW content on a content edit — the row's
                 ``clean_content`` is stale at that point (the filter

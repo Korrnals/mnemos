@@ -386,7 +386,8 @@ def gate_imported_memory(mgr: MemoryManager, memory: Memory) -> tuple[Memory, bo
     """Run the Phase A danger gate over one imported/federated row (#166).
 
     The federated write paths (:func:`run_sync_import` in cli/sync.py and
-    :func:`_import_json` here) persist peer-status rows DIRECTLY through
+    :func:`_import_json` / :func:`_import_sqlite` here) persist peer-status
+    rows DIRECTLY through
     ``sqlite.save`` — a PUBLISHED record arriving from peering never met
     the publication gate, so a secret or injection payload could land
     visible. This helper routes every such row through the SAME single
@@ -621,6 +622,14 @@ def _import_sqlite(
         result.imported = snapshot_count
     else:
         # Merge for SQLite = read memories from snapshot, insert missing.
+        # #245 (ADR-0019 Phase D): this is a federated write path — every
+        # row passes the SAME publication gate as the JSON/sync imports
+        # (``gate_imported_memory``, path=federation-import) before the
+        # store write, and persists through ``mgr.sqlite.save`` — the
+        # single tested write path, which keeps the FTS5 external-content
+        # index consistent (raw INSERT OR REPLACE fires the insert trigger
+        # with a new rowid while the FTS table still references the old
+        # one → ``missing row N from content table``).
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
             tf.write(db_bytes)
             snap_path = Path(tf.name)
@@ -631,22 +640,21 @@ def _import_sqlite(
             for row in rows:
                 mem_id = row["id"]
                 if mgr.sqlite.get(mem_id) is None:
-                    # Insert via the store's save path: reconstruct Memory.
-                    # We use a lightweight import: raw SQL insert into the live DB.
-                    live = mgr.sqlite._get_conn()
-                    live.execute(
-                        """INSERT OR REPLACE INTO memories
-                           (id, content, title, tags, source, source_url,
-                            memory_type, created_at, updated_at, metadata,
-                            file_path, category, project, agent, status,
-                            quality_score, confidence, source_coverage,
-                            cluster_id, derived_from, embedding_id,
-                            raw_content, clean_content, filter_profile,
-                            filter_stats, filter_version)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                        tuple(row[k] for k in row),
-                    )
-                    live.commit()
+                    # Reconstruct a Memory from the snapshot row. The
+                    # store's own ``_row_to_memory`` is schema-drift safe:
+                    # every post-day-1 column (pipeline_state,
+                    # processed_at, rewrite_*, …) is read via a defaulted
+                    # ``_get`` (missing key → default, NULL → None), so an
+                    # older snapshot DB reconstructs fine.
+                    memory = mgr.sqlite._row_to_memory(row)
+                    memory, admitted = gate_imported_memory(mgr, memory)
+                    mgr.sqlite.save(memory)
+                    if not admitted:
+                        result.warnings.append(
+                            f"memory {memory.id}: stored RAW — federation-import "
+                            "danger-gate refusal (zero-loss, invisible)"
+                        )
+                    _reembed(mgr, memory)
                     result.imported += 1
                 else:
                     result.skipped += 1

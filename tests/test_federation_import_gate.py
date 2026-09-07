@@ -1,12 +1,13 @@
 """ADR-0019 Phase D / issue #166 — the federation-import danger gate.
 
-The federated write paths (:func:`mnemos.cli.sync.run_sync_import` and
-:func:`mnemos.cli.import_._import_json`) persist peer-status rows
-DIRECTLY through ``sqlite.save`` — a PUBLISHED record arriving from
-peering never met the Phase A publication gate, so a secret or injection
-payload could land visible. Since Phase D every imported row passes
-``gate_imported_memory`` (the SAME single gate point the server uses,
-audited as ``path=federation-import``):
+The federated write paths (:func:`mnemos.cli.sync.run_sync_import`,
+:func:`mnemos.cli.import_._import_json` and — since #245 — the
+SQLite-snapshot merge :func:`mnemos.cli.import_._import_sqlite`) persist
+peer-status rows DIRECTLY through ``sqlite.save`` — a PUBLISHED record
+arriving from peering never met the Phase A publication gate, so a secret
+or injection payload could land visible. Since Phase D every imported row
+passes ``gate_imported_memory`` (the SAME single gate point the server
+uses, audited as ``path=federation-import``):
 
 * positive danger signal / scanner error (fail-closed) → stored RAW +
   ``pipeline_state=None`` — zero-loss, invisible, no embed;
@@ -18,12 +19,23 @@ The compact payloads below are crafted BY HAND (not via
 very payloads under test): the receiving side must not trust the sender.
 All secrets are fake EXAMPLE literals from the detector's own pattern
 catalogue.
+
+The SQLite-snapshot fixtures are likewise crafted by hand: the export-side
+moderation of ``run_export`` (JSON path) or the snapshot's own origin would
+redact or never carry the planted PUBLISHED secret row the gate has to
+catch — a tampered snapshot is exactly the #245 threat model. Snapshot DBs
+are built with the live store's own schema (Settings + MemoryManager over
+a tmp_path, ``sqlite.save`` of hand-built Memory objects), then tarred as
+``mnemos.tar.gz`` with the ``mnemos.db`` member ``_import_sqlite`` expects.
 """
 
 from __future__ import annotations
 
+import io
 import json
+import tarfile
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock
@@ -36,7 +48,7 @@ from mnemos.compact import COMPACT_SCHEMA
 from mnemos.config import Settings
 from mnemos.danger_detectors import DetectionResult
 from mnemos.manager import MemoryManager
-from mnemos.models import MemoryStatus, PipelineState
+from mnemos.models import Memory, MemoryStatus, PipelineState
 
 PROJECT = "fed-gate"
 AGENT = "peer-agent"
@@ -145,6 +157,70 @@ def _peer_row(
         "status": status,
         "pipeline_state": pipeline_state,
     }
+
+
+def _peer_memory(
+    mid: str,
+    content: str,
+    *,
+    title: str | None = None,
+    status: MemoryStatus = MemoryStatus.PUBLISHED,
+    pipeline_state: PipelineState | None = None,
+) -> Memory:
+    """A hand-built peer Memory (the snapshot's dangerous payload).
+
+    ``project``/``agent`` are set explicitly: real snapshot rows carry the
+    denormalised columns (written by ``MemoryManager.add``'s TagContract
+    pass — ``sqlite.save`` itself does not denormalise), and the scoped
+    search assertions rely on them.
+    """
+    return Memory(
+        id=mid,
+        content=content,
+        title=title or "peer snapshot record",
+        tags=list(TAGS),
+        project=PROJECT,
+        agent=AGENT,
+        created_at=datetime(2026, 9, 7, tzinfo=UTC),
+        updated_at=datetime(2026, 9, 7, tzinfo=UTC),
+        status=status,
+        pipeline_state=pipeline_state,
+    )
+
+
+def _snapshot_file(path: Path, memories: list[Memory]) -> Path:
+    """Craft a SQLite-snapshot tar.gz BY HAND carrying peer rows as-is.
+
+    A ``run_export`` snapshot of a clean store could never contain a
+    PUBLISHED secret row (the write-path scanner would have caught it), so
+    the snapshot is built directly: a live-schema DB over a tmp_path,
+    ``sqlite.save`` of the hand-built rows (bypassing every manager-level
+    gate — this simulates a tampered/at-rest-leaked snapshot), then tarred
+    as ``mnemos.tar.gz`` with the ``mnemos.db`` member ``_import_sqlite``
+    expects (import_.py:584-597).
+    """
+    with TemporaryDirectory() as tmpdir:
+        settings = _settings(Path(tmpdir))
+        mgr = MemoryManager(settings)
+        try:
+            for mem in memories:
+                mgr.sqlite.save(mem)
+            # WAL checkpoint so the on-disk file contains every committed
+            # row (mirrors _build_sqlite_snapshot in cli/export.py).
+            conn = mgr.sqlite._get_conn()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.commit()
+            mgr.close()
+            db_bytes = settings.db_path.read_bytes()
+        finally:
+            mgr.close()
+    info = tarfile.TarInfo(name="mnemos.db")
+    info.size = len(db_bytes)
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.addfile(info, io.BytesIO(db_bytes))
+    path.write_bytes(buf.getvalue())
+    return path
 
 
 # ── Sync path (compact federation payload) ────────────────────────────────────
@@ -369,3 +445,116 @@ class TestJsonImportGate:
         assert row is not None
         assert row.status == MemoryStatus.RAW
         assert row.pipeline_state == PipelineState.PENDING
+
+
+# ── SQLite-snapshot merge path (backup/merge, #245) ───────────────────────────
+
+
+class TestSqliteMergeGate:
+    def test_sqlite_merge_clean_published_pending_and_searchable(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """The #245 merge headline + the Defect-2 regression test: a clean
+        snapshot row imports through the store's save path (this very
+        raise — ``IndexError: No item with that key`` from the old
+        ``tuple(row[k] for k in row)`` — is what made the whole merge loop
+        dead code), keeps its status, joins the refine queue
+        (pipeline_state=pending) and is FTS-searchable."""
+        mid = "44444444-0000-0000-0000-00000000000a"
+        src = _snapshot_file(
+            tmp_path / "snapshot-clean.tar.gz",
+            [_peer_memory(mid, "clean snapshot body about the windlass gearbox")],
+        )
+
+        result = run_import(mgr, src, mode=ImportMode.MERGE)
+
+        assert result.errors == []
+        assert result.imported == 1
+        assert result.skipped == 0
+        row = mgr.sqlite.get(mid)
+        assert row is not None, "merge must insert the missing row (Defect 2 regression)"
+        assert row.status == MemoryStatus.PUBLISHED, "peer status kept"
+        assert row.pipeline_state == PipelineState.PENDING, "joins the refine queue"
+        assert mgr.search("windlass", project=PROJECT), "FTS-searchable after save()"
+        assert mgr.vectors.has(mid), "admitted row is embedded (JSON-path parity)"
+
+    def test_sqlite_merge_published_secret_stored_raw_invisible(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """The #245 threat: a tampered snapshot carrying a PUBLISHED secret
+        row. The gate refuses the peer visibility — stored RAW +
+        pipeline_state=None (zero-loss, invisible), warned, un-embedded."""
+        mid = "55555555-0000-0000-0000-00000000000b"
+        src = _snapshot_file(
+            tmp_path / "snapshot-secret.tar.gz",
+            [
+                _peer_memory(
+                    mid, f"planted row with aws key {FAKE_AWS_KEY} for the exfil runbook"
+                )
+            ],
+        )
+
+        result = run_import(mgr, src, mode=ImportMode.MERGE)
+
+        assert result.errors == []
+        assert result.imported == 1  # stored (zero-loss), not dropped
+        row = mgr.sqlite.get(mid)
+        assert row is not None
+        assert FAKE_AWS_KEY in row.content, "zero-loss: the content itself is kept"
+        assert row.status == MemoryStatus.RAW, "peer visibility refused"
+        assert row.pipeline_state is None, "outside the refine intake"
+        assert mgr.search("exfil", project=PROJECT) == [], "invisible to issuance"
+        assert not mgr.vectors.has(mid), "no embed for a refused row"
+        assert any("danger-gate refusal" in w for w in result.warnings)
+
+    def test_sqlite_merge_skips_existing_ids(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """Merge never overwrites (that is RESTORE's job for sqlite):
+        existing IDs are skipped, imported=0/skipped=N, nothing changes."""
+        mid = "66666666-0000-0000-0000-00000000000c"
+        src = _snapshot_file(
+            tmp_path / "snapshot-existing.tar.gz",
+            [_peer_memory(mid, "first body about the anodizing bath")],
+        )
+        assert run_import(mgr, src, mode=ImportMode.MERGE).errors == []
+        assert mgr.sqlite.count() == 1
+        before = mgr.sqlite.get(mid)
+
+        result = run_import(mgr, src, mode=ImportMode.MERGE)
+
+        assert result.errors == []
+        assert result.imported == 0
+        assert result.skipped == 1
+        assert mgr.sqlite.count() == 1
+        after = mgr.sqlite.get(mid)
+        assert after is not None
+        assert before is not None
+        assert after.status == before.status, "existing row untouched"
+        assert after.content == before.content
+
+    def test_sqlite_merge_preserves_peer_quarantine_verdict(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """A snapshot row arriving quarantined (non-NULL pipeline_state)
+        stays quarantined — the gate stamps only NULL states, so the peer's
+        quarantine verdict survives the merge."""
+        mid = "77777777-0000-0000-0000-00000000000d"
+        src = _snapshot_file(
+            tmp_path / "snapshot-quarantined.tar.gz",
+            [
+                _peer_memory(
+                    mid,
+                    "clean body that the peer quarantined for review",
+                    pipeline_state=PipelineState.QUARANTINED,
+                )
+            ],
+        )
+
+        result = run_import(mgr, src, mode=ImportMode.MERGE)
+
+        assert result.errors == []
+        row = mgr.sqlite.get(mid)
+        assert row is not None
+        assert row.pipeline_state == PipelineState.QUARANTINED, "peer verdict preserved"
+        assert mgr.search("quarantined", project=PROJECT) == [], "quarantine excludes issuance"
