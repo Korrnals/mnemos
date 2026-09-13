@@ -1,14 +1,19 @@
 """Tests for issue #250 — P0 collapse/synthesis pipeline guards.
 
-Covers the four acceptance criteria:
+Covers the four acceptance criteria plus the review-repair findings
+(P1-1 quarantine at the synthesis read, P1-2 drafts-never-feed-synthesis,
+P2 supersession of stale drafts):
   - F1: quarantined RAW rows never enter clusters (and cannot silently
     satisfy min_cluster_size)
+  - F1b/P1-1: a member quarantined AFTER clustering never feeds a draft
   - F2: applyTo:/severity: tags are stripped from the synthesized record
     (strip-by-default, extends #248)
   - F2b: mnemos:no-federate propagates by ANY-member rule
   - F3: the synthesis idempotency key includes an input_set_hash over
     (id, content) of all members — a same-ID content swap (ADR-0019
     §Swap semantics) is a cache miss, not a stale cache hit
+  - P1-2/P2: the fresh draft consumes source members only, and the prior
+    draft is superseded (archived), never re-fed
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ import pytest
 
 from mnemos.config import Settings
 from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemoryStatus, MemoryUpdate
+from mnemos.models import MemoryCreate, MemoryStatus, MemoryUpdate, is_context_admissible
 from mnemos.pipeline.cluster import cluster_raw_memories
 from mnemos.pipeline.synthesize import synthesize_cluster
 
@@ -146,6 +151,53 @@ class TestQuarantineIntakeGuard:
 
 
 # ---------------------------------------------------------------------------
+# P1-1 — quarantined members never feed a synthesis (post-clustering gap)
+# ---------------------------------------------------------------------------
+
+
+class TestQuarantineSynthesisGuard:
+    def test_quarantined_member_excluded_from_synthesis(self, tmp_manager):
+        """A member quarantined in the window between clustering and the
+        synthesis tick never feeds the draft — its content must not leak
+        into a PROCESSED, context-admissible record."""
+        mgr = tmp_manager
+        m1 = _add_raw(mgr, "ordinary cluster note one")
+        m2 = _add_raw(mgr, "ordinary cluster note two with secret payload x9k")
+        clusters = cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        assert len(clusters) == 1
+        cluster_id = clusters[0].cluster_id
+
+        assert mgr.quarantine_entry(m2.id, reason="secret-payload", source="test")
+
+        result = synthesize_cluster(mgr, cluster_id)
+        assert result is not None
+        draft = mgr.sqlite.get(result.draft_id)
+        assert draft is not None
+        # The draft is born admissible, so the quarantined payload must
+        # be absent from it.
+        assert is_context_admissible(draft) is True
+        assert "secret payload x9k" not in draft.content
+        assert m2.id not in draft.derived_from
+        assert m1.id in draft.derived_from
+        assert draft.source_coverage == 1
+
+    def test_all_quarantined_cluster_returns_none(self, tmp_manager):
+        """Every member quarantined → nothing left to synthesize: the
+        cluster falls out via the empty-members guard."""
+        mgr = tmp_manager
+        _add_raw(mgr, "note one")
+        _add_raw(mgr, "note two")
+        clusters = cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
+        assert len(clusters) == 1
+        cluster_id = clusters[0].cluster_id
+
+        for m in mgr.sqlite.list_by_cluster(cluster_id):
+            assert mgr.quarantine_entry(m.id, reason="test-danger", source="test")
+
+        assert synthesize_cluster(mgr, cluster_id) is None
+
+
+# ---------------------------------------------------------------------------
 # F2 / F2b — synthesized-record tag policy
 # ---------------------------------------------------------------------------
 
@@ -198,7 +250,12 @@ class TestSynthesizedTagPolicy:
     def test_no_federate_from_first_member_not_duplicated(self, tmp_manager):
         """When members[0] already carries no-federate (inherited through
         the normal tag pass-through) the ANY-member rule must not append
-        it a second time."""
+        it a second time.
+
+        Reviewer note (P3-5): this pin also passes on pre-fix code —
+        the pre-fix wholesale inheritance carried the tag exactly once
+        too. It is kept deliberately as a no-duplication regression pin
+        on the dedup guard in the ANY-member append."""
         mgr = tmp_manager
         _add_raw(mgr, "secret note one", extra_tags=["mnemos:no-federate"])
         _add_raw(mgr, "secret note two")
@@ -225,8 +282,9 @@ class TestSynthesisInputSetHash:
         again with force=False → a NEW synthesis occurs (cache miss), not
         the stale cached one."""
         mgr = tmp_manager
-        m1 = _add_raw(mgr, "deployment runbook step one")
-        _add_raw(mgr, "deployment runbook step two")
+        old_text = "deployment runbook step one"
+        m1 = _add_raw(mgr, old_text)
+        m2 = _add_raw(mgr, "deployment runbook step two")
 
         clusters = cluster_raw_memories(mgr, similarity_threshold=0.5, min_cluster_size=2)
         assert len(clusters) == 1
@@ -238,9 +296,13 @@ class TestSynthesisInputSetHash:
         r1_again = synthesize_cluster(mgr, cluster_id)
         assert r1_again is not None
         assert r1_again.draft_id == r1.draft_id
+        # Precondition: the first draft embeds the pre-swap member text.
+        assert old_text in r1.content
 
-        # Same-ID content swap through the real update write path.
-        swapped_text = "deployment runbook step one — REVISED after incident"
+        # Same-ID content swap through the real update write path. The
+        # swapped text deliberately shares no substring with the old one
+        # so presence/absence discriminates the two drafts cleanly.
+        swapped_text = "incident postmortem actions for the api gateway"
         updated = mgr.update(m1.id, MemoryUpdate(content=swapped_text))
         assert updated is not None
         assert updated.id == m1.id
@@ -248,11 +310,39 @@ class TestSynthesisInputSetHash:
 
         r2 = synthesize_cluster(mgr, cluster_id, force=False)
         assert r2 is not None
-        assert r2.cache_hit is False
+        # Content-based discrimination (a fresh draft, not the stale
+        # cached one): new draft id carrying the swapped text, old
+        # member text absent — the placeholder builder embeds member
+        # content, so the stale cached draft would answer with the
+        # pre-swap text instead.
         assert r2.draft_id != r1.draft_id
-        # The fresh synthesis reflects the swapped content...
         assert swapped_text in r2.content
-        # ...and the stale cached draft is still stored, untouched.
+        assert old_text not in r2.content
+
+        new_draft = mgr.sqlite.get(r2.draft_id)
+        assert new_draft is not None
+        assert new_draft.status == MemoryStatus.PROCESSED
+        assert is_context_admissible(new_draft) is True
+
+        # P1-2 — the fresh draft consumed SOURCE members only: the prior
+        # draft D1 (which sat in the same cluster) fed neither the
+        # content (the old member text above) nor derived_from.
+        assert set(new_draft.derived_from) == {m1.id, m2.id}
+        assert r1.draft_id not in new_draft.derived_from
+        assert new_draft.source_coverage == 2
+
+        # P2 — supersession: the stale draft is retired, not served.
+        # Zero-loss: the row is kept, ARCHIVED out of the admissible
+        # set, with superseded_by pointing at its replacement.
         old_draft = mgr.sqlite.get(r1.draft_id)
-        assert old_draft is not None
+        assert old_draft is not None, "zero-loss: the stale draft row is never deleted"
+        assert old_draft.status == MemoryStatus.ARCHIVED
+        assert is_context_admissible(old_draft) is False
+        assert old_draft.metadata.get("superseded_by") == r2.draft_id
         assert swapped_text not in old_draft.content
+
+        # Idempotency still holds for the fresh projection: an immediate
+        # repeat (same members, no further swap) hits the NEW cache.
+        r2_again = synthesize_cluster(mgr, cluster_id)
+        assert r2_again is not None
+        assert r2_again.draft_id == r2.draft_id

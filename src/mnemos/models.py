@@ -192,6 +192,14 @@ ALLOWED_OPTIONAL_PREFIXES: frozenset[str] = frozenset(
     {"severity:", "stack:", "applyTo:", "source:"}
 )
 
+# Issue #250 F2 — prefixes of POLICY-bearing tags that are stripped from
+# synthesized records at construction (strip-by-default): a source
+# record's application scope / severity classification must not
+# transitively pin the synthesis output (extends #248). Lives next to
+# ALLOWED_OPTIONAL_PREFIXES as the single source of truth so the
+# strip-list cannot drift from the whitelist it polices.
+POLICY_TAG_PREFIXES: frozenset[str] = frozenset({"applyTo:", "severity:"})
+
 _PROJECT_RE = re.compile(r"^project:[a-z0-9_\-]{1,64}$")
 _AGENT_RE = re.compile(r"^agent:[a-z0-9_\-]{1,64}$")
 _MNEMOS_RE = re.compile(r"^mnemos:[a-z][a-z0-9\-]*$")
