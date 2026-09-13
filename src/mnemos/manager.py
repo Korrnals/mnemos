@@ -72,6 +72,13 @@ logger = logging.getLogger(__name__)
 # Each hop is validated by _validate_url before the next request is issued.
 _MAX_REDIRECTS: int = 5
 
+# heal_stale_embeddings (review P2): a dead/erroring embedder must not
+# walk the whole refined set in one background tick. `limit` bounds the
+# ATTEMPTS, and this cutoff stops the pass early when that many rows
+# fail CONSECUTIVELY — the embedder is presumed down and one summary
+# warning replaces the per-row flood.
+HEAL_CONSECUTIVE_FAILURE_CUTOFF: Final[int] = 10
+
 # ADR-0019 B2b (review #163 follow-up F7) — INTERNAL lifecycle metadata
 # keys. The store writes them server-side (``json_set`` in
 # ``record_refine_failure`` / ``clear_refine_retry``); an external
@@ -3115,8 +3122,15 @@ class MemoryManager:
 
         Quarantined rows are skipped absolutely (they never reach
         ``refined`` anyway; the guard is defence in depth). Batch/limit
-        semantics: one call re-embeds at most ``limit`` rows, and the
-        pass PAGES through the whole refined set (not just the head
+        semantics: ``limit`` is an ATTEMPT budget — every re-embed
+        TRIED, successful or failed, consumes one unit, so one call
+        attempts at most ``limit`` re-embeds total and a dead/erroring
+        embedder cannot walk the whole refined set inside a single
+        background tick. On top of the budget, a run of
+        :data:`HEAL_CONSECUTIVE_FAILURE_CUTOFF` consecutive failures
+        stops the pass early with a single warning (the embedder is
+        presumed down; per-row failure detail lives at debug level).
+        The pass PAGES through the whole refined set (not just the head
         window) so a full-corpus migration after an embedder swap —
         where every row is stale regardless of recency — drains
         organically over successive background cycles.
@@ -3130,6 +3144,7 @@ class MemoryManager:
         page = max(1, limit)
         offset = 0
         budget_left = limit
+        consecutive_failures = 0
         while budget_left > 0:
             rows = self.sqlite.list_by_pipeline_state(
                 PipelineState.REFINED, limit=page, offset=offset
@@ -3159,10 +3174,33 @@ class MemoryManager:
                 try:
                     self.upsert_embedding(mem)
                     healed += 1
-                    budget_left -= 1
+                    consecutive_failures = 0
                 except Exception as exc:
                     failed += 1
-                    logger.warning("heal_stale_embeddings: failed for %s: %s", mem.id[:8], exc)
+                    consecutive_failures += 1
+                    # Per-row detail at debug: the cutoff warning below is
+                    # the single operator-facing line for a dying embedder.
+                    logger.debug(
+                        "heal_stale_embeddings: re-embed failed for %s: %s",
+                        mem.id[:8],
+                        exc,
+                    )
+                    if consecutive_failures >= HEAL_CONSECUTIVE_FAILURE_CUTOFF:
+                        logger.warning(
+                            "heal_stale_embeddings: %d consecutive re-embed "
+                            "failures — embedder %r looks dead, stopping the "
+                            "pass early (checked=%d healed=%d failed=%d)",
+                            consecutive_failures,
+                            current_fingerprint,
+                            checked,
+                            healed,
+                            failed,
+                        )
+                        budget_left = 0
+                        break
+                # Every ATTEMPT (success or failure) consumes budget — a
+                # dead embedder must not walk the whole refined set.
+                budget_left -= 1
         if healed or failed:
             logger.info(
                 "heal_stale_embeddings: checked=%d healed=%d failed=%d "

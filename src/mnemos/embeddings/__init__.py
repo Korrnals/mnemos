@@ -482,6 +482,9 @@ def config_fingerprint(cfg: EmbeddingConfig) -> str:
     if provider == "ollama":
         return f"ollama:{cfg.model}"
     if provider in ("onnx", "onnxhub"):
+        # Asymmetry (harmless): with an empty hf_revision this twin emits
+        # "onnxhub:<model>@" while the factory raises — runtime fails loud
+        # first, so the degenerate string never reaches stored metadata.
         return f"onnxhub:{cfg.model}@{cfg.hf_revision}"
     if provider in ("sentence-transformers", "st"):
         return f"st:{cfg.model}"

@@ -124,6 +124,8 @@ def test_render_neutrality_invariant_catches_reason_leak(
 from benchmarks.stands.s1_quality import model_contour as s1m_contour  # noqa: E402
 
 _FP_A: dict = {
+    # Self-contained round-2-era literal (a mutation-fixture baseline for
+    # _FP_B), NOT the shipped round-3 weights hash — do not "fix" it.
     "provider": "nano",
     "model": "mnema-embed-v1",
     "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",

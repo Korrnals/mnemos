@@ -97,8 +97,11 @@ were produced by the OLD geometry. Nothing needs to be done manually:
    re-embeds those rows in bounded batches — the migration is gradual
    and automatic (start the processor: `mnemos processor start`).
 2. `mnemos doctor` shows the progress in the **Vector store** row
-   ("N cut by another embedder") and the count drops to zero as the
-   sweeper drains it.
+   ("N cut by another embedder"); the count drops to zero as the
+   sweeper drains the `refined` rows. Orphan vector rows of deleted or
+   never-refined memories may keep the count above zero — they are
+   diagnostics-only (doctor reports them; `mnemos reindex` does not
+   clear orphans).
 3. To rebuild in one pass instead of waiting for the background cycles:
 
    ```bash
