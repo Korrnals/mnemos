@@ -1,11 +1,11 @@
 {
-  "stratum_version": "e2-d-1",
+  "stratum_version": "e2-d-2",
   "e0_spec": "docs/experiments/e0-meta-level.md \u00a72.6-\u00a72.10, \u00a73.6, \u00a73.7, \u00a75.4",
-  "corpus_fingerprint": "7b259633c40d9f679d233dcc06f81e17316a9ce5f2b0250a8565f3e846856d0e",
+  "corpus_fingerprint": "6649c245cb07f4d9183381c14a580775a70a493d65a7b5d8f9d93ca4aaa665d9",
   "seed": "deterministic (index-driven combinatorics, no RNG)",
   "counts": {
-    "conflict_pairs": 80,
-    "conflict_pairs_type2": 40,
+    "conflict_pairs": 120,
+    "conflict_pairs_type2": 80,
     "conflict_pairs_type1": 40,
     "stale_claims": 40,
     "stale_window_expired": 20,
@@ -16,8 +16,8 @@
     "adversarial_scenarios": 1,
     "replay224_scenarios": 1,
     "actions": {
-      "colliding": 162,
-      "safe": 326
+      "colliding": 242,
+      "safe": 406
     }
   },
   "engine_binding": {
@@ -40,7 +40,7 @@
   },
   "fixed_parameters": {
     "stratum_nature": "D-strata are scenario artifacts (per-scenario stores), not corpus entries: the e2_gov combined corpus and profile are untouched and S1 stays byte-identical",
-    "conflict_type_split": "40 type-2 + 40 type-1 (the E0 floor is >=40 type-2)",
+    "conflict_type_split": "80 type-2 + 40 type-1 \u2014 the type-2 share raised from the floor-exact 40 by the E0 \u00a73.6 raise rule (TL decision 2026-09-13, E0 \u00a78 pre-run revision 6); type-1 unchanged at 40 (the E0 floor is >=40 type-2, remainder type-1; total 120, n reported)",
     "conflict_type1_hint_policy": "type-1 peers also carry lexically overlapping goals (uniform hint contact); the type split fixes where the claim is discoverable, not whether a goal exists",
     "conflict_store_mass": "per conflict-pair store: exactly 3 checkpoints (actor + peer + an always-present bystander) + 1 evidence row (type-1 only) + 6 noise rows (conflict_pairs.py)",
     "action_menu_shape": "2 colliding + 2 safe actions per conflict pair and in the #224 replay; 4 safe (0 colliding) per stale-claim and adversarial scenario \u2014 the menu size that scales the intrusion rate",

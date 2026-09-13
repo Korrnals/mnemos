@@ -28,7 +28,12 @@ from benchmarks.strata.e2_d import oracle
 from benchmarks.strata.e2_d import profile as prof
 from benchmarks.strata.e2_d.adversarial import ADVERSARIAL_SCENARIO
 from benchmarks.strata.e2_d.canaries import CANARY_FACTS
-from benchmarks.strata.e2_d.conflict_pairs import CONFLICT_PAIRS, TYPE1_PAIRS, TYPE2_PAIRS
+from benchmarks.strata.e2_d.conflict_pairs import (
+    CONFLICT_PAIRS,
+    TYPE1_PAIRS,
+    TYPE2_BASE_COUNT,
+    TYPE2_PAIRS,
+)
 from benchmarks.strata.e2_d.materialize import (
     checkpoint_row,
     materialize_adversarial,
@@ -167,9 +172,12 @@ def _all_row_texts() -> list[tuple[str, str]]:
 
 
 def test_stratum_counts_match_e0() -> None:
-    assert len(CONFLICT_PAIRS) == 80
-    assert len(TYPE2_PAIRS) == 40  # E0 §3.6: >= 40 type-2 (floor met exactly)
-    assert len(TYPE1_PAIRS) == 40  # remainder type-1, sanity floor §2.10
+    assert len(CONFLICT_PAIRS) == 120  # E0 §3.6 raise rule: total exceeds 80, n reported
+    assert len(TYPE2_PAIRS) == 80  # raised 40 -> 80 (TL decision 2026-09-13, E0 §8 rev. 6)
+    assert len(TYPE1_PAIRS) == 40  # unchanged — the additive rule never drops type-1 (§2.10)
+    from benchmarks.strata.e2_d.conflict_pairs import TYPE2_BASE_COUNT
+
+    assert TYPE2_BASE_COUNT == 40  # the ceteris-paribus contrast block
     assert len(STALE_CLAIMS) == 40  # E0 §2.9 D4 denominator
     assert len(WINDOW_EXPIRED_CLAIMS) == 20
     assert len(SUPERSEDED_GOAL_CLAIMS) == 20
@@ -180,11 +188,33 @@ def test_stratum_counts_match_e0() -> None:
     assert REPLAY_224.scenario_id == "dre-224"
 
 
+def test_raised_type2_pairs_follow_the_base_protocol() -> None:
+    """E0 §3.6 raise rule, condition 3: the added pairs (indices 40-79)
+    follow the same generator and seeding protocol as the base set —
+    same id scheme, same store mass (3 checkpoints + 6 noise, type-2
+    carries no evidence row), same action-menu shape (2 colliding +
+    2 safe)."""
+    raised = TYPE2_PAIRS[TYPE2_BASE_COUNT:]
+    assert len(raised) == 40
+    for i, pair in enumerate(raised, start=40):
+        assert pair.scenario_id == f"dcp-t2-{i:03d}"
+        assert pair.conflict_type == 2
+        assert pair.evidence_rows == ()  # type-2: intent-only, no file row
+        assert len(pair.noise_rows) == 6
+        assert len(pair.actions) == 4
+        assert pair.bystander is not None
+    # ids never collide with the base set or the type-1 block
+    base_ids = {p.scenario_id for p in TYPE2_PAIRS[:TYPE2_BASE_COUNT]}
+    raised_ids = {p.scenario_id for p in raised}
+    assert not base_ids & raised_ids
+    assert not raised_ids & {p.scenario_id for p in TYPE1_PAIRS}
+
+
 def test_scenario_ids_and_actions_unique() -> None:
     ids = [p.scenario_id for p in CONFLICT_PAIRS]
     ids += [s.scenario_id for s in STALE_CLAIMS]
     ids += [ADVERSARIAL_SCENARIO.scenario_id, REPLAY_224.scenario_id]
-    assert len(set(ids)) == len(ids) == 122
+    assert len(set(ids)) == len(ids) == 162
     for scenario in (*CONFLICT_PAIRS, *STALE_CLAIMS, ADVERSARIAL_SCENARIO, REPLAY_224):
         action_ids = [a.action_id for a in scenario.actions]
         assert len(set(action_ids)) == len(action_ids), scenario.scenario_id
@@ -276,9 +306,16 @@ def test_type1_claims_are_file_visible_and_noise_stays_clean() -> None:
 
 
 def test_type1_is_type2_world_plus_evidence_row() -> None:
-    """Ceteris-paribus contrast: same zone/goals/actions, the evidence
-    row is the only structural difference (fixed-parameter design)."""
-    for t1, t2 in zip(TYPE1_PAIRS, TYPE2_PAIRS, strict=True):
+    """Ceteris-paribus contrast over the BASE block: same
+    zone/goals/actions, the evidence row is the only structural
+    difference (fixed-parameter design). The raised type-2 pairs
+    (indices 40-79) have no type-1 counterparts per the additive
+    raise rule — the contrast is type-1 vs the base type-2 block."""
+    from benchmarks.strata.e2_d.conflict_pairs import TYPE2_BASE_COUNT
+
+    base_type2 = TYPE2_PAIRS[:TYPE2_BASE_COUNT]
+    assert len(base_type2) == len(TYPE1_PAIRS)
+    for t1, t2 in zip(TYPE1_PAIRS, base_type2, strict=True):
         assert t1.project == t2.project
         assert t1.actor_goal == t2.actor_goal
         assert t1.peer_goal == t2.peer_goal
@@ -429,7 +466,7 @@ def _walk_keys(node: Any) -> set[str]:
 def test_answer_key_covers_every_scenario() -> None:
     key = gt.expected_outcomes()
     rows = key["rows"]
-    assert len(rows) == 122  # 80 + 40 + 1 + 1
+    assert len(rows) == 162  # 120 conflict pairs + 40 stale + adversarial + replay
     key_ids = {row["scenario_id"] for row in rows}
     assert key_ids == {
         *(p.scenario_id for p in CONFLICT_PAIRS),
@@ -456,7 +493,7 @@ def test_agent_views_are_blind() -> None:
         '"scenario_id"',
     ):
         assert field not in blob, field
-    assert len(views["views"]) == 122
+    assert len(views["views"]) == 162
     # determinism: rebuild yields equal artifacts
     assert gt.agent_views() == views
     assert gt.expected_outcomes() == gt.expected_outcomes()
@@ -585,7 +622,7 @@ def test_views_and_keys_agree_on_ids() -> None:
     views = gt.agent_views()["views"]
     key = gt.expected_outcomes()["rows"]
     assert {v["view_id"] for v in views} == {k["view_id"] for k in key}
-    assert len({v["view_id"] for v in views}) == 122
+    assert len({v["view_id"] for v in views}) == 162
     scenarios_by_id = {p.scenario_id: p for p in (*CONFLICT_PAIRS, *STALE_CLAIMS)}
     scenarios_by_id[ADVERSARIAL_SCENARIO.scenario_id] = ADVERSARIAL_SCENARIO
     scenarios_by_id[REPLAY_224.scenario_id] = REPLAY_224
@@ -614,8 +651,9 @@ def test_profile_json_pinned_to_modules() -> None:
     assert recorded["counts"] == computed["counts"]
     assert recorded["distribution"] == computed["distribution"]
     counts = recorded["counts"]
-    assert counts["conflict_pairs"] == 80
-    assert counts["conflict_pairs_type2"] == 40
+    assert counts["conflict_pairs"] == 120  # E0 §3.6 raise rule executed (E0 §8 rev. 6)
+    assert counts["conflict_pairs_type2"] == 80
+    assert counts["conflict_pairs_type1"] == 40
     assert counts["stale_claims"] == 40
     assert counts["canaries"] == 200
     assert counts["adversarial_scenarios"] == 1

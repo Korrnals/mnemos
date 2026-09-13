@@ -80,3 +80,8 @@ federation/gen/
 # commits them deliberately when citing them. Keeps the worktree clean
 # between record and archival so run-manifest git_dirty stays stable.
 benchmarks/experiments/e3_lanes/runs/
+
+# E3 D-leg run artifacts (benchmarks/experiments/e3_d/runs/) — run
+# artifacts stay on disk and are committed deliberately by the report
+# wave when citing them (same discipline as e3_lanes).
+benchmarks/experiments/e3_d/runs/
