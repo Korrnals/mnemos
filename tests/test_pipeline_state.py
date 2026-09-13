@@ -107,7 +107,7 @@ FAKE_GITHUB_TOKEN = "ghp_Ex4mplePl4ceh0lderTok3n42AbCdEfGhIjKl"
 
 MARKER_RE = re.compile(
     r"^\[mnemos:(?P<id>[0-9a-f-]{36}) project=(?P<project>\S+) "
-    r"status=(?P<status>\S+)(?: pipeline=(?P<pipeline>\S+))? "
+    r"status=(?P<status>\S+) origin=(?P<origin>\S+)(?: pipeline=(?P<pipeline>\S+))? "
     r"v=(?P<version>\d+) retrieved=(?P<iso>\S+)\]$"
 )
 
@@ -639,13 +639,14 @@ class TestMarkerContract:
         line = build_provenance(mem, _TS)
         assert line == (
             "[mnemos:01234567-89ab-cdef-0123-456789abcdef project=proj "
-            "status=published pipeline=refined v=7 "
+            "status=published origin=manual pipeline=refined v=7 "
             "retrieved=2026-08-29T12:00:00+00:00]"
         )
         match = MARKER_RE.match(line)
         assert match is not None
         assert match.group("pipeline") == "refined"
         assert match.group("version") == "7"
+        assert match.group("origin") == "manual"
 
     def test_render_null_pipeline_omits_segment(self) -> None:
         mem = Memory(
@@ -659,9 +660,34 @@ class TestMarkerContract:
         line = build_provenance(mem, _TS)
         assert line == (
             "[mnemos:01234567-89ab-cdef-0123-456789abcdef project=proj "
-            "status=published v=1 retrieved=2026-08-29T12:00:00+00:00]"
+            "status=published origin=manual v=1 retrieved=2026-08-29T12:00:00+00:00]"
         )
         assert "pipeline=" not in line
+
+    def test_origin_renders_server_column_spoof_ignored(self) -> None:
+        """origin= comes from the source COLUMN — never client-mintable input.
+
+        ADR-0025 P0: tags and metadata are caller-controlled; a spoofed
+        'origin:federated' tag (or an 'origin' metadata key) must never
+        reach the provenance marker — only the server-side source column
+        renders.
+        """
+        mem = Memory(
+            id="01234567-89ab-cdef-0123-456789abcdef",
+            content="x",
+            status=MemoryStatus.PUBLISHED,
+            project="proj",
+            source=MemorySource.WEB,
+            tags=["origin:federated"],
+            metadata={"origin": "federated"},
+            pipeline_state=None,
+            marker_version=1,
+        )
+        line = build_provenance(mem, _TS)
+        match = MARKER_RE.match(line)
+        assert match is not None
+        assert match.group("origin") == "web"
+        assert "federated" not in line
 
     def test_snapshot_consistency_anti_toctou(self, manager: MemoryManager) -> None:
         """The marker is cut from the SAME snapshot as the projection.
@@ -682,8 +708,10 @@ class TestMarkerContract:
         # projection — and both agree with the snapshot they were cut from.
         assert block["pipeline_phase"] == "refined"
         assert block["marker_version"] == 4
+        assert block["origin"] == mem.source.value == "mcp"
         assert match.group("pipeline") == block["pipeline_phase"]
         assert match.group("version") == str(block["marker_version"])
+        assert match.group("origin") == block["origin"]
 
     def test_legacy_row_block_fields(self, manager: MemoryManager) -> None:
         """A NULL pipeline_state row carries pipeline_phase=None in the

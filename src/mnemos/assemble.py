@@ -34,10 +34,13 @@ pre-LLM-call injection.
 Design decisions (flagged for ArchCom ratification in the #125 report):
 
 * **Provenance format** — one prefix line per injected block, exact shape
-  ``[mnemos:<memory-id> project=<slug> status=<status> pipeline=<phase>
-  v=<n> retrieved=<iso>]`` (ADR-0019 §4 amendment: ``pipeline=`` omitted
-  on NULL/legacy pipeline_state; ``v=`` is the marker version; the
-  legacy ``retrieved`` timestamp stays last).
+  ``[mnemos:<memory-id> project=<slug> status=<status> origin=<source>
+  pipeline=<phase> v=<n> retrieved=<iso>]`` (ADR-0019 §4 amendment:
+  ``pipeline=`` omitted on NULL/legacy pipeline_state; ``v=`` is the
+  marker version; the legacy ``retrieved`` timestamp stays last).
+  ``origin=`` renders the server-side ``source`` column and is always
+  present (ADR-0025 P0: mint provenance) — row-static, so the
+  CacheAligner tail ordering above is unaffected.
 * **Provenance vs CacheAligner order** — the aligner relocates ISO
   timestamps to the tail, which would gut the ``retrieved=<iso>`` field of
   a provenance line if alignment ran after wrapping. Blocks are therefore
@@ -169,14 +172,18 @@ def build_provenance(memory: Memory, retrieved_iso: str, *, project: str | None 
     amended by ADR-0019 §4; the shape is this module's contract, tested
     verbatim):
 
-    ``[mnemos:<memory-id> project=<slug> status=<status> pipeline=<phase> v=<n> retrieved=<iso>]``
+    ``[mnemos:<memory-id> project=<slug> status=<status> origin=<source>
+    pipeline=<phase> v=<n> retrieved=<iso>]``
 
     The ``pipeline=`` segment renders the row's ``pipeline_state`` and
     is OMITTED when it is NULL (legacy rows written before ADR-0019
     Phase B); ``v=`` is ``marker_version`` (1 from day one, incremented
     on every served-projection swap). The legacy ``retrieved=<iso>``
     timestamp stays the final segment (ADR-0017 D1 contract; the
-    CacheAligner ordering decision depends on it).
+    CacheAligner ordering decision depends on it). ``origin=`` renders
+    the server-side ``source`` column (ADR-0025 P0: mint provenance;
+    groundwork for origin-aware pin guards) — always present, row-static,
+    and never a client-mintable tag/metadata value.
 
     ADR-0019 anti-TOCTOU: the marker is built from the SAME ``Memory``
     snapshot the served projection was cut from — never a re-read of
@@ -189,6 +196,9 @@ def build_provenance(memory: Memory, retrieved_iso: str, *, project: str | None 
         f"[mnemos:{memory.id}",
         f"project={project_slug}",
         f"status={memory.status.value}",
+        # Server column only — a client-mintable tag/metadata value must
+        # never reach the marker (ADR-0025 P0).
+        f"origin={memory.source.value}",
     ]
     if memory.pipeline_state is not None:
         segments.append(f"pipeline={memory.pipeline_state.value}")
@@ -513,6 +523,7 @@ def _budget_stage(
             # ADR-0019 §4 structured marker fields — the bracket string
             # above is a projection of THESE values, not the source of
             # truth (None pipeline_phase = legacy row, segment omitted).
+            "origin": mem.source.value,  # ADR-0025 P0: server-side origin column
             "pipeline_phase": mem.pipeline_state.value if mem.pipeline_state else None,
             "marker_version": mem.marker_version,
             "score": cand.score,

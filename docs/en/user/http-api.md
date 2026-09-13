@@ -564,7 +564,8 @@ status gate — only `published`/`processed` surface) → optional CCR marker
 expansion → context filter → **mandatory** secret scan (per-block redaction
 counts; refuse mode drops the block) → CacheAligner → token budget. Every
 injected block carries a provenance line
-`[mnemos:<id> project=<slug> status=<status> retrieved=<iso>]`.
+`[mnemos:<id> project=<slug> status=<status> origin=<source> pipeline=<phase> v=<n> retrieved=<iso>]`
+(`pipeline=` is omitted on legacy rows with NULL pipeline_state).
 
 **Request body**
 

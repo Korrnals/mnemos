@@ -567,7 +567,8 @@ curl -s -X POST http://127.0.0.1:8000/context/recall \
 **обязательный** скан секретов (редакции считаются по блокам; refuse-режим
 выбрасывает блок) → CacheAligner → токен-бюджет. Каждый внедряемый блок
 несёт строку провенанса
-`[mnemos:<id> project=<slug> status=<status> retrieved=<iso>]`.
+`[mnemos:<id> project=<slug> status=<status> origin=<source> pipeline=<phase> v=<n> retrieved=<iso>]`
+(сегмент `pipeline=` опускается для легаси-строк с NULL pipeline_state).
 
 **Тело запроса**
 

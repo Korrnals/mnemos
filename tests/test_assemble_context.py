@@ -5,7 +5,9 @@ Wave 1 (contract core) acceptance for the assemble_context pipeline:
 * fixed stage order (recall → CCR → filter → scan → align → budget),
   recorded verbatim in ``stats.stages``;
 * provenance on EVERY injected block, exact format
-  ``[mnemos:<id> project=<slug> status=<status> retrieved=<iso>]``;
+  ``[mnemos:<id> project=<slug> status=<status> origin=<source>
+  pipeline=<phase> v=<n> retrieved=<iso>]`` (``pipeline=`` omitted on
+  legacy NULL pipeline_state);
 * MANDATORY secret scan — a planted (fake, EXAMPLE-style) secret is
   redacted in the assembled output with per-block counts; refuse mode
   drops the block (fail-closed);
@@ -59,7 +61,7 @@ SESSION = "sess-42"
 
 PROVENANCE_RE = re.compile(
     r"^\[mnemos:(?P<id>[0-9a-f-]{36}) project=(?P<project>\S+) "
-    r"status=(?P<status>\S+)(?: pipeline=(?P<pipeline>\S+))? "
+    r"status=(?P<status>\S+) origin=(?P<origin>\S+)(?: pipeline=(?P<pipeline>\S+))? "
     r"v=(?P<version>\d+) retrieved=(?P<iso>\S+)\]$"
 )
 
@@ -149,11 +151,12 @@ def _add(
     *,
     status: MemoryStatus = MemoryStatus.PUBLISHED,
     tags: list[str] | None = None,
+    source: MemorySource = MemorySource.MCP,
 ) -> Memory:
     data = MemoryCreate(
         content=content,
         tags=tags or [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"],
-        source=MemorySource.MCP,
+        source=source,
         status=status,
     )
     return mgr.add(data, project=PROJECT, agent=AGENT)
@@ -215,6 +218,7 @@ class TestProvenance:
         text_lines = result["text"].splitlines()
         prov_lines = [ln for ln in text_lines if ln.startswith("[mnemos:")]
         assert len(prov_lines) == len(result["blocks"])
+        by_id = {m.id: m for m in (m1, m2)}
 
         for block, line in zip(result["blocks"], prov_lines, strict=True):
             assert block["provenance"] == line
@@ -223,6 +227,8 @@ class TestProvenance:
             assert match.group("id") == block["memory_id"]
             assert match.group("project") == PROJECT
             assert match.group("status") == block["status"]
+            # ADR-0025 P0: origin renders the server-side source column.
+            assert match.group("origin") == by_id[block["memory_id"]].source.value
             # ADR-0019 §4: the bracket string is a projection of the
             # structured block fields (pipeline_phase / marker_version).
             assert match.group("version") == str(block["marker_version"])
@@ -236,6 +242,41 @@ class TestProvenance:
             datetime.fromisoformat(match.group("iso"))
 
         assert {b["memory_id"] for b in result["blocks"]} == {m1.id, m2.id}
+
+    def test_origin_segment_always_present_from_server_column(self, manager: MemoryManager) -> None:
+        """origin= rides every marker and equals the row's source column."""
+        m_web = _add(manager, PROSE_CONTENT, source=MemorySource.WEB)
+        m_mcp = _add(manager, CODE_CONTENT, source=MemorySource.MCP)
+        result = manager.assemble_context(session=SESSION, project=PROJECT)
+
+        assert result["blocks"]
+        by_id = {m.id: m for m in (m_web, m_mcp)}
+        for block in result["blocks"]:
+            assert "origin=" in block["provenance"]
+            match = PROVENANCE_RE.match(block["provenance"])
+            assert match is not None
+            assert match.group("origin") == by_id[block["memory_id"]].source.value
+            # Structured block field carries the same server-column value.
+            assert block["origin"] == by_id[block["memory_id"]].source.value
+
+    def test_spoofed_origin_tag_never_reaches_marker(self, manager: MemoryManager) -> None:
+        """A client-minted 'origin:federated' tag cannot forge origin=.
+
+        The segment renders the SERVER source column only (ADR-0025 P0);
+        client-controlled tags never leak into the provenance marker.
+        """
+        mem = _add(
+            manager,
+            PROSE_CONTENT,
+            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning", "origin:federated"],
+        )
+        result = manager.assemble_context(session=SESSION, project=PROJECT)
+
+        block = next(b for b in result["blocks"] if b["memory_id"] == mem.id)
+        match = PROVENANCE_RE.match(block["provenance"])
+        assert match is not None
+        assert match.group("origin") == mem.source.value == "mcp"
+        assert "federated" not in block["provenance"]
 
     def test_provenance_timestamps_survive_alignment(self, manager: MemoryManager) -> None:
         """Align runs BEFORE wrapping — the provenance line stays parseable."""
