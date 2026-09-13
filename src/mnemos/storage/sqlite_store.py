@@ -2403,6 +2403,12 @@ class SQLiteStore:
         over the canonical field payload INCLUDING the issuer (CWE-294
         replay control: a copy of a victim's checkpoint re-issued by a
         different agent must NOT collide).
+
+        mnemos #251 security review (P1, defense in depth): the lookup
+        also requires the row's ``checkpoint_agent`` metadata stamp to
+        equal the claimed agent — only ``save_checkpoint`` mints that
+        stamp, so a row whose dedup key slipped in through any other
+        path (legacy/partial data) can never satisfy a genuine dedup.
         """
         conn = self._get_conn()
         row = conn.execute(
@@ -2410,6 +2416,7 @@ class SQLiteStore:
             SELECT * FROM memories
             WHERE project = ? AND agent = ?
               AND json_extract(metadata, '$.checkpoint_dedup_key') = ?
+              AND json_extract(metadata, '$.checkpoint_agent') = ?
               AND EXISTS (
                   SELECT 1 FROM json_each(memories.tags)
                   WHERE json_each.value = 'mnemos:checkpoint'
@@ -2417,7 +2424,7 @@ class SQLiteStore:
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            (project, agent, dedup_key),
+            (project, agent, dedup_key, agent),
         ).fetchone()
         return self._row_to_memory(row) if row is not None else None
 

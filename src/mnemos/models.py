@@ -200,6 +200,17 @@ CHECKPOINT_FIELDS: tuple[str, ...] = (
     "context",
 )
 
+# mnemos #251 security review (P1) — server-minted checkpoint identity
+# stamps. Client surfaces must never set them: a forged
+# ``checkpoint_dedup_key`` landing on a generic create would let the
+# attacker's row satisfy a later genuine ``save_checkpoint`` dedup and
+# serve their content as the victim's checkpoint (CWE-346/345 spoofed
+# source). ``MemoryManager.add``/``update`` strip them from client
+# metadata; only ``save_checkpoint`` mints them (trusted flag).
+CHECKPOINT_STAMP_KEYS: frozenset[str] = frozenset(
+    {"checkpoint_agent", "checkpoint_session", "checkpoint_dedup_key"}
+)
+
 # Allowed optional tag prefixes beyond the required ones
 ALLOWED_OPTIONAL_PREFIXES: frozenset[str] = frozenset(
     {"severity:", "stack:", "applyTo:", "source:"}
