@@ -70,6 +70,7 @@
 | 2026-08-31 | БФ-1 (эпик [#169](https://github.com/Korrnals/mnemos/issues/169)) | Корневой каталог `benchmarks/` (директива владельца 2026-08-30): корпус мигрирован из `tests/golden` байт-точно (2 отклонения: импорт-пути пакетов; фикс бага фикстуры `aurora-ci-token-note` — 32-символьный хвост ghp_ против 36 в PLANTED_SECRETS); S1-стенд (`make bench-s1`, гейт в verify) = golden-измерения + сценарии S1–S3 ADR-0019 (карантин/ретракция/подмена) + detector-quarantine-fp (легитимные tech-паттерны в корпусе, 8 записей) + инвариант render-neutrality + interim-McNemar (знаковый тест); канонический `baselines/s1.json` (baseline_version 1, stand_version s1-1, corpus_fingerprint) + генерируемый `BASELINE.md`; wheel/sdist-исключение `benchmarks/` (по образцу #179); smoke-тесты стенда + мутационный тест нейтральности |
 | 2026-08-31 | P1-фиксы [#170](https://github.com/Korrnals/mnemos/issues/170)/[#171](https://github.com/Korrnals/mnemos/issues/171)/[#193](https://github.com/Korrnals/mnemos/issues/193) | **#170** lease/reclaim зависших `processing`: `REFINE_LEASE_TIMEOUT_SEC=600` (claim штампует lease-часы `updated_at`), идемпотентный CAS-reclaim в sweeper-цикле процессора (`WHERE pipeline_state='processing' AND updated_at < cutoff` — двойной воркер/свипер безопасен), аудит `outcome=lease-reclaimed age=…`, retry-бюджет не расходуется. **#171** N1-гейт контентных правок распространён на все admissible-статусы (edit-ветка; flip-ветка осталась PUBLISHED-only — контракт knowledge-pipeline: rewrite-оригиналы редактируются на выдаче): отказ → демоция RAW без касания `pipeline_state` (инвариант B1), чистая правка PROCESSED → `pipeline_state=pending` (F8-семантика, включая legacy-NULL admissible-строки). **#193** `update()` сбрасывает `clean_content` той же транзакцией, что пишет новый контент (B2a swap-дисциплина); served-проекция (`effective_content`) — новый контент немедленно; S1-базлайн перезаписан честно (`filter_projection_stale_after_update` true→false, остальные метрики байт-точно). Сьют 2186 → 2203 (+17: lease-reclaim 7, PROCESSED-гейт 7, сброс проекции 3); мутации 5+2+2 пойманы. NM-трек [#197](https://github.com/Korrnals/mnemos/issues/197)/ADR-0021 внесён в DAG (§4) |
 | 2026-09-13 | Срез 1 §4a «Стабилизация + документация» (цикл АрхКома мета-уровня) | Docs-волна [PR #256](https://github.com/Korrnals/mnemos/pull/256) (ADR-0025/0026, отчёт цикла, §4a, формулировки EN/RU); зависший фикс #245 [PR #257](https://github.com/Korrnals/mnemos/pull/257); P0-батч #250 [PR #260](https://github.com/Korrnals/mnemos/pull/260) (карантин вход+чтение, strip-by-default, ANY-member no-federate, input_set_hash, суперпрессия ARCHIVED); origin= provenance [PR #262](https://github.com/Korrnals/mnemos/pull/262); D0 #251 [PR #263](https://github.com/Korrnals/mnemos/pull/263) (save_checkpoint single authority, binding, issuer-dedup, трёхслойная защита штампов — security approve после ремонта); формат-долг verify [PR #268](https://github.com/Korrnals/mnemos/pull/268). Сьют 2419 → 2452; bench-s1 gate PASS. Урожай трекера: #258/#259/#261(закрыт)/#264/#265/#266/#267 |
+| 2026-09-13 | Срез 2 §4a «Предрегистрация + движок за флагом» | E0-предрегистрация [PR #271](https://github.com/Korrnals/mnemos/pull/271) (docs/experiments/e0-meta-level.md, 394 строки; request-changes → до-прогонная правка → approve; закрывает #252); E1-спайк lanes [PR #272](https://github.com/Korrnals/mnemos/pull/272) (lanes.py за LanesConfig default-off, byte-эквивалентность off sha256-фикстурами, cascade/awareness-ready контракты; P2 lane-dedup → ремонт → approve; закрывает #253); format-долг #270 [PR #273](https://github.com/Korrnals/mnemos/pull/273). Сьют 2452 → 2492 passed / 3 skipped: +37 lane-тестов (34 спайк + 3 ремонт `cb95d4d`) и +3 теста от параллельного PR #270 (#258, вне среза). Правило §4a-1 соблюдено: E1 стартовал только после мержа E0. Далее: E2 (страты корпуса по E0-спеке) |
 
 ## 4. DAG ближайших волн
 
@@ -278,22 +279,61 @@ default-off; ничего не ломает прод.
 
 Чеклист:
 
-- [ ] [#252](https://github.com/Korrnals/mnemos/issues/252) E0:
+- [x] [#252](https://github.com/Korrnals/mnemos/issues/252) E0:
   `docs/experiments/` — гипотезы H1–H5 + D1–D4, первичные метрики, MDE,
   пороги, страты (G-gov ~96, G-neg ~24, мульти-сессионные ~80–100,
   канары 200, stale-claims 40, G-poison), фальсификаторы (B-vs-B0,
   awareness-theater, over-deferral, adversarial-peer), решающие правила,
   план анализа. Коммит до первого прогона.
-- [ ] [#253](https://github.com/Korrnals/mnemos/issues/253) E1-спайк:
+  **✅ 2026-09-13, [PR #271](https://github.com/Korrnals/mnemos/pull/271)**
+  (`docs/experiments/e0-meta-level.md`, 394 строк; ревью analytics:
+  request-changes 1×P1 + 4×P2 + 4×P3 → до-прогонная правка `9bbb433` →
+  approve). Ключевое: ПОЛНОЕ дизъюнктное пространство исходов решающих
+  правил (INDETERMINATE-зоны зарегистрированы до данных), консервативная
+  мощность (H3 0.13–0.32 при собственном MDE +10pp — наследственное
+  ограничение R1), dated amendment-log с честной до-прогонной ревизией.
+- [x] [#253](https://github.com/Korrnals/mnemos/issues/253) E1-спайк:
   `lanes.py`, `_Candidate.lane`, stable lane→score ordering, телеметрия,
   флаг-эквивалентность при off; cascade-ready (lane-enum с synthesized,
   origin=, 4-компонентный ключ — если не в срезе 1) и awareness-ready
   (per-agent слот, курсоры `awr:*` в meta) контракты.
-- [ ] Тесты: happy path, пустые дорожки, off-эквивалентность,
+  **✅ 2026-09-13, [PR #272](https://github.com/Korrnals/mnemos/pull/272)**
+  (ревью: request-changes 1×P2 lane-vs-lane дедуп → ремонт `cb95d4d` →
+  approve). Engine: lanes как SUB-stage recall за единственным флагом
+  `LanesConfig.enabled=False`; byte-эквивалентность off-пути доказана
+  sha256-фикстурами от pristine main; cascade-ready (enum с synthesized,
+  collapse_level-конвенция; origin= и 4-компонентный ключ уже из среза 1);
+  awareness-ready (awr:-курсоры UPSERT-хелперы, per-agent слот, guard
+  «awareness рендерится последним»).
+- [x] Тесты: happy path, пустые дорожки, off-эквивалентность,
   ordering-стабильность; `make verify`.
+  **✅ 2026-09-13**: 37 тестов в `tests/test_lanes.py` (все четыре класса
+  acceptance + дедуп + карантин-композитность + side-channel-пины);
+  сьют 2452 → 2492 на ветке; полный `make verify` на объединённом main —
+  код-гейты зелёные (см. чекпоинт ниже; pip-audit-красный остаётся
+  вынесенным в [#267](https://github.com/Korrnals/mnemos/issues/267));
+  попутный format-долг от #270 закрыт [PR #273](https://github.com/Korrnals/mnemos/pull/273).
 
-**Чекпоинт-контракт среза 2:** E0 закоммичен до прогонов (да/нет);
-флаг-эквивалентность доказана тестом (да/нет); что осталось до E2.
+**Чекпоинт среза 2 (закрыт 2026-09-13):**
+
+- **E0 закоммичен до прогонов: ДА** — ни один прогон любой ноги (A/B/B0,
+  C0–C3, D) не выполнялся; E1 запущен только после мержа E0 (правило §4a-1
+  соблюдено буквально).
+- **Флаг-эквивалентность доказана тестом: ДА** — sha256-фикстуры
+  pristine-main воспроизводятся побайтово при выключенном флаге (обе
+  сборки: без файла и file+query), плюс list_all-шпион (0 lane-запросов),
+  key-walk (нет lane-ключей в выводе) и trace-пин (0 lane-строк трейса).
+- **Осталось до E2:** посев страт по E0-спеке — G-gov (48 записей × 2
+  запроса + surplus-пул замены), G-neg 24, мульти-сессии 80–100 сценариев,
+  200 канарок, 40 stale-claims, G-poison; распределение-согласованный
+  профиль (58% чекпоинтов ±2pp); re-baseline по ADR-0020 в том же PR;
+  для C-ног — smoke-валидация mnema-refine [#223](https://github.com/Korrnals/mnemos/issues/223)
+  (pi); для D-ноги — awareness v0 [#254](https://github.com/Korrnals/mnemos/issues/254)
+  (требует green-light interleave владельца).
+- **Форвард-ноты ревью E1** (в каноне lanes.py): collapse_level/delta-slot —
+  докстринг-пины, поведенческое закрепление приходит с механикой каскада;
+  applyTo-тегированные knowledge-строки теряют пин при lanes-on
+  (off-contract вход, M8 скоупит applyTo на rules).
 
 ### Срез 3 — «Awareness v0» (после green light владельца по interleave)
 
