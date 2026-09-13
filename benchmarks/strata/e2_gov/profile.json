@@ -1,0 +1,55 @@
+{
+  "stratum_version": "e2-gov-1",
+  "e0_spec": "docs/experiments/e0-meta-level.md \u00a73.1-\u00a73.3, \u00a74.3-\u00a74.4",
+  "corpus_fingerprint": "4548948294b39abec897598f9b146276caa0458cbad8b8b7908a9614f8a0eb9e",
+  "seed": "deterministic (index-driven combinatorics, no RNG)",
+  "counts": {
+    "gov_records": 100,
+    "gov_rules": 12,
+    "gov_decisions": 88,
+    "checkpoint_padding": 240,
+    "extension_total": 340,
+    "combined_total": 421,
+    "analyzed_records": 48,
+    "analyzed_queries": 96,
+    "replacement_pool": 52,
+    "gov_query_definitions": 200,
+    "neg_queries": 24
+  },
+  "distribution": {
+    "checkpoint_share": 0.579572,
+    "checkpoint_share_target": 0.58,
+    "checkpoint_share_tolerance": 0.02,
+    "extension_rules_decisions_ratio": 0.1364,
+    "live_rules_decisions_ratio": 0.1382,
+    "live_store": {
+      "total": 1457,
+      "checkpoints": 839,
+      "rules": 30,
+      "decisions": 217
+    },
+    "note": "checkpoint share is the registered pin (58% \u00b1 2pp on the COMBINED corpus); the rules:decisions ratio mirrors the live ratio at the EXTENSION level \u2014 the golden judge corpus is byte-pinned by the S1 fingerprint and not a free parameter"
+  },
+  "class_counts": {
+    "extension": {
+      "rule": 12,
+      "decision": 88,
+      "checkpoint": 240
+    },
+    "combined": {
+      "rule": 28,
+      "learning": 15,
+      "bug-pattern": 10,
+      "session": 11,
+      "decision": 98,
+      "open-question": 4,
+      "checkpoint": 244,
+      "synthesized": 6,
+      "legacy": 5
+    }
+  },
+  "re_baseline_decision": {
+    "s1_rebaseline_required": false,
+    "reason": "strata modules are outside the S1 corpus_fingerprint module set; the S1 stand's measured corpus is byte-identical (c2ce056d\u2026) \u2014 bench-s1 keeps measuring what it measured"
+  }
+}
