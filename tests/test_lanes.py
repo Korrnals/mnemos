@@ -47,7 +47,13 @@ from mnemos.lanes import (
     write_awareness_cursor,
 )
 from mnemos.manager import MemoryManager
-from mnemos.models import Memory, MemoryCreate, MemorySource, MemoryStatus
+from mnemos.models import (
+    Memory,
+    MemoryCreate,
+    MemorySource,
+    MemoryStatus,
+    PipelineState,
+)
 
 PROJECT = "asm-proj"
 AGENT = "asm-agent"
@@ -268,6 +274,51 @@ class TestLanesHappyPath:
         assert raw.id not in {b["memory_id"] for b in result["blocks"]}
         assert result["stats"]["recall"]["lanes"]["rules"] == 0
 
+    def test_quarantined_published_governance_row_never_surfaces(
+        self, lanes_manager: MemoryManager
+    ) -> None:
+        """PUBLISHED + ``pipeline_state=quarantined`` (the ADR-0019 §5
+        composition in ``is_context_admissible``) is excluded from the
+        deterministic lanes — pinning the quarantine half behaviorally
+        (the RAW half is covered above)."""
+        mem = _add(
+            lanes_manager,
+            "# Rule\nQuarantined rule content for the lanes gate test.",
+            [f"project:{PROJECT}", "mnemos:rule"],
+        )
+        assert lanes_manager.sqlite.update_fields(
+            mem.id,
+            pipeline_state=PipelineState.QUARANTINED,
+            quarantine_reason="secret",
+        )
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        assert mem.id not in {b["memory_id"] for b in result["blocks"]}
+        assert result["stats"]["recall"]["lanes"]["rules"] == 0
+
+    def test_dual_tagged_row_emitted_once_into_first_lane(
+        self, lanes_manager: MemoryManager
+    ) -> None:
+        """Review P2-1 regression: a row tagged BOTH ``mnemos:rule`` and
+        ``mnemos:decision`` is contract-legal (the subtype set requires
+        "at least one", not uniqueness) — it must surface exactly once,
+        in the FIRST lane of the pinned order, with telemetry counting
+        the emitted (post-dedup) rows."""
+        dual = _add(
+            lanes_manager,
+            "# Dual rule\nTagged both rule and decision at once.",
+            [f"project:{PROJECT}", "mnemos:rule", "mnemos:decision"],
+        )
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        ids = [b["memory_id"] for b in result["blocks"]]
+        assert len(ids) == len(set(ids)), "dual-tagged row surfaced twice"
+        assert ids.count(dual.id) == 1
+        block = next(b for b in result["blocks"] if b["memory_id"] == dual.id)
+        assert block["lane"] == "rules", "first lane in pinned order wins"
+        assert result["stats"]["recall"]["lanes"]["rules"] == 1
+        assert result["stats"]["recall"]["lanes"]["decisions"] == 0
+        traces = lanes_manager.sqlite.list_traces(project=PROJECT, task_label="assemble_lanes")
+        assert traces[0].rationale_summary == "decisions=0 rules=1"
+
 
 # ── Empty lane results ────────────────────────────────────────────────────────
 
@@ -354,6 +405,14 @@ class TestFlagOffEquivalence:
         monkeypatch.setattr(lanes_manager.sqlite, "list_all", _spy_on)
         lanes_manager.assemble_context(session=SESSION, project=PROJECT, query="handler deployment")
         assert len(lanes_calls) == 2, "lanes-on assemble should query rules + decisions once each"
+
+    def test_flag_off_writes_no_lane_trace_rows(self, manager: MemoryManager) -> None:
+        """Review P3-1: the trace row is the second flag-on side channel
+        (the spy above covers ``list_all`` only) — with the flag off,
+        assembling writes ZERO ``assemble_lanes`` trace rows."""
+        _corpus(manager)
+        manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        assert manager.sqlite.list_traces(project=PROJECT, task_label="assemble_lanes") == []
 
     def test_flag_off_output_has_no_lane_keys(
         self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch

@@ -384,7 +384,11 @@ def _recall_stage(
             # WITHIN their lane, lane order (rules → decisions → knowledge)
             # stays intact — an M8 pin must not reorder across lanes. Any
             # non-pinned lane value (tail lanes) keeps its candidates after
-            # the pinned segments instead of being dropped.
+            # the pinned segments instead of being dropped. NOTE: an
+            # applyTo-pinned KNOWLEDGE row loses its top-of-list pin here
+            # (the budget stage re-sorts within the knowledge lane);
+            # M8 scopes applyTo to rules, so that is off-contract input —
+            # follow up with the cascade slice if it ever matters.
             lane_values = [lane.value for lane in PRE_LLM_PINNED_LANES]
             tail_values = [
                 v for v in dict.fromkeys(c.lane for c in candidates) if v not in PRE_LLM_LANE_VALUES

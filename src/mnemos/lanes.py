@@ -65,9 +65,11 @@ keeps ``mnemos:rule`` / ``mnemos:decision`` as the only lane selectors.
   of the assembled output, NEVER inside the pinned lane prefix (a
   dynamic per-agent block inside the prefix would destroy the byte-stable
   H2 surface). ``assert_foreign_lanes_tail_only`` is the assertion-style
-  guard the budget stage runs when lanes are enabled: it fires the
-  moment a lane outside the pinned order (``synthesized`` today, the
-  future awareness lane) is ordered before a pinned-lane block.
+  guard the budget stage runs POST-SORT when lanes are enabled:
+  ``lane_sort_key`` already maps any foreign lane (``synthesized``
+  today, the future awareness lane) into the deterministic tail, so the
+  guard is defensive only — it fires if a future code path ever bypasses
+  the sort and places a foreign lane before a pinned-lane block.
 """
 
 from __future__ import annotations
@@ -152,9 +154,10 @@ def assert_foreign_lanes_tail_only(lane_values: list[str]) -> None:
     pre_llm_call order (``synthesized`` today; the future awareness
     lane) is ordered BEFORE a pinned-lane value: every foreign-lane
     block must render as a contiguous tail, never inside the pinned
-    prefix (the byte-stable H2 surface). The budget stage calls this
-    right after the lane sort when lanes are enabled — a future
-    awareness block injected into the prefix fires this immediately.
+    prefix (the byte-stable H2 surface). Defensive only, POST-SORT: the
+    budget stage calls this right after the lane sort, whose
+    ``lane_sort_key`` already maps foreign lanes into the tail — the
+    guard exists to fire if a future code path bypasses the sort.
     """
     seen_foreign = False
     for value in lane_values:
@@ -185,8 +188,11 @@ def deterministic_lane_results(mgr: MemoryManager, *, lane: Lane, project: str) 
     change, no ranking); rows are gated by ``is_context_admissible``
     (ADR-0018 status gate + the ADR-0019 §5 quarantine exception — the
     same entry invariant every LLM-bound path composes). Order is the
-    SQL order (``created_at DESC``), which is deterministic for one
-    store state — the stable tiebreak in the budget stage preserves it.
+    SQL order (``created_at DESC``); ``created_at`` ties resolve by
+    engine order (rowid) — deterministic for one store state, and the
+    stable tiebreak in the budget stage preserves it. The shared
+    ``list_all`` ORDER BY is the pre-existing ``recall_context``
+    precedent — deliberately NOT changed by this spike.
 
     Only the governance lanes have a deterministic leg: ``knowledge``
     rides the existing RRF hybrid recall in ``assemble.py``, and
@@ -207,11 +213,16 @@ def governance_lanes_recall(
 
     Returns ``(hits, counts)`` where each hit is ``(memory, lane)`` in
     lane order (rules first, then decisions) with the deterministic SQL
-    order inside a lane. The caller (``_recall_stage``) turns hits into
-    ``_Candidate``s — this module never touches the candidate model.
+    order inside a lane. A row tagged BOTH ``mnemos:rule`` and
+    ``mnemos:decision`` is contract-legal (``validate_tag_contract``
+    requires "at least one" subtype, not uniqueness) — it is emitted
+    ONCE, into the FIRST lane in pinned order (rules), so neither the
+    assembled blocks nor the telemetry can double-count it. The caller
+    (``_recall_stage``) turns hits into ``_Candidate``s — this module
+    never touches the candidate model.
 
     Telemetry: one ``TraceRecorder`` row (task ``assemble_lanes``, step
-    ``recall``) carrying only the per-lane counts in
+    ``recall``) carrying only the per-lane EMITTED counts in
     ``rationale_summary`` — never content (≤200 chars, truncation is the
     Trace model's own validator). ``save_trace`` failures are non-fatal
     by the recorder's contract; a telemetry write can never fail an
@@ -219,12 +230,21 @@ def governance_lanes_recall(
     """
     counts: dict[str, int] = {Lane.RULES.value: 0, Lane.DECISIONS.value: 0}
     hits: list[tuple[Memory, Lane]] = []
+    seen: set[str] = set()
     recorder = TraceRecorder(store=mgr.sqlite)
     with recorder.record("assemble_lanes", project, "recall") as trace:
         for lane in (Lane.RULES, Lane.DECISIONS):
-            rows = deterministic_lane_results(mgr, lane=lane, project=project)
-            counts[lane.value] = len(rows)
-            hits.extend((memory, lane) for memory in rows)
+            emitted = 0
+            for memory in deterministic_lane_results(mgr, lane=lane, project=project):
+                # Cross-lane dedup (review P2-1): first lane in pinned
+                # order wins — emitting a dual-tagged row in both lanes
+                # would duplicate the block and overcount telemetry.
+                if memory.id in seen:
+                    continue
+                seen.add(memory.id)
+                hits.append((memory, lane))
+                emitted += 1
+            counts[lane.value] = emitted
         trace.rationale_summary = " ".join(f"{k}={v}" for k, v in sorted(counts.items()))
     return hits, counts
 
