@@ -1,0 +1,677 @@
+"""ADR-0025 E1 — deterministic retrieval lanes tests (mnemos #253).
+
+Acceptance map (issue #253 acceptance clause → test):
+
+* lanes on → blocks carry ``lane``, rules/decisions surface
+  deterministically → ``TestLanesHappyPath``
+* empty lane results (no rules/decisions in store → no crash, no empty
+  sections) → ``TestEmptyLanes``
+* FLAG-OFF EQUIVALENCE — assemble output byte-identical with the flag
+  off vs the pre-change code path → ``TestFlagOffEquivalence`` (the
+  ``*_FIXTURE_SHA256`` constants were captured from the PRISTINE
+  b8968df tree before any lanes code existed: frozen assemble clock,
+  UUID-normalized ``json.dumps(sort_keys=True)`` — see
+  ``test_flag_off_reproduces_pre_change_fixture``)
+* ordering stability — same session, repeated assemblies → byte-stable
+  block order under lane ordering; interleaved scores do not reorder
+  across runs → ``TestOrderingStability`` (integration) and
+  ``TestBudgetOrderingUnit`` (pure sort semantics)
+* cascade-ready / awareness-ready contracts (R2/R3) →
+  ``TestCascadeReadyContracts`` / ``TestAwarenessContracts``
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import tempfile
+from collections.abc import Iterator
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from mnemos.assemble import _budget_stage, _Candidate
+from mnemos.config import Settings
+from mnemos.lanes import (
+    AWARENESS_CURSOR_PREFIX,
+    Lane,
+    assert_foreign_lanes_tail_only,
+    awareness_cursor_key,
+    deterministic_lane_results,
+    lane_sort_key,
+    read_awareness_cursor,
+    write_awareness_cursor,
+)
+from mnemos.manager import MemoryManager
+from mnemos.models import (
+    Memory,
+    MemoryCreate,
+    MemorySource,
+    MemoryStatus,
+    PipelineState,
+)
+
+PROJECT = "asm-proj"
+AGENT = "asm-agent"
+SESSION = "sess-e1"
+
+# ── Flag-off equivalence fixtures (captured on pristine b8968df) ──────────────
+#
+# Same corpus + frozen assemble clock as the fixture generator run against
+# the PRE-CHANGE tree (commit b8968df, before any lanes code existed).
+# UUIDs are normalized (memory ids are per-run uuid4) — everything else in
+# the dump (block order, scores, provenance, key sets, text) is compared
+# byte-for-byte via sha256. With LanesConfig.enabled=False the post-change
+# code must reproduce these hashes; ANY observable output change on the
+# default path fails here.
+
+NO_FILE_FIXTURE_SHA256 = "98988e3f744924583d40b00ed5da9874e5d5050d544dab360b2f27cbf2fe5655"
+WITH_FILE_FIXTURE_SHA256 = "f50553fb02643386976f1b920c5b7026d901407ffc767da26e99cfcd999fc450"
+
+FROZEN_ISO = "2026-09-13T12:00:00+00:00"
+FROZEN = datetime.fromisoformat(FROZEN_ISO)
+
+RULE_APPLYTO = "# Handler rule\nAlways run ruff before committing handler code."
+RULE_PLAIN = "# Release rule\nCut releases only from green CI."
+DECISION = "Decision: use SQLite WAL mode for the handler store."
+KNOW_A = (
+    "Deployment guide for the handler service.\n"
+    "The service is configured through the deployment manifest and the\n"
+    "access policy is rotated quarterly per the security baseline.\n"
+)
+KNOW_B = (
+    "import json\n"
+    "import logging\n"
+    "\n"
+    "def handler(event, context):\n"
+    '    """Route the deployment event."""\n'
+    "    return json.dumps(event)\n"
+)
+KNOW_C = "Incident notes: the handler queue backed up on 2026-08-01 due to a slow consumer."
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz: object = None) -> datetime:
+        return FROZEN if tz is not None else FROZEN.replace(tzinfo=None)
+
+
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _normalized_sha256(result: dict[str, Any]) -> str:
+    raw = json.dumps(result, sort_keys=True, indent=1)
+    return hashlib.sha256(_UUID_RE.sub("<uuid>", raw).encode()).hexdigest()
+
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+
+def _settings(tmp: Path, *, lanes_enabled: bool = False) -> Settings:
+    settings = Settings(
+        mnemos={
+            "vault_path": str(tmp / "vault"),
+            "data_dir": str(tmp / "data"),
+            "db_name": "test.db",
+        },
+        scanner={"enabled": False},
+        ccr={
+            "min_size_chars": 100,
+            "max_entries": 100,
+            "ttl_days": 1,
+        },  # type: ignore[arg-type]
+        lanes={"enabled": lanes_enabled},
+    )
+    settings.resolve_paths()
+    return settings
+
+
+def _manager(settings: Settings) -> MemoryManager:
+    mgr = MemoryManager(settings)
+    mock_embedder = MagicMock()
+    mock_embedder.embed.return_value = [0.1] * 384
+    mgr._embedder = mock_embedder
+    return mgr
+
+
+@pytest.fixture
+def manager() -> Iterator[MemoryManager]:
+    """Lanes OFF (the default) — the pre-E1 code path."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = _manager(_settings(Path(tmpdir)))
+        yield mgr
+        mgr.close()
+
+
+@pytest.fixture
+def lanes_manager() -> Iterator[MemoryManager]:
+    """Lanes ON (``LanesConfig.enabled=True`` — the E1 treatment path)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = _manager(_settings(Path(tmpdir), lanes_enabled=True))
+        yield mgr
+        mgr.close()
+
+
+def _add(mgr: MemoryManager, content: str, tags: list[str]) -> Memory:
+    return mgr.add(
+        MemoryCreate(
+            content=content,
+            tags=tags,
+            source=MemorySource.MCP,
+            status=MemoryStatus.PUBLISHED,
+        ),
+        project=PROJECT,
+        agent=AGENT,
+    )
+
+
+def _corpus(mgr: MemoryManager) -> None:
+    """The EXACT corpus of the flag-off fixture (order included)."""
+    _add(mgr, KNOW_A, [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"])
+    _add(mgr, RULE_APPLYTO, [f"project:{PROJECT}", "mnemos:rule", "applyTo:**/*.py"])
+    _add(mgr, DECISION, [f"project:{PROJECT}", "mnemos:decision"])
+    _add(mgr, KNOW_B, [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"])
+    _add(mgr, RULE_PLAIN, [f"project:{PROJECT}", "mnemos:rule"])
+    _add(mgr, KNOW_C, [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"])
+
+
+def _freeze_assemble_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("mnemos.assemble.datetime", _FrozenDatetime)
+
+
+# ── Happy path: lanes on ──────────────────────────────────────────────────────
+
+
+class TestLanesHappyPath:
+    def test_blocks_carry_lane_and_governance_leads(self, lanes_manager: MemoryManager) -> None:
+        _corpus(lanes_manager)
+        result = lanes_manager.assemble_context(
+            session=SESSION, project=PROJECT, query="handler deployment"
+        )
+        lanes = [b["lane"] for b in result["blocks"]]
+        assert lanes, "expected assembled blocks"
+        # Fixed lane order: rules → decisions → knowledge, regardless of
+        # RRF scores (the deterministic anti-drowning guarantee).
+        order = {lane: i for i, lane in enumerate(("rules", "decisions", "knowledge"))}
+        positions = [order[lane] for lane in lanes]
+        assert positions == sorted(positions), f"lane order violated: {lanes}"
+        assert "rules" in lanes and "decisions" in lanes and "knowledge" in lanes
+
+    def test_governance_surfaces_deterministically_without_query_match(
+        self, lanes_manager: MemoryManager
+    ) -> None:
+        """Rules/decisions surface even when the derived query has zero
+        lexical overlap with them — deterministic SQL, not ranking."""
+        _corpus(lanes_manager)
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        lanes = [b["lane"] for b in result["blocks"]]
+        assert "rules" in lanes
+        assert "decisions" in lanes
+
+    def test_governance_appears_exactly_once(self, lanes_manager: MemoryManager) -> None:
+        _corpus(lanes_manager)
+        result = lanes_manager.assemble_context(
+            session=SESSION, project=PROJECT, query="handler deployment"
+        )
+        ids = [b["memory_id"] for b in result["blocks"]]
+        assert len(ids) == len(set(ids)), "governance row surfaced twice (RRF + lane)"
+
+    def test_governance_excluded_from_knowledge_leg(self, lanes_manager: MemoryManager) -> None:
+        _corpus(lanes_manager)
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT, query="ruff")
+        # The applyTo rule's content IS the query — RRF would rank it; the
+        # knowledge leg must exclude it (it rides the rules lane).
+        assert result["stats"]["recall"]["lanes"]["governance_excluded_from_knowledge"] >= 1
+
+    def test_lane_telemetry_counts(self, lanes_manager: MemoryManager) -> None:
+        _corpus(lanes_manager)
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        lane_stats = result["stats"]["recall"]["lanes"]
+        assert lane_stats["rules"] == 2
+        assert lane_stats["decisions"] == 1
+        assert lane_stats["knowledge"] >= 1
+
+    def test_lane_trace_row_recorded(self, lanes_manager: MemoryManager) -> None:
+        _corpus(lanes_manager)
+        lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        traces = lanes_manager.sqlite.list_traces(project=PROJECT, task_label="assemble_lanes")
+        assert traces, "lane telemetry trace row missing"
+        assert traces[0].rationale_summary == "decisions=1 rules=2"
+        assert traces[0].step == "recall"
+
+    def test_applyto_pins_within_lane_not_across(self, lanes_manager: MemoryManager) -> None:
+        _corpus(lanes_manager)
+        result = lanes_manager.assemble_context(
+            session=SESSION, project=PROJECT, file="src/handler.py", query="handler deployment"
+        )
+        assert result["stats"]["recall"]["applyto_pinned"] == 1
+        blocks = result["blocks"]
+        # The applyTo rule leads its OWN lane…
+        assert blocks[0]["lane"] == "rules"
+        # …but decisions still follow every rules block (no cross-lane
+        # reordering by the M8 pin).
+        lane_seq = [b["lane"] for b in blocks]
+        assert lane_seq.index("decisions") > lane_seq.index("rules")
+
+    def test_raw_governance_row_never_surfaces(self, lanes_manager: MemoryManager) -> None:
+        """The ADR-0018 status gate composes with the deterministic lanes —
+        a RAW rule is invisible on the lane channel too."""
+        raw = lanes_manager.add(
+            MemoryCreate(
+                content="# Raw rule\nRaw rule content for the lanes gate test.",
+                tags=[f"project:{PROJECT}", "mnemos:rule"],
+                source=MemorySource.MCP,
+                status=MemoryStatus.RAW,
+            ),
+            project=PROJECT,
+            agent=AGENT,
+        )
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        assert raw.id not in {b["memory_id"] for b in result["blocks"]}
+        assert result["stats"]["recall"]["lanes"]["rules"] == 0
+
+    def test_quarantined_published_governance_row_never_surfaces(
+        self, lanes_manager: MemoryManager
+    ) -> None:
+        """PUBLISHED + ``pipeline_state=quarantined`` (the ADR-0019 §5
+        composition in ``is_context_admissible``) is excluded from the
+        deterministic lanes — pinning the quarantine half behaviorally
+        (the RAW half is covered above)."""
+        mem = _add(
+            lanes_manager,
+            "# Rule\nQuarantined rule content for the lanes gate test.",
+            [f"project:{PROJECT}", "mnemos:rule"],
+        )
+        assert lanes_manager.sqlite.update_fields(
+            mem.id,
+            pipeline_state=PipelineState.QUARANTINED,
+            quarantine_reason="secret",
+        )
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        assert mem.id not in {b["memory_id"] for b in result["blocks"]}
+        assert result["stats"]["recall"]["lanes"]["rules"] == 0
+
+    def test_dual_tagged_row_emitted_once_into_first_lane(
+        self, lanes_manager: MemoryManager
+    ) -> None:
+        """Review P2-1 regression: a row tagged BOTH ``mnemos:rule`` and
+        ``mnemos:decision`` is contract-legal (the subtype set requires
+        "at least one", not uniqueness) — it must surface exactly once,
+        in the FIRST lane of the pinned order, with telemetry counting
+        the emitted (post-dedup) rows."""
+        dual = _add(
+            lanes_manager,
+            "# Dual rule\nTagged both rule and decision at once.",
+            [f"project:{PROJECT}", "mnemos:rule", "mnemos:decision"],
+        )
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        ids = [b["memory_id"] for b in result["blocks"]]
+        assert len(ids) == len(set(ids)), "dual-tagged row surfaced twice"
+        assert ids.count(dual.id) == 1
+        block = next(b for b in result["blocks"] if b["memory_id"] == dual.id)
+        assert block["lane"] == "rules", "first lane in pinned order wins"
+        assert result["stats"]["recall"]["lanes"]["rules"] == 1
+        assert result["stats"]["recall"]["lanes"]["decisions"] == 0
+        traces = lanes_manager.sqlite.list_traces(project=PROJECT, task_label="assemble_lanes")
+        assert traces[0].rationale_summary == "decisions=0 rules=1"
+
+
+# ── Empty lane results ────────────────────────────────────────────────────────
+
+
+class TestEmptyLanes:
+    def test_no_governance_in_store_no_crash(self, lanes_manager: MemoryManager) -> None:
+        _add(lanes_manager, KNOW_A, [f"project:{PROJECT}", "mnemos:learning"])
+        result = lanes_manager.assemble_context(
+            session=SESSION, project=PROJECT, query="deployment guide"
+        )
+        # No crash, no empty sections: every block is a knowledge block.
+        assert result["blocks"], "knowledge row should surface"
+        assert all(b["lane"] == "knowledge" for b in result["blocks"])
+        assert result["stats"]["recall"]["lanes"] == {
+            "rules": 0,
+            "decisions": 0,
+            "knowledge": len(result["blocks"]),
+            "governance_excluded_from_knowledge": 0,
+        }
+
+    def test_empty_project_lanes_on(self, lanes_manager: MemoryManager) -> None:
+        result = lanes_manager.assemble_context(session=SESSION, project=PROJECT)
+        assert result["text"] == ""
+        assert result["blocks"] == []
+        assert result["stats"]["recall"]["lanes"]["rules"] == 0
+        assert result["stats"]["stages"] == [
+            "recall",
+            "ccr",
+            "filter",
+            "scan",
+            "align",
+            "budget",
+        ], "STAGE_ORDER unchanged — lanes are a SUB-stage of recall"
+
+
+# ── Flag-off equivalence (the E1 rollback proof) ─────────────────────────────
+
+
+class TestFlagOffEquivalence:
+    def test_flag_off_reproduces_pre_change_fixture(
+        self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Strong version: the flag-off output of the POST-change code is
+        byte-identical (UUID-normalized, frozen clock) to the output of the
+        PRE-change tree — the fixture hashes were captured on pristine
+        b8968df before any lanes code existed."""
+        _freeze_assemble_clock(monkeypatch)
+        _corpus(manager)
+        no_file = manager.assemble_context(session=SESSION, project=PROJECT)
+        assert _normalized_sha256(no_file) == NO_FILE_FIXTURE_SHA256
+        with_file = manager.assemble_context(
+            session=SESSION, project=PROJECT, file="src/handler.py", query="handler deployment"
+        )
+        assert _normalized_sha256(with_file) == WITH_FILE_FIXTURE_SHA256
+
+    def test_flag_off_runs_no_lane_queries(
+        self,
+        manager: MemoryManager,
+        lanes_manager: MemoryManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The only new query channel is ``list_all`` — with the flag off it
+        must never run during assembly."""
+        _corpus(manager)
+        calls: list[str] = []
+        real_off = manager.sqlite.list_all
+
+        def _spy_off(*args: object, **kwargs: object) -> object:
+            calls.append("list_all")
+            return real_off(*args, **kwargs)  # type: ignore[no-any-return]
+
+        monkeypatch.setattr(manager.sqlite, "list_all", _spy_off)
+        manager.assemble_context(session=SESSION, project=PROJECT, query="handler deployment")
+        assert calls == [], f"flag-off assemble ran lane queries: {calls}"
+
+        _corpus(lanes_manager)
+        lanes_calls: list[str] = []
+        real_on = lanes_manager.sqlite.list_all
+
+        def _spy_on(*args: object, **kwargs: object) -> object:
+            lanes_calls.append("list_all")
+            return real_on(*args, **kwargs)  # type: ignore[no-any-return]
+
+        monkeypatch.setattr(lanes_manager.sqlite, "list_all", _spy_on)
+        lanes_manager.assemble_context(session=SESSION, project=PROJECT, query="handler deployment")
+        assert len(lanes_calls) == 2, "lanes-on assemble should query rules + decisions once each"
+
+    def test_flag_off_writes_no_lane_trace_rows(self, manager: MemoryManager) -> None:
+        """Review P3-1: the trace row is the second flag-on side channel
+        (the spy above covers ``list_all`` only) — with the flag off,
+        assembling writes ZERO ``assemble_lanes`` trace rows."""
+        _corpus(manager)
+        manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        assert manager.sqlite.list_traces(project=PROJECT, task_label="assemble_lanes") == []
+
+    def test_flag_off_output_has_no_lane_keys(
+        self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Recursive walk: the default-path output carries no ``lane`` /
+        ``lanes`` keys anywhere — the block/stats shape is the pre-E1
+        shape, not a default-valued extension of it."""
+
+        def _walk(node: object) -> None:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    assert key not in ("lane", "lanes"), f"unexpected lanes key: {key}"
+                    _walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    _walk(item)
+
+        _corpus(manager)
+        _freeze_assemble_clock(monkeypatch)
+        _walk(manager.assemble_context(session=SESSION, project=PROJECT))
+        _walk(
+            manager.assemble_context(
+                session=SESSION, project=PROJECT, file="src/handler.py", query="handler deployment"
+            )
+        )
+
+    def test_flag_off_repeat_runs_byte_identical(
+        self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _freeze_assemble_clock(monkeypatch)
+        _corpus(manager)
+        first = manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        second = manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        assert first == second
+        assert first["text"] == second["text"]
+
+    def test_default_settings_lanes_disabled(self) -> None:
+        assert Settings().lanes.enabled is False, "LanesConfig.enabled must default to False"
+
+    def test_env_override_enables_lanes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MNEMOS_LANES__ENABLED", "true")
+        assert Settings().lanes.enabled is True
+
+    def test_config_model_is_single_switch(self) -> None:
+        """LanesConfig has exactly one field — the E1 contract: ONE switch,
+        no second enablement path."""
+        from mnemos.config import LanesConfig
+
+        assert set(LanesConfig.model_fields) == {"enabled"}
+
+
+# ── Ordering stability (H2 surface) ──────────────────────────────────────────
+
+
+class TestOrderingStability:
+    def test_repeated_assemblies_byte_stable(
+        self, lanes_manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same session, repeated assemblies → byte-stable block order under
+        lane ordering (the deterministic KV-cache prefix, H2)."""
+        _freeze_assemble_clock(monkeypatch)
+        _corpus(lanes_manager)
+        first = lanes_manager.assemble_context(
+            session=SESSION, project=PROJECT, query="handler deployment"
+        )
+        second = lanes_manager.assemble_context(
+            session=SESSION, project=PROJECT, query="handler deployment"
+        )
+        assert first == second
+        assert first["text"] == second["text"]
+
+    def test_high_knowledge_score_does_not_reorder_governance(
+        self, lanes_manager: MemoryManager
+    ) -> None:
+        """Interleaved scores: the knowledge entry with the strongest query
+        match still renders AFTER every rules/decisions block — lane order
+        dominates score."""
+        _corpus(lanes_manager)
+        result = lanes_manager.assemble_context(
+            session=SESSION, project=PROJECT, query="ruff before committing handler code"
+        )
+        lanes = [b["lane"] for b in result["blocks"]]
+        assert "knowledge" in lanes
+        first_knowledge = lanes.index("knowledge")
+        assert set(lanes[:first_knowledge]) == {"rules", "decisions"}
+
+
+def _cand(lane: str, score: float, content: str = "stable candidate content") -> _Candidate:
+    return _Candidate(
+        memory=Memory(content=content, status=MemoryStatus.PUBLISHED, project=PROJECT),
+        score=score,
+        search_type="lane",
+        content_type="prose",
+        content=content,
+        lane=lane,
+    )
+
+
+class TestBudgetOrderingUnit:
+    """Pure sort semantics of the budget-stage lane ordering."""
+
+    def test_interleaved_scores_collapse_into_lane_order(self) -> None:
+        # Knowledge scores deliberately DOMINATE lane scores (RRF scores
+        # are typically ≪ 1.0; deterministic lanes carry 1.0 — but the
+        # test must hold even if a knowledge score beats 1.0).
+        candidates = [
+            _cand("knowledge", 9.9, "k-high"),
+            _cand("rules", 1.0, "r-1"),
+            _cand("knowledge", 8.8, "k-mid"),
+            _cand("decisions", 1.0, "d-1"),
+            _cand("rules", 1.0, "r-2"),
+            _cand("knowledge", 7.7, "k-low"),
+        ]
+        blocks, texts, stats = _budget_stage(
+            candidates, budget=4096, project=PROJECT, retrieved_iso=FROZEN_ISO, lanes_enabled=True
+        )
+        assert [b["lane"] for b in blocks] == [
+            "rules",
+            "rules",
+            "decisions",
+            "knowledge",
+            "knowledge",
+            "knowledge",
+        ]
+        # Within a lane: score desc; the stable tiebreak keeps recall order
+        # (r-1 before r-2 — equal scores, first-seen wins).
+        assert [b["content"] for b in blocks[:2]] == ["r-1", "r-2"]
+        assert [b["content"] for b in blocks[3:]] == ["k-high", "k-mid", "k-low"]
+        assert stats["blocks_included"] == 6
+        assert len(texts) == 6
+
+    def test_off_path_never_sorts_and_never_renders_lane(self) -> None:
+        candidates = [
+            _cand("knowledge", 1.0, "k"),
+            _cand("rules", 1.0, "r"),  # defensive: even a lane-tagged candidate
+        ]
+        blocks, _, _ = _budget_stage(
+            candidates, budget=4096, project=PROJECT, retrieved_iso=FROZEN_ISO
+        )
+        # No sort (recall order stands) and no lane key rendered.
+        assert [b["content"] for b in blocks] == ["k", "r"]
+        assert all("lane" not in b for b in blocks)
+
+    def test_synthesized_sorts_after_pinned_prefix(self) -> None:
+        candidates = [
+            _cand("knowledge", 5.0, "k"),
+            _cand("synthesized", 5.0, "s"),
+            _cand("rules", 1.0, "r"),
+        ]
+        blocks, _, _ = _budget_stage(
+            candidates, budget=4096, project=PROJECT, retrieved_iso=FROZEN_ISO, lanes_enabled=True
+        )
+        assert [b["lane"] for b in blocks] == ["rules", "knowledge", "synthesized"]
+
+    def test_lane_sort_key_order(self) -> None:
+        ordered = sorted(
+            ["awareness", "synthesized", "knowledge", "decisions", "rules"],
+            key=lane_sort_key,
+        )
+        assert ordered == ["rules", "decisions", "knowledge", "synthesized", "awareness"]
+
+
+# ── Cascade-ready contracts (R2 — fields only, no mechanics) ─────────────────
+
+
+class TestCascadeReadyContracts:
+    def test_lane_enum_includes_synthesized(self) -> None:
+        assert Lane.SYNTHESIZED.value == "synthesized"
+        assert {lane.value for lane in Lane} == {
+            "rules",
+            "decisions",
+            "knowledge",
+            "synthesized",
+        }
+
+    def test_nothing_populates_synthesized_or_knowledge_via_sql_leg(
+        self, manager: MemoryManager
+    ) -> None:
+        _corpus(manager)
+        for lane in (Lane.SYNTHESIZED, Lane.KNOWLEDGE):
+            with pytest.raises(ValueError, match="no deterministic SQL leg"):
+                deterministic_lane_results(manager, lane=lane, project=PROJECT)
+
+    def test_collapse_level_convention_documented(self) -> None:
+        """The collapse cascade's ``collapse_level`` key convention lives in
+        the lanes.py docstring: metadata key, never tags, never schema."""
+        import mnemos.lanes as lanes_mod
+
+        text = " ".join((lanes_mod.__doc__ or "").split())
+        assert "collapse_level" in text
+        assert "the metadata key is exactly" in text
+
+    def test_tag_contract_not_extended(self) -> None:
+        from mnemos.models import ALLOWED_OPTIONAL_PREFIXES
+
+        assert "area" not in ALLOWED_OPTIONAL_PREFIXES, "tag contract must stay closed in v0"
+
+
+# ── Awareness-ready contracts (R3 — fields only) ─────────────────────────────
+
+
+class TestAwarenessContracts:
+    def test_cursor_roundtrip_and_key_format(self, manager: MemoryManager) -> None:
+        assert read_awareness_cursor(manager, project=PROJECT, agent=AGENT, session=SESSION) is None
+        write_awareness_cursor(
+            manager, project=PROJECT, agent=AGENT, session=SESSION, cursor="mem-001"
+        )
+        key = f"{AWARENESS_CURSOR_PREFIX}{PROJECT}:{AGENT}:{SESSION}"
+        assert manager.sqlite.get_meta(key) == "mem-001"  # exact R3 key format
+        assert (
+            read_awareness_cursor(manager, project=PROJECT, agent=AGENT, session=SESSION)
+            == "mem-001"
+        )
+
+    def test_cursor_upsert_overwrites_in_place(self, manager: MemoryManager) -> None:
+        write_awareness_cursor(
+            manager, project=PROJECT, agent=AGENT, session=SESSION, cursor="mem-001"
+        )
+        write_awareness_cursor(
+            manager, project=PROJECT, agent=AGENT, session=SESSION, cursor="mem-002"
+        )
+        assert (
+            read_awareness_cursor(manager, project=PROJECT, agent=AGENT, session=SESSION)
+            == "mem-002"
+        )
+
+    def test_cursor_key_validation(self) -> None:
+        with pytest.raises(ValueError, match="agent"):
+            awareness_cursor_key(project=PROJECT, agent="", session=SESSION)
+        with pytest.raises(ValueError, match="session"):
+            awareness_cursor_key(project=PROJECT, agent=AGENT, session="  ")
+
+    def test_cursor_write_rejects_empty(self, manager: MemoryManager) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            write_awareness_cursor(
+                manager, project=PROJECT, agent=AGENT, session=SESSION, cursor=" "
+            )
+
+    def test_guard_passes_for_tail_only_foreign_lanes(self) -> None:
+        # Pinned-only ordering: fine. Foreign lanes (synthesized / the
+        # future awareness lane) in a contiguous tail: fine — awareness
+        # renders LAST. All calls must simply not raise.
+        assert_foreign_lanes_tail_only(["rules", "decisions", "knowledge"])
+        assert_foreign_lanes_tail_only(["rules", "knowledge", "synthesized", "awareness"])
+        assert_foreign_lanes_tail_only([])
+
+    def test_guard_fires_when_foreign_lane_enters_pinned_prefix(self) -> None:
+        with pytest.raises(AssertionError, match="pinned prefix"):
+            assert_foreign_lanes_tail_only(["rules", "awareness", "knowledge"])
+        with pytest.raises(AssertionError, match="pinned prefix"):
+            assert_foreign_lanes_tail_only(["synthesized", "rules"])
+
+    def test_awareness_conventions_documented(self) -> None:
+        import mnemos.lanes as lanes_mod
+
+        text = lanes_mod.__doc__ or ""
+        # Per-agent delta slot (one agent = max one delta block)…
+        assert "AT MOST one delta block" in text
+        # …cursor key format…
+        assert "awr:{project}:{agent}:{session}" in text
+        # …and the renders-LAST invariant.
+        assert "renders LAST" in text or "Awareness renders LAST" in text

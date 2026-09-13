@@ -9,7 +9,14 @@ Fixed pipeline, in order (ADR-0017 D1 with the ADR-0018 CCR-stage amendment):
   1. recall     — hybrid RRF via ``MemoryManager.search`` (FTS5 + vector
                   legs, ``CONTEXT_ADMISSIBLE_STATUSES`` gate by default —
                   no ``status``/``include_raw`` is passed, so only
-                  ``published``/``processed`` surface).
+                  ``published``/``processed`` surface). ADR-0025 E1: when
+                  ``LanesConfig.enabled`` is on, this stage runs the
+                  deterministic lanes SUB-STAGE first (``mnemos/lanes.py``
+                  — rules/decisions via ``list_all(tags=...)``, knowledge
+                  = the same RRF recall with governance rows excluded);
+                  the six-stage order itself is unchanged, and with the
+                  flag off (the default) the code path is identical to
+                  the pre-E1 pipeline.
   2. ccr        — OPTIONAL (``expand_ccr=True``): expand inline
                   ``[compressed: <hash> | …]`` markers found in recalled
                   content via ``retrieve_content`` (project-scoped, already
@@ -100,6 +107,15 @@ from typing import TYPE_CHECKING, Any, Final
 
 from mnemos.ccr import parse_marker
 from mnemos.filter.pipeline import detect_profile, estimate_tokens
+from mnemos.lanes import (
+    PRE_LLM_LANE_VALUES,
+    PRE_LLM_PINNED_LANES,
+    Lane,
+    assert_foreign_lanes_tail_only,
+    governance_lanes_recall,
+    is_governance,
+    lane_sort_key,
+)
 from mnemos.models import Memory
 
 if TYPE_CHECKING:
@@ -160,6 +176,10 @@ class _Candidate:
     # Filter/align stage bookkeeping.
     filter_profile: str | None = None
     align_moved_chars: int = 0
+    # ADR-0025 E1 — retrieval lane of this candidate ("knowledge" is the
+    # pre-E1 default, so a flag-off assembly needs no lane bookkeeping at
+    # all). The ONLY structural model change of the lanes spike.
+    lane: str = "knowledge"
 
 
 # ── Provenance ─────────────────────────────────────────────────────────────────
@@ -261,6 +281,16 @@ def _matches_apply_to(memory: Memory, file: str) -> bool:
     return False
 
 
+def _applyto_partition(cands: list[_Candidate], file: str) -> tuple[list[_Candidate], int]:
+    """Stable partition — applyTo-matching rules float up (M8 semantics),
+    preserving order within the matched/unmatched groups."""
+    matched: list[_Candidate] = []
+    unmatched: list[_Candidate] = []
+    for c in cands:
+        (matched if _matches_apply_to(c.memory, file) else unmatched).append(c)
+    return matched + unmatched, len(matched)
+
+
 def _recall_stage(
     mgr: MemoryManager,
     *,
@@ -268,6 +298,7 @@ def _recall_stage(
     file: str | None,
     content_type: str | None,
     query: str | None = None,
+    lanes_enabled: bool = False,
 ) -> tuple[list[_Candidate], dict[str, Any]]:
     """Hybrid RRF recall (status-gated) + contentType filter + applyTo pinning.
 
@@ -287,6 +318,19 @@ def _recall_stage(
     interim boundary drop this channel carried
     (``stats.recall.project_scoped_out``) was removed: the systemic fix
     supersedes the channel patch.
+
+    ADR-0025 E1 lanes SUB-STAGE (``lanes_enabled`` from
+    ``LanesConfig.enabled``, default off): before the knowledge leg,
+    ``governance_lanes_recall`` runs the deterministic rules/decisions
+    queries (``list_all(tags=...)``, the ``recall_context`` pattern —
+    no ranking, SQL order is the deterministic order); governance-tagged
+    rows are EXCLUDED from the RRF knowledge leg (they surface via their
+    own lanes — leaving them in RRF too would duplicate blocks and
+    re-create the drowning). applyTo pinning partitions WITHIN each lane
+    when lanes are on, so the pinned lane order survives file context;
+    with lanes off the partition runs over the whole list exactly as
+    before. With the flag off no lane query runs and the stats dict
+    carries no ``lanes`` key — the pre-E1 output, byte-identical.
     """
     derived_query = query if query else (Path(file).stem if file else project)
 
@@ -295,7 +339,30 @@ def _recall_stage(
     fallbacks = [0]
     candidates: list[_Candidate] = []
     type_filtered = 0
+    governance_excluded = 0
+
+    if lanes_enabled:
+        lane_hits, lane_counts = governance_lanes_recall(mgr, project=project)
+        for memory, lane in lane_hits:
+            ct = _content_type_of(memory, fallbacks=fallbacks)
+            if content_type is not None and ct != content_type:
+                type_filtered += 1
+                continue
+            candidates.append(
+                _Candidate(
+                    memory=memory,
+                    score=1.0,
+                    search_type="lane",
+                    content_type=ct,
+                    content=memory.effective_content(),
+                    lane=lane.value,
+                )
+            )
+
     for r in results:
+        if lanes_enabled and is_governance(r.memory):
+            governance_excluded += 1
+            continue
         ct = _content_type_of(r.memory, fallbacks=fallbacks)
         if content_type is not None and ct != content_type:
             type_filtered += 1
@@ -312,12 +379,29 @@ def _recall_stage(
 
     pinned = 0
     if file:
-        # Stable partition — applyTo-matching rules float to the top of the
-        # candidate list (M8 semantics) preserving rank order within groups.
-        matched = [c for c in candidates if _matches_apply_to(c.memory, file)]
-        unmatched = [c for c in candidates if not _matches_apply_to(c.memory, file)]
-        candidates = matched + unmatched
-        pinned = len(matched)
+        if lanes_enabled:
+            # Per-lane stable partition: file-matching rules float up
+            # WITHIN their lane, lane order (rules → decisions → knowledge)
+            # stays intact — an M8 pin must not reorder across lanes. Any
+            # non-pinned lane value (tail lanes) keeps its candidates after
+            # the pinned segments instead of being dropped. NOTE: an
+            # applyTo-pinned KNOWLEDGE row loses its top-of-list pin here
+            # (the budget stage re-sorts within the knowledge lane);
+            # M8 scopes applyTo to rules, so that is off-contract input —
+            # follow up with the cascade slice if it ever matters.
+            lane_values = [lane.value for lane in PRE_LLM_PINNED_LANES]
+            tail_values = [
+                v for v in dict.fromkeys(c.lane for c in candidates) if v not in PRE_LLM_LANE_VALUES
+            ]
+            reordered: list[_Candidate] = []
+            for lane_value in lane_values + tail_values:
+                segment = [c for c in candidates if c.lane == lane_value]
+                seg, seg_pinned = _applyto_partition(segment, file)
+                reordered.extend(seg)
+                pinned += seg_pinned
+            candidates = reordered
+        else:
+            candidates, pinned = _applyto_partition(candidates, file)
 
     stats: dict[str, Any] = {
         "query": derived_query,
@@ -328,6 +412,13 @@ def _recall_stage(
         "content_type_fallbacks": fallbacks[0],
         "applyto_pinned": pinned,
     }
+    if lanes_enabled:
+        stats["lanes"] = {
+            "rules": lane_counts.get(Lane.RULES.value, 0),
+            "decisions": lane_counts.get(Lane.DECISIONS.value, 0),
+            "knowledge": sum(1 for c in candidates if c.lane == Lane.KNOWLEDGE.value),
+            "governance_excluded_from_knowledge": governance_excluded,
+        }
     return candidates, stats
 
 
@@ -500,8 +591,27 @@ def _budget_stage(
     budget: int,
     project: str,
     retrieved_iso: str,
+    lanes_enabled: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
-    """Greedy rank-ordered inclusion of whole provenance-wrapped blocks."""
+    """Greedy rank-ordered inclusion of whole provenance-wrapped blocks.
+
+    ADR-0025 E1 lane ordering: when lanes are enabled, candidates are
+    first sorted by ``(lane order, score desc)`` with a STABLE tiebreak —
+    Python's stable sort preserves the deterministic recall order for
+    equal (lane, score) pairs, so the block prefix is byte-stable across
+    assemblies of one session (the KV-cache hypothesis H2 surface,
+    E0 §2.2). Lane order is fixed: rules → decisions → knowledge;
+    anything outside the pinned prefix (``synthesized`` today, the
+    future awareness lane) sorts into the deterministic tail, and
+    ``assert_foreign_lanes_tail_only`` fires if a foreign lane ever
+    lands inside the pinned prefix. With lanes off there is NO sort
+    (recall order stands, exactly as pre-E1) and blocks carry no
+    ``lane`` key — the flag-off output stays byte-identical.
+    """
+    if lanes_enabled:
+        candidates.sort(key=lambda c: (*lane_sort_key(c.lane), -c.score))
+        assert_foreign_lanes_tail_only([c.lane for c in candidates])
+
     included: list[dict[str, Any]] = []
     texts: list[str] = []
     skipped = 0
@@ -539,6 +649,10 @@ def _budget_stage(
             # wrapper format is unchanged (it names the outer memory).
             "ccr_hashes": list(cand.ccr_hashes),
         }
+        if lanes_enabled:
+            # ADR-0025 E1 — additive lane field; OMITTED entirely when
+            # lanes are off so the flag-off block shape is unchanged.
+            block["lane"] = cand.lane
         if cand.redactions:
             block["redacted_patterns"] = cand.redacted_patterns
         included.append(block)
@@ -681,10 +795,18 @@ def assemble_context(
     delivery = "async" if mode == "async" else "sync"
     content_type: str | None = mode if mode in _CONTENT_TYPE_MODES else None
     retrieved_iso = datetime.now(UTC).isoformat()
+    # ADR-0025 E1 — the ONE switch (LanesConfig.enabled, default False):
+    # read once, threaded to the recall sub-stage and the budget stage.
+    lanes_enabled = mgr.settings.lanes.enabled
 
     # ── Fixed stage order (D1; recorded verbatim in stats) ────────────────
     candidates, recall_stats = _recall_stage(
-        mgr, project=project, file=file, content_type=content_type, query=query
+        mgr,
+        project=project,
+        file=file,
+        content_type=content_type,
+        query=query,
+        lanes_enabled=lanes_enabled,
     )
     ccr_stats = _ccr_stage(
         mgr,
@@ -699,7 +821,11 @@ def assemble_context(
     scan_stats = _scan_stage(mgr, candidates)
     align_stats = _align_stage(mgr, candidates)
     blocks, texts, budget_stats = _budget_stage(
-        candidates, budget=budget, project=project, retrieved_iso=retrieved_iso
+        candidates,
+        budget=budget,
+        project=project,
+        retrieved_iso=retrieved_iso,
+        lanes_enabled=lanes_enabled,
     )
 
     result: dict[str, Any] = {
