@@ -71,6 +71,7 @@
 | 2026-08-31 | P1-фиксы [#170](https://github.com/Korrnals/mnemos/issues/170)/[#171](https://github.com/Korrnals/mnemos/issues/171)/[#193](https://github.com/Korrnals/mnemos/issues/193) | **#170** lease/reclaim зависших `processing`: `REFINE_LEASE_TIMEOUT_SEC=600` (claim штампует lease-часы `updated_at`), идемпотентный CAS-reclaim в sweeper-цикле процессора (`WHERE pipeline_state='processing' AND updated_at < cutoff` — двойной воркер/свипер безопасен), аудит `outcome=lease-reclaimed age=…`, retry-бюджет не расходуется. **#171** N1-гейт контентных правок распространён на все admissible-статусы (edit-ветка; flip-ветка осталась PUBLISHED-only — контракт knowledge-pipeline: rewrite-оригиналы редактируются на выдаче): отказ → демоция RAW без касания `pipeline_state` (инвариант B1), чистая правка PROCESSED → `pipeline_state=pending` (F8-семантика, включая legacy-NULL admissible-строки). **#193** `update()` сбрасывает `clean_content` той же транзакцией, что пишет новый контент (B2a swap-дисциплина); served-проекция (`effective_content`) — новый контент немедленно; S1-базлайн перезаписан честно (`filter_projection_stale_after_update` true→false, остальные метрики байт-точно). Сьют 2186 → 2203 (+17: lease-reclaim 7, PROCESSED-гейт 7, сброс проекции 3); мутации 5+2+2 пойманы. NM-трек [#197](https://github.com/Korrnals/mnemos/issues/197)/ADR-0021 внесён в DAG (§4) |
 | 2026-09-13 | Срез 1 §4a «Стабилизация + документация» (цикл АрхКома мета-уровня) | Docs-волна [PR #256](https://github.com/Korrnals/mnemos/pull/256) (ADR-0025/0026, отчёт цикла, §4a, формулировки EN/RU); зависший фикс #245 [PR #257](https://github.com/Korrnals/mnemos/pull/257); P0-батч #250 [PR #260](https://github.com/Korrnals/mnemos/pull/260) (карантин вход+чтение, strip-by-default, ANY-member no-federate, input_set_hash, суперпрессия ARCHIVED); origin= provenance [PR #262](https://github.com/Korrnals/mnemos/pull/262); D0 #251 [PR #263](https://github.com/Korrnals/mnemos/pull/263) (save_checkpoint single authority, binding, issuer-dedup, трёхслойная защита штампов — security approve после ремонта); формат-долг verify [PR #268](https://github.com/Korrnals/mnemos/pull/268). Сьют 2419 → 2452; bench-s1 gate PASS. Урожай трекера: #258/#259/#261(закрыт)/#264/#265/#266/#267 |
 | 2026-09-13 | Срез 2 §4a «Предрегистрация + движок за флагом» | E0-предрегистрация [PR #271](https://github.com/Korrnals/mnemos/pull/271) (docs/experiments/e0-meta-level.md, 394 строки; request-changes → до-прогонная правка → approve; закрывает #252); E1-спайк lanes [PR #272](https://github.com/Korrnals/mnemos/pull/272) (lanes.py за LanesConfig default-off, byte-эквивалентность off sha256-фикстурами, cascade/awareness-ready контракты; P2 lane-dedup → ремонт → approve; закрывает #253); format-долг #270 [PR #273](https://github.com/Korrnals/mnemos/pull/273). Сьют 2452 → 2492 passed / 3 skipped: +37 lane-тестов (34 спайк + 3 ремонт `cb95d4d`) и +3 теста от параллельного PR #270 (#258, вне среза). Правило §4a-1 соблюдено: E1 стартовал только после мержа E0. Далее: E2 (страты корпуса по E0-спеке) |
+| 2026-09-13 | Interleave-волна: срез 3 (awareness v0) ∥ E2 волна 1 (владелец делегировал секвенирование TL директивой 2026-09-13; interleave по рекомендации АрхКома) | Awareness v0 [PR #275](https://github.com/Korrnals/mnemos/pull/275) (closes #254; двойное ревью code+security → консолидированный ремонт по 13 находкам → approve; hooks-композиция R3, инструменты 26→27, federated_origin-штампы, E0-амендмент revision 2; +59 тестов); E2 волна 1 [PR #276](https://github.com/Korrnals/mnemos/pull/276) (G-gov 96/48×2 + пул 52, G-neg 24, профиль 57.96%, слепая адъюдикация; +696 тестов; analytics approve). Сьют на ветках: 2551 (awareness) / 3188 (E2); объединённый main — **3247 passed / 3 skipped** (2492 + 696 + 59 — точная сумма), bench-s1 gate PASS (recall@5 0.8745), mypy --strict 88 файлов, format/lint/doctor/check-version зелёные; pip-audit остаётся вынесенным в [#267](https://github.com/Korrnals/mnemos/issues/267). Трекер: [#277](https://github.com/Korrnals/mnemos/issues/277) (E3-readiness), [#278](https://github.com/Korrnals/mnemos/issues/278) (awareness-полировка) |
 
 ## 4. DAG ближайших волн
 
@@ -343,10 +344,37 @@ default-off; ничего не ломает прод.
 attribution, project-scoped fail-closed, born no-federate. Зависимости:
 #251 (срез 1). Тесты по acceptance #254.
 
+**✅ 2026-09-13, [PR #275](https://github.com/Korrnals/mnemos/pull/275)**
+(двойное ревью — code + security — request-changes → консолидированный
+ремонт `41ffd9c` по 13 находкам → оба approve). Green-light по interleave:
+директивой владельца 2026-09-13 секвенирование делегировано ТехЛиду —
+решение принято TL по рекомендации АрхКома (interleave, не swap).
+Реализовано: awareness.py (presence_snapshot/project_delta/conflict-hints,
+двухуровневое доверие с дословной оговоркой R3 и inline-[unverified],
+per-agent слот, ограничение секции top-8), hooks-композиция
+(include_awareness opt-in, off-путь побайтово эквивалентен, закреплено
+тестом), MCP `mnemos_awareness` + REST-паритет (инструментов 26→27),
+abstention attribution (цепочка воздержание→дельта-блок→чекпоинт→сессия
+писателя, self-abstention отвергнуто, note-гигиена), project=None
+fail-closed, never-pinnable + born no-federate, федеративное исключение
+(штамп federated_origin на всех import-путях, RESTORE = self-restore),
+адмиссибельность goal-эха при ungated presence-слотах. E0-амендмент
+(pre-run revision 2) регистрирует CONFLICT_HINT_MIN_SHARED_TOKENS=2.
+Тесты: 59 (41 acceptance + 18 ремонтных); сьют 2492 → 2551 на ветке.
+Остатки-полировка → [#278](https://github.com/Korrnals/mnemos/issues/278).
+
 ### Срезы 4+ — «Корпус → прогоны → вердикт» (E2 → E3 → АрхКом)
 
 - [ ] E2: страты корпуса (по E0-спеке), распределение-согласованный профиль
   (58% чекпоинтов), re-baseline по ADR-0020 в том же PR.
+  **Волна 1 ✅ 2026-09-13, [PR #276](https://github.com/Korrnals/mnemos/pull/276)**
+  (analytics-ревью approve): G-gov (100 сидов, analyzed 96 = 48×2,
+  replacement-пул 52 + append-only ledger), G-neg 24, профиль 421/57.96%
+  ∈ 58%±2pp, слепой адъюдикационный worksheet (96×3, ключи отдельно),
+  re-baseline честно НЕ триггернут (страты вне fingerprint-множества S1,
+  закреплено тестом). Остаток: страты C/D ног (мульти-сессии 80–100,
+  awareness-пары/stale-claims/канары/adversarial-peer, G-poison) —
+  по готовности ног; E3-runner + pre-run обязательства [#277](https://github.com/Korrnals/mnemos/issues/277).
 - [ ] E3: прогоны A/B/B0; затем C1 (после smoke mnema-refine #223) и D
   (после awareness v0) — по предрегистрированным воротам; факториалы B×C1
   и B×D только после индивидуальных проходов.
