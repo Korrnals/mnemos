@@ -67,6 +67,21 @@ def build_experimental_manager(
     → checkpoints), deterministic embedder by default, scanner off —
     the same runtime shape the golden harness pins.
     """
+    # Masquerade guard (issue #277, defense in depth): ingest routes by
+    # slug membership in _GOLDEN_SLUGS, so a stratum seed whose slug
+    # collided with a golden slug would silently take the golden-restore
+    # branch and dodge the fail-loud stratum screen below. The suite
+    # already pins slug disjointness (test_strata_are_outside_the_s1_
+    # measured_corpus); this asserts it AT the routing boundary too.
+    stratum_slugs = {e.slug for e in GOV_RECORDS} | {e.slug for e in CHECKPOINT_ENTRIES}
+    masquerading = stratum_slugs & _GOLDEN_SLUGS
+    if masquerading:
+        raise AssertionError(
+            f"stratum seed slug(s) masquerade as golden slugs: {sorted(masquerading)} "
+            "— they would silently dodge the fail-loud demotion screen "
+            "(loader.py, issue #277); fix the slug collision, not this guard"
+        )
+
     # Local import to avoid a module-level stand dependency (mirrors
     # harness.py's lazy mnemos imports).
     from benchmarks.stands.s1_quality.harness import golden_settings

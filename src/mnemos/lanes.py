@@ -134,6 +134,21 @@ GOVERNANCE_TAGS: Final[frozenset[str]] = frozenset(GOVERNANCE_TAG_BY_LANE.values
 #: default drifting.
 LANE_RECALL_LIMIT: Final[int] = 50
 
+#: E0 §1.1 leg B0 — the trivial type-boost factor (issue #277, registered
+#: pre-run, before any E3 leg run). "Type-boost of rules/decisions at
+#: recall — one ranking line, zero meta-level": governance rows still
+#: arrive through ordinary RRF recall only (no lane queries, no lane
+#: ordering), but their scores are multiplied by this factor and the
+#: candidates re-ranked by score in ``assemble._recall_stage``. Measured
+#: RRF scores on the E2 corpus run ~0.011-0.016, so x10.0 lifts a
+#: recalled governance row above every non-governance candidate — the
+#: MAXIMAL lift a mere type boost can buy, which is the anti-confounding
+#: point: whatever leg B still adds over B0 is the meta-level structure
+#: (deterministic lane recall + byte-stable pinned prefix), not residual
+#: rank boost. B0 cannot surface governance rows the RRF recall MISSED —
+#: that recall reach is exactly B's structural contribution.
+B0_TYPE_BOOST_FACTOR: Final[float] = 10.0
+
 #: Meta-table key prefix for awareness cursors (R3 contract:
 #: ``awr:{project}:{agent}:{session}``).
 AWARENESS_CURSOR_PREFIX: Final[str] = "awr:"

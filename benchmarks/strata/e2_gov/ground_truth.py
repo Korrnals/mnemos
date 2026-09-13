@@ -222,7 +222,12 @@ def record_rejection(
     E0 §4.4: a rejected analyzed record is replaced by the next unused
     pool record (fixed pool order), the replacement is logged, and the
     analyzed denominator stays 96 — the swap exchanges one record (and
-    its two queries) for another, atomically.
+    its two queries) for another, atomically. Replacement granularity
+    (issue #277, registered pre-run): the RECORD is the unit — both its
+    queries (gg-NNN-ph/pr) are replaced together; E0 §4.4's "rejected
+    pairs are replaced" is implemented at record level, the granularity
+    defensible under §3.1 (the pool is records; the denominator 96 is
+    held by whole-record swaps, never partial).
 
     ``decided_at`` is an ISO date string supplied by the caller: this
     module is deterministic and reads no clock.
