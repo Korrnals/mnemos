@@ -64,6 +64,13 @@ Surfaces: one grouped MCP tool ``mnemos_hooks`` with
 share the session/project/agent spine; three literal routes would
 triplicate the same body model). Both call :func:`dispatch_hook`.
 
+Awareness composition (mnemos #254, R3): ``pre_llm_call`` and
+``on_session_start`` take ``include_awareness`` (default False) — the
+awareness presence/delta section composes HERE, at the hook, never as
+a seventh assemble stage. See :mod:`mnemos.awareness` for the R3
+security contour; with the flag off every output is byte-identical to
+the pre-#254 shape.
+
 Modes: ADR-0017 D1 names sync/async hook modes. This wave implements
 SYNC only (the automation deployments W3 targets are synchronous
 request/response); async hook delivery waits for a consumer that needs
@@ -110,6 +117,7 @@ def pre_llm_call(
     context_hint: str | None = None,
     file: str | None = None,
     budget: int = 2048,
+    include_awareness: bool = False,
 ) -> dict[str, Any]:
     """Assemble the context block to inject before the model call (sync).
 
@@ -124,6 +132,16 @@ def pre_llm_call(
     The returned ``text`` is the injection suggestion: provenance-
     wrapped, filter-cleaned, secret-scanned, budget-bounded. The
     harness decides whether and where to inject it.
+
+    ``include_awareness=True`` (mnemos #254, R3 — default False)
+    composes the awareness delta section AFTER the assembled output:
+    per-agent delta blocks are appended to ``blocks`` and the rendered
+    section to ``text`` — awareness renders LAST, never inside the
+    pinned lane prefix (the E1 guard is re-asserted over the composed
+    list), and the awareness cursor advances to the consumed
+    high-water mark. With the flag off the output is byte-identical to
+    the pre-#254 shape: no ``awareness`` key, no extra blocks (pinned
+    by tests).
     """
     _require_identity(session, project, agent)
     if context_hint is not None and not context_hint.strip():
@@ -140,14 +158,28 @@ def pre_llm_call(
     )
     result["hook"] = "pre_llm_call"
     result["injection"] = "prepend result['text'] to the model call prompt"
+    if include_awareness:
+        # Hooks composition (R3): awareness is NOT an assemble stage —
+        # it composes at this hook, after the fixed six-stage pipeline.
+        from mnemos.awareness import assert_awareness_tail, compose_pre_llm_awareness
+
+        awr = compose_pre_llm_awareness(mgr, session=session, project=project, agent=agent)
+        blocks: list[dict[str, Any]] = [*result.get("blocks", []), *awr["blocks"]]
+        assert_awareness_tail(blocks)
+        result["blocks"] = blocks
+        if awr["text"]:
+            result["text"] = f"{result['text']}\n\n{awr['text']}" if result["text"] else awr["text"]
+        result["awareness"] = awr["meta"]
     logger.info(
-        "hooks.pre_llm_call: session=%s project=%s agent=%s hint=%s blocks=%d tokens=%d",
+        "hooks.pre_llm_call: session=%s project=%s agent=%s hint=%s blocks=%d tokens=%d "
+        "awareness=%s",
         session,
         project,
         agent,
         "yes" if context_hint else "no",
         len(result.get("blocks", [])),
         result.get("tokens", {}).get("estimated", 0),
+        "on" if include_awareness else "off",
     )
     return result
 
@@ -162,6 +194,7 @@ def on_session_start(
     project: str,
     agent: str,
     limit: int = SESSION_START_LIMIT,
+    include_awareness: bool = False,
 ) -> dict[str, Any]:
     """Recall the session bootstrap state — recent checkpoints/context.
 
@@ -171,6 +204,12 @@ def on_session_start(
     checkpoint's content is ``scan_issuance``-scanned before it enters
     the response; refuse mode drops the checkpoint (logged with the
     memory id), redactions are counted per checkpoint.
+
+    ``include_awareness=True`` (mnemos #254, R3 — default False) adds a
+    ``presence`` section: server-observed neighbor activity in the
+    presence window plus deterministic conflict-hints against my last
+    checkpoint goal. Pure read — the awareness cursor is NOT touched
+    here (consumption is the ``pre_llm_call`` composition's job).
     """
     _require_identity(session, project, agent)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
@@ -204,7 +243,7 @@ def on_session_start(
         len(checkpoints),
         total_redactions,
     )
-    return {
+    result: dict[str, Any] = {
         "hook": "on_session_start",
         "session": session,
         "project": project,
@@ -212,6 +251,11 @@ def on_session_start(
         "checkpoints": checkpoints,
         "redactions": total_redactions,
     }
+    if include_awareness:
+        from mnemos.awareness import compose_session_presence
+
+        result["presence"] = compose_session_presence(mgr, project=project, agent=agent)
+    return result
 
 
 # ── post_tool_call ────────────────────────────────────────────────────────────
@@ -356,6 +400,7 @@ def dispatch_hook(
     output_text: str | None = None,
     auto_compress: bool | None = None,
     profile: str | None = None,
+    include_awareness: bool = False,
 ) -> dict[str, Any]:
     """Route one ``mnemos_hooks`` action to its hook function.
 
@@ -372,9 +417,17 @@ def dispatch_hook(
             context_hint=context_hint,
             file=file,
             budget=budget,
+            include_awareness=include_awareness,
         )
     if action == "on_session_start":
-        return on_session_start(mgr, session=session, project=project, agent=agent, limit=limit)
+        return on_session_start(
+            mgr,
+            session=session,
+            project=project,
+            agent=agent,
+            limit=limit,
+            include_awareness=include_awareness,
+        )
     if action == "post_tool_call":
         if tool_name is None or output_text is None:
             raise ValueError("action 'post_tool_call' requires 'tool_name' and 'output_text'")

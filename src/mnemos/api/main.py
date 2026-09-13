@@ -1154,6 +1154,8 @@ class HooksRequest(BaseModel):
     output_text: str | None = None
     auto_compress: bool | None = None
     profile: str | None = None
+    # pre_llm_call / on_session_start (mnemos #254 awareness composition)
+    include_awareness: bool = False
 
 
 @app.post("/hooks/{action}")
@@ -1189,6 +1191,7 @@ async def run_hook(action: str, req: HooksRequest) -> dict[str, Any]:
             output_text=req.output_text,
             auto_compress=req.auto_compress,
             profile=req.profile,
+            include_awareness=req.include_awareness,
         )
     except ValueError as exc:
         # Per-hook boundary validation (identity, per-action args).

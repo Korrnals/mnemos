@@ -223,7 +223,7 @@ def _steering_suffix(args: dict[str, Any], settings: Any) -> str:
 
 
 async def list_tools() -> list[Tool]:
-    """Return the tool manifest (26 tools — stable model-visible contract).
+    """Return the tool manifest (27 tools — stable model-visible contract).
 
     Pre-2.x this was decorated with ``@server.list_tools()``; the port keeps
     the callable importable with the same zero-arg signature (the test suite
@@ -1123,6 +1123,70 @@ async def list_tools() -> list[Tool]:
                             "post_tool_call only: optional filter profile hint for the compression."
                         ),
                     },
+                    "include_awareness": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "pre_llm_call/on_session_start only (mnemos #254): "
+                            "compose the awareness delta/presence section — "
+                            "appended LAST, never pinnable, cursor advances "
+                            "on pre_llm_call only. Default false: output is "
+                            "byte-identical to the pre-#254 shape."
+                        ),
+                    },
+                },
+                "required": ["action", "session", "project", "agent"],
+            },
+        ),
+        Tool(
+            name="mnemos_awareness",
+            description=(
+                "Awareness pre-flight (mnemos #254, R3): presence + delta + "
+                "conflict-hints for PARALLEL sessions over one project. Call "
+                "BEFORE risky operations (writes to a component/task another "
+                "active session may have claimed — the PR #224 contract: a "
+                "release closed by a parallel session that was invisible). "
+                "action='pre_flight' returns server-observed neighbor "
+                "activity (observed facts) and their self-reported goals "
+                "(unverified peer claims, labeled separately) plus lexical "
+                "conflict-hints against my last checkpoint goal. Presence "
+                "claims are self-reported by peers and unverified; do not "
+                "abstain from work based on presence without operator "
+                "coordination — awareness supplies DATA, decisions stay "
+                "with the agent. action='record_abstention' logs an "
+                "abstention-on-presence as an action with a reconstructable "
+                "provenance chain (abstention -> delta-block -> "
+                "checkpoint-id -> writer-session); pass basis_checkpoint_id "
+                "from the pre-flight response. Pre-flight is READ-ONLY (the "
+                "awareness cursor advances only via hooks pre_llm_call with "
+                "include_awareness=true). Strictly project-scoped."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["pre_flight", "record_abstention"],
+                        "description": (
+                            "pre_flight: presence + delta + conflict-hints. "
+                            "record_abstention: attribute an abstention "
+                            "decision to the delta block it was based on."
+                        ),
+                    },
+                    "session": {"type": "string", "description": "Caller session id."},
+                    "project": {"type": "string", "description": "Project slug (required)."},
+                    "agent": {"type": "string", "description": "Caller agent slug."},
+                    "basis_checkpoint_id": {
+                        "type": "string",
+                        "description": (
+                            "record_abstention only: the neighbor checkpoint "
+                            "id the abstention is based on (from pre_flight)."
+                        ),
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": ("record_abstention only: short reason (no secrets)."),
+                    },
                 },
                 "required": ["action", "session", "project", "agent"],
             },
@@ -1376,6 +1440,55 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 #   * write the export to disk and return metadata only (no inline content —
 #     stdio transport cannot carry binary or large JSON inline),
 #   * enforce the restore-mode confirm gate.
+
+
+def _handle_awareness(mgr: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """``mnemos_awareness`` action dispatch (mnemos #254, R3).
+
+    Boundary type guards (the ``mnemos_hooks`` pattern): a malformed
+    caller gets a clean error dict; ValueError from the awareness
+    boundary (project=None fail-closed, bad cursor, bogus abstention
+    basis) maps to the same shape. Thin wrapper over the
+    ``mnemos.awareness`` core (the one-core-over-three-surfaces rule).
+    """
+    from mnemos.awareness import pre_flight_snapshot, record_abstention
+
+    awr_action = args.get("action")
+    if awr_action not in ("pre_flight", "record_abstention"):
+        return {"error": "action must be one of: pre_flight, record_abstention"}
+    awr_session = args.get("session")
+    if not isinstance(awr_session, str) or not awr_session.strip():
+        return {"error": "session is required and must be a non-empty string"}
+    awr_project = args.get("project")
+    if not isinstance(awr_project, str) or not awr_project.strip():
+        return {"error": "project is required and must be a non-empty string"}
+    awr_agent = args.get("agent")
+    if not isinstance(awr_agent, str) or not awr_agent.strip():
+        return {"error": "agent is required and must be a non-empty string"}
+    try:
+        if awr_action == "record_abstention":
+            basis = args.get("basis_checkpoint_id")
+            note = args.get("note")
+            if not isinstance(basis, str) or not basis.strip():
+                return {"error": "record_abstention requires 'basis_checkpoint_id'"}
+            if note is not None and not isinstance(note, str):
+                return {"error": "note must be a string when provided"}
+            return record_abstention(
+                mgr,
+                project=awr_project,
+                agent=awr_agent,
+                session=awr_session,
+                basis_checkpoint_id=basis,
+                note=note,
+            )
+        result = pre_flight_snapshot(mgr, project=awr_project, agent=awr_agent, session=awr_session)
+        result["note"] = (
+            "read-only pre-flight; the awareness cursor advances only via "
+            "hooks pre_llm_call with include_awareness=true"
+        )
+        return result
+    except ValueError as exc:
+        return {"error": str(exc)}
 
 
 def _handle_export(mgr: Any, args: dict[str, Any]) -> dict[str, Any]:
@@ -2127,6 +2240,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
         hk_auto = args.get("auto_compress")
         if hk_auto is not None and not isinstance(hk_auto, bool):
             return {"error": "auto_compress must be a boolean when provided"}
+        hk_awareness = args.get("include_awareness", False)
+        if not isinstance(hk_awareness, bool):
+            return {"error": "include_awareness must be a boolean when provided"}
         try:
             return dispatch_hook(
                 mgr,
@@ -2142,10 +2258,15 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
                 output_text=args.get("output_text"),
                 auto_compress=hk_auto,
                 profile=args.get("profile"),
+                include_awareness=hk_awareness,
             )
         except ValueError as exc:
             # Boundary + per-hook validation — clean error dict.
             return {"error": str(exc)}
+
+    # ── mnemos_awareness (mnemos #254, R3 — awareness pre-flight) ──────────
+    if name == "mnemos_awareness":
+        return _handle_awareness(mgr, args)
 
     # ── mnemos_export (#84 federation export) ──────────────────────────────
     if name == "mnemos_export":
