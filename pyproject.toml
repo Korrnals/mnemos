@@ -199,6 +199,13 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
 # Cyrillic and latin identifiers — RUF001's lookalike warnings are noise
 # (same rationale as the synthetic RU corpus files).
 "benchmarks/reports/generate_report.py" = ["RUF001", "E501"]
+# benchmarks/strata/e2_d data-pool modules (E2 D-strata, E0 §3.6): the
+# corpus content lives in one-line (slug, title, prose) tuples — the
+# one-entry-per-line table IS the artifact's readable, diffable shape;
+# wrapping each single-sentence prose string would obscure it (same
+# E501 rationale class as generate_report.py).
+"benchmarks/strata/e2_d/conflict_pairs.py" = ["E501"]
+"benchmarks/strata/e2_d/replay224.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

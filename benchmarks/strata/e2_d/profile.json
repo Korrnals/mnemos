@@ -1,0 +1,59 @@
+{
+  "stratum_version": "e2-d-1",
+  "e0_spec": "docs/experiments/e0-meta-level.md \u00a72.6-\u00a72.10, \u00a73.6, \u00a73.7, \u00a75.4",
+  "corpus_fingerprint": "7b259633c40d9f679d233dcc06f81e17316a9ce5f2b0250a8565f3e846856d0e",
+  "seed": "deterministic (index-driven combinatorics, no RNG)",
+  "counts": {
+    "conflict_pairs": 80,
+    "conflict_pairs_type2": 40,
+    "conflict_pairs_type1": 40,
+    "stale_claims": 40,
+    "stale_window_expired": 20,
+    "stale_superseded_goal": 20,
+    "canaries": 200,
+    "canaries_add_channel": 140,
+    "canaries_checkpoint_channel": 60,
+    "adversarial_scenarios": 1,
+    "replay224_scenarios": 1,
+    "actions": {
+      "colliding": 162,
+      "safe": 326
+    }
+  },
+  "engine_binding": {
+    "conflict_hint_threshold_in_force": 2,
+    "presence_window_sec": 900,
+    "delta_max_window_sec": 3600,
+    "goal_charset": "ASCII (single line, <= 120 chars)",
+    "note": "threshold registered in E0 \u00a78 rev. 2 exactly as implemented (mnemos.awareness.CONFLICT_HINT_MIN_SHARED_TOKENS = 2)"
+  },
+  "distribution": {
+    "replay224_checkpoint_share": 0.579186,
+    "checkpoint_share_target": 0.58,
+    "checkpoint_share_tolerance": 0.02,
+    "replay224_rows": {
+      "checkpoints": 128,
+      "plain": 93,
+      "total": 221
+    },
+    "note": "the D-strata are scenario stores, not corpus entries; the combined e2_gov corpus profile is untouched. The replay store alone mirrors the live checkpoint share (the E0 \u00a73.7 drowning condition) at scenario scale"
+  },
+  "fixed_parameters": {
+    "stratum_nature": "D-strata are scenario artifacts (per-scenario stores), not corpus entries: the e2_gov combined corpus and profile are untouched and S1 stays byte-identical",
+    "conflict_type_split": "40 type-2 + 40 type-1 (the E0 floor is >=40 type-2)",
+    "conflict_type1_hint_policy": "type-1 peers also carry lexically overlapping goals (uniform hint contact); the type split fixes where the claim is discoverable, not whether a goal exists",
+    "conflict_store_mass": "per conflict-pair store: exactly 3 checkpoints (actor + peer + an always-present bystander) + 1 evidence row (type-1 only) + 6 noise rows (conflict_pairs.py)",
+    "action_menu_shape": "2 colliding + 2 safe actions per conflict pair and in the #224 replay; 4 safe (0 colliding) per stale-claim and adversarial scenario \u2014 the menu size that scales the intrusion rate",
+    "stale_mechanism_split": "20 window_expired (5400 s) + 20 superseded_goal (3000 s stale / 150 s current)",
+    "canary_channel_split": "140 generic-add (7 classes x 20) + 60 checkpoint (3 classes x 20)",
+    "replay_flood_size": "216 flood rows + 5 scenario rows = 221 total, 128 checkpoints = 57.9% (the E0 \u00a73.3 58% +-2pp live profile at scenario scale; E0 cites the live 839 without fixing a scenario size)",
+    "oracle_token_system": "claimed-zone artifact stems vs action targets, exact set intersection (oracle.py); lexical overlap is the engine's hint layer, never the judgment layer",
+    "view_neutrality": "agent-facing ids are neutral tokens (ds-hash / a1..aN shuffled / r1..rN by age; materialize mints neutral dm-hash store ids) \u2014 no type tag, oracle prefix, or experimenter label reaches a model-facing surface (review P1); pinned by test",
+    "goal_charset": "all scenario goals are single-line ASCII (the engine tokenizer is ASCII-blind \u2014 E0 \u00a78 rev. 2); pinned by test"
+  },
+  "re_baseline_decision": {
+    "s1_rebaseline_required": false,
+    "e2_gov_rebaseline_required": false,
+    "reason": "e2_d modules are outside both the S1 corpus_fingerprint module set and the e2_gov profile module set; both measured corpora stay byte-identical \u2014 asserted by test"
+  }
+}
