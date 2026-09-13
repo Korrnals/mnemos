@@ -90,6 +90,9 @@ def _make_mock_manager() -> MagicMock:
     mgr = MagicMock()
     mgr.settings.mnemos.strict_tag_contract = False
     mgr.add.return_value = mock_memory
+    # mnemos #251 D0: mnemos_save_context routes through the checkpoint
+    # single authority (validation + binding + dedup live in the manager).
+    mgr.save_checkpoint.return_value = (mock_memory, False)
     mgr.search.return_value = []
     mgr.agent_recall.return_value = []
     mgr.recall_context.return_value = []
@@ -242,12 +245,13 @@ async def test_routing_invokes_correct_manager_method(tool_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 5 - save_context -> mgr.add edge (not search / recall_context) (mcp-3)
+# Test 5 - save_context -> mgr.save_checkpoint edge (not add / search) (mcp-3,
+# updated by mnemos #251 D0: the checkpoint channel has a single authority)
 # ---------------------------------------------------------------------------
 
 
-async def test_save_context_routes_to_add_not_search() -> None:
-    """mnemos_save_context must route to mgr.add - not mgr.search or mgr.recall_context."""
+async def test_save_context_routes_to_save_checkpoint_not_add_or_search() -> None:
+    """mnemos_save_context must route to mgr.save_checkpoint - not mgr.add/search."""
     mock_mgr = _make_mock_manager()
     with (
         patch("mnemos.mcp_server.get_manager", return_value=mock_mgr),
@@ -258,7 +262,8 @@ async def test_save_context_routes_to_add_not_search() -> None:
     ):
         await _dispatch("mnemos_save_context", _TOOL_ARGS["mnemos_save_context"])
 
-    mock_mgr.add.assert_called_once()
+    mock_mgr.save_checkpoint.assert_called_once()
+    mock_mgr.add.assert_not_called()
     mock_mgr.search.assert_not_called()
     mock_mgr.recall_context.assert_not_called()
 

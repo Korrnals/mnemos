@@ -15,7 +15,7 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,13 +35,13 @@ from mnemos.api.rate_limit import limiter
 from mnemos.config import ApiConfig, Settings, load_settings
 from mnemos.context_rewrite import ContextRewriteRateLimitError
 from mnemos.hooks import HOOK_ACTIONS, dispatch_hook
-from mnemos.manager import MemoryManager
+from mnemos.manager import MemoryManager, SessionAgentMismatchError
 from mnemos.models import (
+    CHECKPOINT_FIELDS,
     AgentRecallQuery,
     FilterRequest,
     Memory,
     MemoryCreate,
-    MemorySource,
     MemoryStatus,
     MemoryType,
     RuleIngestRequest,
@@ -921,6 +921,11 @@ class SaveContextRequest(BaseModel):
     body. This matches the Hermes plugin schema which declares these as
     ``type: array, items: {type: string}`` and the MCP tool which accepts
     free-form strings (bullet lists).
+
+    mnemos #251 D0 — optional ``agent``/``session`` are the validated
+    identity channel (agent defaults to ``"user"``, today's behaviour);
+    validation, session→agent binding and dedup live in
+    ``MemoryManager.save_checkpoint`` (single authority).
     """
 
     project: str
@@ -929,6 +934,8 @@ class SaveContextRequest(BaseModel):
     in_progress: str | list[str] | None = None
     decisions: str | list[str] | None = None
     context: str | list[str] | None = None
+    agent: str | None = None
+    session: str | None = None
 
 
 class RecallContextRequest(BaseModel):
@@ -966,29 +973,37 @@ class AssembleContextRequest(BaseModel):
 async def save_context(req: SaveContextRequest) -> dict[str, Any]:
     """Save a session checkpoint memory tagged ``mnemos:checkpoint``.
 
-    Mirrors the ``mnemos_save_context`` MCP tool. Builds structured Markdown
-    from the supplied fields and stores it as a ``SESSION_CONTEXT`` memory.
+    Mirrors the ``mnemos_save_context`` MCP tool: identity validation,
+    session→agent binding (mismatch → 409), issuer-keyed dedup and the
+    trivial-reject all live in ``MemoryManager.save_checkpoint``; this
+    endpoint only maps errors to HTTP codes (ValueError → 400).
     """
     mgr = get_manager()
-    parts = [f"# Session checkpoint — {datetime.now(UTC).isoformat()}\n"]
-    for field in ("goals", "completed", "in_progress", "decisions", "context"):
+    fields: dict[str, str | None] = {}
+    for field in CHECKPOINT_FIELDS:
         val = getattr(req, field)
-        if val:
-            # Accept both str and list[str] — join lists with newlines.
-            if isinstance(val, list):
-                val = "\n".join(val)
-            parts.append(f"## {field.replace('_', ' ').title()}\n{val}\n")
-    content = "\n".join(parts)
-    tags = [f"project:{req.project}", "agent:user", "mnemos:checkpoint"]
-    data = MemoryCreate(
-        content=content,
-        tags=tags,
-        source=MemorySource.MCP,
-        memory_type=MemoryType.SESSION_CONTEXT,
-    )
-    memory = mgr.add(data, project=req.project, agent="user")
+        # Accept both str and list[str] — join lists with newlines.
+        fields[field] = "\n".join(val) if isinstance(val, list) else val
+    try:
+        memory, duplicate = mgr.save_checkpoint(
+            fields,
+            project=req.project,
+            agent=req.agent,
+            session=req.session,
+            memory_type=MemoryType.SESSION_CONTEXT,
+        )
+    except SessionAgentMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     _track_http_call(is_save=True)
-    return {"status": "saved", "id": str(memory.id), "title": memory.auto_title()}
+    # Response shape is additive: "duplicate" joins the legacy keys.
+    return {
+        "status": "saved",
+        "id": str(memory.id),
+        "title": memory.auto_title(),
+        "duplicate": duplicate,
+    }
 
 
 @app.post("/context/recall")

@@ -10,10 +10,12 @@ Backed by:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -31,12 +33,14 @@ from mnemos.config import Settings
 from mnemos.danger_detectors import DetectionResult, detect
 from mnemos.embeddings import EmbeddingProvider, create_embedding_provider
 from mnemos.models import (
+    CHECKPOINT_FIELDS,
     CONTEXT_ADMISSIBLE_STATUSES,
     AgentRecallQuery,
     Memory,
     MemoryCreate,
     MemorySource,
     MemoryStatus,
+    MemoryType,
     MemoryUpdate,
     PipelineState,
     SearchResult,
@@ -80,6 +84,14 @@ INTERNAL_METADATA_KEYS: frozenset[str] = frozenset(
         "pipeline_retry_at",  # lane-(a) backoff gate (refine)
     }
 )
+
+
+# mnemos #251 D0 — a session id is already bound to a different agent.
+# Subclasses ValueError so every caller that already maps ValueError to a
+# client error keeps working; the REST twin uses the subclass to answer
+# 409 specifically.
+class SessionAgentMismatchError(ValueError):
+    """mnemos #251 D0 — a session id is already bound to a different agent."""
 
 
 class _SSRFRejectionError(Exception):
@@ -1528,6 +1540,118 @@ class MemoryManager:
         # Sort by recency and trim
         memories.sort(key=lambda m: m.created_at, reverse=True)
         return memories[:limit]
+
+    # ── Checkpoint channel identity (mnemos #251 D0) ────────────────────
+
+    def save_checkpoint(
+        self,
+        fields: Mapping[str, str | None],
+        *,
+        project: str,
+        agent: str | None = None,
+        session: str | None = None,
+        memory_type: MemoryType = MemoryType.NOTE,
+    ) -> tuple[Memory, bool]:
+        """Store a session checkpoint with validated agent identity (#251 D0).
+
+        Single authority for the checkpoint channel — the MCP tool
+        (``mnemos_save_context``) and the REST twin (``POST /context/save``)
+        are thin wrappers over this method. Order of operations:
+
+        1. Identity validation (``_require_identity`` semantics: non-empty
+           string when provided, whitespace-only rejected). ``agent``
+           defaults to ``"user"`` — today's behaviour, so deployed
+           instruction packs keep working unchanged.
+        2. Trivial-reject: all five fields empty → ValueError BEFORE any
+           store (zero-loss — the caller is told, nothing is dropped).
+        3. Session→agent binding: the first call presenting a session id
+           records the binding server-side (meta table, first writer
+           wins); later calls must claim the bound agent or a
+           :class:`SessionAgentMismatchError` (a ValueError) is raised.
+        4. Issuer-keyed dedup: SHA-256 over the canonical payload
+           (project + agent + the five fields, fixed order, None
+           normalised to ``""``) — NOT over the rendered markdown, which
+           embeds a fresh timestamp and would never collide. A hit
+           returns the EXISTING memory with ``duplicate=True`` and stores
+           nothing.
+        5. Store with server-controlled metadata stamps
+           (``checkpoint_agent`` / ``checkpoint_session`` /
+           ``checkpoint_dedup_key``). Tags are display-only; these
+           server columns/metadata are the source of truth (the awareness
+           read surface arrives with #254).
+
+        Returns ``(memory, duplicate)``.
+        """
+        # 1. Identity validation — mirrors mnemos.hooks._require_identity.
+        for label, value in (("agent", agent), ("session", session)):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{label} must be a non-empty string when provided")
+        resolved_agent = agent if agent is not None else "user"
+
+        # 2. Trivial-reject before any store side effect.
+        normalized = {f: (fields.get(f) or "") for f in CHECKPOINT_FIELDS}
+        if not any(normalized[f] for f in CHECKPOINT_FIELDS):
+            raise ValueError(
+                "checkpoint rejected: all fields (goals/completed/in_progress/"
+                "decisions/context) are empty — nothing to save"
+            )
+
+        # 3. Session→agent binding (only when a session id is presented).
+        if session is not None:
+            bound_agent = self.sqlite.bind_session_agent(session, resolved_agent)
+            if bound_agent != resolved_agent:
+                logger.warning(
+                    "checkpoint binding mismatch (mnemos #251): session=%r bound_agent=%r "
+                    "claimed_agent=%r — refused",
+                    session,
+                    bound_agent,
+                    resolved_agent,
+                )
+                raise SessionAgentMismatchError(
+                    f"session {session!r} is already bound to agent {bound_agent!r}; "
+                    f"refusing checkpoint claimed by agent {resolved_agent!r}"
+                )
+
+        # 4. Issuer-keyed dedup.
+        canonical = json.dumps(
+            [project, resolved_agent, *(normalized[f] for f in CHECKPOINT_FIELDS)],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        dedup_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        existing = self.sqlite.find_checkpoint_by_dedup_key(
+            project=project, agent=resolved_agent, dedup_key=dedup_key
+        )
+        if existing is not None:
+            logger.info(
+                "checkpoint dedup hit (mnemos #251): project=%r agent=%r id=%s",
+                project,
+                resolved_agent,
+                existing.id,
+            )
+            return existing, True
+
+        # 5. Build and store — content format unchanged from the legacy
+        # hardcoded-agent surfaces.
+        parts = [f"# Session checkpoint — {datetime.now(UTC).isoformat()}\n"]
+        for field in CHECKPOINT_FIELDS:
+            if normalized[field]:
+                parts.append(f"## {field.replace('_', ' ').title()}\n{normalized[field]}\n")
+        metadata: dict[str, Any] = {
+            "checkpoint_agent": resolved_agent,
+            "checkpoint_dedup_key": dedup_key,
+        }
+        if session is not None:
+            metadata["checkpoint_session"] = session
+        data = MemoryCreate(
+            content="\n".join(parts),
+            tags=[f"project:{project}", f"agent:{resolved_agent}", "mnemos:checkpoint"],
+            source=MemorySource.MCP,
+            memory_type=memory_type,
+            metadata=metadata,
+        )
+        memory = self.add(data, project=project, agent=resolved_agent)
+        return memory, False
 
     def list_recent(
         self,
