@@ -420,9 +420,9 @@ Phase A2 does not block B — one foundation (`sink.py`), two tracks.
 3. **Owner (blocks phase A2):** green-light for the addendum —
    phase A2 and the `F9` family — under the same directive that
    extended coverage to the full server.
-3. **Joint specification (phase C):** a small zcode client-contract RFC
+4. **Joint specification (phase C):** a small zcode client-contract RFC
    for `prompt_static_share` and touched reports, after phases A–B.
-4. **Registry sync:** metric names `S5` ↔ E0 (ADR-0025) land in the same
+5. **Registry sync:** metric names `S5` ↔ E0 (ADR-0025) land in the same
    PR that introduces `F8`; the `docs/experiments/` template created by
    this track is reused by E0.
 
