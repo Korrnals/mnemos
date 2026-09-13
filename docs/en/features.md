@@ -45,6 +45,12 @@ Connect — and it is there. No extra wiring required for anything in this table
 | **Memory graph** | Links between entries, citation cascades ([ADR-0017](../project/adr/0017-memory-system-evolution-roadmap.md)) |
 | **Cross-device federation** | A persistent exchange channel between devices; today the exchange is batch, via files ([ADR-0017](../project/adr/0017-memory-system-evolution-roadmap.md)) |
 | **Multi-principal** | Memory of several owners with isolation |
+| **Meta-level: retrieval lanes** | Deterministic lanes (rules / decisions / knowledge) as a recall sub-stage of `assemble_context` — rolls out only if a pre-registered A/B/B0 experiment beats the trivial baseline ([ADR-0025](../project/adr/0025-memory-meta-level-lanes.md)) |
+| **Collapse cascade — "collapse with checks"** | Session → project → cross-project synthesis over clusters: automatic by default, never unconditional in authority — derivatives are born without `applyTo:`/`severity:`, nothing pins without an operator, every result traceable to its sources ([ADR-0025](../project/adr/0025-memory-meta-level-lanes.md)) |
+| **Awareness — presence & delta** | What each agent is working on and what changed since your last look, with conflict hints — built from server-observed facts; a nervous system, not a conductor ([ADR-0025](../project/adr/0025-memory-meta-level-lanes.md)) |
+
+Roadmap invariant for the meta-level track: **zero silent losses** — a fact is either retained, or
+its loss is visible in a report; each rung above opens only after measurements confirm it.
 
 ---
 
@@ -64,6 +70,7 @@ Connect — and it is there. No extra wiring required for anything in this table
 _Source: owner-approved feature map (2026-08-31), cross-checked against the
 v4.0.0 codebase — 26 tools registered in `src/mnemos/mcp_server.py`, skill pack
 in `integrations/skills/`, pipeline stages in `src/mnemos/pipeline/`,
-benchmark stands in `benchmarks/`. Updated 2026-09-05._
+benchmark stands in `benchmarks/`. Updated 2026-09-05; meta-level roadmap rows
+added 2026-09-13 per ADR-0025._
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-13_

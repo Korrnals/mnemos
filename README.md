@@ -142,6 +142,15 @@ control surfaces, and a storage layer you can read with your own eyes.
 SQLite for metadata, a local numpy + SQLite vector index for recall, and an Obsidian-compatible vault
 for the humans in the loop.
 
+**Where this is going.** The shipped, measured rung is *stores and finds*. The next rungs —
+*collapse with checks* (session → project → cross-project synthesis: automatic by default, but never
+unconditional in authority — every derivative traces back to its sources, nothing pins without an
+operator) and, later, *builds understanding* — open only as pre-registered experiments prove them
+([ADR-0025](docs/project/adr/0025-memory-meta-level-lanes.md)). The invariant on that road is
+**zero silent losses**: a fact is either retained, or its loss is visible. And the shape of the
+ambition is a *nervous system, not a conductor* — memory that surfaces the right thing at the right
+moment, never one that conducts the agent.
+
 ---
 
 ## 🤝 Connect any harness
