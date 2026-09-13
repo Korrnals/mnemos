@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import tarfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -188,7 +189,12 @@ def _peer_memory(
     )
 
 
-def _snapshot_file(path: Path, memories: list[Memory]) -> Path:
+def _snapshot_file(
+    path: Path,
+    memories: list[Memory],
+    *,
+    corrupt: Callable[[sqlite3.Connection], None] | None = None,
+) -> Path:
     """Craft a SQLite-snapshot tar.gz BY HAND carrying peer rows as-is.
 
     A ``run_export`` snapshot of a clean store could never contain a
@@ -198,6 +204,11 @@ def _snapshot_file(path: Path, memories: list[Memory]) -> Path:
     gate — this simulates a tampered/at-rest-leaked snapshot), then tarred
     as ``mnemos.tar.gz`` with the ``mnemos.db`` member ``_import_sqlite``
     expects (import_.py:584-597).
+
+    ``corrupt`` (optional): run after the saves, BEFORE the checkpoint/
+    tar — a direct ``sqlite3`` UPDATE hook for planting a row no Memory/
+    manager path could ever write (invalid JSON column, bad enum, …),
+    i.e. the malformed-payload half of the tampered-snapshot threat model.
     """
     with TemporaryDirectory() as tmpdir:
         settings = _settings(Path(tmpdir))
@@ -205,6 +216,8 @@ def _snapshot_file(path: Path, memories: list[Memory]) -> Path:
         try:
             for mem in memories:
                 mgr.sqlite.save(mem)
+            if corrupt is not None:
+                corrupt(mgr.sqlite._get_conn())
             # WAL checkpoint so the on-disk file contains every committed
             # row (mirrors _build_sqlite_snapshot in cli/export.py).
             conn = mgr.sqlite._get_conn()
@@ -552,3 +565,90 @@ class TestSqliteMergeGate:
         assert row is not None
         assert row.pipeline_state == PipelineState.QUARANTINED, "peer verdict preserved"
         assert mgr.search("quarantined", project=PROJECT) == [], "quarantine excludes issuance"
+
+    def test_sqlite_merge_raw_peer_row_stays_raw_pending(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """A clean snapshot row arriving status=RAW keeps its (invisible)
+        status but joins the refine queue (sqlite twin of the JSON-path
+        test above: an imported raw row is no longer 'raw forever')."""
+        mid = "88888888-0000-0000-0000-00000000000e"
+        src = _snapshot_file(
+            tmp_path / "snapshot-raw.tar.gz",
+            [
+                _peer_memory(
+                    mid, "unpublished peer draft about the press brake", status=MemoryStatus.RAW
+                )
+            ],
+        )
+
+        result = run_import(mgr, src, mode=ImportMode.MERGE)
+
+        assert result.errors == []
+        row = mgr.sqlite.get(mid)
+        assert row is not None
+        assert row.status == MemoryStatus.RAW, "peer (invisible) status kept"
+        assert row.pipeline_state == PipelineState.PENDING
+
+    def test_sqlite_merge_refused_row_outside_refine_intake(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """The gate-refused row (RAW + pipeline_state=None) must never
+        enter the refine intake — danger-class content must not auto-refine
+        back into visibility."""
+        mid = "99999999-0000-0000-0000-00000000000f"
+        src = _snapshot_file(
+            tmp_path / "snapshot-refused-intake.tar.gz",
+            [_peer_memory(mid, f"planted row carrying {FAKE_AWS_KEY} in the body")],
+        )
+
+        result = run_import(mgr, src, mode=ImportMode.MERGE)
+
+        assert result.errors == []
+        row = mgr.sqlite.get(mid)
+        assert row is not None
+        assert row.status == MemoryStatus.RAW
+        assert row.pipeline_state is None
+        # The refine-intake idiom (test_pipeline_state.py): NULL rows are
+        # not intake-eligible.
+        intake_ids = {m.id for m in mgr.sqlite.list_refine_intake()}
+        assert mid not in intake_ids, "refused row must stay outside the refine queue"
+
+    def test_sqlite_merge_malformed_row_recorded_and_continues(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """Review P2-1 regression: one malformed snapshot row must not
+        abort the whole merge. The bad row (tags column rewritten to
+        invalid JSON via a direct sqlite UPDATE → ``json.JSONDecodeError``
+        in ``_row_to_memory``) is recorded per-row in ``result.errors``
+        and counted as neither imported nor skipped; the clean row after
+        it still imports and stays searchable. Before the fix this raised
+        out of ``_import_sqlite`` mid-loop (and leaked the snapshot conn).
+        """
+        bad_id = "aaaaaaaa-0000-0000-0000-000000000010"
+        good_id = "bbbbbbbb-0000-0000-0000-000000000011"
+
+        def corrupt_tags(conn: sqlite3.Connection) -> None:
+            conn.execute("UPDATE memories SET tags = ? WHERE id = ?", ("{not json", bad_id))
+            conn.commit()
+
+        src = _snapshot_file(
+            tmp_path / "snapshot-malformed.tar.gz",
+            [
+                _peer_memory(bad_id, "row whose tags column is corrupt"),
+                _peer_memory(good_id, "clean row after the malformed one about the log girder"),
+            ],
+            corrupt=corrupt_tags,
+        )
+
+        result = run_import(mgr, src, mode=ImportMode.MERGE)
+
+        assert len(result.errors) == 1
+        assert result.errors[0].startswith(f"memory {bad_id}:"), "error names the bad row"
+        assert result.imported == 1, "the clean row behind the bad one still imports"
+        assert result.skipped == 0
+        assert mgr.sqlite.get(bad_id) is None, "malformed row never written"
+        good = mgr.sqlite.get(good_id)
+        assert good is not None
+        assert good.status == MemoryStatus.PUBLISHED, "peer status kept on the clean row"
+        assert mgr.search("girder", project=PROJECT), "clean row FTS-searchable after save()"

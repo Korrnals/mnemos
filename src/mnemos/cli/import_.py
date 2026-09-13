@@ -3,7 +3,8 @@
 Two modes:
 
 * **merge** (default, idempotent) — insert memories whose ID is absent;
-  skip existing IDs (or update with ``--overwrite``). Projects are merged
+  skip existing IDs (or update with ``--overwrite`` — JSON format only;
+  the SQLite path always skips existing IDs). Projects are merged
   (create if absent, update paths if changed). Vectors are regenerated
   for published memories.
 * **restore** (destructive) — wipe all memories, vectors, and projects,
@@ -614,7 +615,10 @@ def _import_sqlite(
 
     if dry_run:
         result.imported = snapshot_count
-        result.warnings.append("SQLite dry-run: snapshot validated, no files replaced.")
+        result.warnings.append(
+            f"SQLite dry-run: snapshot read, {snapshot_count} memories counted, "
+            "no files replaced."
+        )
         return result
 
     if mode == ImportMode.RESTORE:
@@ -635,30 +639,61 @@ def _import_sqlite(
             snap_path = Path(tf.name)
         try:
             conn = sqlite3.connect(str(snap_path))
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT * FROM memories").fetchall()
-            for row in rows:
-                mem_id = row["id"]
-                if mgr.sqlite.get(mem_id) is None:
-                    # Reconstruct a Memory from the snapshot row. The
-                    # store's own ``_row_to_memory`` is schema-drift safe:
-                    # every post-day-1 column (pipeline_state,
-                    # processed_at, rewrite_*, …) is read via a defaulted
-                    # ``_get`` (missing key → default, NULL → None), so an
-                    # older snapshot DB reconstructs fine.
-                    memory = mgr.sqlite._row_to_memory(row)
-                    memory, admitted = gate_imported_memory(mgr, memory)
-                    mgr.sqlite.save(memory)
-                    if not admitted:
-                        result.warnings.append(
-                            f"memory {memory.id}: stored RAW — federation-import "
-                            "danger-gate refusal (zero-loss, invisible)"
-                        )
-                    _reembed(mgr, memory)
-                    result.imported += 1
-                else:
-                    result.skipped += 1
-            conn.close()
+            try:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("SELECT * FROM memories").fetchall()
+                for row in rows:
+                    # Label errors by id when the column is readable — a
+                    # corrupt snapshot row may not even carry one. The
+                    # keys-set idiom mirrors ``_row_to_memory``; plain
+                    # ``"id" in row`` would test VALUES, not columns.
+                    cols = set(row.keys())
+                    mem_id = row["id"] if "id" in cols else "?"
+                    try:
+                        if mgr.sqlite.get(mem_id) is None:
+                            # Reconstruct a Memory from the snapshot row. The
+                            # store's own ``_row_to_memory`` is schema-drift safe:
+                            # every post-day-1 column (pipeline_state,
+                            # processed_at, rewrite_*, …) is read via a defaulted
+                            # ``_get`` (missing key → default, NULL → None), so an
+                            # older snapshot DB reconstructs fine. Two columns
+                            # are deliberately DROPPED on this path: a locked
+                            # peer row re-imports unlocked (``save()`` never
+                            # writes workflow_status/locked_by/locked_at —
+                            # ``set_workflow_status`` is the sole writer, a
+                            # state-machine bypass guard), and rewrite
+                            # provenance is nulled (``save()`` without the
+                            # trusted flag stores NULL in rewrite_source/
+                            # rewrite_session/rewrite_event_key per the C10
+                            # anti-forgery gate, so merge-imported rows never
+                            # mint rewrite quota).
+                            memory = mgr.sqlite._row_to_memory(row)
+                            memory, admitted = gate_imported_memory(mgr, memory)
+                            mgr.sqlite.save(memory)
+                            if not admitted:
+                                result.warnings.append(
+                                    f"memory {memory.id}: stored RAW — federation-import "
+                                    "danger-gate refusal (zero-loss, invisible)"
+                                )
+                            _reembed(mgr, memory)
+                            result.imported += 1
+                        else:
+                            result.skipped += 1
+                    except Exception as exc:
+                        # Per-row isolation (review P2-1): one malformed row
+                        # (invalid status/pipeline_state enum, malformed JSON
+                        # in tags/metadata/derived_from/filter_stats,
+                        # non-ISO timestamps, NULL id → pydantic
+                        # ValidationError, pre-#32 schema → IndexError) must
+                        # not abort the whole merge — earlier rows are
+                        # already committed (every ``save()`` commits).
+                        # Mirrors the JSON path (``_import_json``): the row
+                        # lands in ``result.errors``, counts as neither
+                        # imported nor skipped, and the loop continues.
+                        result.errors.append(f"memory {mem_id}: {exc}")
+                        continue
+            finally:
+                conn.close()
             mgr.sqlite._invalidate_caches()
         finally:
             snap_path.unlink(missing_ok=True)
