@@ -26,6 +26,11 @@
 
 ## 2. Текущее состояние — снимок на 2026-08-31
 
+> **Примечание 2026-09-13:** проценты и счётчики ниже — снимок на
+> 2026-08-31; с тех пор main ушёл далеко (ADR-0019 Фазы C–D, ADR-0021–0026,
+> релизы 3.x–4.1.0, срез 1 §4a). Пересчёт процентов линий — за
+> председателем АрхКома на ближайшем срезе; живые статусы — в трекере.
+
 **Ядро Фазы 2 сделано: модель публикации (ADR-0019, Фазы A–B) и защита
 контекста (ADR-0018) в main. Измерительная часть начата: БФ-1 сдан (S1-стенд,
 корневой `benchmarks/`, канонические базлайны); впереди — стенды S2–S4 и
@@ -64,6 +69,7 @@
 | 2026-08-31 | Гигиена очереди | Очередь комитета вычищена; [#185](https://github.com/Korrnals/mnemos/issues/185)/[#186](https://github.com/Korrnals/mnemos/issues/186) переоформлены из очереди комитета (карточки от 2026-08-30); заведён этот dev-plan (поезд [#168](https://github.com/Korrnals/mnemos/issues/168)) |
 | 2026-08-31 | БФ-1 (эпик [#169](https://github.com/Korrnals/mnemos/issues/169)) | Корневой каталог `benchmarks/` (директива владельца 2026-08-30): корпус мигрирован из `tests/golden` байт-точно (2 отклонения: импорт-пути пакетов; фикс бага фикстуры `aurora-ci-token-note` — 32-символьный хвост ghp_ против 36 в PLANTED_SECRETS); S1-стенд (`make bench-s1`, гейт в verify) = golden-измерения + сценарии S1–S3 ADR-0019 (карантин/ретракция/подмена) + detector-quarantine-fp (легитимные tech-паттерны в корпусе, 8 записей) + инвариант render-neutrality + interim-McNemar (знаковый тест); канонический `baselines/s1.json` (baseline_version 1, stand_version s1-1, corpus_fingerprint) + генерируемый `BASELINE.md`; wheel/sdist-исключение `benchmarks/` (по образцу #179); smoke-тесты стенда + мутационный тест нейтральности |
 | 2026-08-31 | P1-фиксы [#170](https://github.com/Korrnals/mnemos/issues/170)/[#171](https://github.com/Korrnals/mnemos/issues/171)/[#193](https://github.com/Korrnals/mnemos/issues/193) | **#170** lease/reclaim зависших `processing`: `REFINE_LEASE_TIMEOUT_SEC=600` (claim штампует lease-часы `updated_at`), идемпотентный CAS-reclaim в sweeper-цикле процессора (`WHERE pipeline_state='processing' AND updated_at < cutoff` — двойной воркер/свипер безопасен), аудит `outcome=lease-reclaimed age=…`, retry-бюджет не расходуется. **#171** N1-гейт контентных правок распространён на все admissible-статусы (edit-ветка; flip-ветка осталась PUBLISHED-only — контракт knowledge-pipeline: rewrite-оригиналы редактируются на выдаче): отказ → демоция RAW без касания `pipeline_state` (инвариант B1), чистая правка PROCESSED → `pipeline_state=pending` (F8-семантика, включая legacy-NULL admissible-строки). **#193** `update()` сбрасывает `clean_content` той же транзакцией, что пишет новый контент (B2a swap-дисциплина); served-проекция (`effective_content`) — новый контент немедленно; S1-базлайн перезаписан честно (`filter_projection_stale_after_update` true→false, остальные метрики байт-точно). Сьют 2186 → 2203 (+17: lease-reclaim 7, PROCESSED-гейт 7, сброс проекции 3); мутации 5+2+2 пойманы. NM-трек [#197](https://github.com/Korrnals/mnemos/issues/197)/ADR-0021 внесён в DAG (§4) |
+| 2026-09-13 | Срез 1 §4a «Стабилизация + документация» (цикл АрхКома мета-уровня) | Docs-волна [PR #256](https://github.com/Korrnals/mnemos/pull/256) (ADR-0025/0026, отчёт цикла, §4a, формулировки EN/RU); зависший фикс #245 [PR #257](https://github.com/Korrnals/mnemos/pull/257); P0-батч #250 [PR #260](https://github.com/Korrnals/mnemos/pull/260) (карантин вход+чтение, strip-by-default, ANY-member no-federate, input_set_hash, суперпрессия ARCHIVED); origin= provenance [PR #262](https://github.com/Korrnals/mnemos/pull/262); D0 #251 [PR #263](https://github.com/Korrnals/mnemos/pull/263) (save_checkpoint single authority, binding, issuer-dedup, трёхслойная защита штампов — security approve после ремонта); формат-долг verify [PR #268](https://github.com/Korrnals/mnemos/pull/268). Сьют 2419 → 2452; bench-s1 gate PASS. Урожай трекера: #258/#259/#261(закрыт)/#264/#265/#266/#267 |
 
 ## 4. DAG ближайших волн
 
@@ -189,21 +195,39 @@ Engineer (+ Security-ревью контура #251); доки — Tech Lead.
 
 Чеклист:
 
-- [ ] P0-батч [#250](https://github.com/Korrnals/mnemos/issues/250): F1
+- [x] P0-батч [#250](https://github.com/Korrnals/mnemos/issues/250): F1
   intake-предикат `is_quarantined` в `cluster_raw_memories`; F2
   strip-by-default (синтез без `applyTo:`/`severity:`); F2b no-federate по
   правилу ANY-member; F3 идемпотентность с `input_set_hash` (4-компонентный
   ключ). Тесты на все четыре (мутации: подмена члена кластера, карантин
   входит, секрет на непервой позиции, swap не инвалидирует).
-- [ ] D0-блокер [#251](https://github.com/Korrnals/mnemos/issues/251):
+  **✅ 2026-09-13, [PR #260](https://github.com/Korrnals/mnemos/pull/260)**
+  (вердикт approve после ремонтного цикла): карантинный предикат на входе
+  И на чтении членов синтеза (расширенная находка ревью, закрыл #261),
+  strip-by-default + `POLICY_TAG_PREFIXES`, ANY-member no-federate,
+  4-компонентный ключ с `input_set_hash` + суперпрессия устаревших
+  черновиков (ARCHIVED + `superseded_by`); 8 тестов в
+  `tests/test_synthesis_guards.py`.
+- [x] D0-блокер [#251](https://github.com/Korrnals/mnemos/issues/251):
   расхардкод `agent="user"` в `mnemos_save_context` (MCP + REST-аналог) из
   валидированной identity; серверный session→agent binding поверх
   sessions-таблицы; дедуп-ключ с issuer
   SHA256(content+project+agent); trivial-reject на границе. Security-ревью
   обязательное.
-- [ ] `origin=` в provenance-строке всех блоков (из серверных колонок) —
+  **✅ 2026-09-13, [PR #263](https://github.com/Korrnals/mnemos/pull/263)**
+  (security-ревью approve после ремонта): единая точка
+  `MemoryManager.save_checkpoint`, binding first-writer-wins в meta-таблице,
+  issuer-keyed dedup, trivial-reject, гигиена идентичности
+  (`^[a-z0-9_-]{1,64}$`), трёхслойная защита серверных штампов
+  `checkpoint_*` от подделки через generic-create (P1-находка ревью,
+  CWE-346); 18 тестов в `tests/test_save_context_identity.py`.
+- [x] `origin=` в provenance-строке всех блоков (из серверных колонок) —
   если ещё не в #250/#251 срезе, отдельным коммитом (связано с #248).
-- [ ] Docs-волна: закоммитить untracked (ADR-0025, ADR-0026, отчёт цикла,
+  **✅ 2026-09-13, [PR #262](https://github.com/Korrnals/mnemos/pull/262)**:
+  `origin=<source>` в каждом маркере из серверной колонки `Memory.source`
+  (spoof-тесты: тег/metadata никогда не попадают в маркер) + структурное
+  поле блока + синхрон контрактных доков EN/RU (http-api, mcp-tools).
+- [x] Docs-волна: закоммитить untracked (ADR-0025, ADR-0026, отчёт цикла,
   индексы adr/README + reports/README, этот dev-plan §4a); обновить
   формулировки, найденные циклом: «свёртка с чеками» (двухчастное
   «безусловное»), «нервная система, не дирижёр» (awareness-граница),
@@ -211,11 +235,41 @@ Engineer (+ Security-ревью контура #251); доки — Tech Lead.
   находит → сворачивает с чеками → строит понимание» — в соответствующие
   места доков (README/docs-обзор) с EN-каноном и RU-синхронностью (правило
   docs-reflect-code).
-- [ ] `make verify` зелёный; сьют расширен тестами P0/D0.
+  **✅ 2026-09-13, [PR #256](https://github.com/Korrnals/mnemos/pull/256)**
+  (ревью approve, 7 находок исправлены: опечатка, индекс-даты, легенда
+  статусов, нумерация, таблица отчёта, калюк, EOF).
+- [x] `make verify` зелёный; сьют расширен тестами P0/D0.
+  **✅ 2026-09-13**: сьют 2419 → 2452 на объединённом main (полный `make verify`
+  в чистом worktree): format (после формат-PR [#268](https://github.com/Korrnals/mnemos/pull/268)
+  — долг `test_hermes_adapter.py` + пришедший с #257
+  `test_federation_import_gate.py`), lint, mypy --strict, tests 2452/3,
+  bench-s1 **gate PASS** (recall@5=0.8745), doctor, check-version — зелёные.
+  Единственная красная стадия — pip-audit по СВЕЖИМ сторонним адвайзори
+  (aiohttp/cryptography/pip/setuptools), не регрессия среза → отдельный
+  P1-тикет [#267](https://github.com/Korrnals/mnemos/issues/267).
 
-**Чекпоинт-контракт среза 1:** отчёт волны §6 (доска → сделано/не сделано →
-мутации пойманы? → параллельные потоки (pi/NM-3a не трогаем) → «ждут
-владельца»: 3 green-light из §5 отчёта цикла).
+**Чекпоинт среза 1 (закрыт 2026-09-13):**
+
+- **Доска:** 5/5 пунктов чеклиста закрыты; PR #256, #257 (зависший фикс
+  #245 прошлой сессии), #260, #262, #263 — все смержены после
+  ревью-гейтов (2 approve с первого захода, 2 approve после ремонтных
+  циклов, 1 approve по security-контуру после ремонта).
+- **Мутации пойманы:** да — карантин в кластере/синтезе (секрет не доезжает
+  до черновика), подмена члена инвалидирует кэш, секрет на непервой позиции
+  рождает no-federate, подделка штампов через generic-create стрипается,
+  спуфинг `origin:federated` не попадает в маркер.
+- **Урожай в трекер:** #258 (изоляция ошибок sqlite-merge), #259 (restore
+  без гейта), #261 (закрыт ремонтом #260), #264 (ARCHIVED-консистентность),
+  #265 (D1-харднинг идентичности: eviction/TTL, UNIQUE-колонка,
+  server-issued ids, оракулы, import-гейт с условием loopback), #266
+  (hermes-канал вне save_checkpoint).
+- **Параллельные потоки:** pi/NM-3a не тронуты (training/, uv.lock, npm —
+  никогда не stage); Containerfile/entrypoint.sh пришли в main через PR
+  #255 параллельной сессии — конфликтов нет.
+- **Ждут владельца:** те же 3 green-light из §5 отчёта цикла (interleave
+  D∥C; нарратив после D1+D4; финализация R2 → go эксперимента) — срез 2
+  (E0-предрегистрация #252 + E1-спайк #253) может стартовать без них;
+  срез 3 (awareness #254) требует green-light interleave.
 
 ### Срез 2 — «Предрегистрация + движок за флагом»
 
