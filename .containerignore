@@ -1,0 +1,6 @@
+# Exclude symlinks to external repos (release-pipeline) — hatchling's
+# wheel force-include copies everything under scripts/, and broken
+# symlinks crash the build. The real scripts ship from source.
+scripts/run-release-local.sh
+scripts/local-ci/run-all.sh
+scripts/local-release.sh

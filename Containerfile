@@ -1,10 +1,12 @@
 # Mnemos — Memory & Knowledge Server for AI Agents
-# Build: podman build -t mnemos .
-# Run:   podman run -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 mnemos
+# Build: podman build -t ghcr.io/korrnals/mnemos:4.1.0 .
+# Run:   podman run -v mnemos-data:/data -v mnemos-vault:/vault -p 8787:8787 ghcr.io/korrnals/mnemos:4.1.0
 FROM docker.io/library/python:3.12-slim AS base
 
 LABEL maintainer="abyss"
 LABEL description="Mnemos: hybrid long-term memory system for AI agents"
+LABEL org.opencontainers.image.source="https://github.com/Korrnals/mnemos"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -19,44 +21,30 @@ RUN apt-get update -qq && \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps first (layer caching)
+# Install the package (the MCP SDK rides in core since 4.1.0 — ADR-0023;
+# the bundled mnema-embed-v1 model ships inside the wheel, so vector
+# search works offline out of the box with no downloads).
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-# integrations/ is required at build time — pyproject.toml force-include
-# ships it inside the wheel via [tool.hatch.build.targets.wheel.force-include].
+# integrations/ and scripts/ are force-included into the wheel via
+# pyproject.toml [tool.hatch.build.targets.wheel.force-include].
 COPY integrations/ ./integrations/
-# scripts/ is required at build time — force-include ships it inside the wheel
-# as mnemos/scripts/ so `mnemos integration setup` can find mcp-setup.sh.
 COPY scripts/ ./scripts/
+COPY NOTICE LICENSE ./
 RUN pip install --no-cache-dir "."
 
-# Pre-download ChromaDB's default embedding model (all-MiniLM-L6-v2 ONNX, ~90MB)
-# so vector search works offline out of the box.
-# NOTE: /data is a volume mount at runtime — anything written there during build
-# is hidden. We pre-download to /opt/model-cache and copy to /data on startup.
-ENV HOME=/data
-RUN mkdir -p /opt/model-cache/.cache/chroma/onnx_models/all-MiniLM-L6-v2 && \
-    HOME=/opt/model-cache python3 -c "\
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction; \
-DefaultEmbeddingFunction() \
-" && \
-    echo 'Embedding model pre-downloaded to /opt/model-cache'
-
-# Entrypoint script: copies pre-downloaded model into the mounted PVC on first boot
+# Entrypoint
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Default directories
+# Default directories (/data and /vault are volume mounts at runtime)
 RUN mkdir -p /data /vault
 
-# Copy container config (with auth + CORS configured for 0.0.0.0 bind)
+# Container config (0.0.0.0 bind + auth + CORS; TOTP master key via env)
 COPY config.container.yaml /app/config.yaml
-
-# Set config path for container environment
 ENV MNEMOS_CONFIG=/app/config.yaml
 
 EXPOSE 8787
 
-# Default: HTTP API server (mnemos serve wraps fastapi + uvicorn)
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["mnemos", "serve"]
