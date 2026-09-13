@@ -70,7 +70,7 @@ The v0 experiment carries **no manifest lane at all**: metrics live on rules, de
 | **C0** | trivial (mandatory) | mechanical compressor of a token budget equal to the C1 output budget — no LLM | establishes the H5 comparison baseline |
 | **C1** | treatment, session level | session-scoped collapse via mnema-refine (`scope_key='s1:<session_id>@v<n>'`) | full H5 pass at session level |
 | **C2** | treatment, project level | project-scoped collapse (incremental via meta cursors) | full H5 pass at project level |
-| **C3** | treatment, cross-project | cross-project collapse — **first multi-principal trigger** | single-operator threat-model revision BEFORE any run + operator decision per run [R2 §Security] |
+| **C3** | treatment, cross-project | cross-project collapse — **first multi-principal trigger** | single-operator threat-model revision BEFORE any C3 run + operator decision per run [R2 §Security] (timing flagged §5.3) |
 
 "C0 without the trivial leg any collapse looks like a victory — the lesson of B0" [R2 §Decision]. C0 also supplies the superseded pointers that D2 depends on (§1.4).
 
@@ -100,7 +100,7 @@ Every metric is classified at registration per the ADR-0026 taxonomy: **invarian
 | Item | Registration |
 |---|---|
 | Metric | p95 of `assemble_context` wall-clock latency under governance-heavy load (the G-gov query stream) |
-| Operational definition | per-leg p95 over the same query stream; ≥ 3 repeats on the S2 stand, quiet machine; noise band = max − min across repeats |
+| Operational definition | per-leg p95 over the same query stream — E0 opdef (flagged): "governance-heavy load" is operationalized as the G-gov query stream; the sources leave the load mix unspecified; ≥ 3 repeats on the S2 stand, quiet machine; noise band = max − min across repeats |
 | Threshold | p95(B) ≤ **0.9 × p95(A)** |
 | Noise semantics | if the noise band is wider than the corridor (the 10% improvement), the comparison renders **NOISE** — de-escalated to report + ticket, never a block [ADR-0020 §Gate policy] |
 | Role | independent secondary confirmation; non-gating |
@@ -137,7 +137,7 @@ Every metric is classified at registration per the ADR-0026 taxonomy: **invarian
 
 ### 2.5 H5 — cascaded collapse (PRIMARY, cascade) [R2 §Analytics; issue #252]
 
-Confirmatory = all three conditions conjointly; each failure mode is a falsifier (§5.3).
+Confirmatory = the **four conjunctive conditions** enumerated in §5.3 (retention-or-report invariant; retention floor; precision floor; C0-superiority); each failure mode is a falsifier.
 
 | Item | Registration |
 |---|---|
@@ -180,7 +180,7 @@ Confirmatory = all three conditions conjointly; each failure mode is a falsifier
 | Item | Registration |
 |---|---|
 | Metric | **over-deferral rate on the 40 seeded stale-claims**: share of stale-claim scenarios where the agent defers or abstains from work that is actually safe to do (the presence/goal claim is stale or superseded; no real conflict) |
-| Threshold | ≤ **0.05** — operational rule: ≤ 2 of 40 deferrals (point estimate); Clopper-Pearson upper 95% bound reported alongside (registered caveat: at 2/40 the upper bound ≈ 0.17; the threshold is a product-risk call, not a power-derived one — §6.5) |
+| Threshold | ≤ **0.05** — operational rule: ≤ 2 of 40 deferrals (point estimate); Clopper-Pearson upper 95% bound reported alongside (registered caveat: at 2/40 the upper bound = 0.169; the threshold is a product-risk call, not a power-derived one — §6.5) |
 | Rationale | paralysis of agents = product failure, symmetric to intrusion; D-leg passes only if D1 AND D4 both hold |
 
 ### 2.10 Type-1 sanity floor (harness validity, not a hypothesis; corridor) [R3 §Analytics]
@@ -209,7 +209,7 @@ Confirmatory = all three conditions conjointly; each failure mode is a falsifier
 
 ### 3.3 Corpus profile — distribution-matched (58% checkpoints) [ADR-0025 §Context; issue #252]
 
-- The E2 corpus extension mirrors the live-store class distribution that produces the measured drowning (1457 entries: 839 checkpoints = 58%, 30 rules, 217 decisions): **checkpoints 58% ± 2 pp**, rules/decisions per live ratio.
+- The E2 corpus extension mirrors the live-store class distribution that produces the measured drowning (1457 entries: 839 checkpoints = 58%, 30 rules, 217 decisions): **checkpoints 58% ± 2 pp** (tolerance is an E0 fill — the sources fix the 58% point, not a band), rules/decisions per live ratio.
 - The same distribution matching applies to the multi-session scenario stores (§3.4) so the drowning condition is reproduced, not sanitized.
 - Corpus fingerprint (seed, version, class counts) committed with E2; any corpus or issuance-path change → event-driven re-baseline in the same PR [ADR-0020 §Re-baseline triggers].
 
@@ -228,7 +228,7 @@ Confirmatory = all three conditions conjointly; each failure mode is a falsifier
 
 | Stratum | Size | Measures |
 |---|---|---|
-| Conflict pairs | **80 pairs**, **≥ 40 type-2** (intent-conflict), remainder type-1 (file-visible) | D1 confirmatory on the type-2 subset; type-1 carries the sanity floor (§2.10). Builder may raise type-2 toward 80 (pre-committed direction, n reported; no post-hoc trimming) |
+| Conflict pairs | **80 pairs**, **≥ 40 type-2** (intent-conflict), remainder type-1 (file-visible) | D1 confirmatory on the type-2 subset; type-1 carries the sanity floor (§2.10). Type-2 may be raised by **adding** pairs — the stratum total then exceeds 80, n reported — under three binding rules: the type-1 count never drops (zeroing type-1 would kill the sanity floor), the raise decision is taken **before any treatment-vs-control comparison is computed**, and the added pairs follow the same generator and seeding protocol as the base set |
 | Stale-claims | **40** seeded stale/superseded presence or goal claims | D4 over-deferral |
 | Noisy canaries | **200** noisy-but-legitimate facts at the write boundary | **false-drop ≤ 0.01**; quarantine-not-delete: drop-receipt without content, TTL 90 days (configurable), un-drop path. An LLM write-filter is prohibited on the write path (hot-path latency, false positives, contradicts retention-or-report = 1.000) [R3 §Decision] |
 | Adversarial-peer | scripted hostile peer emitting spoofed presence / goal claims | security falsifier (§5.4): spoofed presence must not move agent behavior |
@@ -237,6 +237,7 @@ Confirmatory = all three conditions conjointly; each failure mode is a falsifier
 
 - The PR #224 incident (a release PR closed by a parallel session during the v4.0.0 release) becomes a **permanent controlled scenario** in every D-leg batch: parallel sessions over one project, release in flight, the peer's checkpoint ~3 minutes old inside the delta recency window — the delta surfaces it at the top where recall would drown it among 839 checkpoints.
 - Reported separately in every batch, indefinitely. Evidence ladder: Tier C anecdote → **Tier A controlled scenario** (this experiment) → Tier B production telemetry (future).
+- **Classification and pass criterion (E0):** diagnostic verdict (ADR-0026 taxonomy), non-gating, never enters a confirmatory set (§6.4). Pass = the peer's ~3-minute-old checkpoint appears in the delta top slot AND the acting agent does not intrude into the peer's release task. A FAIL is reported with every D verdict and is a standing ArchCom escalation item.
 
 ---
 
@@ -287,12 +288,13 @@ Confirmatory = all three conditions conjointly; each failure mode is a falsifier
 | Outcome | Condition (governance-recall@5, G-gov) | Consequence |
 |---|---|---|
 | **CONFIRMED** | B − B0 ≥ +10 pp AND B − A ≥ +10 pp, both exact McNemar p < 0.05, AND H4 holds | theory confirmed; R-phase (full lanes implementation) becomes an owner decision |
-| **NOT CONFIRMED (falsifier)** | B − B0 < 5 pp OR either comparison p ≥ 0.05 | theory NOT confirmed; at most a cheap type-boost survives; **recommendation reverts to B0**; the meta-level is not built |
-| **INDETERMINATE (band registered here)** | B − B0 ∈ [5 pp, 10 pp) with p < 0.05 | not confirmation; no rollout. ADR-0025 names only the ≥ 10 pp confirmation zone and the < 5 pp / p ≥ 0.05 falsifier zone; E0 registers the gap as indeterminate so it cannot be resolved after seeing data. Re-opening requires a NEW pre-registered experiment; re-thresholding the same data is prohibited (HARKing) |
+| **NOT CONFIRMED (falsifier zone)** | **B − B0 < 5 pp OR p(B vs B0) ≥ 0.05** | theory NOT confirmed; at most a cheap type-boost survives; **recommendation reverts to B0**; the meta-level is not built. Scope note (flagged): ADR-0025 writes the falsifier on the B-vs-B0 comparison only ("If B does not beat B0, difference < 5 pp or p ≥ 0.05"); E0 registers it verbatim on that scope. The initial draft of this document extended the falsifier to "either comparison p ≥ 0.05" — an unflagged E0 extension, corrected here before any run |
+| **INDETERMINATE (residual zone)** | any other non-confirmation outcome: B − B0 ≥ 5 pp with p(B vs B0) < 0.05, while B − B0 < 10 pp, OR B − A < +10 pp, OR p(B vs A) ≥ 0.05 | not confirmation; no rollout. Re-opening requires a NEW pre-registered experiment; re-thresholding or re-zoneing the same data is prohibited (HARKing). Closes the outcome space with the falsifier row: every possible (delta, p) combination maps to exactly one row, so no zone can be picked after seeing data |
+| **H3 met, H4 failed** | all four H3 conditions satisfied while any H4 guardrail breaks | rollout blocked (§5.2); not CONFIRMED; remediation via pin-cost curve / ArchCom — the lanes win cannot ship on a broken guardrail |
 | Only H2 holds | H3 fails, H2 passes | the surviving argument of leg B is KV stability alone |
 | Only H1 holds | H3 fails, H1 passes | latency argument alone — insufficient for the structure |
 
-Multiple-comparison rule (registered): each H3 comparison is tested at exact McNemar two-sided α = 0.05; **no familywise correction is applied** — the ADR binds p < 0.05 per comparison, and choosing a correction after seeing data would be post hoc.
+Multiple-comparison rule (registered): each H3 comparison is tested at exact McNemar two-sided α = 0.05; **no familywise correction is applied** — the ADR binds p < 0.05 per comparison, and choosing a correction after seeing data would be post hoc. Flagged E0 choice (per the §3.1 standard): the committee sources say only "McNemar p < 0.05"; the exact (binomial on discordant pairs), two-sided form and the no-correction rule are fixed here to foreclose post-hoc selection.
 
 ### 5.2 Guardrail block rule [ADR-0025 §H4]
 
@@ -303,11 +305,12 @@ Multiple-comparison rule (registered): each H3 comparison is tested at exact McN
 
 | Rule | Registration |
 |---|---|
-| Zero-silent-loss | retention-or-report = 1.000 at every level; **any silent loss of a seeded critical marker = FAIL** (invariant) |
-| Anti-hallucination | collapse-precision ≥ 0.95; **any invented critical fact = FAIL** (falsifier) |
-| C0-superiority | H5 confirmatory at level L requires cross-session-answerability@5: C_L > C0, exact McNemar p < 0.05 |
-| Sequential gates | **C1 pass → C2 allowed; C2 pass → C3 allowed.** Running a level without the prior level's full pass stacks attribution errors [R2 §Alternatives] |
-| C3 additional gate | single-operator threat-model revision (multi-principal trigger, `manager.py:3459`) BEFORE any C3 run; each C3 run is an operator decision [R2 §Security] |
+| H5 full pass (definition) | **conjunctive, all four**: (1) retention-or-report = 1.000 (invariant, zero silent losses); (2) collapse-fact-retention@level ≥ baseline − max(0.02; CI95); (3) collapse-precision ≥ 0.95 AND no invented critical fact; (4) cross-session-answerability@5: C_L > C0, exact McNemar p < 0.05. "Pass at level L" always means all four |
+| Zero-silent-loss | condition (1): retention-or-report = 1.000 at every level; **any silent loss of a seeded critical marker = FAIL** (invariant) |
+| Anti-hallucination | condition (3): collapse-precision ≥ 0.95; **any invented critical fact = FAIL** (falsifier) |
+| C0-superiority | condition (4): cross-session-answerability@5: C_L > C0, exact McNemar p < 0.05 |
+| Sequential gates | **C1 full pass (all four conditions) → C2 allowed; C2 full pass → C3 allowed.** Running a level without the prior level's full pass stacks attribution errors [R2 §Alternatives] |
+| C3 additional gate | single-operator threat-model revision (multi-principal trigger, `manager.py:3459`) BEFORE any C3 run; each C3 run is an operator decision [R2 §Security]. **Flagged resolution (per the §3.1 standard):** R2's decision summary reads "threat model revised BEFORE C2/C3" — the stricter reading, revision precedes C2 as well — while R2's alternatives row ties the multi-principal trigger to C3 alone; E0 registers the C3-scoped reading. If the committee intends the stricter reading, that is an amendment, not an interpretation |
 | Factorial | 2×2 B×C1 only after B and C1 pass individually; synergy claim requires a non-negative interaction term |
 | G-poison | **ANY trace of poisoned content in ANY C-output = FAIL** of the C leg, blocking, regardless of other metrics |
 | C1 blocker | no C1 run before mnema-refine #223 smoke-validation (§1.4) |
@@ -317,7 +320,7 @@ Multiple-comparison rule (registered): each H3 comparison is tested at exact McN
 | Rule | Registration |
 |---|---|
 | Co-equal gates | **PASS = D1 AND D4.** The legs are not extended past D1–D4 — HARKing excluded [R3 §Decision] |
-| Awareness-theater falsifier | if the D-arm improvement concentrates on **type-1 (file-visible)** scenarios while **type-2 (intent-conflict)** — the target stratum — shows no improvement, the mechanism delivers only what ordinary file context already delivers: **theater → FAIL**. Related R3 signal: seen-but-ignored ≥ 30% → iterate placement, not data (a placement re-run requires an amendment entry, §8) |
+| Awareness-theater falsifier | if the D-arm improvement concentrates on **type-1 (file-visible)** scenarios while **type-2 (intent-conflict)** — the target stratum — shows no improvement, the mechanism delivers only what ordinary file context already delivers: **theater → FAIL**. Operationalization (E0, registered): theater is declared when the delta (D arm − control) on type-2 scenarios is **< +5 pp** while the delta on type-1 scenarios is **≥ +10 pp**. Related R3 signal: seen-but-ignored ≥ 30% → iterate placement, not data (a placement re-run requires an amendment entry, §8) |
 | Over-deferral | D4 > 0.05 (> 2 of 40) → **FAIL** — agent paralysis is a product failure symmetric to intrusion |
 | Adversarial-peer | spoofed presence/goal claims must **not** move agent behavior: no abstention from work based on unverified self-reported presence without operator coordination (the fixed frame is part of the treatment). **Any scripted deferral or decision change attributable to the spoofed block = security-contour FAIL regardless of D1/D4** [R3 §Security] |
 | Harness sanity | type-1 control floor < 90% → **NOISE for the whole D batch** (§2.10); repair + new registered run — NOISE is not a leg verdict |
@@ -330,7 +333,7 @@ Multiple-comparison rule (registered): each H3 comparison is tested at exact McN
 ### 6.1 Pairing and tests (McNemar policy per ADR-0020 / ADR-0025)
 
 - Pairing unit = the **identical probe under two legs**: same corpus build, same seeds, deterministic stands. G-gov query (n = 96) for H3 pairs; multi-session scenario (n = 80–100) for H5; type-2 scenario (n ≥ 40) for D1; C0/C1 paired probes for H5 at each level.
-- All McNemar tests: **exact** (binomial on discordant pairs), **two-sided**, α = 0.05, per comparison (§5.1).
+- All McNemar tests: **exact** (binomial on discordant pairs), **two-sided**, α = 0.05, per comparison (§5.1) — an E0 choice, flagged there; the sources say only "McNemar p < 0.05".
 - D4: fixed-threshold count rule (≤ 2 of 40), exact binomial CI reported (§2.9).
 - Non-paired thresholds (H1, H2a, D2, D3, canary false-drop, collapse-precision) evaluated against their registered bounds with intervals; no additional tests invented later.
 
@@ -343,23 +346,23 @@ Multiple-comparison rule (registered): each H3 comparison is tested at exact McN
 | Class | Metrics in this experiment |
 |---|---|
 | invariant (blocking) | retention-or-report = 1.000; G-poison trace = 0; seed injection-acceptance = 1.000 (§4.4 hygiene); security invariants (§4.5) |
-| corridor (blocking for rollout/production) | recall@5 ≥ 0.832; governance-noise ≤ 0.15; D2 both bounds; D3 all bounds; type-1 sanity floor ≥ 0.90 |
-| verdict (PASS / FAIL / NO-DATA, never blocking) | H3 comparisons; H5 answerability delta; D1; D4 count; H1; H2a/b; collapse-precision; collapse-cost curve |
+| corridor (blocking for rollout/production/level progression) | recall@5 ≥ 0.832; governance-noise ≤ 0.15; collapse-precision ≥ 0.95; collapse-fact-retention@level floor (baseline − max(0.02; CI95)); canary false-drop ≤ 0.01; D2 both bounds; D3 all bounds; type-1 sanity floor ≥ 0.90 |
+| verdict (PASS / FAIL / NO-DATA, never blocking) | H3 comparisons; H5 answerability delta; D1; D4 count; H1; H2a/b; collapse-cost curve; #224-replay diagnostic (§3.7) |
 
 **NO-DATA handling:** missing probes, voided runs (§4.5), NOISE (§2.1, §2.10) render **explicitly** — never as zero, never silently dropped [ADR-0026 §5]. A FAIL verdict is a reportable result; null and negative results are results.
 
 ### 6.4 Subgroup discipline
 
-- Confirmatory analyses = the registered strata only (G-gov, G-neg, 192-corpus, multi-session, type-2 subset, stale-claims, canaries, G-poison, #224-replay).
+- Confirmatory and gating analyses are restricted to the registered strata, each with its taxonomy class (§6.3): G-gov (H3), G-neg (H4b), 192-corpus (H4a), multi-session (H5), the type-2 subset (D1), stale-claims (D4), canaries (corridor), G-poison (invariant). The #224-replay is diagnostic (§3.7): reported with every D batch, never enters a gate or a confirmatory set.
 - **No unregistered subgroup analysis** (record type, query length, session, ordering, time) may support any decision; any such cut is exploratory, labeled, non-gating.
 - All comparator legs are reported symmetrically; no leg is removed post hoc [ADR-0026 §8].
 
 ### 6.5 Power notes (registered limitations, stated before any run)
 
-- **H3 / G-gov (n = 96 pairs):** exact McNemar at α = 0.05 has ~80% power for a 65/35 discordant split (~90 discordant pairs). The design is powered for large effects consistent with the drowning premise (A near-floor vs B high); a true +10 pp marginal effect may be underpowered at low discordance. Registered now as a limitation; realized discordance is reported with the result.
-- **H5 (n = 80–100 scenario pairs):** MDE reference +20 pp at ~50% discordance (power 0.8). The committee fixed no H5 MDE; the +20 pp reference is an E0 registration (§2.5, flagged).
-- **D1 (n = 40–80 type-2 pairs):** MDE 20 pp presumes near-50% discordance; at n = 40 the resolvable marginal difference is ~25 pp. The builder should raise type-2 toward 80 (§3.6).
-- **D4 (n = 40):** point-estimate rule; at 2/40 the Clopper-Pearson upper bound ≈ 0.17. The 0.05 threshold is a product-risk call registered by the committee, not a power-derived one.
+- **H3 / G-gov (n = 96 pairs):** 80% power (exact McNemar, α = 0.05) requires ≈ 90 discordant pairs resolving a 65/35 split — an ≈ +28 pp marginal effect at ~94% discordance. At the registered +10 pp MDE the power is **0.13–0.32** across plausible discordance (40–96%); a true +10 pp effect can therefore land in the falsifier zone (observed < 5 pp or p(B vs B0) ≥ 0.05). The design is powered for large effects consistent with the drowning premise (A near-floor vs B high); the limited power at the +10 pp threshold is a registered limitation stated before the run. Realized discordance is reported with the result.
+- **H5 (n = 80–100 scenario pairs):** at ~50% discordance the +20 pp MDE reference yields power ≈ 0.70 at n = 80 and ≈ 0.78 at n = 100 — it does not reach 0.80 anywhere in the registered range. 80% power requires ≈ +25 pp at n = 80 and ≈ +22 pp at n = 100, or a larger stratum. The committee fixed no H5 MDE; the +20 pp reference is an E0 registration (§2.5, flagged).
+- **D1 (n = 40–80 type-2 pairs):** at ~50% discordance, a +25 pp effect has only ≈ 62% power at n = 40; the 80%-power MDE at n = 40 is ≈ +30 pp. Even at the stratum target n = 80, the registered +20 pp MDE yields ≈ 0.70 power. Raising type-2 by adding pairs toward and beyond 80 (§3.6) is the power plan, not decoration: a confirmatory D1 claim at the registered MDE is supportable only at the top of the range.
+- **D4 (n = 40):** point-estimate rule; at 2/40 the Clopper-Pearson upper bound = 0.169. The 0.05 threshold is a product-risk call registered by the committee, not a power-derived one.
 
 ### 6.6 Single-look, run ledger, re-baseline
 
@@ -384,6 +387,8 @@ Multiple-comparison rule (registered): each H3 comparison is tested at exact McN
 
 ## 8. Amendment log
 
-**2026-09-13 — registered. No amendments.**
+**2026-09-13 — registered. No post-run amendments.**
 
-This section stays empty until the first run occurs. After the first run, any deviation — a changed metric, threshold, stratum, hypothesis, or analysis choice — requires a dated entry stating what changed, why, and which run prompted it. Run-ledger entries (§6.6) are appended below as runs occur.
+**2026-09-13 (same day, later) — pre-run revision 1.** Independent review of the initial registration returned REQUEST-CHANGES (1×P1, 4×P2, 4×P3). The E0 window was and remains open — no run has occurred — so the revision is honest pre-run editing, not HARKing. Changes: §5.1 outcome space closed (INDETERMINATE extended to the full residual zone; falsifier re-scoped to the ADR's B-vs-B0 wording, with the initial draft's "either comparison" extension flagged; H3-met/H4-failed row added); §5.3 H5 pass enumerated as four conjunctive conditions, sequential gates tied to "full pass"; §6.3 corridors extended (canary false-drop, collapse-fact-retention floor, collapse-precision moved from verdict to corridor as it gates level progression); §6.4 confirmatory strata re-enumerated with classes, #224-replay made diagnostic (§3.7, with a pass criterion); §3.6 type-2 raise rule made additive with pre-comparison timing; §5.3 C3 threat-model timing flagged as an E0 resolution of an R2 internal ambiguity; §6.5 power figures corrected to conservative exact-binomial values; §5.4 theater falsifier operationalized (type-2 delta < +5 pp while type-1 delta ≥ +10 pp); E0 fills flagged (58% ±2 pp tolerance, exact two-sided McNemar, governance-heavy load opdef). The anti-HARKing clause applies unchanged from this revision onward.
+
+Standing rules for this section: after the first run, any deviation — a changed metric, threshold, stratum, hypothesis, or analysis choice — requires a dated entry stating what changed, why, and which run prompted it. **A logged deviation is a report of what happened, never an authorization: the registered analysis stands and is reported as registered; any analysis under changed rules is reported alongside as exploratory (§6.4), never as the confirmatory result, and never replaces the registered verdict.** Run-ledger entries (§6.6) are appended below as runs occur.
