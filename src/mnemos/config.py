@@ -301,6 +301,27 @@ class HooksConfig(BaseModel):
     max_output_chars: int = Field(default=1_048_576, ge=0, le=100_000_000)
 
 
+class LanesConfig(BaseModel):
+    """ADR-0025 E1 — deterministic retrieval lanes (mnemos #253).
+
+    Lanes dispatch is a recall SUB-STAGE of ``assemble_context``
+    (``mnemos/lanes.py``): rules/decisions ride deterministic SQL
+    (``list_all(tags=...)``), knowledge keeps the hybrid RRF recall with
+    governance rows excluded, checkpoints stay on the
+    ``on_session_start`` bootstrap channel. ``STAGE_ORDER`` and
+    ``hooks.py`` are unchanged.
+
+    ONE switch, default OFF — there is no second enablement path. With
+    ``enabled=False`` the assemble code path is identical to the
+    pre-E1 pipeline: no lane queries run and the assembled output is
+    byte-identical (the ``lane`` block field is omitted entirely when
+    off, not rendered as a default value). Canonical env override:
+    ``MNEMOS_LANES__ENABLED=true``.
+    """
+
+    enabled: bool = False
+
+
 class CacheAlignerConfig(BaseModel):
     """P1-5 — CacheAligner prefix stabilization.
 
@@ -556,6 +577,7 @@ class Settings(BaseSettings):
     runtime: RuntimeConfig = RuntimeConfig()
     ccr: CCRConfig = CCRConfig()
     hooks: HooksConfig = HooksConfig()
+    lanes: LanesConfig = LanesConfig()
     cache_aligner: CacheAlignerConfig = CacheAlignerConfig()
     output_style: OutputStyleConfig = OutputStyleConfig()
     federation: FederationConfig = FederationConfig()
