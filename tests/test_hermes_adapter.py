@@ -243,9 +243,7 @@ class TestWriteChannel:
         with pytest.raises(ValueError, match="tags are required"):
             adapter.add_memory("body", [])
 
-    def test_publish_on_write_false_immediate_still_visible(
-        self, manager: MemoryManager
-    ) -> None:
+    def test_publish_on_write_false_immediate_still_visible(self, manager: MemoryManager) -> None:
         """ADR-0019 Phase D: ``publish_on_write`` is neutralized. Under
         the default ``immediate`` visibility the SERVER publishes the
         clean write at ingest — the knob no longer changes anything:

@@ -487,11 +487,7 @@ class TestSqliteMergeGate:
         mid = "55555555-0000-0000-0000-00000000000b"
         src = _snapshot_file(
             tmp_path / "snapshot-secret.tar.gz",
-            [
-                _peer_memory(
-                    mid, f"planted row with aws key {FAKE_AWS_KEY} for the exfil runbook"
-                )
-            ],
+            [_peer_memory(mid, f"planted row with aws key {FAKE_AWS_KEY} for the exfil runbook")],
         )
 
         result = run_import(mgr, src, mode=ImportMode.MERGE)
@@ -507,9 +503,7 @@ class TestSqliteMergeGate:
         assert not mgr.vectors.has(mid), "no embed for a refused row"
         assert any("danger-gate refusal" in w for w in result.warnings)
 
-    def test_sqlite_merge_skips_existing_ids(
-        self, mgr: MemoryManager, tmp_path: Path
-    ) -> None:
+    def test_sqlite_merge_skips_existing_ids(self, mgr: MemoryManager, tmp_path: Path) -> None:
         """Merge never overwrites (that is RESTORE's job for sqlite):
         existing IDs are skipped, imported=0/skipped=N, nothing changes."""
         mid = "66666666-0000-0000-0000-00000000000c"
