@@ -626,6 +626,13 @@ _BACKFILL_REWRITE_EVENT_KEY_FLAG: Final[str] = "schema_backfill_rewrite_event_ke
 # pipeline_state / processed_at (same commit as the backfill).
 _BACKFILL_PIPELINE_STATE_FLAG: Final[str] = "schema_backfill_pipeline_state_v1"
 
+# mnemos #251 D0 — meta-table key namespace for the first-writer-wins
+# session→agent binding of the checkpoint channel. Lives in the existing
+# ``meta`` table (additive, migration-free): a dedicated column on
+# ``sessions`` would require callers to present SessionStore-issued ids,
+# while save_context accepts any caller-held session id.
+_SESSION_AGENT_META_PREFIX: Final[str] = "session_agent_binding:"
+
 # C8 (ArchCom 2026-08-27) — legacy turn FTS objects dropped idempotently on
 # every connect (IF EXISTS no-ops after the first run).
 _C8_DROP_SQL: Final[tuple[str, ...]] = (
@@ -2355,6 +2362,71 @@ class SQLiteStore:
         conn = self._get_conn()
         row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
+
+    # ── Checkpoint channel identity (mnemos #251 D0) ─────────────────────
+
+    def bind_session_agent(self, session_id: str, agent: str) -> str:
+        """Atomically bind ``session_id`` to ``agent``; first writer wins.
+
+        mnemos #251 D0 — the session→agent binding lives in the existing
+        ``meta`` key-value table (additive, migration-free surface; no
+        destructive schema change). INSERT OR IGNORE + SELECT inside one
+        transaction close the TOCTOU window: two racing first calls with
+        different agents cannot both establish a binding. Returns the
+        CANONICAL agent — the value passed in when this call created the
+        binding, or the pre-existing binding otherwise. Spoofing another
+        agent from that point on requires this server-recorded session id
+        to keep validating.
+        """
+        key = _SESSION_AGENT_META_PREFIX + session_id
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value, updated_at) VALUES (?,?,?)",
+                (key, agent, datetime.now(UTC).isoformat()),
+            )
+            row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        return str(row["value"]) if row is not None else agent
+
+    def find_checkpoint_by_dedup_key(
+        self, *, project: str, agent: str, dedup_key: str
+    ) -> Memory | None:
+        """Issuer-keyed checkpoint dedup lookup (mnemos #251 D0).
+
+        Finds the newest ``mnemos:checkpoint`` memory of the exact
+        ``(project, agent)`` issuer whose server-written metadata carries
+        ``checkpoint_dedup_key == dedup_key``. The dedup key is computed
+        over the canonical field payload INCLUDING the issuer (CWE-294
+        replay control: a copy of a victim's checkpoint re-issued by a
+        different agent must NOT collide).
+
+        mnemos #251 security review (P1, defense in depth): the lookup
+        also requires the row's ``checkpoint_agent`` metadata stamp to
+        equal the claimed agent — only ``save_checkpoint`` mints that
+        stamp, so a row whose dedup key slipped in through any other
+        path (legacy/partial data) can never satisfy a genuine dedup.
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            SELECT * FROM memories
+            WHERE project = ? AND agent = ?
+              AND json_extract(metadata, '$.checkpoint_dedup_key') = ?
+              AND json_extract(metadata, '$.checkpoint_agent') = ?
+              AND EXISTS (
+                  SELECT 1 FROM json_each(memories.tags)
+                  WHERE json_each.value = 'mnemos:checkpoint'
+              )
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (project, agent, dedup_key, agent),
+        ).fetchone()
+        return self._row_to_memory(row) if row is not None else None
 
     # ── CCR cache (P1-4) ──────────────────────────────────────────────────
 

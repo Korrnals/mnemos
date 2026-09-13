@@ -187,6 +187,30 @@ MNEMOS_TAG_SUBTYPES: frozenset[str] = frozenset(
 #: See ArchCom 2026-07-17 federation contract §4 КП-6 and §2.2.1.
 NO_FEDERATE_TAG: str = "mnemos:no-federate"
 
+# mnemos #251 D0 — the five checkpoint payload fields in canonical order.
+# Lives in models (shared vocabulary): mcp_server, api and manager all
+# reference it. The order is load-bearing — it feeds the issuer-keyed
+# checkpoint dedup hash and must never change without a dedup-key
+# version bump.
+CHECKPOINT_FIELDS: tuple[str, ...] = (
+    "goals",
+    "completed",
+    "in_progress",
+    "decisions",
+    "context",
+)
+
+# mnemos #251 security review (P1) — server-minted checkpoint identity
+# stamps. Client surfaces must never set them: a forged
+# ``checkpoint_dedup_key`` landing on a generic create would let the
+# attacker's row satisfy a later genuine ``save_checkpoint`` dedup and
+# serve their content as the victim's checkpoint (CWE-346/345 spoofed
+# source). ``MemoryManager.add``/``update`` strip them from client
+# metadata; only ``save_checkpoint`` mints them (trusted flag).
+CHECKPOINT_STAMP_KEYS: frozenset[str] = frozenset(
+    {"checkpoint_agent", "checkpoint_session", "checkpoint_dedup_key"}
+)
+
 # Allowed optional tag prefixes beyond the required ones
 ALLOWED_OPTIONAL_PREFIXES: frozenset[str] = frozenset(
     {"severity:", "stack:", "applyTo:", "source:"}

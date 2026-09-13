@@ -138,15 +138,18 @@ class TestContextSave:
         assert "id" in data
 
     def test_save_minimal_only_project(self, client):
-        """Only the required ``project`` field is sufficient."""
+        """Only ``project`` with all fields empty is trivially rejected (#251 D0).
+
+        mnemos #251 D0 item 5 replaces the legacy 201-on-empty behaviour:
+        a checkpoint with all five fields empty stores nothing and tells
+        the caller (400) — zero-loss, nothing silently dropped.
+        """
         resp = client.post(
             "/context/save",
             json={"project": "minimal"},
         )
-        assert resp.status_code == 201
-        data = resp.json()
-        assert data["status"] == "saved"
-        assert data["id"]
+        assert resp.status_code == 400
+        assert "all fields" in resp.json()["detail"]
 
     def test_save_missing_project_returns_422(self, client):
         """Missing required ``project`` → 422 validation error."""

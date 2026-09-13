@@ -41,6 +41,7 @@ from mnemos.config import load_settings
 from mnemos.context_rewrite import ContextRewriteRateLimitError
 from mnemos.hooks import HOOK_ACTIONS, dispatch_hook
 from mnemos.models import (
+    CHECKPOINT_FIELDS,
     AgentRecallQuery,
     MemoryCreate,
     MemorySource,
@@ -258,6 +259,10 @@ async def list_tools() -> list[Tool]:
             "active file paths, architecture notes. "
             "Call after completing significant work steps or before switching major tasks."
         )
+    ) + (
+        " Optional `agent`/`session` params are the validated identity channel: "
+        "`agent` defaults to 'user'; presenting a `session` binds it to that agent "
+        "server-side (first writer wins, later mismatches are rejected)."
     )
 
     _add_desc = (
@@ -457,6 +462,24 @@ async def list_tools() -> list[Tool]:
                     "context": {
                         "type": "string",
                         "description": "Other critical context (file paths, architecture, gotchas)",
+                    },
+                    "agent": {
+                        "type": "string",
+                        "description": (
+                            "Agent identity for this checkpoint — the validated "
+                            "identity channel (defaults to 'user'). Must match the "
+                            "server-side session→agent binding when a session id is "
+                            "supplied."
+                        ),
+                    },
+                    "session": {
+                        "type": "string",
+                        "description": (
+                            "Optional session id binding this checkpoint to a "
+                            "conversation. First presentation records the "
+                            "session→agent binding server-side; later calls with "
+                            "the same session but a different agent are rejected."
+                        ),
                     },
                 },
             },
@@ -1661,16 +1684,20 @@ async def _dispatch(name: str, args: dict[str, Any]) -> Any:
     # ── mnemos_save_context ─────────────────────────────────────────────────
     if name == "mnemos_save_context":
         project = args.get("project") or _detect_project()
-        parts = [f"# Session checkpoint — {datetime.now(UTC).isoformat()}\n"]
-        for field in ("goals", "completed", "in_progress", "decisions", "context"):
-            if args.get(field):
-                parts.append(f"## {field.replace('_', ' ').title()}\n{args[field]}\n")
-        content = "\n".join(parts)
-        tags = [f"project:{project}", "agent:user", "mnemos:checkpoint"]
-        data = MemoryCreate(content=content, tags=tags, source=MemorySource.MCP)
-        memory = mgr.add(data, project=project, agent="user")
+        fields = {f: args.get(f) for f in CHECKPOINT_FIELDS}
+        memory, duplicate = mgr.save_checkpoint(
+            fields,
+            project=project,
+            agent=args.get("agent"),
+            session=args.get("session"),
+        )
         _track_call(is_save=True)
         instructions = _auto_collect_instructions(project) if _auto_collect_state["enabled"] else ""
+        if duplicate:
+            return (
+                f"✅ Duplicate checkpoint (id={memory.id}, duplicate=true) — "
+                f"identical checkpoint already stored, nothing new created.{instructions}"
+            )
         return f"✅ Context saved (id={memory.id}).{instructions}"
 
     # ── mnemos_recall_context ───────────────────────────────────────────────

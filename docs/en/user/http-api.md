@@ -471,6 +471,8 @@ Builds structured Markdown from the supplied fields and stores it as a
 | `in_progress` | string | no | — | Immediate next action. |
 | `decisions` | string | no | — | Decisions worth surviving. |
 | `context` | string | no | — | File paths, architecture notes, gotchas. |
+| `agent` | string | no | `"user"` | Agent identity — the validated identity channel (non-empty string when provided, whitespace-only rejected). Must match the server-side session→agent binding when `session` is supplied. |
+| `session` | string | no | — | Session id binding the checkpoint to a conversation; first presentation records the session→agent binding server-side (first writer wins). |
 
 **Response 201**
 
@@ -478,9 +480,12 @@ Builds structured Markdown from the supplied fields and stores it as a
 {
   "status": "saved",
   "id": "550e8400-e29b-41d4-a716-446655440000",
-  "title": "Session checkpoint — 2026-07-07T12:00:00+00:00"
+  "title": "Session checkpoint — 2026-07-07T12:00:00+00:00",
+  "duplicate": false
 }
 ```
+
+`duplicate` is `true` when an identical checkpoint for the same `(project, agent)` already exists: the existing id is returned and nothing new is stored (the response shape is additive — older clients may ignore the flag).
 
 **Example**
 
@@ -501,6 +506,8 @@ curl -s -X POST http://127.0.0.1:8000/context/save \
 
 | Code | Cause |
 |------|-------|
+| `400` | Identity validation failed (empty/whitespace `agent` or `session`) or trivial-reject: all five payload fields are empty — nothing is stored |
+| `409` | `session` is already bound to a different agent (server-side session→agent binding, first writer wins) |
 | `422` | Missing required `project` field (Pydantic validation) |
 | `500` | SQLite / vault write failure |
 

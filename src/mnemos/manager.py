@@ -10,10 +10,13 @@ Backed by:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import re
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -31,12 +34,15 @@ from mnemos.config import Settings
 from mnemos.danger_detectors import DetectionResult, detect
 from mnemos.embeddings import EmbeddingProvider, create_embedding_provider
 from mnemos.models import (
+    CHECKPOINT_FIELDS,
+    CHECKPOINT_STAMP_KEYS,
     CONTEXT_ADMISSIBLE_STATUSES,
     AgentRecallQuery,
     Memory,
     MemoryCreate,
     MemorySource,
     MemoryStatus,
+    MemoryType,
     MemoryUpdate,
     PipelineState,
     SearchResult,
@@ -74,12 +80,36 @@ _MAX_REDIRECTS: int = 5
 # counter or forge backoff bookkeeping by rewriting metadata. The set is
 # enumerated (not a ``pipeline_*`` prefix rule) so membership is
 # auditable in one place; a new internal key must be listed here.
-INTERNAL_METADATA_KEYS: frozenset[str] = frozenset(
-    {
-        "pipeline_retry_count",  # lane-(a) attempt counter (refine)
-        "pipeline_retry_at",  # lane-(a) backoff gate (refine)
-    }
+# mnemos #251 security review (P1): the server-minted checkpoint stamps
+# (CHECKPOINT_STAMP_KEYS) join this set — once ``save_checkpoint`` minted
+# them, no update path can rewrite or drop them.
+INTERNAL_METADATA_KEYS: frozenset[str] = (
+    frozenset(
+        {
+            "pipeline_retry_count",  # lane-(a) attempt counter (refine)
+            "pipeline_retry_at",  # lane-(a) backoff gate (refine)
+        }
+    )
+    | CHECKPOINT_STAMP_KEYS
 )
+
+
+# mnemos #251 D0 — a session id is already bound to a different agent.
+# Subclasses ValueError so every caller that already maps ValueError to a
+# client error keeps working; the REST twin uses the subclass to answer
+# 409 specifically.
+class SessionAgentMismatchError(ValueError):
+    """mnemos #251 D0 — a session id is already bound to a different agent."""
+
+
+# mnemos #251 review (P3) — identity hygiene for the checkpoint channel.
+# Agent: a slug (the bare-agent charset of the agent:<slug> tag contract,
+# models._AGENT_RE, without the prefix). Session: bounded print-safe
+# ASCII token (no whitespace/control chars) so a session id can never
+# smuggle control characters or unbounded payloads into logs, the meta
+# binding key, or metadata stamps.
+_CHECKPOINT_AGENT_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9_-]{1,64}$")
+_CHECKPOINT_SESSION_RE: Final[re.Pattern[str]] = re.compile(r"^[\x21-\x7E]{1,128}$")
 
 
 class _SSRFRejectionError(Exception):
@@ -537,6 +567,7 @@ class MemoryManager:
         project: str = "",
         agent: str = "",
         trusted_rewrite_provenance: bool = False,
+        trusted_checkpoint_stamps: bool = False,
     ) -> Memory:
         """Create a new memory entry.
 
@@ -560,6 +591,14 @@ class MemoryManager:
         keep the default ``False`` — client-controlled metadata must
         never mint rewrite quota counters.
 
+        ``trusted_checkpoint_stamps`` (mnemos #251 security review P1)
+        is set ONLY by ``save_checkpoint``: the checkpoint identity
+        stamps (``CHECKPOINT_STAMP_KEYS``) are server-minted. On every
+        other path client-supplied copies are stripped from
+        ``data.metadata`` with a warning — a forged
+        ``checkpoint_dedup_key`` on a generic create must never satisfy
+        a later genuine checkpoint dedup (CWE-346/345 spoofed source).
+
         ADR-0019 §2 (B2b) — for records created WITHOUT an explicit
         ``status``, the ``mnemos.visibility`` policy decides the initial
         visibility through the same Phase A gate (see the ingest block
@@ -568,6 +607,19 @@ class MemoryManager:
         the row RAW+pending until the refine cycle gates the refined
         projection. An explicit ``status=`` keeps the pre-B2b contract.
         """
+        # ── mnemos #251 review P1: strip client-forgeable stamps ────────
+        if not trusted_checkpoint_stamps:
+            forged = sorted(k for k in CHECKPOINT_STAMP_KEYS if k in data.metadata)
+            if forged:
+                logger.warning(
+                    "generic create: stripped client-supplied checkpoint stamps "
+                    "(server-minted only, mnemos #251 review P1): keys=%s",
+                    forged,
+                )
+                data.metadata = {
+                    k: v for k, v in data.metadata.items() if k not in CHECKPOINT_STAMP_KEYS
+                }
+
         # ── Layer 1: write-path secrets scanner ───────────────────────────
         # Run before Memory construction so the tag is part of the persisted
         # record from the first write (no second UPDATE needed). Non-fatal:
@@ -768,6 +820,20 @@ class MemoryManager:
         # see INTERNAL_METADATA_KEYS) is merged back on top so a caller
         # can neither reset a retry budget nor forge backoff state.
         if "metadata" in update_kwargs:
+            # mnemos #251 review P1: checkpoint stamps are server-minted —
+            # drop any client-supplied copies BEFORE the merge-back so
+            # they cannot land on a row that never had them either.
+            forged = sorted(k for k in CHECKPOINT_STAMP_KEYS if k in memory.metadata)
+            if forged:
+                logger.warning(
+                    "update: stripped client-supplied checkpoint stamps "
+                    "(server-minted only, mnemos #251 review P1): id=%s keys=%s",
+                    memory_id[:8],
+                    forged,
+                )
+                memory.metadata = {
+                    k: v for k, v in memory.metadata.items() if k not in CHECKPOINT_STAMP_KEYS
+                }
             internal = {
                 k: previous_metadata[k] for k in INTERNAL_METADATA_KEYS if k in previous_metadata
             }
@@ -1528,6 +1594,136 @@ class MemoryManager:
         # Sort by recency and trim
         memories.sort(key=lambda m: m.created_at, reverse=True)
         return memories[:limit]
+
+    # ── Checkpoint channel identity (mnemos #251 D0) ────────────────────
+
+    def save_checkpoint(
+        self,
+        fields: Mapping[str, str | None],
+        *,
+        project: str,
+        agent: str | None = None,
+        session: str | None = None,
+        memory_type: MemoryType = MemoryType.NOTE,
+    ) -> tuple[Memory, bool]:
+        """Store a session checkpoint with validated agent identity (#251 D0).
+
+        Single authority for the checkpoint channel — the MCP tool
+        (``mnemos_save_context``) and the REST twin (``POST /context/save``)
+        are thin wrappers over this method. Order of operations:
+
+        1. Identity validation (``_require_identity`` semantics: non-empty
+           string when provided, whitespace-only rejected). ``agent``
+           defaults to ``"user"`` — today's behaviour, so deployed
+           instruction packs keep working unchanged.
+        2. Trivial-reject: all five fields empty → ValueError BEFORE any
+           store (zero-loss — the caller is told, nothing is dropped).
+        3. Session→agent binding: the first call presenting a session id
+           records the binding server-side (meta table, first writer
+           wins); later calls must claim the bound agent or a
+           :class:`SessionAgentMismatchError` (a ValueError) is raised.
+        4. Issuer-keyed dedup: SHA-256 over the canonical payload
+           (project + agent + the five fields, fixed order, None
+           normalised to ``""``) — NOT over the rendered markdown, which
+           embeds a fresh timestamp and would never collide. A hit
+           returns the EXISTING memory with ``duplicate=True`` and stores
+           nothing.
+        5. Store with server-controlled metadata stamps
+           (``checkpoint_agent`` / ``checkpoint_session`` /
+           ``checkpoint_dedup_key``). The stamps are minted ONLY here
+           (``trusted_checkpoint_stamps`` on ``add``); generic
+           create/update paths strip client-supplied copies (review P1).
+           Tags are display-only; these server columns/metadata are the
+           source of truth (the awareness read surface arrives with #254).
+
+        Returns ``(memory, duplicate)``.
+        """
+        # 1. Identity validation — mirrors mnemos.hooks._require_identity
+        #    (non-empty string when provided, whitespace-only rejected),
+        #    plus the review-P3 hygiene: agent is a slug (same charset as
+        #    the agent:<slug> tag contract) and session is a bounded
+        #    print-safe token, so whitespace-cased or oversize identities
+        #    can never become distinct binding identities.
+        for label, value in (("agent", agent), ("session", session)):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{label} must be a non-empty string when provided")
+        resolved_agent = agent if agent is not None else "user"
+        if _CHECKPOINT_AGENT_RE.fullmatch(resolved_agent) is None:
+            raise ValueError(
+                f"agent must be 1-64 characters of [a-z0-9_-] (got {len(resolved_agent)} chars)"
+            )
+        if session is not None and _CHECKPOINT_SESSION_RE.fullmatch(session) is None:
+            raise ValueError(
+                "session must be 1-128 printable ASCII characters without spaces "
+                f"(got {len(session)} chars)"
+            )
+
+        # 2. Trivial-reject before any store side effect.
+        normalized = {f: (fields.get(f) or "") for f in CHECKPOINT_FIELDS}
+        if not any(normalized[f] for f in CHECKPOINT_FIELDS):
+            raise ValueError(
+                "checkpoint rejected: all fields (goals/completed/in_progress/"
+                "decisions/context) are empty — nothing to save"
+            )
+
+        # 3. Session→agent binding (only when a session id is presented).
+        if session is not None:
+            bound_agent = self.sqlite.bind_session_agent(session, resolved_agent)
+            if bound_agent != resolved_agent:
+                logger.warning(
+                    "checkpoint binding mismatch (mnemos #251): session=%r bound_agent=%r "
+                    "claimed_agent=%r — refused",
+                    session,
+                    bound_agent,
+                    resolved_agent,
+                )
+                raise SessionAgentMismatchError(
+                    f"session {session!r} is already bound to agent {bound_agent!r}; "
+                    f"refusing checkpoint claimed by agent {resolved_agent!r}"
+                )
+
+        # 4. Issuer-keyed dedup.
+        canonical = json.dumps(
+            [project, resolved_agent, *(normalized[f] for f in CHECKPOINT_FIELDS)],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        dedup_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        existing = self.sqlite.find_checkpoint_by_dedup_key(
+            project=project, agent=resolved_agent, dedup_key=dedup_key
+        )
+        if existing is not None:
+            logger.info(
+                "checkpoint dedup hit (mnemos #251): project=%r agent=%r id=%s",
+                project,
+                resolved_agent,
+                existing.id,
+            )
+            return existing, True
+
+        # 5. Build and store — content format unchanged from the legacy
+        # hardcoded-agent surfaces.
+        parts = [f"# Session checkpoint — {datetime.now(UTC).isoformat()}\n"]
+        for field in CHECKPOINT_FIELDS:
+            if normalized[field]:
+                parts.append(f"## {field.replace('_', ' ').title()}\n{normalized[field]}\n")
+        metadata: dict[str, Any] = {
+            "checkpoint_agent": resolved_agent,
+            "checkpoint_dedup_key": dedup_key,
+        }
+        if session is not None:
+            metadata["checkpoint_session"] = session
+        data = MemoryCreate(
+            content="\n".join(parts),
+            tags=[f"project:{project}", f"agent:{resolved_agent}", "mnemos:checkpoint"],
+            source=MemorySource.MCP,
+            memory_type=memory_type,
+            metadata=metadata,
+        )
+        memory = self.add(
+            data, project=project, agent=resolved_agent, trusted_checkpoint_stamps=True
+        )
+        return memory, False
 
     def list_recent(
         self,

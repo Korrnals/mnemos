@@ -319,13 +319,18 @@ Persist a session checkpoint. Agents should call this **proactively**: after mea
 | `in_progress` | string | no | — | What is in progress. |
 | `decisions` | string | no | — | Key technical decisions + rationale. |
 | `context` | string | no | — | Other context (file paths, architecture, gotchas). |
+| `agent` | string | no | `"user"` | Agent identity for the checkpoint — the validated identity channel (non-empty string when provided, whitespace-only rejected). Must match the server-side session→agent binding when `session` is supplied. |
+| `session` | string | no | — | Session id binding the checkpoint to a conversation. First presentation records the session→agent binding server-side; later calls with the same session but a different agent are rejected. |
 
-Mnemos synthesises the parts into a single Markdown memory tagged with `project:<slug>`, `agent:user`, and `mnemos:checkpoint`.
+Mnemos synthesises the parts into a single Markdown memory tagged with `project:<slug>`, `agent:<validated-agent>` (`agent:user` when omitted), and `mnemos:checkpoint`. The validated identity is also stamped into server-controlled metadata (`checkpoint_agent`, `checkpoint_session`) — that metadata is the source of truth for per-agent attribution; tags are display-only.
+
+A checkpoint whose five payload fields are all empty is trivially rejected before any store (zero-loss: the caller is told, nothing is silently dropped). Re-sending an identical payload for the same `(project, agent)` is idempotent: the existing memory id is returned with `duplicate=true` and nothing new is stored.
 
 ### Output
 
 ```text
 ✅ Context saved (id=550e8400-...).
+✅ Duplicate checkpoint (id=550e8400-..., duplicate=true) — identical checkpoint already stored, nothing new created.
 ```
 
 ### Example call
