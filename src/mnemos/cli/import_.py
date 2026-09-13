@@ -501,12 +501,24 @@ def _import_json(
                 mgr.sqlite.save_project(existing)
 
     # ── Memories ─────────────────────────────────────────────────────────
+    # #254 review P2 — federation-origin stamp. In MERGE mode the rows
+    # arriving here are FEDERATED (a peer's records joining this store):
+    # each is stamped ``federated_origin`` so awareness
+    # (``mnemos.awareness.is_delta_excluded``) keeps cross-operator rows
+    # out of presence/delta — otherwise operator B's imports read as
+    # LOCAL neighbors under the "observed" header (CWE-359). RESTORE
+    # mode is a SELF-restore of this operator's own backup (rows were
+    # locally minted) and is deliberately NOT stamped. A first-class
+    # ``origin=`` column remains a tracker item.
+    stamp_federated = mode != ImportMode.RESTORE
     for entry in memories:
         try:
             memory = _memory_from_export(entry)
         except Exception as exc:
             result.errors.append(f"memory {entry.get('id', '?')}: {exc}")
             continue
+        if stamp_federated and not dry_run:
+            memory.metadata = {**memory.metadata, "federated_origin": "json-import"}
 
         existing_mem = mgr.sqlite.get(memory.id)
         if existing_mem is not None:
@@ -667,6 +679,16 @@ def _import_sqlite(
                             # anti-forgery gate, so merge-imported rows never
                             # mint rewrite quota).
                             memory = mgr.sqlite._row_to_memory(row)
+                            # #254 review P2 — this MERGE branch is a
+                            # federated write path (see the gate comment
+                            # above): stamp the row so awareness keeps the
+                            # peer's rows out of local presence/delta
+                            # (CWE-359). The RESTORE branch above replaces
+                            # the whole DB (self-restore) and is unstamped.
+                            memory.metadata = {
+                                **memory.metadata,
+                                "federated_origin": "sqlite-merge-import",
+                            }
                             memory, admitted = gate_imported_memory(mgr, memory)
                             mgr.sqlite.save(memory)
                             if not admitted:

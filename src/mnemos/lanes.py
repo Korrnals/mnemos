@@ -56,8 +56,11 @@ keeps ``mnemos:rule`` / ``mnemos:decision`` as the only lane selectors.
   no runtime code: one agent contributes AT MOST one delta block to an
   assembly. This is the structural anti-DoS bound (an agent cannot flood
   the context with N delta blocks) and the accounting unit for D1.
-* **Awareness cursor keys** — ``awr:{project}:{agent}:{session}`` in the
-  existing ``meta`` key-value table, written with the UPSERT pattern
+* **Awareness cursor keys** — ``awr:`` + the LENGTH-PREFIXED
+  ``(project, agent, session)`` tuple (``awareness_cursor_key``; plain
+  ``:``-joins alias when a session id contains ``:`` — #251 sessions
+  are printable-ASCII and legally may) in the existing ``meta``
+  key-value table, written with the UPSERT pattern
   (precedent: ``session_agent_binding``, PR #263). The tiny read/write
   helpers below are the ONLY runtime piece; the awareness module that
   consumes them arrives later.
@@ -253,7 +256,16 @@ def governance_lanes_recall(
 
 
 def awareness_cursor_key(*, project: str, agent: str, session: str) -> str:
-    """Build the meta-table cursor key ``awr:{project}:{agent}:{session}``.
+    """Build the meta-table cursor key for ``(project, agent, session)``.
+
+    Encoding: ``awr:{len(project)}:{project}:{len(agent)}:{agent}:{len(session)}:{session}``
+    — each component is LENGTH-PREFIXED. A plain ``:``-join of the tuple
+    is NOT collision-safe: ``#251`` session ids are "printable ASCII
+    without spaces" and may legally contain ``:``, so the plain form
+    aliases distinct tuples (review P3, e.g. ``(a, b:c, d)`` vs
+    ``(a:b, c, d)`` both render ``awr:a:b:c:d``) — one agent could read
+    or overwrite another agent's cursor. The length prefixes make the
+    split unique.
 
     Components are validated non-empty at this boundary so a blank
     agent/session can never mint a malformed cursor key (the same
@@ -262,7 +274,10 @@ def awareness_cursor_key(*, project: str, agent: str, session: str) -> str:
     for label, value in (("project", project), ("agent", agent), ("session", session)):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"awareness cursor component {label} must be a non-empty string")
-    return f"{AWARENESS_CURSOR_PREFIX}{project}:{agent}:{session}"
+    return (
+        f"{AWARENESS_CURSOR_PREFIX}"
+        f"{len(project)}:{project}:{len(agent)}:{agent}:{len(session)}:{session}"
+    )
 
 
 def read_awareness_cursor(

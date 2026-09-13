@@ -620,12 +620,27 @@ class TestAwarenessContracts:
         write_awareness_cursor(
             manager, project=PROJECT, agent=AGENT, session=SESSION, cursor="mem-001"
         )
-        key = f"{AWARENESS_CURSOR_PREFIX}{PROJECT}:{AGENT}:{SESSION}"
-        assert manager.sqlite.get_meta(key) == "mem-001"  # exact R3 key format
+        # Exact length-prefixed encoding (#254 review P3): plain
+        # ":"-joins alias when a session id contains ":" — components
+        # are prefixed with their character lengths.
+        key = f"{AWARENESS_CURSOR_PREFIX}8:{PROJECT}:9:{AGENT}:7:{SESSION}"
+        assert manager.sqlite.get_meta(key) == "mem-001"  # exact encoded key format
         assert (
             read_awareness_cursor(manager, project=PROJECT, agent=AGENT, session=SESSION)
             == "mem-001"
         )
+
+    def test_cursor_key_no_tuple_aliasing(self) -> None:
+        """The crafted-tuple alias: distinct tuples whose plain ":"-joins
+        coincide must produce DISTINCT keys (session ids may contain ":")."""
+        from mnemos.lanes import awareness_cursor_key
+
+        first = awareness_cursor_key(project="a", agent="b:c", session="d")
+        second = awareness_cursor_key(project="a:b", agent="c", session="d")
+        assert first != second, "length-prefixed encoding must not alias tuples"
+        third = awareness_cursor_key(project="a", agent="b", session="c:d:e")
+        fourth = awareness_cursor_key(project="a", agent="b:c", session="d:e")
+        assert third != fourth
 
     def test_cursor_upsert_overwrites_in_place(self, manager: MemoryManager) -> None:
         write_awareness_cursor(
@@ -671,7 +686,7 @@ class TestAwarenessContracts:
         text = lanes_mod.__doc__ or ""
         # Per-agent delta slot (one agent = max one delta block)…
         assert "AT MOST one delta block" in text
-        # …cursor key format…
-        assert "awr:{project}:{agent}:{session}" in text
+        # …cursor key format (length-prefixed tuple, #254 review P3)…
+        assert "LENGTH-PREFIXED" in text
         # …and the renders-LAST invariant.
         assert "renders LAST" in text or "Awareness renders LAST" in text

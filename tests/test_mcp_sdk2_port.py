@@ -6,7 +6,8 @@ Covers:
   AttributeError — the two #185 failure classes) fails LOUDLY with the
   remediation hint.
 - In-memory MCP handshake probe (SDK 2.x ``create_client_server_memory_streams``):
-  initialize → tools/list must return the 26-tool contract. Skipped when the
+  initialize → tools/list must return the 27-tool contract (#254 added
+  mnemos_awareness). Skipped when the
   real ``mcp`` SDK is not installed (the stub environment cannot drive a
   real session).
 """
@@ -24,9 +25,10 @@ import pytest
 
 from mnemos.cli.doctor import CheckStatus, _check_mcp_transport
 
-# The 26-tool model-visible contract (#185): names are frozen; any change
+# The 27-tool model-visible contract (#185): names are frozen; any change
 # here is a breaking contract change and must not happen silently.
-EXPECTED_TOOL_COUNT = 26
+# 26 → 27 (mnemos #254): mnemos_awareness added (R3 awareness pre-flight).
+EXPECTED_TOOL_COUNT = 27
 
 
 # The conftest installs MagicMock stubs into sys.modules BEFORE any test
@@ -195,7 +197,7 @@ def test_doctor_json_includes_mcp_transport(tmp_path, monkeypatch: pytest.Monkey
     reason="real mcp SDK 2.x not installed (stub env / 1.x ambient)",
 )
 def test_in_memory_handshake_lists_26_tools() -> None:
-    """initialize + tools/list over an in-memory session returns the 26 tools.
+    """initialize + tools/list over an in-memory session returns the 27 tools.
 
     This is the #185 acceptance probe: it exercises the exact SDK 2.x
     server wiring (constructor-registered handlers) through a real
@@ -279,7 +281,7 @@ def test_server_registers_handlers_via_constructor() -> None:
 
 
 def test_tool_manifest_uses_input_schema_attribute() -> None:
-    """Tool manifest entries expose the SDK 2.x input_schema attribute (26 tools)."""
+    """Tool manifest entries expose the SDK 2.x input_schema attribute (27 tools)."""
     from mnemos.mcp_server import list_tools
 
     tools = asyncio.run(list_tools())
