@@ -108,6 +108,7 @@ from typing import TYPE_CHECKING, Any, Final
 from mnemos.ccr import parse_marker
 from mnemos.filter.pipeline import detect_profile, estimate_tokens
 from mnemos.lanes import (
+    B0_TYPE_BOOST_FACTOR,
     PRE_LLM_LANE_VALUES,
     PRE_LLM_PINNED_LANES,
     Lane,
@@ -299,6 +300,7 @@ def _recall_stage(
     content_type: str | None,
     query: str | None = None,
     lanes_enabled: bool = False,
+    type_boost: bool = False,
 ) -> tuple[list[_Candidate], dict[str, Any]]:
     """Hybrid RRF recall (status-gated) + contentType filter + applyTo pinning.
 
@@ -331,6 +333,14 @@ def _recall_stage(
     with lanes off the partition runs over the whole list exactly as
     before. With the flag off no lane query runs and the stats dict
     carries no ``lanes`` key — the pre-E1 output, byte-identical.
+
+    E0 §1.1 leg B0 (``type_boost`` from ``LanesConfig.type_boost``,
+    default off, mutually exclusive with ``lanes_enabled``): governance
+    rows keep arriving through the ordinary RRF leg only — no lane
+    queries run — but their scores are multiplied by
+    ``lanes.B0_TYPE_BOOST_FACTOR`` at recall and the candidate list is
+    re-ranked by score (one ranking line, zero meta-level). With both
+    flags off the stats dict carries no ``type_boost`` key either.
     """
     derived_query = query if query else (Path(file).stem if file else project)
 
@@ -340,6 +350,7 @@ def _recall_stage(
     candidates: list[_Candidate] = []
     type_filtered = 0
     governance_excluded = 0
+    type_boosted = 0
 
     if lanes_enabled:
         lane_hits, lane_counts = governance_lanes_recall(mgr, project=project)
@@ -367,15 +378,31 @@ def _recall_stage(
         if content_type is not None and ct != content_type:
             type_filtered += 1
             continue
+        score = r.score
+        if type_boost and is_governance(r.memory):
+            # E0 §1.1 leg B0 — the type boost at recall (one ranking
+            # line, zero meta-level): governance rows still arrive via
+            # ordinary RRF only; their scores are multiplied by the
+            # registered factor. Mutually exclusive with lanes_enabled
+            # (enforced at the LanesConfig boundary).
+            score *= B0_TYPE_BOOST_FACTOR
+            type_boosted += 1
         candidates.append(
             _Candidate(
                 memory=r.memory,
-                score=r.score,
+                score=score,
                 search_type=r.search_type,
                 content_type=ct,
                 content=r.memory.effective_content(),
             )
         )
+
+    if type_boost:
+        # B0's "one ranking line": re-rank candidates by (boosted) score,
+        # stable sort preserving recall order among equals — BEFORE the
+        # applyTo partition below, so M8 pinning still floats applyTo-
+        # matching rules to the absolute top (B0 must not break M8).
+        candidates.sort(key=lambda c: -c.score)
 
     pinned = 0
     if file:
@@ -419,6 +446,10 @@ def _recall_stage(
             "knowledge": sum(1 for c in candidates if c.lane == Lane.KNOWLEDGE.value),
             "governance_excluded_from_knowledge": governance_excluded,
         }
+    if type_boost:
+        # B0 telemetry — additive only when on, same discipline as the
+        # lanes stats key (flag-off stats dicts stay byte-identical).
+        stats["type_boost"] = {"boosted": type_boosted, "factor": B0_TYPE_BOOST_FACTOR}
     return candidates, stats
 
 
@@ -798,6 +829,21 @@ def assemble_context(
     # ADR-0025 E1 — the ONE switch (LanesConfig.enabled, default False):
     # read once, threaded to the recall sub-stage and the budget stage.
     lanes_enabled = mgr.settings.lanes.enabled
+    # E0 §1.1 leg B0 — the trivial type-boost treatment (mutually exclusive
+    # with lanes; enforced at the LanesConfig boundary).
+    type_boost = mgr.settings.lanes.type_boost
+    if lanes_enabled and type_boost:
+        # Point-of-use mutex (review P3): the construction-time
+        # LanesConfig validator can be bypassed by direct attribute
+        # assignment on an already-built manager — assembling with both
+        # treatments on would silently run an unregistered fourth leg.
+        # Assertion-style guard, the repo's invariant convention
+        # (cf. lanes.assert_foreign_lanes_tail_only from the budget stage).
+        raise AssertionError(
+            "LanesConfig: 'enabled' (E0 §1.1 leg B) and 'type_boost' (leg B0) "
+            "are mutually exclusive treatments — a leg is exactly one of "
+            "A/B0/B (construction validator bypassed by direct assignment?)"
+        )
 
     # ── Fixed stage order (D1; recorded verbatim in stats) ────────────────
     candidates, recall_stats = _recall_stage(
@@ -807,6 +853,7 @@ def assemble_context(
         content_type=content_type,
         query=query,
         lanes_enabled=lanes_enabled,
+        type_boost=type_boost,
     )
     ccr_stats = _ccr_stage(
         mgr,

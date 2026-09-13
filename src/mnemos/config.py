@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Final, Literal
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
@@ -317,9 +317,34 @@ class LanesConfig(BaseModel):
     byte-identical (the ``lane`` block field is omitted entirely when
     off, not rendered as a default value). Canonical env override:
     ``MNEMOS_LANES__ENABLED=true``.
+
+    ``type_boost`` is NOT a second lanes enablement path — it is the E3
+    leg B0 treatment (E0 §1.1: "type-boost of rules/decisions at recall
+    — one ranking line, zero meta-level", issue #277): governance rows
+    keep arriving through the ordinary RRF recall only, but their
+    scores are multiplied by ``lanes.B0_TYPE_BOOST_FACTOR`` and the
+    candidate list is re-ranked by score. Zero meta-level: no lane
+    queries, no lane ordering, no byte-stable pinned prefix. The two
+    treatments are mutually exclusive (a leg is exactly one of
+    A / B0 / B) — enabling both is a configuration bug, raised here.
+    With both flags off the code path is byte-identical to the pre-E1
+    pipeline. Canonical env override: ``MNEMOS_LANES__TYPE_BOOST=true``.
     """
 
     enabled: bool = False
+    type_boost: bool = False
+
+    @model_validator(mode="after")
+    def _treatments_are_exclusive(self) -> LanesConfig:
+        """E0 §1.1 — ``enabled`` (leg B) and ``type_boost`` (leg B0) are
+        alternative treatments of the SAME experiment; composing them is
+        an unregistered fourth leg and is refused at the config boundary."""
+        if self.enabled and self.type_boost:
+            raise ValueError(
+                "LanesConfig: 'enabled' (E0 §1.1 leg B) and 'type_boost' (leg B0) "
+                "are mutually exclusive treatments — a leg is exactly one of A/B0/B"
+            )
+        return self
 
 
 class CacheAlignerConfig(BaseModel):

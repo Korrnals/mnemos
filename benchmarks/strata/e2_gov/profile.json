@@ -1,7 +1,7 @@
 {
   "stratum_version": "e2-gov-1",
   "e0_spec": "docs/experiments/e0-meta-level.md \u00a73.1-\u00a73.3, \u00a74.3-\u00a74.4",
-  "corpus_fingerprint": "4548948294b39abec897598f9b146276caa0458cbad8b8b7908a9614f8a0eb9e",
+  "corpus_fingerprint": "a5155acafecd3c794e919d33d8c72335e4f6ec3c527dbd33e2bf9134e27f61aa",
   "seed": "deterministic (index-driven combinatorics, no RNG)",
   "counts": {
     "gov_records": 100,

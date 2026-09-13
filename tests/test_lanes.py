@@ -38,6 +38,7 @@ from mnemos.assemble import _budget_stage, _Candidate
 from mnemos.config import Settings
 from mnemos.lanes import (
     AWARENESS_CURSOR_PREFIX,
+    B0_TYPE_BOOST_FACTOR,
     Lane,
     assert_foreign_lanes_tail_only,
     awareness_cursor_key,
@@ -111,7 +112,7 @@ def _normalized_sha256(result: dict[str, Any]) -> str:
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 
-def _settings(tmp: Path, *, lanes_enabled: bool = False) -> Settings:
+def _settings(tmp: Path, *, lanes_enabled: bool = False, type_boost: bool = False) -> Settings:
     settings = Settings(
         mnemos={
             "vault_path": str(tmp / "vault"),
@@ -124,7 +125,7 @@ def _settings(tmp: Path, *, lanes_enabled: bool = False) -> Settings:
             "max_entries": 100,
             "ttl_days": 1,
         },  # type: ignore[arg-type]
-        lanes={"enabled": lanes_enabled},
+        lanes={"enabled": lanes_enabled, "type_boost": type_boost},
     )
     settings.resolve_paths()
     return settings
@@ -457,11 +458,48 @@ class TestFlagOffEquivalence:
         assert Settings().lanes.enabled is True
 
     def test_config_model_is_single_switch(self) -> None:
-        """LanesConfig has exactly one field — the E1 contract: ONE switch,
-        no second enablement path."""
+        """LanesConfig field set is closed: ``enabled`` (E1) + ``type_boost``
+        (E0 §1.1 leg B0, issue #277). Still no second enablement path for
+        LANES: ``type_boost`` is an alternative TREATMENT (a leg is exactly
+        one of A/B0/B), not a way to also turn lanes on — the two are
+        mutually exclusive by model validator (next test), both default
+        off, and both-off stays the byte-identical pre-E1 path."""
         from mnemos.config import LanesConfig
 
-        assert set(LanesConfig.model_fields) == {"enabled"}
+        assert set(LanesConfig.model_fields) == {"enabled", "type_boost"}
+        assert LanesConfig().enabled is False
+        assert LanesConfig().type_boost is False
+
+    def test_treatments_are_mutually_exclusive(self) -> None:
+        """E0 §1.1 — enabling lanes (leg B) and type_boost (leg B0) together
+        is an unregistered fourth leg: refused at the config boundary."""
+        import pydantic
+
+        from mnemos.config import LanesConfig
+
+        with pytest.raises(pydantic.ValidationError, match="mutually exclusive"):
+            LanesConfig(enabled=True, type_boost=True)
+
+    def test_type_boost_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Canonical env override for the B0 treatment, mirroring the
+        ``MNEMOS_LANES__ENABLED`` override test above."""
+        monkeypatch.setenv("MNEMOS_LANES__TYPE_BOOST", "true")
+        assert Settings().lanes.type_boost is True
+        assert Settings().lanes.enabled is False
+
+    def test_treatments_mutex_enforced_at_point_of_use(self, lanes_manager: MemoryManager) -> None:
+        """The construction-time validator can be bypassed by direct
+        attribute assignment on a built manager; assemble_context
+        re-checks at the point of use — both treatments on at assemble
+        time would silently run an unregistered fourth leg (review P3)."""
+        _corpus(lanes_manager)
+        assert lanes_manager.settings.lanes.enabled is True
+        lanes_manager.settings.lanes.type_boost = True  # bypass on purpose
+        with pytest.raises(AssertionError, match="mutually exclusive"):
+            lanes_manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        # the single-treatment configuration still assembles normally
+        lanes_manager.settings.lanes.type_boost = False
+        assert lanes_manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
 
 
 # ── Ordering stability (H2 surface) ──────────────────────────────────────────
@@ -690,3 +728,74 @@ class TestAwarenessContracts:
         assert "LENGTH-PREFIXED" in text
         # …and the renders-LAST invariant.
         assert "renders LAST" in text or "Awareness renders LAST" in text
+
+
+# ── E0 §1.1 leg B0 — the trivial type-boost treatment (issue #277) ───────────
+
+
+class TestB0TypeBoost:
+    """B0 = "type-boost of rules/decisions at recall — one ranking line,
+    zero meta-level" (E0 §1.1). It shares NO lanes mechanics: no lane
+    queries, no ``lane`` block field, no lane stats — only the boosted
+    score re-ranking of the ordinary RRF candidates."""
+
+    @pytest.fixture
+    def b0_manager(self) -> Iterator[MemoryManager]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = _manager(_settings(Path(tmpdir), type_boost=True))
+            yield mgr
+            mgr.close()
+
+    def test_b0_lifts_governance_above_knowledge(self, b0_manager: MemoryManager) -> None:
+        _corpus(b0_manager)
+        result = b0_manager.assemble_context(
+            session=SESSION, project=PROJECT, query="handler deployment"
+        )
+        assert result["blocks"], "expected assembled blocks"
+        # Identify rows by their deterministic first lines (blocks carry
+        # no tags): governance = the two rules + the decision of _corpus.
+        gov_prefixes = ("# Handler rule", "# Release rule", "Decision:")
+        blocks = [(b["content"].splitlines()[0], b["score"]) for b in result["blocks"]]
+        governance = [score for title, score in blocks if title.startswith(gov_prefixes)]
+        knowledge = [score for title, score in blocks if not title.startswith(gov_prefixes)]
+        # The boost multiplies governance scores by B0_TYPE_BOOST_FACTOR:
+        # every governance block outranks every knowledge block — the
+        # trivial type-lift, ahead of the RRF-winning knowledge rows.
+        assert len(governance) == 3, blocks
+        assert knowledge, blocks
+        assert min(governance) > max(knowledge), blocks
+
+    def test_b0_stats_key_additive_only_when_on(
+        self, b0_manager: MemoryManager, manager: MemoryManager
+    ) -> None:
+        _corpus(b0_manager)
+        _corpus(manager)
+        on = b0_manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        off = manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        boost_stats = on["stats"]["recall"]["type_boost"]
+        assert boost_stats["boosted"] == 3  # 2 rules + 1 decision in _corpus
+        assert boost_stats["factor"] == B0_TYPE_BOOST_FACTOR
+        assert "type_boost" not in off["stats"]["recall"]
+        assert "lanes" not in on["stats"]["recall"]  # B0 shares no lanes mechanics
+        assert all("lane" not in b for b in on["blocks"])
+
+    def test_b0_preserves_applyto_pinning(self, b0_manager: MemoryManager) -> None:
+        """M8 pinning must survive the boost: the sort runs BEFORE the
+        applyTo partition, so the applyTo-matching rule still floats to
+        the absolute top (B0 must not break M8)."""
+        _corpus(b0_manager)
+        result = b0_manager.assemble_context(
+            session=SESSION, project=PROJECT, file="src/handler.py", query="handler deployment"
+        )
+        assert result["blocks"], "expected assembled blocks"
+        assert result["blocks"][0]["content"].startswith("# Handler rule"), result["blocks"][0][
+            "content"
+        ][:60]
+
+    def test_b0_flag_off_output_unchanged(self, manager: MemoryManager) -> None:
+        """Both flags off = the pre-E1 code path: no boost sort, no
+        extra stats keys (the flag-off fixture tests above pin the
+        bytes; this asserts the B0 telemetry discipline)."""
+        _corpus(manager)
+        result = manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        assert "type_boost" not in result["stats"]["recall"]

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from pathlib import Path
 
 import pytest
 from benchmarks.corpus.corpus import CORPUS, GoldenEntry
@@ -347,3 +348,19 @@ def test_experimental_corpus_loads_into_fresh_manager() -> None:
         results = mgr.search(probe.text, project=probe.project, limit=10)
         assert isinstance(results, list)
         assert results, "fresh ingest returned nothing for a verbatim phrase query"
+
+
+def test_loader_refuses_stratum_slug_masquerade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#277 P3 masquerade guard: ingest routes by slug membership in
+    ``_GOLDEN_SLUGS``, so a stratum seed whose slug collided with a
+    golden slug would silently take the golden-restore branch and dodge
+    the fail-loud demotion screen. The loader now asserts disjointness
+    AT the routing boundary (defense in depth under the test above)."""
+    from benchmarks.strata.e2_gov import loader as loader_mod
+
+    sneaky = frozenset({rec.GOV_RECORDS[0].slug})
+    monkeypatch.setattr(loader_mod, "_GOLDEN_SLUGS", sneaky)
+    with pytest.raises(AssertionError, match="masquerade"):
+        loader_mod.build_experimental_manager(tmp_path)
