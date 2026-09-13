@@ -6,7 +6,8 @@ Covers:
   AttributeError — the two #185 failure classes) fails LOUDLY with the
   remediation hint.
 - In-memory MCP handshake probe (SDK 2.x ``create_client_server_memory_streams``):
-  initialize → tools/list must return the 26-tool contract. Skipped when the
+  initialize → tools/list must return the 27-tool contract (#254 added
+  mnemos_awareness). Skipped when the
   real ``mcp`` SDK is not installed (the stub environment cannot drive a
   real session).
 """

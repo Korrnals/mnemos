@@ -24,6 +24,30 @@ Acceptance map (issue #254 acceptance/scope clauses → test):
 * MCP ``mnemos_awareness`` tool + ``mnemos_hooks`` passthrough →
   ``TestMcpAwarenessTool`` / ``TestMcpHooksPassthrough``
 
+Repair round (consolidated review findings → test):
+
+* P2-1 agent-filtered ``_my_goal`` (noisy-neighbor overflow) →
+  ``TestRepairMyGoalAgentFilter``
+* P2-2 single-feed cursor high-water (race deleted with query C) →
+  ``TestRepairSingleFeedCursor``
+* P2-8 observed-only blocks + inline ``[unverified]`` qualifiers →
+  ``TestPerAgentSlot::test_slot_line_wording`` /
+  ``TestTwoLevelTrust::test_conflict_hint_lines_carry_unverified_marker``
+* P2-9 import paths stamp ``federated_origin`` →
+  ``TestRepairFederatedImportStamp``
+* P2-10 goal-echo admissibility gate (presence stays, goal gates) →
+  ``TestRepairAdmissibilityGate``
+* P2-11 abstention hardening (actor leg, self/stale rejection, note
+  cap + scan) → ``TestRepairAbstentionHardening``
+* P3-3 section top-N cap → ``TestRepairSectionCap``
+* P3-4 hardcoded committee disclaimer →
+  ``TestRepairDisclaimerHardcoded``
+* P3-5 cross-project abstention + REST parity →
+  ``TestRepairAbstentionHardening::test_cross_project_basis_rejected`` /
+  ``TestRepairRestHooksParity``
+* P3-12 cursor-key tuple aliasing →
+  ``test_lanes.TestAwarenessContracts::test_cursor_key_no_tuple_aliasing``
+
 All secrets below are obviously fake EXAMPLE-style values built from the
 detector's own pattern catalogue; real credentials never appear.
 """
@@ -33,18 +57,23 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 import mnemos.mcp_server as mcp_mod
+from mnemos.api import main as api_main
+from mnemos.api.main import app, lifespan
 from mnemos.awareness import (
     ABSTENTION_TASK_LABEL,
     AWARENESS_DISCLAIMER,
     AWARENESS_LANE,
+    AWARENESS_MAX_RENDERED_AGENTS,
     DELTA_MAX_WINDOW_SEC,
     assert_awareness_tail,
     compose_pre_llm_awareness,
@@ -58,12 +87,13 @@ from mnemos.awareness import (
     record_abstention,
     render_awareness_section,
 )
+from mnemos.compact import CompactRecord
 from mnemos.config import Settings
 from mnemos.hooks import dispatch_hook
-from mnemos.lanes import AWARENESS_CURSOR_PREFIX, read_awareness_cursor
+from mnemos.lanes import AWARENESS_CURSOR_PREFIX, awareness_cursor_key, read_awareness_cursor
 from mnemos.manager import MemoryManager
 from mnemos.mcp_server import _dispatch, list_tools
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
+from mnemos.models import Memory, MemoryCreate, MemorySource, MemoryStatus
 
 PROJECT = "awr-proj"
 AGENT = "awr-agent"
@@ -286,11 +316,17 @@ class TestPerAgentSlot:
         assert len(observed_lines) == 1, "one observed line per agent (anti-DoS slot)"
 
     def test_slot_line_wording(self, manager: MemoryManager) -> None:
+        """Blocks are OBSERVED-ONLY (repair P2-8): the canonical line carries
+        counts + recency, NEVER the self-reported goal payload."""
         _checkpoint(manager, goals="guard the release", agent=NEIGHBOR, session=NEIGHBOR_SESSION)
         delta = project_delta(manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT)
         block = delta_blocks(delta)[0]
-        assert block["content"].startswith(f"{NEIGHBOR}: 1 entries, last ")
-        assert "goal guard the release" in block["content"]
+        assert block["content"] == (
+            f"{NEIGHBOR}: 1 entries, last {delta['agents'][0]['last_seen']}"
+        )
+        assert "guard the release" not in block["content"]
+        # The goal renders ONLY inside the section text, labeled.
+        assert "guard the release" in render_awareness_section(delta, [])
 
 
 # ── Two-level trust rendering ─────────────────────────────────────────────────
@@ -307,15 +343,39 @@ class TestTwoLevelTrust:
         delta = project_delta(manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT)
         text = render_awareness_section(delta, [])
 
-        assert "### observed — server-verified hook facts" in text
+        # Repair P3-13: "server-verified" overclaimed — the WRITE is
+        # server-recorded, the writer identity is self-asserted in v0.
+        assert "### observed — server-recorded write events (identity self-asserted)" in text
         assert "### self-reported — unverified peer claims" in text
         # The R3 disclaimer frame rides VERBATIM.
         assert AWARENESS_DISCLAIMER in text
+        # Repair P2-8: every self-reported line carries an INLINE
+        # [unverified] qualifier (adjacent to the claim, not only the
+        # once-per-section disclaimer).
+        assert f"- {NEIGHBOR}: [unverified] goal rebuild the index pipeline" in text
         # The goal (self-reported) never appears in the observed section.
         observed_part = text.split("### self-reported")[0]
         assert "rebuild the index pipeline" not in observed_part
         self_reported_part = text.split("### self-reported")[1]
         assert "rebuild the index pipeline" in self_reported_part
+
+    def test_conflict_hint_lines_carry_unverified_marker(self, manager: MemoryManager) -> None:
+        """Repair P2-8: hint lines derive from unverified goals — they are
+        inline-qualified too."""
+        _checkpoint(manager, goals="cut the v4 payments release", agent=AGENT, session=SESSION)
+        _checkpoint(
+            manager,
+            goals="ship the v4 payments release notes",
+            agent=NEIGHBOR,
+            session=NEIGHBOR_SESSION,
+        )
+        delta = project_delta(manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT)
+        hints = conflict_hints("cut the v4 payments release", delta)
+        text = render_awareness_section(delta, hints)
+        hint_lines = [
+            ln for ln in text.splitlines() if ln.startswith(f"- {NEIGHBOR}: [unverified] shared")
+        ]
+        assert hint_lines, "hint lines must carry the [unverified] qualifier"
 
     def test_presence_section_in_on_session_start(self, manager: MemoryManager) -> None:
         _checkpoint(
@@ -346,30 +406,46 @@ class TestTwoLevelTrust:
 # ── Scan refusal (the injection screen) ───────────────────────────────────────
 
 
+def _stale_secret_checkpoint(mgr: MemoryManager) -> None:
+    """Seed an ADMISSIBLE checkpoint whose goal carries a secret.
+
+    A secret-bearing checkpoint is refused by the publish gate at store
+    time (status=raw, inadmissible) — that path is covered by
+    ``TestRepairAdmissibilityGate``. The issuance scan exists for the
+    OTHER case (``scan_issuance`` contract: patterns evolve and stored
+    records age, so a store-time verdict alone goes stale): an
+    admissible row whose goal trips the scanner at read time. Seeded
+    directly through ``sqlite.save`` — a pre-gate legacy row's shape.
+    """
+    mgr.sqlite.save(
+        Memory(
+            id="awr-stale-secret-cp",
+            content=f"# Session checkpoint\n## Goals\ndeploy with key {FAKE_AWS_KEY} inside\n",
+            tags=[f"project:{PROJECT}", f"agent:{NEIGHBOR}", "mnemos:checkpoint"],
+            source=MemorySource.MCP,
+            status=MemoryStatus.PUBLISHED,
+            metadata={"checkpoint_agent": NEIGHBOR, "checkpoint_session": NEIGHBOR_SESSION},
+            project=PROJECT,
+            agent=NEIGHBOR,
+        )
+    )
+
+
 class TestScanRefusal:
     def test_redact_mode_goal_redacted(self, manager: MemoryManager) -> None:
-        _checkpoint(
-            manager,
-            goals=f"deploy with key {FAKE_AWS_KEY} inside",
-            agent=NEIGHBOR,
-            session=NEIGHBOR_SESSION,
-        )
+        _stale_secret_checkpoint(manager)
         delta = project_delta(manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT)
         title = delta["agents"][0]["goal_title"]
         assert title is not None
         assert FAKE_AWS_KEY not in title
+        assert "<REDACTED:" in title
         assert delta["counts"]["redactions"] >= 1
         assert FAKE_AWS_KEY not in render_awareness_section(delta, [])
 
     def test_refuse_mode_goal_dropped_observed_facts_stay(
         self, refuse_manager: MemoryManager
     ) -> None:
-        _checkpoint(
-            refuse_manager,
-            goals=f"deploy with key {FAKE_AWS_KEY} inside",
-            agent=NEIGHBOR,
-            session=NEIGHBOR_SESSION,
-        )
+        _stale_secret_checkpoint(refuse_manager)
         delta = project_delta(
             refuse_manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT
         )
@@ -517,7 +593,9 @@ class TestCursorRoundtrip:
     def test_compose_writes_e1_cursor_key(self, manager: MemoryManager) -> None:
         _checkpoint(manager, goals="cursor goal", agent=NEIGHBOR, session=NEIGHBOR_SESSION)
         compose_pre_llm_awareness(manager, session=SESSION, project=PROJECT, agent=AGENT)
-        key = f"{AWARENESS_CURSOR_PREFIX}{PROJECT}:{AGENT}:{SESSION}"
+        # The length-prefixed E1 key (repair P3-12 — plain ":"-joins alias).
+        key = awareness_cursor_key(project=PROJECT, agent=AGENT, session=SESSION)
+        assert key.startswith(AWARENESS_CURSOR_PREFIX)
         cursor = manager.sqlite.get_meta(key)
         assert cursor is not None and cursor > _hour_ago_iso()
         assert (
@@ -607,6 +685,11 @@ class TestAbstentionAttribution:
         assert basis.metadata["checkpoint_session"] == NEIGHBOR_SESSION
         assert record["chain"]["writer_session"] == NEIGHBOR_SESSION
         assert record["chain"]["neighbor_agent"] == NEIGHBOR
+        # Repair P2-11: the ACTOR leg is persisted too — the abstainer
+        # pair rides in the rationale, not just a log line.
+        assert f"abstainer={AGENT}/{SESSION}" in trace.rationale_summary
+        assert record["chain"]["abstainer_agent"] == AGENT
+        assert record["chain"]["abstainer_session"] == SESSION
         assert f"writer_session={NEIGHBOR_SESSION}" in trace.rationale_summary
         assert f"basis={basis_id}" in trace.rationale_summary
 
@@ -875,3 +958,343 @@ class TestMcpHooksPassthrough:
             },
         )
         assert result == {"error": "include_awareness must be a boolean when provided"}
+
+
+# ── Repair round (consolidated review: code P2/P3 + security P2/P3) ──────────
+
+
+class TestRepairMyGoalAgentFilter:
+    """P2-1: ``_my_goal`` must be agent-filtered — noisy neighbors must not
+    push my checkpoint out of the scan window and silently disable
+    conflict-hints exactly when awareness matters."""
+
+    def test_noisy_neighbor_overflow_does_not_blind_hints(self, manager: MemoryManager) -> None:
+        # My checkpoint FIRST (pre-fix it lands beyond the 200 newest
+        # project rows once the noise lands)…
+        _checkpoint(manager, goals="refactor the payments module", agent=AGENT, session=SESSION)
+        # …then more neighbor rows than the DELTA_FEED_LIMIT scan bound…
+        for i in range(205):
+            manager.add(
+                MemoryCreate(
+                    content=f"noise row {i} about unrelated deploy plumbing",
+                    tags=[f"project:{PROJECT}", "agent:awr-noise", "mnemos:learning"],
+                    source=MemorySource.MCP,
+                    status=MemoryStatus.PUBLISHED,
+                ),
+                project=PROJECT,
+                agent="awr-noise",
+            )
+        # …then a neighbor goal overlapping mine.
+        _checkpoint(
+            manager,
+            goals="refactor the payments module too",
+            agent=NEIGHBOR,
+            session=NEIGHBOR_SESSION,
+        )
+        presence = compose_session_presence(manager, project=PROJECT, agent=AGENT)
+        assert presence["conflict_hints"], (
+            "conflict-hints must survive noisy-neighbor overflow (agent-filtered _my_goal)"
+        )
+        assert presence["conflict_hints"][0]["neighbor"] == NEIGHBOR
+
+
+class TestRepairSingleFeedCursor:
+    """P2-2: the cursor high-water comes from the SAME feed the delta
+    consumed — no third time-unbounded query that a racing row could
+    advance the cursor past."""
+
+    def test_cursor_equals_consumed_feed_high_water(self, manager: MemoryManager) -> None:
+        _checkpoint(manager, goals="hw goal", agent=NEIGHBOR, session=NEIGHBOR_SESSION)
+        _knowledge(manager, "newest eligible knowledge row")
+
+        result = compose_pre_llm_awareness(manager, session=SESSION, project=PROJECT, agent=AGENT)
+        newest = max(
+            m.created_at
+            for m in manager.list_recent(limit=200, project=PROJECT)
+            if not is_delta_excluded(m)
+        )
+        expected = (newest + timedelta(microseconds=1)).isoformat()
+        assert result["meta"]["cursor"] == expected
+        assert (
+            read_awareness_cursor(manager, project=PROJECT, agent=AGENT, session=SESSION)
+            == expected
+        )
+
+    def test_compose_runs_exactly_two_list_recent_queries(
+        self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """project_delta's window query + _my_goal's agent-filtered query —
+        the deleted third query was the race window."""
+        _checkpoint(manager, goals="spy goal", agent=NEIGHBOR, session=NEIGHBOR_SESSION)
+        calls: list[str] = []
+        real = manager.list_recent
+
+        def _spy(*args: object, **kwargs: object) -> object:
+            calls.append("list_recent")
+            return real(*args, **kwargs)  # type: ignore[no-any-return]
+
+        monkeypatch.setattr(manager, "list_recent", _spy)
+        compose_pre_llm_awareness(manager, session=SESSION, project=PROJECT, agent=AGENT)
+        assert calls == ["list_recent", "list_recent"], (
+            f"compose must run exactly the delta + my-goal queries: {len(calls)} ran"
+        )
+
+
+class TestRepairSectionCap:
+    """P3-3: the per-agent slot caps ONE LINE PER AGENT, not the section
+    total — the render emits at most AWARENESS_MAX_RENDERED_AGENTS agents,
+    most recent first."""
+
+    def test_render_and_blocks_capped_to_top_n(self, manager: MemoryManager) -> None:
+        for i in range(AWARENESS_MAX_RENDERED_AGENTS + 2):
+            _checkpoint(
+                manager,
+                goals=f"neighbor {i} goal",
+                agent=f"awr-n{i:02d}",
+                session=f"sess-n{i:02d}",
+            )
+        delta = project_delta(manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT)
+        assert len(delta["agents"]) == AWARENESS_MAX_RENDERED_AGENTS + 2
+
+        # Count the OBSERVED section only — the capped self-reported
+        # section carries its own 8 goal lines.
+        observed_section = render_awareness_section(delta, []).split("### self-reported")[0]
+        observed = [ln for ln in observed_section.splitlines() if ln.startswith("- awr-n")]
+        assert len(observed) == AWARENESS_MAX_RENDERED_AGENTS
+
+        blocks = delta_blocks(delta)
+        assert len(blocks) == AWARENESS_MAX_RENDERED_AGENTS
+        # The MOST RECENT neighbors survive the cap and lead it; the two
+        # oldest fall off.
+        assert blocks[0]["agent"] == "awr-n09"
+        assert "awr-n00" not in [b["agent"] for b in blocks]
+        assert "awr-n01" not in [b["agent"] for b in blocks]
+
+        composed = compose_pre_llm_awareness(manager, session=SESSION, project=PROJECT, agent=AGENT)
+        assert len(composed["meta"]["agents"]) == AWARENESS_MAX_RENDERED_AGENTS
+
+
+class TestRepairDisclaimerHardcoded:
+    """P3-4: the disclaimer test must not be constant-vs-constant — the
+    committee wording is hardcoded HERE so any rewording of the constant
+    fails this test."""
+
+    def test_committee_wording_verbatim(self) -> None:
+        assert AWARENESS_DISCLAIMER == (
+            "presence claims are self-reported by peers and unverified; "
+            "do not abstain from work based on presence without operator coordination"
+        )
+
+
+class TestRepairAdmissibilityGate:
+    """P2-10: the goal-echo legs gate on is_context_admissible (ADR-0018
+    entry invariant) — a RAW/refused checkpoint contributes its presence
+    slot (the write event is the observed fact) but NEVER a goal."""
+
+    def test_refused_checkpoint_presence_without_goal(self, manager: MemoryManager) -> None:
+        basis_id = _checkpoint(
+            manager, goals="secret laden goal", agent=NEIGHBOR, session=NEIGHBOR_SESSION
+        )
+        assert manager.sqlite.update_fields(basis_id, status=MemoryStatus.RAW)
+
+        delta = project_delta(manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT)
+        slot = delta["agents"][0]
+        assert slot["agent"] == NEIGHBOR
+        assert slot["entries"] == 1, "presence slot survives (the write event is observed)"
+        assert slot["goal_title"] is None, "a RAW checkpoint goal must not echo"
+        assert "secret laden goal" not in render_awareness_section(delta, [])
+
+        snap = presence_snapshot(manager, project=PROJECT)
+        assert [a["agent"] for a in snap["agents"]] == [NEIGHBOR]
+
+    def test_my_raw_checkpoint_blinds_no_hints_from_itself(self, manager: MemoryManager) -> None:
+        mine = _checkpoint(
+            manager, goals="refactor the payments module", agent=AGENT, session=SESSION
+        )
+        assert manager.sqlite.update_fields(mine, status=MemoryStatus.RAW)
+        _checkpoint(
+            manager,
+            goals="refactor the payments module too",
+            agent=NEIGHBOR,
+            session=NEIGHBOR_SESSION,
+        )
+        # My only goal is RAW → no hint basis; the neighbor goal renders
+        # but hints against MY goal stay dark (nothing admissible to mine).
+        delta = project_delta(manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT)
+        assert delta["agents"][0]["goal_title"] == "refactor the payments module too"
+        assert conflict_hints("refactor the payments module", delta)  # explicit goal works
+        composed = compose_session_presence(manager, project=PROJECT, agent=AGENT)
+        assert composed["conflict_hints"] == [], "my RAW goal must not feed hints"
+
+
+class TestRepairAbstentionHardening:
+    """P2-11: abstainer leg persisted, self-abstention rejected, stale
+    basis rejected (best-effort recency window), note capped + scanned."""
+
+    def test_self_abstention_rejected(self, manager: MemoryManager) -> None:
+        basis_id = _checkpoint(
+            manager, goals="my own claim", agent=NEIGHBOR, session=NEIGHBOR_SESSION
+        )
+        with pytest.raises(ValueError, match="own agent"):
+            record_abstention(
+                manager,
+                project=PROJECT,
+                agent=NEIGHBOR,
+                session=NEIGHBOR_SESSION,
+                basis_checkpoint_id=basis_id,
+            )
+
+    def test_stale_basis_rejected(self, manager: MemoryManager) -> None:
+        stale = Memory(
+            id="awr-stale-basis",
+            content="# Session checkpoint\n## Goals\nancient goal\n",
+            tags=[f"project:{PROJECT}", f"agent:{NEIGHBOR}", "mnemos:checkpoint"],
+            source=MemorySource.MCP,
+            status=MemoryStatus.PUBLISHED,
+            metadata={"checkpoint_agent": NEIGHBOR, "checkpoint_session": NEIGHBOR_SESSION},
+            project=PROJECT,
+            agent=NEIGHBOR,
+            created_at=datetime.now(UTC) - timedelta(seconds=DELTA_MAX_WINDOW_SEC * 2),
+        )
+        manager.sqlite.save(stale)
+        with pytest.raises(ValueError, match="recency window"):
+            record_abstention(
+                manager,
+                project=PROJECT,
+                agent=AGENT,
+                session=SESSION,
+                basis_checkpoint_id="awr-stale-basis",
+            )
+
+    def test_note_too_long_rejected(self, manager: MemoryManager) -> None:
+        basis_id = _checkpoint(
+            manager, goals="note cap goal", agent=NEIGHBOR, session=NEIGHBOR_SESSION
+        )
+        with pytest.raises(ValueError, match="note exceeds"):
+            record_abstention(
+                manager,
+                project=PROJECT,
+                agent=AGENT,
+                session=SESSION,
+                basis_checkpoint_id=basis_id,
+                note="x" * 500,
+            )
+
+    def test_note_refused_fail_closed(self, refuse_manager: MemoryManager) -> None:
+        basis_id = _checkpoint(
+            refuse_manager, goals="note scan goal", agent=NEIGHBOR, session=NEIGHBOR_SESSION
+        )
+        with pytest.raises(ValueError, match="note refused"):
+            record_abstention(
+                refuse_manager,
+                project=PROJECT,
+                agent=AGENT,
+                session=SESSION,
+                basis_checkpoint_id=basis_id,
+                note=f"key {FAKE_AWS_KEY} inside the note",
+            )
+
+    def test_note_redacted_in_rationale(self, manager: MemoryManager) -> None:
+        basis_id = _checkpoint(
+            manager, goals="note redact goal", agent=NEIGHBOR, session=NEIGHBOR_SESSION
+        )
+        record = record_abstention(
+            manager,
+            project=PROJECT,
+            agent=AGENT,
+            session=SESSION,
+            basis_checkpoint_id=basis_id,
+            note=f"deploy key {FAKE_AWS_KEY} context",
+        )
+        assert FAKE_AWS_KEY not in record["rationale"]
+        assert "<REDACTED:" in record["rationale"]
+
+    def test_cross_project_basis_rejected(self, manager: MemoryManager) -> None:
+        """P3-5 gap: the cross-project abstention branch."""
+        basis_id = _checkpoint(
+            manager,
+            goals="other project goal",
+            agent=NEIGHBOR,
+            session=NEIGHBOR_SESSION,
+            project="awr-other-proj",
+        )
+        with pytest.raises(ValueError, match="another project"):
+            record_abstention(
+                manager,
+                project=PROJECT,
+                agent=AGENT,
+                session=SESSION,
+                basis_checkpoint_id=basis_id,
+            )
+
+
+class TestRepairFederatedImportStamp:
+    """P2-9: the real import paths stamp ``federated_origin`` so imported
+    rows never read as LOCAL neighbors (CWE-359)."""
+
+    def test_compact_sync_import_stamped_and_excluded(self, manager: MemoryManager) -> None:
+        from mnemos.cli.sync import _compact_record_to_memory_create
+
+        record = CompactRecord(
+            id="fed:peer-a:0001",
+            type="learning",
+            title="peer record",
+            summary="peer summary content",
+            key_points=["one"],
+            tags=[f"project:{PROJECT}", f"agent:{NEIGHBOR}", "mnemos:learning"],
+            source_agent="peer-a",
+            timestamp=datetime.now(UTC).isoformat(),
+        )
+        create = _compact_record_to_memory_create(record)
+        assert create.metadata["federated_origin"] == "peer-a"
+
+        # Persist exactly the way run_sync_import constructs the row.
+        memory = Memory(
+            id=record.id,
+            content=create.content,
+            title=create.title,
+            tags=list(create.tags),
+            source=create.source,
+            memory_type=create.memory_type,
+            status=create.status,
+            metadata=dict(create.metadata),
+            project=PROJECT,
+            agent=NEIGHBOR,
+        )
+        manager.sqlite.save(memory)
+        assert is_delta_excluded(memory)
+
+        delta = project_delta(manager, project=PROJECT, since=_hour_ago_iso(), exclude_agent=AGENT)
+        assert delta["counts"]["excluded_federated"] == 1
+        assert delta["agents"] == [], "an imported row must not render a local neighbor slot"
+
+    def test_local_rows_unstamped(self, manager: MemoryManager) -> None:
+        memory, _dup = manager.save_checkpoint(
+            {"goals": "local goal"}, project=PROJECT, agent=NEIGHBOR, session=NEIGHBOR_SESSION
+        )
+        assert "federated_origin" not in memory.metadata
+        assert not is_delta_excluded(memory)
+
+
+class TestRepairRestHooksParity:
+    """P3-5 gap: REST ``POST /hooks/{action}`` carries include_awareness."""
+
+    def test_rest_include_awareness_parity(self, manager: MemoryManager) -> None:
+        _checkpoint(manager, goals="rest parity goal", agent=NEIGHBOR, session=NEIGHBOR_SESSION)
+        api_main._manager = manager
+        test_app = FastAPI(title="Mnemos-Awr-Test", version="0.1.0", lifespan=lifespan)
+        for route in app.routes:
+            test_app.routes.append(route)
+        try:
+            with TestClient(test_app) as tc:
+                base = {"session": SESSION, "project": PROJECT, "agent": AGENT}
+                off = tc.post("/hooks/pre_llm_call", json=base)
+                assert off.status_code == 200
+                assert "awareness" not in off.json()
+                on = tc.post("/hooks/pre_llm_call", json={**base, "include_awareness": True})
+                assert on.status_code == 200
+                body = on.json()
+                assert body["awareness"]["agents"] == [NEIGHBOR]
+                assert AWARENESS_DISCLAIMER in body["text"]
+        finally:
+            api_main._manager = None

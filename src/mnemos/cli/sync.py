@@ -492,6 +492,14 @@ def _compact_record_to_memory_create(record: CompactRecord) -> MemoryCreate:
     arrive via the sync pipeline, which is MCP-shaped (no dedicated
     ``FEDERATED`` source exists yet; ``MCP`` is the closest semantic
     match and is the documented fallback per the task spec).
+
+    Every mapped row carries the ``federated_origin`` metadata stamp
+    (#254 review P2): a cross-operator row must never read as a LOCAL
+    neighbor under awareness ``observed`` rendering (CWE-359) —
+    ``mnemos.awareness.is_delta_excluded`` keys on exactly this stamp
+    to keep imported rows out of the delta. The stamp value is the
+    compact record's ``source_agent`` (the peer-side author slug); a
+    first-class ``origin=`` column remains a tracker item.
     """
     parts: list[str] = []
     if record.summary:
@@ -510,6 +518,7 @@ def _compact_record_to_memory_create(record: CompactRecord) -> MemoryCreate:
         source=MemorySource.MCP,
         memory_type=MemoryType.NOTE,
         status=MemoryStatus.PUBLISHED,
+        metadata={"federated_origin": record.source_agent or "federation-sync"},
     )
 
 
@@ -673,7 +682,10 @@ def run_sync_import(
         # Persist with the federated id (not a freshly-generated uuid) so
         # re-imports are idempotent. We bypass ``mgr.add`` (which generates
         # a new id) and construct the Memory directly, mirroring the JSON
-        # import path in ``cli/import_.py::_import_json``.
+        # import path in ``cli/import_.py::_import_json``. ``metadata``
+        # carries the ``federated_origin`` stamp minted by the mapper
+        # (#254 review P2) — without it the row would read as a LOCAL
+        # neighbor under awareness presence/delta (CWE-359).
         memory = Memory(
             id=record.id,
             content=create.content,
@@ -682,6 +694,7 @@ def run_sync_import(
             source=create.source,
             memory_type=create.memory_type,
             status=create.status,
+            metadata=dict(create.metadata),
             project=project,
             agent=agent,
         )

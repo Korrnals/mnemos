@@ -79,13 +79,15 @@ the delta where recall would drown it among hundreds of rows).
 
 ── Cursors ──────────────────────────────────────────────────────────
 
-``awr:{project}:{agent}:{session}`` in the meta table (ISO high-water
-timestamp value) via the E1 helpers ``read_awareness_cursor`` /
-``write_awareness_cursor`` (UPSERT, migration-free). ``list_recent``
-compares ``created_at >= since`` INCLUSIVELY, so the stored cursor is
-the consumed high-water mark +1µs — the next delta opens strictly
-after everything already rendered (a quiet store yields an empty
-delta, never a boundary-row re-render).
+``awr:`` + the length-prefixed ``(project, agent, session)`` tuple (see
+``lanes.awareness_cursor_key`` — the E1 helper; plain ``:``-joins are
+NOT collision-safe because session ids may legally contain ``:``) in
+the meta table, value = consumed ISO high-water mark, via the E1
+helpers ``read_awareness_cursor`` / ``write_awareness_cursor`` (UPSERT,
+migration-free). ``list_recent`` compares ``created_at >= since``
+INCLUSIVELY, so the stored cursor is the consumed high-water mark +1µs
+— the next delta opens strictly after everything already rendered (a
+quiet store yields an empty delta, never a boundary-row re-render).
 
 ── Measurement surfaces (E0 docs/experiments/e0-meta-level.md) ──────
 
@@ -93,10 +95,13 @@ The engine exists to make the D-leg hypotheses measurable: D1/D4
 (intrusion vs over-deferral — the disclaimer + two-level trust are the
 levers), D2 ``t_eligible`` (a committed row is delta-eligible the
 moment it lands: no async hop between store and ``list_recent``),
-D3 price (the per-agent slot bounds the section to one line per
-neighbor; PRESENCE_WINDOW/DELTA_MAX_WINDOW/GOAL_TITLE_MAX_CHARS are
-the budget knobs), and the KV guardrail (awareness renders last,
-outside the byte-stable pinned prefix). No experiment runs here.
+D3 price (the per-agent slot caps the section at ONE LINE PER AGENT —
+NOT a total section bound; the render-level top-N cap
+:data:`AWARENESS_MAX_RENDERED_AGENTS` bounds the section total, and
+the ≤300 tokens / ≤5% budget figure is the D3 CORRIDOR to be MEASURED
+by E0, not a code invariant enforced here), and the KV guardrail
+(awareness renders last, outside the byte-stable pinned prefix). No
+experiment runs here.
 """
 
 from __future__ import annotations
@@ -112,7 +117,7 @@ from mnemos.lanes import (
     read_awareness_cursor,
     write_awareness_cursor,
 )
-from mnemos.models import Memory, MemorySource, MemoryStatus
+from mnemos.models import Memory, MemorySource, MemoryStatus, is_context_admissible
 from mnemos.traces import TraceRecorder
 
 if TYPE_CHECKING:
@@ -150,6 +155,19 @@ DELTA_FEED_LIMIT: Final[int] = 200
 #: Goal title cap in rendered/blocked output (D3 price knob — the
 #: self-reported layer must stay a title, not a content echo).
 GOAL_TITLE_MAX_CHARS: Final[int] = 120
+
+#: Render-level section cap: the per-agent slot bounds ONE LINE PER
+#: AGENT but not the section total (200 agents x lines would still
+#: dwarf the context) — the rendered section and the emitted blocks
+#: carry at most this many agents, the most recent first (review P3:
+#: aggregate cap; the ≤300-token figure is the D3 corridor, measured
+#: by E0, not enforced here).
+AWARENESS_MAX_RENDERED_AGENTS: Final[int] = 8
+
+#: Hard cap on the free-text abstention note before it enters a trace
+#: rationale (the Trace model truncates at 200 chars anyway; this keeps
+#: room for the chain fields).
+ABSTENTION_NOTE_MAX_CHARS: Final[int] = 140
 
 #: Minimum shared lexical tokens before a conflict hint fires. 2 is the
 #: v0 calibration trading D1 (missed conflicts) against D4 (over-deferral
@@ -400,7 +418,17 @@ def _strip_policy_markers(title: str) -> str:
 
 
 def _goal_tokens(text: str) -> frozenset[str]:
-    """Deterministic lexical token set (lowercased, stopwords dropped)."""
+    """Deterministic lexical token set (lowercased, stopwords dropped).
+
+    Known v0 limitation: the tokenizer is ASCII-blind by construction
+    (``[a-z0-9][a-z0-9_.\\-]+`` over the lowercased text) — a Cyrillic
+    goal yields an EMPTY token set and never fires a conflict hint. The
+    project is bilingual (RU owner, EN corpus), so this is a real gap:
+    D-batches with Cyrillic-goal scenarios must not be scored as hint
+    misses without noting this. Widening the class (e.g. ``\\w`` with
+    Unicode) is a tokenizer change that E0 must register before any run
+    that relies on it.
+    """
     return frozenset(t for t in _TOKEN_RE.findall(text.lower()) if t not in _STOPWORDS)
 
 
@@ -569,6 +597,15 @@ def project_delta(
     slots, counts = _agent_slots(rows, exclude_agent=exclude_agent)
     by_id = {m.id: m for m in rows}
 
+    # The cursor high-water over the SAME feed this delta consumed — the
+    # single query the composition trusts (review P2: a second, later
+    # query would let a row arriving between the two reads advance the
+    # cursor past itself and be permanently skipped). Residual: two rows
+    # sharing the exact same microsecond at the top of the window tie —
+    # the +1µs cursor can skip the twin rendered with it. Accepted v0
+    # #254 residual; an E0 D-batch reporting line, not a silent gap.
+    high_water = max((m.created_at for m in rows), default=since_dt)
+
     redactions = 0
     goals_refused = 0
     for slot in slots:
@@ -576,6 +613,13 @@ def project_delta(
             continue
         memory = by_id.get(slot["last_checkpoint_id"])
         if memory is None:
+            continue
+        # The ADR-0018 entry invariant on the goal-echo leg (review P2):
+        # a RAW/refused checkpoint's first Goals line must not ride into
+        # a neighbor's context while every other LLM-bound channel gates.
+        # Presence slots stay UN-gated — the write event is the observed
+        # fact; the GOAL is the content echo, and only it gates here.
+        if not is_context_admissible(memory):
             continue
         goal = checkpoint_goal_title(memory)
         if goal is None:
@@ -605,6 +649,7 @@ def project_delta(
             "excluded_federated": excluded_federated,
             "redactions": redactions,
             "goals_refused": goals_refused,
+            "high_water": high_water.isoformat(),
         },
     }
 
@@ -612,31 +657,53 @@ def project_delta(
 # ── Rendering (two-level trust, disclaimer, per-agent lines) ─────────────────
 
 
+def _capped_agents(delta: dict[str, Any]) -> list[dict[str, Any]]:
+    """Most-recent-first top-N of the delta agents (the section bound).
+
+    The per-agent slot caps ONE LINE PER AGENT, not the section total
+    (review P3) — this cap bounds the total: slots arrive sorted by
+    (last_seen desc, agent asc), so ``[:N]`` keeps the most recent
+    neighbors, which is also the #224-replay ordering (the ~3-minute-old
+    peer checkpoint sits at the top).
+    """
+    agents: list[dict[str, Any]] = delta.get("agents", [])
+    return agents[:AWARENESS_MAX_RENDERED_AGENTS]
+
+
 def _agent_line(slot: dict[str, Any]) -> str:
-    """The canonical per-agent delta line (the issue's slot wording)."""
-    goal = slot.get("goal_title")
-    return (
-        f"{slot['agent']}: {slot['entries']} entries, last {slot['last_seen']}, "
-        f"goal {goal if goal else 'none'}"
-    )
+    """The canonical per-agent delta line — OBSERVED ONLY.
+
+    The self-reported goal NEVER enters a block's content (review P2:
+    blocks are a harness-rendered surface without the section frame; a
+    120-char peer-authored goal next to observed facts is a bare
+    goal-injection channel there). Goals render ONLY inside the section
+    text, under the labeled self-reported header.
+    """
+    return f"{slot['agent']}: {slot['entries']} entries, last {slot['last_seen']}"
 
 
 def render_awareness_section(delta: dict[str, Any], hints: list[dict[str, Any]]) -> str:
     """Render the delta as the model-facing awareness section.
 
     Two-level trust is VISUAL: observed facts and self-reported claims
-    render under separate labeled headers, and the R3 disclaimer frame
-    rides verbatim at the top. An empty delta renders as an empty
-    string (no empty sections).
+    render under separate labeled headers, every self-reported and
+    conflict-hint line carries an INLINE ``[unverified]`` qualifier (the
+    once-per-section disclaimer is not adjacent enough to a line a
+    harness may quote alone), and the R3 disclaimer frame rides verbatim
+    at the top. The observed header says "server-recorded write events
+    (identity self-asserted)" — the WRITE is server-observed, but the
+    writer identity is only as trustworthy as the session→agent binding
+    (v0: self-asserted, server-recorded). An empty delta renders as an
+    empty string (no empty sections).
     """
-    agents: list[dict[str, Any]] = delta.get("agents", [])
+    agents = _capped_agents(delta)
     if not agents:
         return ""
     lines = [
         f"## Peer awareness — delta since {delta['since']} (project {delta['project']})",
         AWARENESS_DISCLAIMER,
         "",
-        "### observed — server-verified hook facts",
+        "### observed — server-recorded write events (identity self-asserted)",
     ]
     for slot in agents:
         session_part = f", session {slot['writer_session']}" if slot["writer_session"] else ""
@@ -646,20 +713,22 @@ def render_awareness_section(delta: dict[str, Any], hints: list[dict[str, Any]])
     self_reported = [a for a in agents if a.get("goal_title")]
     if self_reported:
         lines += ["", "### self-reported — unverified peer claims"]
-        lines += [f"- {a['agent']}: goal {a['goal_title']}" for a in self_reported]
+        lines += [f"- {a['agent']}: [unverified] goal {a['goal_title']}" for a in self_reported]
     if hints:
         lines += ["", "### conflict-hints — lexical overlap with my current goal"]
-        lines += [f"- {h['neighbor']}: shared {h['shared_tokens']}" for h in hints]
+        lines += [f"- {h['neighbor']}: [unverified] shared {h['shared_tokens']}" for h in hints]
     return "\n".join(lines)
 
 
 def delta_blocks(delta: dict[str, Any]) -> list[dict[str, Any]]:
     """Per-agent awareness blocks (the E1 delta-slot convention).
 
-    ONE block per neighbor agent — the structural anti-DoS bound.
-    Blocks deliberately carry NO ``memory_id`` and no policy fields:
-    an awareness block is not a memory record and is not eligible for
-    the approval machine (never pinnable, R3).
+    ONE block per neighbor agent — the structural anti-DoS bound — and
+    at most :data:`AWARENESS_MAX_RENDERED_AGENTS` blocks total. Block
+    content is OBSERVED-ONLY (no goal payload — see :func:`_agent_line`)
+    and carries NO ``memory_id`` / policy fields: an awareness block is
+    not a memory record and is not eligible for the approval machine
+    (never pinnable, R3).
     """
     return [
         {
@@ -668,7 +737,7 @@ def delta_blocks(delta: dict[str, Any]) -> list[dict[str, Any]]:
             "content": _agent_line(slot),
             "pinnable": False,
         }
-        for slot in delta.get("agents", [])
+        for slot in _capped_agents(delta)
     ]
 
 
@@ -705,11 +774,16 @@ def _my_goal(mgr: MemoryManager, *, project: str, agent: str) -> str | None:
 
     Conflict hints compare against my CURRENT goal — the last checkpoint
     I wrote, not just the delta window (a stale window must not blind
-    the hint layer).
+    the hint layer). The query is AGENT-FILTERED server-side (review
+    P2): scanning the 200 newest PROJECT rows unfiltered lets noisy
+    neighbors push my checkpoint out of the window, silently disabling
+    conflict-hints exactly when awareness matters. The ADR-0018
+    admissibility gate applies (review P2): a RAW/refused checkpoint of
+    mine is not an LLM-bound goal echo.
     """
-    rows = mgr.list_recent(limit=DELTA_FEED_LIMIT, project=project)
+    rows = mgr.list_recent(limit=DELTA_FEED_LIMIT, project=project, agent=agent)
     for m in rows:
-        if m.agent == agent and m.metadata.get("checkpoint_agent"):
+        if m.metadata.get("checkpoint_agent") and is_context_admissible(m):
             return checkpoint_goal_title(m)
     return None
 
@@ -742,18 +816,18 @@ def compose_pre_llm_awareness(
     hints = conflict_hints(_my_goal(mgr, project=project, agent=agent), delta)
     text = render_awareness_section(delta, hints)
 
-    # High-water cursor over the ELIGIBLE feed (self rows included — my
-    # own writes are not news to me; federated-excluded rows included —
-    # they must never re-scan). The +1µs makes the INCLUSIVE SQL bound
+    # Cursor high-water comes from the SAME feed the delta consumed
+    # (``counts["high_water"]``, computed inside ``project_delta``'s single
+    # window query — review P2: a separate later query here could let a
+    # row arriving between the two reads advance the cursor past itself
+    # and be permanently skipped). The +1µs makes the INCLUSIVE SQL bound
     # (``created_at >= since``) behave exclusively: the next delta opens
-    # strictly after everything already consumed, so a quiet store
-    # yields an empty delta instead of re-rendering the boundary row.
-    feed = [
-        m for m in _window_rows(mgr, project=project, since_dt=since_dt) if not is_delta_excluded(m)
-    ]
-    high_water = max((m.created_at for m in feed), default=since_dt)
-    cursor = (high_water + timedelta(microseconds=1)).isoformat()
-    write_awareness_cursor(mgr, project=project, agent=agent, session=session, cursor=cursor)
+    # strictly after everything already consumed. Same-microsecond tie at
+    # the top of the window is an accepted v0 residual (see
+    # ``project_delta``) — an E0 D-batch reporting line.
+    high_water = _parse_since(delta["counts"]["high_water"])
+    new_cursor = (high_water + timedelta(microseconds=1)).isoformat()
+    write_awareness_cursor(mgr, project=project, agent=agent, session=session, cursor=new_cursor)
     return {
         "text": text,
         "blocks": delta_blocks(delta),
@@ -761,8 +835,8 @@ def compose_pre_llm_awareness(
             "included": True,
             "lane": AWARENESS_LANE,
             "since": delta["since"],
-            "cursor": cursor,
-            "agents": [a["agent"] for a in delta["agents"]],
+            "cursor": new_cursor,
+            "agents": [a["agent"] for a in delta["agents"][:AWARENESS_MAX_RENDERED_AGENTS]],
             "conflict_hints": len(hints),
             "redactions": delta["counts"]["redactions"],
             "pinnable": False,
@@ -848,18 +922,38 @@ def record_abstention(
     session: str,
     basis_checkpoint_id: str,
     note: str | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Log an abstention-on-presence as an action with a provenance chain.
 
     The chain must be reconstructable from traces alone:
     ``abstention → delta-block → checkpoint-id → writer-session`` —
     the trace row's ``item_id`` IS the neighbor checkpoint id, and the
-    rationale names the neighbor agent and the writer session stamped
-    on that checkpoint by the server (#251). Fail-closed at the
-    boundary: a missing checkpoint, a non-checkpoint basis (no server
-    stamps), or a cross-project basis raises before anything is logged
-    — an abstention with no reconstructable provenance is exactly the
-    unattributable paralysis D4 exists to catch.
+    rationale names BOTH legs: the neighbor (agent + writer session,
+    from the #251 server stamps on the basis row) and the ABSTAINER
+    (``abstainer=<agent>/<session>`` — review P2: the actor leg was
+    previously only a log line, unpersisted).
+
+    Fail-closed at the boundary (review P2 hardening):
+
+    * a missing checkpoint, a non-checkpoint basis (no server stamps),
+      or a cross-project basis raises before anything is logged;
+    * SELF-abstention is rejected — a basis written by the caller's own
+      agent is not a neighbor claim (a forged self-attribution pollutes
+      the D4 denominator);
+    * the basis must sit inside the awareness recency window
+      (:data:`DELTA_MAX_WINDOW_SEC`, best-effort — review P2): a basis
+      older than the clamp can never have been in a delta this caller
+      rendered, so abstention traces minted against arbitrary old
+      neighbor checkpoints (D4 pollution) are rejected fail-closed. The
+      caller's cursor is read and the basis-consumption relation is
+      persisted in the rationale (``consumed=yes|no``); a strict cursor
+      floor is deliberately NOT enforced — the honest post-composition
+      flow (compose → saw the block → abstain) has basis < cursor;
+    * the free-text ``note`` is length-capped
+      (:data:`ABSTENTION_NOTE_MAX_CHARS`) and ``scan_issuance``-screened
+      — refuse mode raises (a secret-bearing note must not reach the
+      trace store), redactions are applied in place.
     """
     _require_project(project)
     _require_identity(agent, session)
@@ -880,14 +974,58 @@ def record_abstention(
         )
     if basis.project != project:
         raise ValueError("basis checkpoint belongs to another project — refusing (fail-closed)")
+    if neighbor == agent:
+        raise ValueError(
+            f"basis checkpoint was written by the caller's own agent {agent!r} — "
+            "self-abstention is not a neighbor-claim abstention (refusing)"
+        )
+
+    # Window coupling (best-effort, review P2). The forgery this blocks:
+    # abstention traces minted against ARBITRARY OLD neighbor checkpoints
+    # (D4 pollution) — a basis older than the recency-window clamp can
+    # never have been in any delta this caller rendered, so it is rejected
+    # fail-closed. The cursor IS read and its relation to the basis is
+    # PERSISTED in the rationale (``consumed=yes/no``): a basis older than
+    # the cursor was rendered by a past composition, one newer than it is
+    # still unconsumed — BOTH are legitimately abstainable (the honest
+    # post-composition flow "pre_llm_call → saw the block → abstain"
+    # has basis < cursor; the pre-flight flow has basis > cursor), so a
+    # strict cursor floor would reject the primary flow and is
+    # deliberately NOT used.
+    now_dt = _now_or(now)
+    cursor = read_awareness_cursor(mgr, project=project, agent=agent, session=session)
+    window_start = now_dt - timedelta(seconds=DELTA_MAX_WINDOW_SEC)
+    if basis.created_at < window_start:
+        raise ValueError(
+            "basis checkpoint is outside the awareness recency window — it can "
+            "never have been in a delta this caller rendered (refusing, "
+            "anti-forged-attribution)"
+        )
+    consumed = bool(cursor and basis.created_at <= _parse_since(cursor))
+
+    scanned_note = ""
+    if note is not None and note.strip():
+        if len(note) > ABSTENTION_NOTE_MAX_CHARS:
+            raise ValueError(
+                f"note exceeds {ABSTENTION_NOTE_MAX_CHARS} chars "
+                f"(got {len(note)}) — truncate before logging"
+            )
+        scan = mgr.scan_issuance(note, context=f"awareness:abstention_note:{basis_checkpoint_id}")
+        if scan.refused:
+            raise ValueError(
+                f"note refused at issuance (reason={scan.reason}) — a note that "
+                "cannot be safely echoed cannot be logged"
+            )
+        scanned_note = scan.text
 
     writer_session = basis.metadata.get("checkpoint_session")
     rationale = (
-        f"abstention on presence: neighbor={neighbor} "
-        f"writer_session={writer_session} basis={basis_checkpoint_id}"
+        f"abstainer={agent}/{session} abstention on presence: neighbor={neighbor} "
+        f"writer_session={writer_session} basis={basis_checkpoint_id} "
+        f"consumed={'yes' if consumed else 'no'}"
     )
-    if note and note.strip():
-        rationale += f" note={note.strip()}"
+    if scanned_note:
+        rationale += f" note={scanned_note}"
 
     recorder = TraceRecorder(store=mgr.sqlite)
     with recorder.record(
@@ -906,6 +1044,8 @@ def record_abstention(
         "action": "abstention_on_presence",
         "chain": {
             "abstention_trace": trace.id,
+            "abstainer_agent": agent,
+            "abstainer_session": session,
             "delta_block_basis": basis_checkpoint_id,
             "checkpoint_id": basis_checkpoint_id,
             "writer_session": writer_session,
