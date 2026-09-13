@@ -1739,8 +1739,7 @@ class TestSweeperVintageFingerprint:
 
         manager._embedder.embed.side_effect = poisoned_embed
         healthy = [
-            self._seed_vintage_stale(manager, f"poison bound probe {i} about eta")
-            for i in range(4)
+            self._seed_vintage_stale(manager, f"poison bound probe {i} about eta") for i in range(4)
         ]
         poison = self._seed_vintage_stale(manager, "poison-marker row about theta")
         # The sweep pages created_at DESC — backdate the healthy rows so
@@ -1804,9 +1803,7 @@ class TestSweeperVintageFingerprint:
         # Nothing healed: all 12 rows keep the old fingerprint (10 failed
         # attempts + 2 never attempted) — the drain resumes next tick.
         metas = manager.vectors.get_metadata(batch)
-        assert all(
-            metas[mid].get("model_fingerprint") != "nano:sha256:newweights" for mid in batch
-        )
+        assert all(metas[mid].get("model_fingerprint") != "nano:sha256:newweights" for mid in batch)
 
     def test_heal_stale_by_fingerprint_count_when_budget_exhausts(
         self, manager: MemoryManager
