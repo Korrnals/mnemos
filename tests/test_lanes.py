@@ -487,6 +487,20 @@ class TestFlagOffEquivalence:
         assert Settings().lanes.type_boost is True
         assert Settings().lanes.enabled is False
 
+    def test_treatments_mutex_enforced_at_point_of_use(self, lanes_manager: MemoryManager) -> None:
+        """The construction-time validator can be bypassed by direct
+        attribute assignment on a built manager; assemble_context
+        re-checks at the point of use — both treatments on at assemble
+        time would silently run an unregistered fourth leg (review P3)."""
+        _corpus(lanes_manager)
+        assert lanes_manager.settings.lanes.enabled is True
+        lanes_manager.settings.lanes.type_boost = True  # bypass on purpose
+        with pytest.raises(AssertionError, match="mutually exclusive"):
+            lanes_manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+        # the single-treatment configuration still assembles normally
+        lanes_manager.settings.lanes.type_boost = False
+        assert lanes_manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
+
 
 # ── Ordering stability (H2 surface) ──────────────────────────────────────────
 

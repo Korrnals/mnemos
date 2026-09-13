@@ -130,6 +130,69 @@ def test_collect_is_deterministic(collected: tuple[dict, dict]) -> None:
     assert second_outcomes["g_neg"] == first_outcomes["g_neg"]
 
 
+# ── the statistics ban is SCHEMA, not convention (review P2) ─────────────────
+
+
+def test_verify_outcomes_refuses_smuggled_stat_keys(
+    collected: tuple[dict, dict],
+) -> None:
+    """An outcomes dict carrying statistical keys anywhere — top level,
+    deep inside pairs, or inside a leg's rates — is REFUSED by
+    verify_outcomes, with the offending key path named."""
+    _, outcomes = collected
+    # sanity: the honest artifact passes the schema gate
+    runner.verify_outcomes(outcomes)
+
+    top_level = {**outcomes, "p_value": 0.03}
+    with pytest.raises(AssertionError, match="unexpected=\\['p_value'\\]"):
+        runner.verify_outcomes(top_level)
+
+    deep = {**outcomes, "pairs": [{**outcomes["pairs"][0], "ci95": 0.02}, *outcomes["pairs"][1:]]}
+    with pytest.raises(AssertionError, match=r"pairs\[0\]\.ci95"):
+        runner.verify_outcomes(deep)
+
+    nested = {
+        **outcomes,
+        "leg_rates": {
+            leg: {**rates, "significance": "high"} for leg, rates in outcomes["leg_rates"].items()
+        },
+    }
+    with pytest.raises(AssertionError, match=r"leg_rates\.A\.significance"):
+        runner.verify_outcomes(nested)
+
+    smuggled = {**outcomes, "verdict": "CONFIRMED"}
+    with pytest.raises(AssertionError, match="unexpected=\\['verdict'\\]"):
+        runner.verify_outcomes(smuggled)
+
+
+def test_verify_outcomes_pins_exact_key_schemas(collected: tuple[dict, dict]) -> None:
+    """Exact key sets at both levels: a missing non-stat key and an
+    extra non-stat key are both refused (the artifact cannot drift
+    either)."""
+    _, outcomes = collected
+    missing = {k: v for k, v in outcomes.items() if k != "discordance"}
+    with pytest.raises(AssertionError, match="missing=\\['discordance'\\]"):
+        runner.verify_outcomes(missing)  # type: ignore[arg-type]
+    extra_rate = {
+        **outcomes,
+        "leg_rates": {leg: {**rates, "bonus": 1} for leg, rates in outcomes["leg_rates"].items()},
+    }
+    with pytest.raises(AssertionError, match=r"leg_rates\['A'\].*bonus"):
+        runner.verify_outcomes(extra_rate)
+
+
+def test_record_refuses_smuggled_stat_artifact(
+    tmp_path: Path, collected: tuple[dict, dict]
+) -> None:
+    """record_run routes through the schema gate: a statistical outcomes
+    dict never reaches the disk."""
+    manifest, outcomes = collected
+    smuggled = {**outcomes, "p_value": 0.03}
+    with pytest.raises(AssertionError, match="unexpected=\\['p_value'\\]"):
+        runner.record_run(manifest, smuggled, tmp_path)  # type: ignore[arg-type]
+    assert not list(tmp_path.iterdir())
+
+
 # ── refusal and write-once recording ─────────────────────────────────────────
 
 
@@ -155,12 +218,41 @@ def test_record_writes_write_once_artifacts(tmp_path: Path, collected: tuple[dic
     outcomes_disk = json.loads((run_dir / "outcomes.json").read_text())
     assert outcomes_disk["run_id"] == manifest["run_id"]
     assert outcomes_disk["pairs"] == outcomes["pairs"]
+    # atomic record: no staging dir lingers after success
+    assert not list(tmp_path.glob(".tmp-*"))
     # write-once: the same run id can never be overwritten
     with pytest.raises(FileExistsError, match="write-once"):
         runner.record_run(manifest, outcomes, tmp_path)
     # and the CLI surfaces the refusal as a clean non-zero exit
     rc = runner.main(["--record", "--runs-dir", str(tmp_path), "--quiet"])
     assert rc == 1
+
+
+def test_record_crash_mid_write_leaves_no_partial_run(
+    tmp_path: Path,
+    collected: tuple[dict, dict],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Atomicity (review P3): a crash between the two staged writes
+    leaves NO run directory — only the cleaned-up staging path — so
+    write-once never wedges on a partial record."""
+    manifest, outcomes = collected
+    original = Path.write_text
+
+    def crash_on_outcomes(self: Path, data: str, **kwargs: object) -> int:
+        if self.name == "outcomes.json":
+            raise OSError("simulated crash between staged writes")
+        return original(self, data, **kwargs)  # type: ignore[arg-type, call-arg]
+
+    monkeypatch.setattr(Path, "write_text", crash_on_outcomes)
+    with pytest.raises(OSError, match="simulated crash"):
+        runner.record_run(manifest, outcomes, tmp_path)
+    monkeypatch.undo()
+    assert not (tmp_path / manifest["run_id"]).exists(), "partial run dir leaked"
+    assert not list(tmp_path.glob(".tmp-*")), "staging dir leaked"
+    # and the run is still recordable after the crash (nothing wedged)
+    run_dir = runner.record_run(manifest, outcomes, tmp_path)
+    assert (run_dir / "outcomes.json").exists()
 
 
 def test_record_refuses_mismatched_artifacts(tmp_path: Path) -> None:

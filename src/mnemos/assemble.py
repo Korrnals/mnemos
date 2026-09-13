@@ -832,6 +832,18 @@ def assemble_context(
     # E0 §1.1 leg B0 — the trivial type-boost treatment (mutually exclusive
     # with lanes; enforced at the LanesConfig boundary).
     type_boost = mgr.settings.lanes.type_boost
+    if lanes_enabled and type_boost:
+        # Point-of-use mutex (review P3): the construction-time
+        # LanesConfig validator can be bypassed by direct attribute
+        # assignment on an already-built manager — assembling with both
+        # treatments on would silently run an unregistered fourth leg.
+        # Assertion-style guard, the repo's invariant convention
+        # (cf. lanes.assert_foreign_lanes_tail_only from the budget stage).
+        raise AssertionError(
+            "LanesConfig: 'enabled' (E0 §1.1 leg B) and 'type_boost' (leg B0) "
+            "are mutually exclusive treatments — a leg is exactly one of "
+            "A/B0/B (construction validator bypassed by direct assignment?)"
+        )
 
     # ── Fixed stage order (D1; recorded verbatim in stats) ────────────────
     candidates, recall_stats = _recall_stage(

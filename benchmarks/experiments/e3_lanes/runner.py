@@ -44,7 +44,10 @@ state hash (replacements change the analyzed qid set), corpus
 fingerprints (e2-gov + the S1 pin covering the golden 81 inside the
 combined build), code version (package version + VERSION file + git
 commit + dirty flag), leg configuration, equal budget (E0 §4.1). Run
-artifacts live under ``benchmarks/experiments/e3_lanes/runs/<run_id>/``.
+artifacts live under ``benchmarks/experiments/e3_lanes/runs/<run_id>/``
+(gitignored: run artifacts stay on disk and are committed deliberately
+by the E3 report wave when citing them — the tree stays clean between
+record and archival, so ``git_dirty`` in future run cores stays stable).
 
 E0 §6.6 run-ledger note: appending the run-ledger entry to the E0
 document is part of the deliberate first-run step (the document is
@@ -57,6 +60,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
+import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -161,10 +167,19 @@ def _git_state() -> dict[str, Any]:
 
 
 def _code_version() -> dict[str, Any]:
+    """Code + platform provenance of the manifest core.
+
+    Platform versions are part of the identity (review P3): the RRF
+    recall rides FTS5 bm25 ranking from the LINKED libsqlite3, and the
+    same git commit can behave differently across interpreter/sqlite
+    builds — ``sys.version`` is whitespace-normalized to one line.
+    """
     version_file = (ROOT / "VERSION").read_text().strip()
     return {
         "mnemos_version": mnemos_version,
         "version_file": version_file,
+        "python_version": " ".join(sys.version.split()),
+        "sqlite_version": sqlite3.sqlite_version,
         **_git_state(),
     }
 
@@ -441,8 +456,83 @@ def build_outcomes(ledger: dict[str, Any], leg_results: dict[str, Any]) -> dict[
     }
 
 
+#: The exact top-level key set of a outcomes artifact. The statistics
+#: ban (E0 §6.6 — no p-values/CI/verdicts at run time) is SCHEMA, not
+#: convention: an artifact outside this set cannot be recorded.
+_OUTCOME_TOP_KEYS: frozenset[str] = frozenset(
+    {
+        "pairing",
+        "denominator",
+        "legs",
+        "g_gov",
+        "g_neg",
+        "pairs",
+        "discordance",
+        "leg_rates",
+    }
+)
+
+#: The exact per-leg key set inside ``leg_rates`` (proportions + counts
+#: of the raw rows — nothing else).
+_LEG_RATE_KEYS: frozenset[str] = frozenset(
+    {
+        "governance_recall_at_5",
+        "governance_noise_rate",
+        "g_gov_hits",
+        "g_neg_insertions",
+    }
+)
+
+#: Any key matching this pattern ANYWHERE in the artifact (any depth,
+#: dicts inside lists included) marks it as carrying statistics — refused.
+_STAT_KEY_RE = re.compile(r"p.?value|ci\d*|verdict|signif|confiden")
+
+
+def _stat_key_offenders(node: Any, path: str) -> list[str]:
+    """Every key path in the structure whose key matches _STAT_KEY_RE."""
+    offenders: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            here = f"{path}.{key}" if path else str(key)
+            if _STAT_KEY_RE.search(str(key)):
+                offenders.append(here)
+            offenders.extend(_stat_key_offenders(value, here))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            offenders.extend(_stat_key_offenders(value, f"{path}[{index}]"))
+    return offenders
+
+
 def verify_outcomes(outcomes: dict[str, Any]) -> None:
-    """Structural check of a outcomes artifact (fail loud on drift)."""
+    """Structural check of an outcomes artifact (fail loud on drift).
+
+    The statistics ban is enforced by SCHEMA (review P2): the exact
+    top-level key set, the exact per-leg ``leg_rates`` key set, and a
+    recursive scan rejecting any key matching ``p.?value`` / ``ci\\d*`` /
+    ``verdict`` / ``signif`` / ``confiden`` anywhere in the structure —
+    the artifact is INCAPABLE of carrying statistics, not merely
+    discouraged from it. (``record_run`` stamps the linkage field
+    ``run_id`` onto the recorded copy AFTER this verification.)
+    """
+    missing = _OUTCOME_TOP_KEYS - set(outcomes)
+    extra = set(outcomes) - _OUTCOME_TOP_KEYS
+    if missing or extra:
+        raise AssertionError(
+            f"outcomes top-level keys must be exactly {sorted(_OUTCOME_TOP_KEYS)} — "
+            f"missing={sorted(missing)}, unexpected={sorted(extra)}"
+        )
+    offenders = _stat_key_offenders(outcomes, "")
+    if offenders:
+        raise AssertionError(
+            "outcomes artifact must not carry statistical keys "
+            f"({_STAT_KEY_RE.pattern!r}) — forbidden at: {', '.join(offenders)}"
+        )
+    for leg, rates in outcomes["leg_rates"].items():
+        if set(rates) != _LEG_RATE_KEYS:
+            raise AssertionError(
+                f"leg_rates[{leg!r}] keys must be exactly {sorted(_LEG_RATE_KEYS)} — "
+                f"got {sorted(rates)}"
+            )
     if outcomes["denominator"] != 96:
         raise AssertionError("outcomes denominator must be 96")
     if len(outcomes["pairs"]) != 96:
@@ -477,21 +567,45 @@ def collect_run(ledger: dict[str, Any] | None = None) -> tuple[dict[str, Any], d
 
 
 def record_run(manifest: dict[str, Any], outcomes: dict[str, Any], runs_dir: Path) -> Path:
-    """Write the run artifacts — WRITE-ONCE, never overwritten."""
-    run_dir: Path = runs_dir / str(manifest["run_id"])
+    """Write the run artifacts — WRITE-ONCE, ATOMIC, never overwritten.
+
+    Atomicity (review P3): both files are staged into a hidden
+    ``.tmp-<run_id>`` directory and moved into place with one ``rename``
+    — a crash mid-write leaves at most a staging dir (cleaned on the
+    next attempt), never a partial run directory that write-once would
+    then refuse forever.
+    """
+    run_id = str(manifest["run_id"])
+    run_dir: Path = runs_dir / run_id
     if run_dir.exists():
         raise FileExistsError(
-            f"run {manifest['run_id']} already recorded at {run_dir} — "
+            f"run {run_id} already recorded at {run_dir} — "
             "recorded runs are write-once; a re-record is a new run state"
         )
     verify_manifest(manifest)
     verify_outcomes(outcomes)
     if outcomes.get("run_id") not in (None, manifest["run_id"]):
         raise AssertionError("outcomes/manifest run id mismatch")
-    run_dir.mkdir(parents=True)
-    (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    recorded = {**outcomes, "run_id": manifest["run_id"]}
-    (run_dir / "outcomes.json").write_text(json.dumps(recorded, indent=2) + "\n")
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    staging = runs_dir / f".tmp-{run_id}"
+    if staging.exists():
+        shutil.rmtree(staging)  # leftover of an earlier crashed attempt
+    staging.mkdir()
+    try:
+        (staging / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        recorded = {**outcomes, "run_id": manifest["run_id"]}
+        (staging / "outcomes.json").write_text(json.dumps(recorded, indent=2) + "\n")
+        try:
+            staging.rename(run_dir)
+        except OSError as exc:
+            # rename onto a non-empty existing dir fails — the write-once
+            # race lost; surface it as the same FileExistsError contract.
+            raise FileExistsError(
+                f"run {run_id} already recorded at {run_dir} (rename race): {exc}"
+            ) from exc
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     return run_dir
 
 

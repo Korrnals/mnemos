@@ -74,3 +74,9 @@ bandit-report.json
 # `python -m grpc_tools.protoc` (see federation/proto/buf.gen.yaml for the
 # buf equivalent). Never commit; the .proto files are the source of truth.
 federation/gen/
+
+# E3 run artifacts (benchmarks/experiments/e3_lanes/runs/) — run
+# manifests/outcomes stay on disk after --record; the E3 report wave
+# commits them deliberately when citing them. Keeps the worktree clean
+# between record and archival so run-manifest git_dirty stays stable.
+benchmarks/experiments/e3_lanes/runs/
