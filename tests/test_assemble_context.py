@@ -5,7 +5,9 @@ Wave 1 (contract core) acceptance for the assemble_context pipeline:
 * fixed stage order (recall → CCR → filter → scan → align → budget),
   recorded verbatim in ``stats.stages``;
 * provenance on EVERY injected block, exact format
-  ``[mnemos:<id> project=<slug> status=<status> origin=<source> retrieved=<iso>]``;
+  ``[mnemos:<id> project=<slug> status=<status> origin=<source>
+  pipeline=<phase> v=<n> retrieved=<iso>]`` (``pipeline=`` omitted on
+  legacy NULL pipeline_state);
 * MANDATORY secret scan — a planted (fake, EXAMPLE-style) secret is
   redacted in the assembled output with per-block counts; refuse mode
   drops the block (fail-closed);
@@ -254,6 +256,8 @@ class TestProvenance:
             match = PROVENANCE_RE.match(block["provenance"])
             assert match is not None
             assert match.group("origin") == by_id[block["memory_id"]].source.value
+            # Structured block field carries the same server-column value.
+            assert block["origin"] == by_id[block["memory_id"]].source.value
 
     def test_spoofed_origin_tag_never_reaches_marker(self, manager: MemoryManager) -> None:
         """A client-minted 'origin:federated' tag cannot forge origin=.

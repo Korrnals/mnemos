@@ -708,8 +708,10 @@ class TestMarkerContract:
         # projection — and both agree with the snapshot they were cut from.
         assert block["pipeline_phase"] == "refined"
         assert block["marker_version"] == 4
+        assert block["origin"] == mem.source.value == "mcp"
         assert match.group("pipeline") == block["pipeline_phase"]
         assert match.group("version") == str(block["marker_version"])
+        assert match.group("origin") == block["origin"]
 
     def test_legacy_row_block_fields(self, manager: MemoryManager) -> None:
         """A NULL pipeline_state row carries pipeline_phase=None in the

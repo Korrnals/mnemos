@@ -1238,8 +1238,10 @@ Fixed pipeline, in order (recorded verbatim in `stats.stages`):
 Every injected block carries a provenance line, exact format:
 
 ```text
-[mnemos:<memory-id> project=<slug> status=<status> retrieved=<iso8601>]
+[mnemos:<memory-id> project=<slug> status=<status> origin=<source> pipeline=<phase> v=<n> retrieved=<iso8601>]
 ```
+
+`pipeline=` is omitted when the row's `pipeline_state` is NULL (legacy rows).
 
 ### Input
 

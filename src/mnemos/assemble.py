@@ -523,6 +523,7 @@ def _budget_stage(
             # ADR-0019 §4 structured marker fields — the bracket string
             # above is a projection of THESE values, not the source of
             # truth (None pipeline_phase = legacy row, segment omitted).
+            "origin": mem.source.value,  # ADR-0025 P0: server-side origin column
             "pipeline_phase": mem.pipeline_state.value if mem.pipeline_state else None,
             "marker_version": mem.marker_version,
             "score": cand.score,

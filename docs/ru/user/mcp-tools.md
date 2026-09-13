@@ -1238,8 +1238,10 @@ output_style:
 Каждый внедряемый блок несёт строку провенанса, точный формат:
 
 ```text
-[mnemos:<memory-id> project=<slug> status=<status> retrieved=<iso8601>]
+[mnemos:<memory-id> project=<slug> status=<status> origin=<source> pipeline=<phase> v=<n> retrieved=<iso8601>]
 ```
+
+Сегмент `pipeline=` опускается, если `pipeline_state` строки NULL (легаси-строки).
 
 ### Вход
 
