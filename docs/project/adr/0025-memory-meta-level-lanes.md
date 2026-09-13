@@ -1,8 +1,23 @@
 # ADR 0025: Memory Meta-Level — Retrieval Lanes and Area Manifests
 
-**Status:** Accepted with conditions (Architectural Committee, 2026-09-08) —
-a pre-registered experiment precedes full implementation; the manifest lane
-waits for the P1 approval machine
+**Status:** Lanes hypothesis FALSIFIED by the first recorded pre-registered
+run (Architectural Committee ratification, 2026-09-14; run
+`e3-lanes-56c568297ad6`, E0 ledger revisions 1-8 + run ledger). The
+original acceptance (2026-09-08, with conditions) is superseded for the
+lanes leg: the registered consequence applies verbatim — "theory NOT
+confirmed; at most a cheap type-boost survives; recommendation reverts to
+B0; the meta-level is not built." The lanes engine remains in-tree behind
+`LanesConfig.enabled=False` as a verified-inert dormant capability (no
+rollout: rollout required an H3+H4 pass). The awareness leg (D) and the
+collapse-cascade legs (C) carry separate hypotheses and are NOT
+falsified by this run. Committee findings: the engine executed the
+specification flawlessly (byte-exact reproduction, no defect) — the
+query-blind pinned prefix, the very feature that constitutes B's
+registered structural advantage over B0 (byte-stable KV prefix), caps at
+`pinned∩gold` on per-query-gold strata (observed 12/96 = the exact
+structural ceiling); a future query-conditioned redesign (leg B1) would
+sacrifice H2 and requires a NEW pre-registration. The manifest lane
+remains behind the P1 approval machine (unchanged).
 **Deciders:** Tech Lead (chair), Product Architect, Analytics Lead,
 Senior System Engineer, Senior Security Engineer
 **Scope:** structured memory meta-level: retrieval lanes as a recall
