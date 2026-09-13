@@ -42,6 +42,22 @@ class EmbeddingProvider(ABC):
     @abstractmethod
     def dimension(self) -> int: ...
 
+    @property
+    def fingerprint(self) -> str:
+        """Stable identity of the embedding geometry this provider produces.
+
+        The vector "vintage" key: stamped into vector-store metadata on
+        every upsert and compared by ``heal_stale_embeddings`` — after an
+        embedder swap every pre-swap vector carries a different
+        fingerprint and is re-embedded (ADR-0021: full re-embed on every
+        embedder swap). Concrete (non-abstract): subclasses without a
+        verifiable identity keep this default, which is stable per class
+        but coarse — it detects a provider SWITCH, not a silent weights
+        update. Subclasses with stronger keys override it
+        (NanoProvider pins its ``weights_sha256``).
+        """
+        return f"{type(self).__name__}"
+
 
 # ── mnema-embed: the bundled distilled embedder (ADR-0021 NM-1) ───────────────
 
@@ -190,6 +206,13 @@ class NanoProvider(EmbeddingProvider):
     def dimension(self) -> int:
         return self._dim
 
+    @property
+    def fingerprint(self) -> str:
+        # Strongest available key: the verified weights hash changes
+        # exactly when the embedding geometry changes (round-3 swap ⇒
+        # full re-embed via the heal sweeper).
+        return f"nano:sha256:{self.weights_sha256}"
+
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
 
@@ -226,6 +249,13 @@ class OllamaProvider(EmbeddingProvider):
         if self._dim is None:
             self.embed("test")
         return self._dim or 768
+
+    @property
+    def fingerprint(self) -> str:
+        # No verifiable weights hash over a served Ollama model; the
+        # coarse identity detects model switches, not Ollama-side weight
+        # updates (documented limitation of the base contract).
+        return f"ollama:{self._model}"
 
 
 # ── ONNX Hub ──────────────────────────────────────────────────────────────────
@@ -264,6 +294,11 @@ class ONNXHubProvider(EmbeddingProvider):
                 "risk (CWE-494)."
             )
         logger.info("Loading ONNX model: %s (%s) @ revision=%s", model_id, onnx_file, revision)
+
+        # Kept for the vintage fingerprint: model@revision is the pinned
+        # identity (M15.2) — a revision bump is a weights change.
+        self._model_id = model_id
+        self._revision = revision
 
         try:
             model_path = hf_hub_download(model_id, onnx_file, revision=revision)
@@ -331,6 +366,12 @@ class ONNXHubProvider(EmbeddingProvider):
     def dimension(self) -> int:
         return self._dim
 
+    @property
+    def fingerprint(self) -> str:
+        # The pinned model@revision pair (M15.2) is the strongest key a
+        # Hub-served model has — it changes on any operator-pinned bump.
+        return f"onnxhub:{self._model_id}@{self._revision}"
+
 
 # ── sentence-transformers ─────────────────────────────────────────────────────
 
@@ -342,6 +383,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         from sentence_transformers import SentenceTransformer
 
         logger.info("Using sentence-transformers: %s", model_name)
+        self._model_name = model_name
         self._model = SentenceTransformer(model_name)
         self._dim = self._model.get_sentence_embedding_dimension() or 384
 
@@ -359,6 +401,12 @@ class SentenceTransformerProvider(EmbeddingProvider):
     @property
     def dimension(self) -> int:
         return self._dim
+
+    @property
+    def fingerprint(self) -> str:
+        # Coarse identity: detects model switches, not upstream weight
+        # refreshes inside the same model name (documented limitation).
+        return f"st:{self._model_name}"
 
 
 # ── factory ───────────────────────────────────────────────────────────────────
@@ -410,3 +458,36 @@ def create_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
         f"Unknown embedding provider: {provider!r}. "
         "Valid: nano, ollama, onnx, sentence-transformers"
     )
+
+
+def config_fingerprint(cfg: EmbeddingConfig) -> str:
+    """Vintage fingerprint of the embedder ``cfg`` WILL build — no session.
+
+    Doctor-side twin of ``EmbeddingProvider.fingerprint``: computes the
+    same identity ``create_embedding_provider(cfg)`` would produce
+    WITHOUT instantiating it (no ORT session, no network — the nano leg
+    only hashes the artifact file). MUST stay in sync with the factory's
+    provider resolution, including the legacy chromadb degradation
+    (review #221 F1): a drifted twin would make the doctor report false
+    vintage mismatches.
+    """
+    provider = cfg.provider.lower()
+    if provider == "nano":
+        return f"nano:sha256:{mnema_weights_sha256(cfg.model)}"
+    if provider in ("chromadb", "chroma", "default"):
+        model = cfg.model
+        if model.strip().lower() == _LEGACY_CHROMADB_MODEL:
+            model = MNEMA_EMBED_MODEL
+        return f"nano:sha256:{mnema_weights_sha256(model)}"
+    if provider == "ollama":
+        return f"ollama:{cfg.model}"
+    if provider in ("onnx", "onnxhub"):
+        # Asymmetry (harmless): with an empty hf_revision this twin emits
+        # "onnxhub:<model>@" while the factory raises — runtime fails loud
+        # first, so the degenerate string never reaches stored metadata.
+        return f"onnxhub:{cfg.model}@{cfg.hf_revision}"
+    if provider in ("sentence-transformers", "st"):
+        return f"st:{cfg.model}"
+    # Unknown provider never instantiates (factory raises); report the
+    # raw coarse identity so doctor can still surface the mismatch.
+    return f"{provider}:{cfg.model}"

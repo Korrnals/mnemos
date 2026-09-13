@@ -5,10 +5,10 @@
   "model_fingerprint": {
     "provider": "nano",
     "model": "mnema-embed-v1",
-    "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
+    "weights_sha256": "3b752e0671a50da5c108cb50e49630a66c160f7683afedcf879e1880d84317ba",
     "opset": null
   },
-  "created": "2026-09-03T19:28:56+00:00",
+  "created": "2026-09-13T14:34:51+00:00",
   "metrics": {
     "retrieval": {
       "precision_at_5": 0.229319,
@@ -227,22 +227,22 @@
       "fingerprint": {
         "provider": "nano",
         "model": "mnema-embed-v1",
-        "weights_sha256": "fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e",
+        "weights_sha256": "3b752e0671a50da5c108cb50e49630a66c160f7683afedcf879e1880d84317ba",
         "opset": null
       },
       "metrics": {
-        "precision_at_5": 0.227225,
-        "precision_at_10": 0.120942,
-        "recall_at_5": 0.87452,
-        "recall_at_10": 0.913787,
-        "mrr": 0.839448,
-        "ndcg_at_5": 0.823242,
-        "ndcg_at_10": 0.838069,
+        "precision_at_5": 0.219895,
+        "precision_at_10": 0.117277,
+        "recall_at_5": 0.863002,
+        "recall_at_10": 0.897906,
+        "mrr": 0.83256,
+        "ndcg_at_5": 0.817398,
+        "ndcg_at_10": 0.831711,
         "ci95": {
-          "precision_at_5": 0.017273,
-          "precision_at_10": 0.008585,
-          "recall_at_5": 0.042274,
-          "recall_at_10": 0.034463
+          "precision_at_5": 0.016604,
+          "precision_at_10": 0.00844,
+          "recall_at_5": 0.043918,
+          "recall_at_10": 0.038009
         },
         "judged_queries": 191,
         "dimension": 384
@@ -260,10 +260,5 @@
   "environment": {
     "python": "3.12.3",
     "deterministic_embedder": true
-  },
-  "rebaseline": {
-    "trigger": "embedder change (ADR-0020 §triggers, ADR-0021 NM-1d)",
-    "reason": "bundled artifact renamed nano-embed-v1 -> mnema-embed-v1 (same weights, sha256 unchanged)",
-    "task": "NM-1d"
   }
 }

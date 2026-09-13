@@ -72,6 +72,13 @@ logger = logging.getLogger(__name__)
 # Each hop is validated by _validate_url before the next request is issued.
 _MAX_REDIRECTS: int = 5
 
+# heal_stale_embeddings (review P2): a dead/erroring embedder must not
+# walk the whole refined set in one background tick. `limit` bounds the
+# ATTEMPTS, and this cutoff stops the pass early when that many rows
+# fail CONSECUTIVELY — the embedder is presumed down and one summary
+# warning replaces the per-row flood.
+HEAL_CONSECUTIVE_FAILURE_CUTOFF: Final[int] = 10
+
 # ADR-0019 B2b (review #163 follow-up F7) — INTERNAL lifecycle metadata
 # keys. The store writes them server-side (``json_set`` in
 # ``record_refine_failure`` / ``clear_refine_retry``); an external
@@ -403,16 +410,40 @@ class MemoryManager:
         """
         return hashlib.sha256(text.encode()).hexdigest()[:16]
 
+    def _embedder_fingerprint(self) -> str:
+        """Stable identity of the current embedder (the vector vintage key).
+
+        Delegates to ``EmbeddingProvider.fingerprint`` (ADR-0021 embedder
+        swaps: every vector cut by a different fingerprint is stale).
+        Test doubles auto-create a non-str ``fingerprint`` attribute
+        (MagicMock), so coerce anything non-string to a stable
+        class-name identity — metadata must stay JSON-serializable on
+        every write path and the comparison must stay well-defined.
+        """
+        fp = getattr(self.embedder, "fingerprint", None)
+        if isinstance(fp, str) and fp:
+            return fp
+        return f"unidentified:{type(self.embedder).__name__}"
+
     def _vector_metadata(self, memory: Memory) -> dict[str, Any]:
         """Metadata blob for every vector upsert (project/agent/freshness).
 
         Single construction site for the embed metadata so the sweeper's
-        freshness key can never drift from what the writers stamp.
+        freshness keys can never drift from what the writers stamp.
+        Two freshness keys:
+
+        * ``content_hash`` — the embedding INPUT text (ADR-0019 B2a);
+          detects re-embeds needed after content edits.
+        * ``model_fingerprint`` — the embedder identity (ADR-0021 round-3
+          swap); detects re-embeds needed after a weights swap: content
+          is unchanged, but the old-geometry vector no longer matches
+          the space the queries are embedded into.
         """
         return {
             "project": memory.project,
             "agent": memory.agent,
             "content_hash": self._embed_content_hash(self._embedding_text(memory)),
+            "model_fingerprint": self._embedder_fingerprint(),
         }
 
     def upsert_embedding(self, memory: Memory) -> None:
@@ -3078,45 +3109,113 @@ class MemoryManager:
 
         ADR-0019 §Swap: the vector upsert happens after the swap commit;
         when it fails (or predates a swap), the embed no longer
-        represents the served projection. Freshness is decided by the
-        ``content_hash`` metadata key stamped on every upsert (see
-        :meth:`_vector_metadata`) — missing embed, missing key or hash
-        mismatch ⇒ re-embed. Quarantined rows are skipped absolutely
-        (they never reach ``refined`` anyway; the guard is defence in
-        depth).
+        represents the served projection. Two freshness keys decide
+        staleness, both stamped on every upsert (see
+        :meth:`_vector_metadata`):
+
+        * ``content_hash`` — missing embed, missing key or hash mismatch
+          ⇒ the vector was cut from other content ⇒ re-embed.
+        * ``model_fingerprint`` — missing key or fingerprint mismatch ⇒
+          the vector was cut by another embedder (ADR-0021 weights
+          swap) ⇒ re-embed even though the content is unchanged; a
+          mixed-space index silently degrades vector search.
+
+        Quarantined rows are skipped absolutely (they never reach
+        ``refined`` anyway; the guard is defence in depth). Batch/limit
+        semantics: ``limit`` is an ATTEMPT budget — every re-embed
+        TRIED, successful or failed, consumes one unit, so one call
+        attempts at most ``limit`` re-embeds total and a dead/erroring
+        embedder cannot walk the whole refined set inside a single
+        background tick. On top of the budget, a run of
+        :data:`HEAL_CONSECUTIVE_FAILURE_CUTOFF` consecutive failures
+        stops the pass early with a single warning (the embedder is
+        presumed down; per-row failure detail lives at debug level).
+        The pass PAGES through the whole refined set (not just the head
+        window) so a full-corpus migration after an embedder swap —
+        where every row is stale regardless of recency — drains
+        organically over successive background cycles.
         """
-        rows = self.sqlite.list_by_pipeline_state(PipelineState.REFINED, limit=limit)
         checked = 0
         healed = 0
         failed = 0
+        stale_by_fingerprint = 0
         skipped_quarantined = 0
-        admissible = [m for m in rows if not is_quarantined(m)]
-        skipped_quarantined = len(rows) - len(admissible)
-        metas = self.vectors.get_metadata([m.id for m in admissible]) if admissible else {}
-        for mem in admissible:
-            checked += 1
-            expected = self._embed_content_hash(self._embedding_text(mem))
-            meta = metas.get(mem.id)
-            if meta is not None and meta.get("content_hash") == expected:
-                continue
-            try:
-                self.upsert_embedding(mem)
-                healed += 1
-            except Exception as exc:
-                failed += 1
-                logger.warning("heal_stale_embeddings: failed for %s: %s", mem.id[:8], exc)
+        current_fingerprint = self._embedder_fingerprint()
+        page = max(1, limit)
+        offset = 0
+        budget_left = limit
+        consecutive_failures = 0
+        while budget_left > 0:
+            rows = self.sqlite.list_by_pipeline_state(
+                PipelineState.REFINED, limit=page, offset=offset
+            )
+            if not rows:
+                break  # refined set exhausted
+            offset += len(rows)
+            admissible = [m for m in rows if not is_quarantined(m)]
+            skipped_quarantined += len(rows) - len(admissible)
+            metas = self.vectors.get_metadata([m.id for m in admissible]) if admissible else {}
+            for mem in admissible:
+                checked += 1
+                expected = self._embed_content_hash(self._embedding_text(mem))
+                meta = metas.get(mem.id)
+                if meta is not None:
+                    if meta.get("model_fingerprint") != current_fingerprint:
+                        # Vintage mismatch (or pre-fingerprint metadata):
+                        # the vector was cut by another embedder geometry.
+                        stale_by_fingerprint += 1
+                    if (
+                        meta.get("content_hash") == expected
+                        and meta.get("model_fingerprint") == current_fingerprint
+                    ):
+                        continue
+                if budget_left <= 0:
+                    break
+                try:
+                    self.upsert_embedding(mem)
+                    healed += 1
+                    consecutive_failures = 0
+                except Exception as exc:
+                    failed += 1
+                    consecutive_failures += 1
+                    # Per-row detail at debug: the cutoff warning below is
+                    # the single operator-facing line for a dying embedder.
+                    logger.debug(
+                        "heal_stale_embeddings: re-embed failed for %s: %s",
+                        mem.id[:8],
+                        exc,
+                    )
+                    if consecutive_failures >= HEAL_CONSECUTIVE_FAILURE_CUTOFF:
+                        logger.warning(
+                            "heal_stale_embeddings: %d consecutive re-embed "
+                            "failures — embedder %r looks dead, stopping the "
+                            "pass early (checked=%d healed=%d failed=%d)",
+                            consecutive_failures,
+                            current_fingerprint,
+                            checked,
+                            healed,
+                            failed,
+                        )
+                        budget_left = 0
+                        break
+                # Every ATTEMPT (success or failure) consumes budget — a
+                # dead embedder must not walk the whole refined set.
+                budget_left -= 1
         if healed or failed:
             logger.info(
-                "heal_stale_embeddings: checked=%d healed=%d failed=%d skipped_quarantined=%d",
+                "heal_stale_embeddings: checked=%d healed=%d failed=%d "
+                "stale_by_fingerprint=%d skipped_quarantined=%d",
                 checked,
                 healed,
                 failed,
+                stale_by_fingerprint,
                 skipped_quarantined,
             )
         return {
             "checked": checked,
             "healed": healed,
             "failed": failed,
+            "stale_by_fingerprint": stale_by_fingerprint,
             "skipped_quarantined": skipped_quarantined,
         }
 
@@ -3266,8 +3365,10 @@ class MemoryManager:
         ADR-0019 §5 (B2a): quarantined rows are SKIPPED — they are
         excluded from every issuance path, so an embed would only keep
         a terminally-quarantined id warm in the vector leg. Each upsert
-        stamps the ``content_hash`` freshness key the sweeper
-        (:meth:`heal_stale_embeddings`) compares against.
+        stamps the ``content_hash`` and ``model_fingerprint`` freshness
+        keys the sweeper (:meth:`heal_stale_embeddings`) compares
+        against — a full rebuild is therefore also a one-pass vintage
+        migration after an embedder swap.
         """
         published = self.sqlite.list_all(
             limit=10000,

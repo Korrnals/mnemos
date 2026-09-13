@@ -1596,10 +1596,18 @@ class SQLiteStore:
         pipeline_state: PipelineState,
         *,
         limit: int = 100,
+        offset: int = 0,
         project: str | None = None,
         agent: str | None = None,
     ) -> list[Memory]:
-        """Select rows by the orthogonal lifecycle state (sweeper/stats)."""
+        """Select rows by the orthogonal lifecycle state (sweeper/stats).
+
+        ``offset`` pages through the set (keyed on the same
+        ``created_at DESC`` order) so a bounded-per-call consumer — the
+        heal sweeper's vintage migration — can drain a set larger than
+        ``limit`` over successive passes instead of re-reading the same
+        head window forever.
+        """
         q = "SELECT * FROM memories WHERE pipeline_state=?"
         params: list[Any] = [pipeline_state.value]
         if project:
@@ -1608,8 +1616,9 @@ class SQLiteStore:
         if agent:
             q += " AND agent=?"
             params.append(agent)
-        q += " ORDER BY created_at DESC LIMIT ?"
+        q += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.append(limit)
+        params.append(max(0, offset))
         conn = self._get_conn()
         return [self._row_to_memory(r) for r in conn.execute(q, params).fetchall()]
 

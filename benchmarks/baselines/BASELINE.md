@@ -7,9 +7,9 @@
 - **baseline_version:** 1
 - **stand_version:** s1-1
 - **corpus_fingerprint:** `c2ce056d57d91143f7a1959442ef2b37891464d4cd5f218f5eabbc785c8e72f1`
-- **created:** 2026-09-03T19:28:56+00:00
-- **model_fingerprint (production embedder):** `nano mnema-embed-v1 sha256:fc61e7977c2a…`
-  - full weights sha256: `fc61e7977c2a49f2bd5603605123fa3c4c407d43462d161884705d7fa16c540e`
+- **created:** 2026-09-13T14:34:51+00:00
+- **model_fingerprint (production embedder):** `nano mnema-embed-v1 sha256:3b752e0671a5…`
+  - full weights sha256: `3b752e0671a50da5c108cb50e49630a66c160f7683afedcf879e1880d84317ba`
 - **environment:** python 3.12.3, deterministic_embedder=True (BLAKE2b lexical — pins the retrieval PIPELINE, not MiniLM)
 
 ## 1. Retrieval quality (judged golden queries)
@@ -96,15 +96,15 @@ Delta (current - pre-A9) recall@10: **-0.0157**
 
 | Metric | Value | 95% CI (half-width) |
 | --- | ---: | ---: |
-| precision@5 | 0.2272 | 0.0173 |
-| precision@10 | 0.1209 | 0.0086 |
-| recall@5 | 0.8745 | 0.0423 |
-| recall@10 | 0.9138 | 0.0345 |
-| mrr | 0.8394 | — |
-| ndcg@5 | 0.8232 | — |
-| ndcg@10 | 0.8381 | — |
+| precision@5 | 0.2199 | 0.0166 |
+| precision@10 | 0.1173 | 0.0084 |
+| recall@5 | 0.8630 | 0.0439 |
+| recall@10 | 0.8979 | 0.0380 |
+| mrr | 0.8326 | — |
+| ndcg@5 | 0.8174 | — |
+| ndcg@10 | 0.8317 | — |
 | judged queries | 191 | — |
-- embedder: `nano mnema-embed-v1 sha256:fc61e7977c2a…`, dim 384, arch x86_64
+- embedder: `nano mnema-embed-v1 sha256:3b752e0671a5…`, dim 384, arch x86_64
 
 ## 11. Gate corridors (derived from THIS baseline)
 
@@ -118,10 +118,10 @@ Delta (current - pre-A9) recall@10: **-0.0157**
 | replace-regret-rate ≤ | +0.2700 |
 | A9 recall@10 delta ≥ | -0.0200 |
 | invariants | exact (= 1.000 / = 0), never carried over a re-baseline |
-| s1m precision_at_5 ≥ | +0.2072 (baseline 0.2272 - max(0.02; ci 0.0200)) |
-| s1m precision_at_10 ≥ | +0.1009 (baseline 0.1209 - max(0.02; ci 0.0200)) |
-| s1m recall_at_5 ≥ | +0.8322 (baseline 0.8745 - max(0.02; ci 0.0423)) |
-| s1m recall_at_10 ≥ | +0.8793 (baseline 0.9138 - max(0.02; ci 0.0345)) |
+| s1m precision_at_5 ≥ | +0.1999 (baseline 0.2199 - max(0.02; ci 0.0200)) |
+| s1m precision_at_10 ≥ | +0.0973 (baseline 0.1173 - max(0.02; ci 0.0200)) |
+| s1m recall_at_5 ≥ | +0.8191 (baseline 0.8630 - max(0.02; ci 0.0439)) |
+| s1m recall_at_10 ≥ | +0.8599 (baseline 0.8979 - max(0.02; ci 0.0380)) |
 | model_fingerprint | exact match vs this baseline — a mismatch is RED (re-baseline `--record`, same PR, per ADR-0021) |
 
 ## 12. Reproducing

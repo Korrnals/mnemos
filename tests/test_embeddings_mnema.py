@@ -30,6 +30,7 @@ from mnemos.config import EmbeddingConfig
 from mnemos.embeddings import (
     MNEMA_EMBED_MODEL,
     NanoProvider,
+    config_fingerprint,
     create_embedding_provider,
     mnema_artifact_onnx_path,
 )
@@ -155,3 +156,59 @@ def test_legacy_default_pair_migrates_model_too(caplog: pytest.LogCaptureFixture
 def test_unknown_provider_fails_loud() -> None:
     with pytest.raises(ValueError, match="Unknown embedding provider"):
         create_embedding_provider(EmbeddingConfig(provider="no-such-provider"))
+
+
+# ── vintage fingerprint (ADR-0021 round-3 swap) ───────────────────────────────
+
+
+def test_nano_fingerprint_pins_weights(provider: NanoProvider) -> None:
+    """The bundled provider exposes its verified weights hash as fingerprint."""
+    assert provider.fingerprint == f"nano:sha256:{provider.weights_sha256}"
+
+
+def test_config_fingerprint_twin_matches_instance() -> None:
+    """Doctor-side twin: config_fingerprint == instance fingerprint.
+
+    The two sides are computed by different code paths (pure hash vs a
+    loaded provider); a drift here would make the doctor report false
+    vintage mismatches (or miss real ones).
+    """
+    cfg = EmbeddingConfig()
+    built = create_embedding_provider(cfg)
+    assert config_fingerprint(cfg) == built.fingerprint
+
+
+def test_config_fingerprint_legacy_pair_degrades_wholesale() -> None:
+    """chromadb + MiniLM (the legacy default pair) hashes the BUNDLED artifact."""
+    legacy = EmbeddingConfig(provider="chromadb", model="all-MiniLM-L6-v2")
+    assert config_fingerprint(legacy) == config_fingerprint(EmbeddingConfig())
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "expected"),
+    [
+        ("ollama", "nomic-embed-text", "ollama:nomic-embed-text"),
+        ("onnx", "BAAI/bge-small-en-v1.5", "onnxhub:BAAI/bge-small-en-v1.5@rev123"),
+        (
+            "sentence-transformers",
+            "intfloat/multilingual-e5-small",
+            "st:intfloat/multilingual-e5-small",
+        ),
+    ],
+)
+def test_config_fingerprint_coarse_providers(provider: str, model: str, expected: str) -> None:
+    """Non-nano providers: stable ``key:identity`` (switch detection)."""
+    kwargs: dict[str, str] = {"provider": provider, "model": model}
+    if provider == "onnx":
+        kwargs["hf_revision"] = "rev123"
+    assert config_fingerprint(EmbeddingConfig(**kwargs)) == expected
+
+
+def test_config_fingerprint_follows_weights_swap(provider: NanoProvider) -> None:
+    """The fingerprint changes exactly when the shipped weights change.
+
+    Regression guard for the round-3 swap: the stamped vintage key must
+    not be pinned to a constant — it tracks the artifact bytes.
+    """
+    swapped = hashlib.sha256(b"other weights").hexdigest()
+    assert provider.fingerprint != f"nano:sha256:{swapped}"

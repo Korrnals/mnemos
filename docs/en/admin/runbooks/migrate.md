@@ -86,6 +86,32 @@ Notes:
 - [ ] Vault files visible in `~/.mnemos/vault/`
 - [ ] MCP server `mnemos_recall_context` works
 
+## Upgrading across an embedder weights change
+
+When an upgrade ships new bundled embedder weights (e.g. the round-3
+`mnema-embed-v1` swap, `weights_sha256 3b752e06…`), your existing vectors
+were produced by the OLD geometry. Nothing needs to be done manually:
+
+1. On upgrade, the background heal sweeper detects every vector whose
+   stored embedder fingerprint no longer matches the current one and
+   re-embeds those rows in bounded batches — the migration is gradual
+   and automatic (start the processor: `mnemos processor start`).
+2. `mnemos doctor` shows the progress in the **Vector store** row
+   ("N cut by another embedder"); the count drops to zero as the
+   sweeper drains the `refined` rows. Orphan vector rows of deleted or
+   never-refined memories may keep the count above zero — they are
+   diagnostics-only (doctor reports them; `mnemos reindex` does not
+   clear orphans).
+3. To rebuild in one pass instead of waiting for the background cycles:
+
+   ```bash
+   mnemos reindex
+   ```
+
+Until the migration drains, vector search mixes two embedding spaces,
+which can slightly degrade semantic ranking; full-text search is
+unaffected.
+
 ## Rollback
 
 If something goes wrong:

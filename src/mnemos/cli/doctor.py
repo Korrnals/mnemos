@@ -133,7 +133,15 @@ def _check_sqlite(settings: Any) -> CheckResult:
 
 
 def _check_vector_store(settings: Any) -> CheckResult:
-    """Vector store DB exists, opens, and reports embedding count."""
+    """Vector store DB exists, opens, reports embedding count + vintage.
+
+    Vintage mismatch (ADR-0021 embedder swap): rows whose metadata
+    ``model_fingerprint`` differs from the fingerprint of the configured
+    embedder were cut by another embedding geometry. Mixing spaces in
+    one index silently degrades vector search; the background heal
+    sweeper re-embeds them gradually, or `mnemos reindex` rebuilds in
+    one pass. Diagnostics only — the doctor never re-embeds.
+    """
     vectors_path = settings.mnemos.data_dir / "vectors.db"
     if not vectors_path.exists():
         return CheckResult(
@@ -141,20 +149,55 @@ def _check_vector_store(settings: Any) -> CheckResult:
             CheckStatus.WARN,
             f"{vectors_path} (missing — created on first add)",
         )
+
+    # Current embedder identity WITHOUT loading a provider session (the
+    # nano leg only hashes the bundled artifact file).
+    try:
+        from mnemos.embeddings import config_fingerprint
+
+        current_fp: str | None = config_fingerprint(settings.embedding)
+    except Exception as exc:  # doctor must report, not crash
+        logger.debug("doctor embedder fingerprint unavailable: %s", exc)
+        current_fp = None
+
     try:
         conn = sqlite3.connect(str(vectors_path))
         try:
             # The table name is `embeddings` in the current VectorStore schema.
             row = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()
             count = row[0] if row else 0
+            metadata_rows = (
+                conn.execute("SELECT metadata FROM embeddings").fetchall() if count else []
+            )
         finally:
             conn.close()
     except sqlite3.Error as exc:
         return CheckResult("Vector store", CheckStatus.FAIL, f"{vectors_path} (error: {exc})")
+
+    vintage_stale = 0
+    if current_fp is not None and metadata_rows:
+        for (raw_meta,) in metadata_rows:
+            try:
+                meta = json.loads(raw_meta) if raw_meta else {}
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+            if not isinstance(meta, dict) or meta.get("model_fingerprint") != current_fp:
+                # Missing key = pre-fingerprint vintage (pre round-3 swap).
+                vintage_stale += 1
+
+    if vintage_stale:
+        return CheckResult(
+            "Vector store",
+            CheckStatus.WARN,
+            f"{vectors_path} (healthy, {count:,} embeddings, "
+            f"{vintage_stale:,} cut by another embedder — the background heal "
+            "re-embeds them gradually; `mnemos reindex` rebuilds in one pass)",
+        )
+    detail_suffix = "" if current_fp is None else ", vintage current"
     return CheckResult(
         "Vector store",
         CheckStatus.PASS,
-        f"{vectors_path} (healthy, {count:,} embeddings)",
+        f"{vectors_path} (healthy, {count:,} embeddings{detail_suffix})",
     )
 
 

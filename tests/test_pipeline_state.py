@@ -1595,6 +1595,256 @@ class TestSweeperAndRebuild:
         assert manager.vectors.has(dirty.id) is False
 
 
+class TestSweeperVintageFingerprint:
+    """ADR-0021 round-3 swap: ``model_fingerprint`` freshness semantics.
+
+    After a weights swap the content is unchanged, so the content-hash
+    leg alone would call old-geometry vectors fresh forever — the
+    vintage key is what forces the re-embed. Quarantined rows stay
+    absolutely excluded from the migration.
+    """
+
+    def test_metadata_stamps_model_fingerprint(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "vintage stamp probe about omega")
+        manager._embedder.fingerprint = "nano:sha256:testweights"
+        meta = manager._vector_metadata(mem)
+        assert meta["model_fingerprint"] == "nano:sha256:testweights"
+        assert "content_hash" in meta  # both freshness keys present
+
+    def test_heal_reembeds_on_fingerprint_mismatch(self, manager: MemoryManager) -> None:
+        """Same content, OTHER embedder geometry ⇒ stale ⇒ re-embed."""
+        mem = _published(manager, "vintage mismatch probe about alpha")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        # Pre-swap vector: correct content_hash, OLD fingerprint.
+        manager._embedder.fingerprint = "nano:sha256:oldweights"
+        manager.vectors.upsert(mem.id, [0.2] * 384, manager._vector_metadata(stored))
+        manager._embedder.fingerprint = "nano:sha256:newweights"  # the swap
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 1
+        assert result["stale_by_fingerprint"] == 1
+        meta = manager.vectors.get_metadata([mem.id])[mem.id]
+        assert meta["model_fingerprint"] == "nano:sha256:newweights"
+
+    def test_heal_reembeds_on_missing_fingerprint(self, manager: MemoryManager) -> None:
+        """Pre-round-3 rows carry no vintage key at all ⇒ stale ⇒ re-embed.
+
+        This is the actual upgrade path: every vector written before the
+        fingerprint stamp must migrate, not just mismatched ones.
+        """
+        mem = _published(manager, "missing fingerprint probe about beta")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        expected_hash = manager._embed_content_hash(manager._embedding_text(stored))
+        manager.vectors.upsert(
+            mem.id,
+            [0.2] * 384,
+            {"project": PROJECT, "agent": AGENT, "content_hash": expected_hash},
+        )
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 1
+        assert result["stale_by_fingerprint"] == 1
+        meta = manager.vectors.get_metadata([mem.id])[mem.id]
+        assert meta["model_fingerprint"] == "nano:sha256:newweights"
+
+    def test_heal_noops_when_vintage_current(self, manager: MemoryManager) -> None:
+        """Both freshness keys match ⇒ nothing to do (steady state)."""
+        mem = _published(manager, "vintage current probe about gamma")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        seeded = manager._vector_metadata(stored)
+        manager.vectors.upsert(mem.id, [0.2] * 384, seeded)
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 0
+        assert result["stale_by_fingerprint"] == 0
+        # The untouched row keeps its seeded vector (no re-embed churn).
+        assert manager.vectors.get_metadata([mem.id])[mem.id] == seeded
+
+    def test_heal_vintage_migration_respects_limit(self, manager: MemoryManager) -> None:
+        """Batch semantics: a vintage migration drains ``limit`` rows per call."""
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        ids = []
+        for i in range(3):
+            mem = _published(manager, f"vintage limit probe {i} about delta")
+            _pipeline_state(manager, mem.id, PipelineState.REFINED)
+            ids.append(mem.id)
+        # All three rows carry pre-swap vectors (old fingerprint).
+        for mid in ids:
+            stored = manager.sqlite.get(mid)
+            assert stored is not None
+            manager._embedder.fingerprint = "nano:sha256:oldweights"
+            manager.vectors.upsert(mid, [0.2] * 384, manager._vector_metadata(stored))
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        first = manager.heal_stale_embeddings(limit=2)
+        assert first["checked"] == 2
+        assert first["healed"] == 2
+        second = manager.heal_stale_embeddings(limit=2)
+        assert second["healed"] == 1
+        third = manager.heal_stale_embeddings(limit=2)
+        assert third["healed"] == 0  # fully migrated, idempotent
+
+    def test_heal_never_touches_quarantined_on_vintage_mismatch(
+        self, manager: MemoryManager
+    ) -> None:
+        """Quarantine is absolute: even the vintage migration skips it."""
+        mem = _published(manager, "quarantined vintage probe about epsilon")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        _quarantine(manager, mem.id, "secret")
+        manager._embedder.fingerprint = "nano:sha256:oldweights"
+        manager.vectors.upsert(mem.id, [0.5] * 384, {"project": PROJECT, "agent": AGENT})
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 0
+        # The quarantined row keeps its stale vector — untouched.
+        assert "model_fingerprint" not in manager.vectors.get_metadata([mem.id])[mem.id]
+
+    # ── review P2: failures must be bounded within ONE heal call ──────────
+
+    @staticmethod
+    def _seed_vintage_stale(
+        manager: MemoryManager, content: str, *, old_fp: str = "nano:sha256:oldweights"
+    ) -> str:
+        """Seed a REFINED row carrying a pre-swap (old-fingerprint) vector."""
+        mem = _published(manager, content)
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        manager._embedder.fingerprint = old_fp
+        manager.vectors.upsert(mem.id, [0.2] * 384, manager._vector_metadata(stored))
+        return mem.id
+
+    def test_heal_vintage_migration_poison_row_bounded(
+        self, manager: MemoryManager, caplog
+    ) -> None:
+        """Review P2: every attempt consumes budget; poison cannot unbound it.
+
+        Pre-fix, only successes consumed budget, so one poison row (or a
+        dead embedder — ollama/sentence-transformers mid-migration) let a
+        single background tick attempt EVERY remaining stale row inline.
+        Now each TRIED re-embed (success or failure) consumes one unit,
+        and a run of consecutive failures stops the pass early with one
+        summary warning instead of a per-row flood.
+        """
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+
+        def poisoned_embed(text: str) -> list[float]:
+            if "poison-marker" in text:
+                raise RuntimeError("poison row explodes the embedder")
+            return [0.1] * 384
+
+        manager._embedder.embed.side_effect = poisoned_embed
+        healthy = [
+            self._seed_vintage_stale(manager, f"poison bound probe {i} about eta")
+            for i in range(4)
+        ]
+        poison = self._seed_vintage_stale(manager, "poison-marker row about theta")
+        # The sweep pages created_at DESC — backdate the healthy rows so
+        # the poison row is guaranteed inside the first budget window.
+        past = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
+        conn = manager.sqlite._get_conn()
+        conn.executemany(
+            "UPDATE memories SET created_at=? WHERE id=?", [(past, mid) for mid in healthy]
+        )
+        conn.commit()
+
+        manager._embedder.fingerprint = "nano:sha256:newweights"  # the swap
+        first = manager.heal_stale_embeddings(limit=3)
+        # The FAILED poison attempt consumes budget too: 3 attempts total.
+        assert first["checked"] == 3
+        assert first["healed"] == 2
+        assert first["failed"] == 1
+        assert first["healed"] + first["failed"] == 3  # attempts ≤ limit
+        # Poison (attempted, failed) + the two never-attempted rows stay
+        # stale — bounded work, leftovers for later ticks.
+        probe_ids = [*healthy, poison]
+        metas = manager.vectors.get_metadata(probe_ids)
+        still_stale = [
+            mid
+            for mid in probe_ids
+            if metas[mid].get("model_fingerprint") != "nano:sha256:newweights"
+        ]
+        assert len(still_stale) == 3
+        assert poison in still_stale
+
+        # Embedder healthy again: the drain resumes and finishes the set.
+        manager._embedder.embed.side_effect = None
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        second = manager.heal_stale_embeddings(limit=3)
+        assert second["healed"] == 3
+        assert second["failed"] == 0
+
+        # Dead embedder: the consecutive-failure cutoff stops the pass
+        # early with ONE summary warning (per-row detail is debug-level).
+        manager._embedder.embed.side_effect = RuntimeError("ollama unreachable")
+        batch = [
+            self._seed_vintage_stale(manager, f"dead embedder probe {i} about iota")
+            for i in range(12)
+        ]
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        embed_calls_before = manager._embedder.embed.call_count
+        with caplog.at_level("WARNING", logger="mnemos.manager"):
+            dead = manager.heal_stale_embeddings()  # default limit=200
+        assert dead["healed"] == 0
+        assert dead["failed"] == 10  # HEAL_CONSECUTIVE_FAILURE_CUTOFF stops mid-set
+        # Exactly 10 embed ATTEMPTS: the 12-row stale set is not walked to
+        # the end — the 2 rows past the cutoff stay for the next tick.
+        assert manager._embedder.embed.call_count - embed_calls_before == 10
+        heal_warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "heal_stale_embeddings" in r.getMessage()
+        ]
+        assert len(heal_warnings) == 1
+        assert "10 consecutive" in heal_warnings[0].getMessage()
+        # Nothing healed: all 12 rows keep the old fingerprint (10 failed
+        # attempts + 2 never attempted) — the drain resumes next tick.
+        metas = manager.vectors.get_metadata(batch)
+        assert all(
+            metas[mid].get("model_fingerprint") != "nano:sha256:newweights" for mid in batch
+        )
+
+    def test_heal_stale_by_fingerprint_count_when_budget_exhausts(
+        self, manager: MemoryManager
+    ) -> None:
+        """Review P2 pin: vintage counting under budget pressure.
+
+        More stale rows than budget: ``stale_by_fingerprint`` names
+        exactly the stale rows the call EXAMINED, healed == limit, and
+        the un-attempted leftovers stay stale so successive ticks keep
+        draining the set (idempotent full-corpus migration).
+        """
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        ids = [
+            self._seed_vintage_stale(manager, f"budget exhaust probe {i} about kappa")
+            for i in range(7)
+        ]
+        manager._embedder.fingerprint = "nano:sha256:newweights"  # the swap
+        first = manager.heal_stale_embeddings(limit=3)
+        assert first["checked"] == 3
+        assert first["healed"] == 3  # == limit: the budget exhausted
+        assert first["failed"] == 0
+        assert first["stale_by_fingerprint"] == 3  # every examined row was stale
+        # Leftovers: 4 rows still carry the old fingerprint for later ticks.
+        metas = manager.vectors.get_metadata(ids)
+        still_stale = [
+            mid for mid in ids if metas[mid].get("model_fingerprint") != "nano:sha256:newweights"
+        ]
+        assert len(still_stale) == 4
+
+        second = manager.heal_stale_embeddings(limit=3)
+        assert second["healed"] == 3  # fresh head skipped, budget spent deeper
+        third = manager.heal_stale_embeddings(limit=3)
+        assert third["healed"] == 1
+        fourth = manager.heal_stale_embeddings(limit=3)
+        assert fourth["healed"] == 0  # drained — idempotent steady state
+        assert fourth["stale_by_fingerprint"] == 0
+
+
 # ── 13. Lease/reclaim — issue #170 (ADR-0019 Phase C) ─────────────────────────
 
 
