@@ -616,8 +616,7 @@ def _import_sqlite(
     if dry_run:
         result.imported = snapshot_count
         result.warnings.append(
-            f"SQLite dry-run: snapshot read, {snapshot_count} memories counted, "
-            "no files replaced."
+            f"SQLite dry-run: snapshot read, {snapshot_count} memories counted, no files replaced."
         )
         return result
 
