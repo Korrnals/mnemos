@@ -1,4 +1,4 @@
-"""E2 D-leg conflict pairs — 80 scenarios, >= 40 type-2 (E0 §3.6, §2.6, §2.10).
+"""E2 D-leg conflict pairs — 120 scenarios: 80 type-2 + 40 type-1 (E0 §3.6, §2.6, §2.10).
 
 Deterministic index-driven combinatorics over fixed pools (no RNG, no
 wall-clock — same discipline as the e2_gov strata): each scenario is a
@@ -7,38 +7,50 @@ the REAL conflict-hint layer of ``mnemos.awareness`` (threshold
 ``CONFLICT_HINT_MIN_SHARED_TOKENS`` = 2, registered in E0 §8 rev. 2)
 fires on the peer when the E3 runner materializes the store.
 
-Type split (E0 §3.6: 80 pairs, >= 40 type-2, remainder type-1 — the
-type-2 share inside the base 80 is E0-unspecified; this wave locks the
-floor-exact symmetric 40 / 40, keeping the §2.10 sanity floor at a
-healthy n — a reported artifact parameter, not an E0 amendment):
+Type split history: the base set (E2 wave-2) locked the floor-exact
+symmetric 40 type-2 / 40 type-1 (E0 §8 rev. 4 item 2). The E0 §3.6
+raise rule was then EXECUTED per the TL decision of 2026-09-13
+(registered in E0 §8 pre-run revision 6, BEFORE any arm comparison was
+computed): type-2 raised 40 -> 80 by ADDING 40 pairs through this
+module's own generator protocol — indices 40-79, ids
+``dcp-t2-040``…``dcp-t2-079``. All three §3.6 binding conditions hold:
+the type-1 count never dropped (stays 40), the raise decision precedes
+any treatment-vs-control comparison, and the added pairs follow the
+same generator and seeding protocol as the base set (identical zone
+pools, store mass, action-menu shape, and blindness invariants —
+pinned by the same tests). The stratum total is therefore 120 pairs
+(the §3.6 "total exceeds 80, n reported" clause), n reported in E0 §8
+rev. 6 and in the stratum profile:
 
-* **type-2 (40)** — the peer's claim on the zone exists ONLY in the
-  peer checkpoint goal; every non-checkpoint row of the store is
-  zone-free by construction (test-pinned), so neither arm can see the
-  conflict in "files" — only the awareness hint carries it. This is
-  the D1 confirmatory set (n = 40 of the >= 40 registered minimum).
-* **type-1 (40)** — additionally one decision row carries the claim
-  verbatim (zone tokens + claimed artifacts), so a competent agent
-  reading current files already avoids the zone: the E0 §2.10 control
-  sanity floor. Type-1 peers ALSO write lexically overlapping goals
-  (realistic peers on the same zone do) — hint contact is uniform
-  across the stratum; where the conflict signal LIVES is what the type
-  splits (an E0-unspecified design point, fixed here and reported).
+* **type-2 (80; base 40 + raised 40)** — the peer's claim on the zone
+  exists ONLY in the peer checkpoint goal; every non-checkpoint row of
+  the store is zone-free by construction (test-pinned), so neither arm
+  can see the conflict in "files" — only the awareness hint carries
+  it. This is the D1 confirmatory set (n = 80).
+* **type-1 (40, unchanged)** — additionally one decision row carries
+  the claim verbatim (zone tokens + claimed artifacts), so a competent
+  agent reading current files already avoids the zone: the E0 §2.10
+  control sanity floor. Type-1 peers ALSO write lexically overlapping
+  goals (realistic peers on the same zone do) — hint contact is
+  uniform across the stratum; where the conflict signal LIVES is what
+  the type splits. No type-1 counterparts were added with the raise
+  (the additive rule drops only the type-2 count).
 
-Ceteris-paribus contrast: the type-1 block is built from the SAME
-index space as the type-2 block, so ``dcp-t1-NNN`` is exactly the
-``dcp-t2-NNN`` world plus the file-visible evidence row — same zone,
-same goals, same action menu; the ONLY difference is where the claim
-is discoverable. The two blocks are separate scenario stores, so the
-contrast leaks nothing across runs.
+Ceteris-paribus contrast (BASE BLOCK ONLY): the type-1 block shares
+the index space 0-39 with the BASE type-2 block, so ``dcp-t1-NNN`` is
+exactly the ``dcp-t2-NNN`` world plus the file-visible evidence row —
+same zone, same goals, same action menu; the ONLY difference is where
+the claim is discoverable. The raised type-2 pairs (indices 40-79)
+have no type-1 counterparts by the additive rule — the contrast is
+``TYPE1_PAIRS`` vs ``TYPE2_PAIRS[:TYPE2_BASE_COUNT]`` (test-pinned).
+The blocks are separate scenario stores, so the contrast leaks nothing
+across runs.
 
-E0 §3.6 raise rule: type-2 may be raised later by ADDING pairs (total
-exceeds 80, n reported) under three binding conditions — the type-1
-count never drops, the raise is decided BEFORE any arm comparison is
-computed, and added pairs follow the same generator and seeding
-protocol as the base set. This module's ``_build_pair`` IS that
-protocol: a raise is ``_build_pair(TYPE_2, index >= 40)`` plus a
-profile re-record — nothing else may differ.
+E0 §3.6 raise rule (in force for any FUTURE raise): type-2 may be
+raised further only by ADDING pairs under the same three binding
+conditions. This module's ``_build_pair`` IS that protocol: a raise is
+``_build_pair(TYPE_2, index >= 80)`` plus a profile re-record —
+nothing else may differ.
 
 Hint-contact guarantee (structural, test-pinned against the real
 ``conflict_hints``): actor and peer goals always share the zone key
@@ -581,13 +593,20 @@ def _build_pair(conflict_type: int, index: int) -> ConflictPair:
     )
 
 
-#: The full 80-pair stratum in fixed order: type-2 block (indices
-#: 000-039) first, then type-1 (040-079) — index spaces are disjoint
-#: so both blocks reuse zone cycling without id collisions.
-CONFLICT_PAIRS: tuple[ConflictPair, ...] = tuple(
-    _build_pair(TYPE_2_INTENT_CONFLICT, i) for i in range(40)
-) + tuple(_build_pair(TYPE_1_FILE_VISIBLE, i) for i in range(40))
+#: Size of the BASE type-2 block (indices 0-39) — the ceteris-paribus
+#: contrast set for the type-1 block, and the floor-exact share E0 §8
+#: rev. 4 item 2 registered before the raise.
+TYPE2_BASE_COUNT = 40
 
-TYPE2_PAIRS: tuple[ConflictPair, ...] = CONFLICT_PAIRS[:40]
-TYPE1_PAIRS: tuple[ConflictPair, ...] = CONFLICT_PAIRS[40:]
+#: The raised stratum in fixed order: the type-2 block (BASE indices
+#: 000-039, then RAISED indices 040-079) first, then type-1 (000-039) —
+#: the type-1 index space overlaps only the BASE type-2 indices, and
+#: the id tags (t2/t1) keep all ids disjoint across blocks.
+TYPE2_PAIRS: tuple[ConflictPair, ...] = tuple(
+    _build_pair(TYPE_2_INTENT_CONFLICT, i) for i in range(80)
+)
+TYPE1_PAIRS: tuple[ConflictPair, ...] = tuple(
+    _build_pair(TYPE_1_FILE_VISIBLE, i) for i in range(40)
+)
+CONFLICT_PAIRS: tuple[ConflictPair, ...] = TYPE2_PAIRS + TYPE1_PAIRS
 PAIR_SCENARIO_IDS: frozenset[str] = frozenset(p.scenario_id for p in CONFLICT_PAIRS)

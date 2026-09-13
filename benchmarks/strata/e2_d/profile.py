@@ -41,8 +41,11 @@ from benchmarks.strata.e2_d import scenarios as scenarios_mod
 from benchmarks.strata.e2_d import stale_claims as stale_claims_mod
 
 #: Bumped when the stratum's shape semantics change (a bump invalidates
-#: the recorded profile and the pin test fails — never silent).
-STRATUM_VERSION = "e2-d-1"
+#: the recorded profile and the pin test fails — never silent). d-2:
+#: type-2 raised 40 -> 80 per the E0 §3.6 raise rule (TL decision
+#: 2026-09-13, E0 §8 pre-run revision 6) — counts changed, generator
+#: protocol unchanged.
+STRATUM_VERSION = "e2-d-2"
 
 PROFILE_PATH = Path(__file__).resolve().parent / "profile.json"
 
@@ -62,7 +65,13 @@ FIXED_PARAMETERS: dict[str, str] = {
         "entries: the e2_gov combined corpus and profile are untouched and "
         "S1 stays byte-identical"
     ),
-    "conflict_type_split": "40 type-2 + 40 type-1 (the E0 floor is >=40 type-2)",
+    "conflict_type_split": (
+        "80 type-2 + 40 type-1 — the type-2 share raised from the "
+        "floor-exact 40 by the E0 §3.6 raise rule (TL decision "
+        "2026-09-13, E0 §8 pre-run revision 6); type-1 unchanged at 40 "
+        "(the E0 floor is >=40 type-2, remainder type-1; total 120, "
+        "n reported)"
+    ),
     "conflict_type1_hint_policy": (
         "type-1 peers also carry lexically overlapping goals (uniform hint "
         "contact); the type split fixes where the claim is discoverable, "
