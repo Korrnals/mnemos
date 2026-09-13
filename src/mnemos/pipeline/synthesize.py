@@ -2,8 +2,10 @@
 
 Takes a cluster of raw/processing memories and produces a single
 synthesized article (status=processed).  Idempotency is keyed on
-hash(cluster_id, prompt_version, model_version) — repeats return cached
-result without calling the LLM again.
+hash(scope_key, prompt_version, model_version, input_set_hash) — repeats
+return cached result without calling the LLM again, and a same-ID content
+swap of any member (ADR-0019 §Swap semantics) changes input_set_hash and
+forces a fresh synthesis (#250 F3).
 
 Security: only rationale_summary (≤200 chars) is stored in Trace.
 Raw chain-of-thought is NEVER logged or persisted.
@@ -16,7 +18,15 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from mnemos.models import Memory, MemorySource, MemoryStatus, MemoryType, SynthesisResult, Trace
+from mnemos.models import (
+    NO_FEDERATE_TAG,
+    Memory,
+    MemorySource,
+    MemoryStatus,
+    MemoryType,
+    SynthesisResult,
+    Trace,
+)
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
@@ -24,9 +34,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _synthesis_cache_key(cluster_id: str, prompt_version: str, model_version: str) -> str:
-    payload = f"{cluster_id}:{prompt_version}:{model_version}"
+def _synthesis_cache_key(
+    scope_key: str,
+    prompt_version: str,
+    model_version: str,
+    input_set_hash: str,
+) -> str:
+    payload = f"{scope_key}:{prompt_version}:{model_version}:{input_set_hash}"
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
+
+
+def _input_set_hash(members: list[Memory], mgr: MemoryManager) -> str:
+    """#250 F3 — deterministic hash over the (id, content) of all members.
+
+    Reuses the ADR-0019 B2a freshness computation —
+    ``MemoryManager._embed_content_hash`` over ``_embedding_text`` — so a
+    same-ID content swap changes the synthesis idempotency key exactly
+    when it changes the embedding input. Members are folded in id-sorted
+    order so the hash is order-independent.
+
+    Prior drafts of the same cluster (``source=SYNTHESIZED``) are outputs,
+    not inputs: a saved draft carries the same ``cluster_id``, so hashing
+    it would change the key on every re-run and the cache could never
+    hit. The input set is the cluster's source records only.
+    """
+    source_members = [m for m in members if m.source != MemorySource.SYNTHESIZED]
+    parts = [
+        f"{m.id}:{mgr._embed_content_hash(mgr._embedding_text(m))}"
+        for m in sorted(source_members, key=lambda m: m.id)
+    ]
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
 def _build_prompt(memories: list[Memory]) -> str:
@@ -73,7 +110,9 @@ def synthesize_cluster(
         return None
 
     model = mgr.settings.llm.model
-    cache_key = _synthesis_cache_key(cluster_id, prompt_version, model)
+    cache_key = _synthesis_cache_key(
+        cluster_id, prompt_version, model, _input_set_hash(members, mgr)
+    )
 
     # 2. Idempotency / cache check — look for existing processed memory
     existing_processed = [
@@ -149,11 +188,24 @@ def synthesize_cluster(
         tokens_out=tokens_out,
     )
 
+    # #250 F2 — strip-by-default: policy-bearing tags (``applyTo:`` /
+    # ``severity:``) inherited from the first member never reach the
+    # synthesized record — otherwise the draft would be born already
+    # pinned to the member's application scope (transitive mint→pin,
+    # extends #248). Everything else from the member's tags is inherited.
+    inherited_tags = [t for t in members[0].tags if not t.startswith(("applyTo:", "severity:"))]
+    tags = [*inherited_tags, "mnemos:synthesized"]
+    # #250 F2b — no-federate propagates by ANY-member rule: one
+    # secret-bearing member is enough for the synthesis to be born
+    # excluded from all external exchange.
+    if NO_FEDERATE_TAG not in tags and any(NO_FEDERATE_TAG in m.tags for m in members):
+        tags.append(NO_FEDERATE_TAG)
+
     # 5. Create processed memory
     processed = Memory(
         content=result.content,
         title=result.title,
-        tags=[*members[0].tags, "mnemos:synthesized"],
+        tags=tags,
         source=MemorySource.SYNTHESIZED,
         memory_type=MemoryType.NOTE,
         project=members[0].project,

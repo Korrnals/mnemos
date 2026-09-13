@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mnemos.models import ClusterResult, Memory, MemoryStatus
+from mnemos.models import ClusterResult, Memory, MemoryStatus, is_quarantined
 
 if TYPE_CHECKING:
     from mnemos.manager import MemoryManager
@@ -65,12 +65,18 @@ def cluster_raw_memories(
         List of ClusterResult objects (may be empty).
     """
     # 1. Fetch raw memories
-    raw_memories = mgr.sqlite.list_all(
+    raw_rows = mgr.sqlite.list_all(
         limit=limit,
         status=MemoryStatus.RAW,
         project=project,
         agent=agent,
     )
+    # ADR-0019 §5: quarantined rows are excluded from every issuance path
+    # by the single ``is_quarantined`` predicate; the collapse intake
+    # composes the same predicate so a quarantined RAW row can never enter
+    # a synthesis cluster (#250 F1). Filtered BEFORE the min_cluster_size
+    # check so an excluded row cannot silently satisfy the minimum.
+    raw_memories = [m for m in raw_rows if not is_quarantined(m)]
     if len(raw_memories) < min_cluster_size:
         logger.info(
             "cluster: only %s raw memories (< min=%s), skipping",
