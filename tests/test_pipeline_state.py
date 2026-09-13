@@ -1595,6 +1595,115 @@ class TestSweeperAndRebuild:
         assert manager.vectors.has(dirty.id) is False
 
 
+class TestSweeperVintageFingerprint:
+    """ADR-0021 round-3 swap: ``model_fingerprint`` freshness semantics.
+
+    After a weights swap the content is unchanged, so the content-hash
+    leg alone would call old-geometry vectors fresh forever — the
+    vintage key is what forces the re-embed. Quarantined rows stay
+    absolutely excluded from the migration.
+    """
+
+    def test_metadata_stamps_model_fingerprint(self, manager: MemoryManager) -> None:
+        mem = _published(manager, "vintage stamp probe about omega")
+        manager._embedder.fingerprint = "nano:sha256:testweights"
+        meta = manager._vector_metadata(mem)
+        assert meta["model_fingerprint"] == "nano:sha256:testweights"
+        assert "content_hash" in meta  # both freshness keys present
+
+    def test_heal_reembeds_on_fingerprint_mismatch(self, manager: MemoryManager) -> None:
+        """Same content, OTHER embedder geometry ⇒ stale ⇒ re-embed."""
+        mem = _published(manager, "vintage mismatch probe about alpha")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        # Pre-swap vector: correct content_hash, OLD fingerprint.
+        manager._embedder.fingerprint = "nano:sha256:oldweights"
+        manager.vectors.upsert(mem.id, [0.2] * 384, manager._vector_metadata(stored))
+        manager._embedder.fingerprint = "nano:sha256:newweights"  # the swap
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 1
+        assert result["stale_by_fingerprint"] == 1
+        meta = manager.vectors.get_metadata([mem.id])[mem.id]
+        assert meta["model_fingerprint"] == "nano:sha256:newweights"
+
+    def test_heal_reembeds_on_missing_fingerprint(self, manager: MemoryManager) -> None:
+        """Pre-round-3 rows carry no vintage key at all ⇒ stale ⇒ re-embed.
+
+        This is the actual upgrade path: every vector written before the
+        fingerprint stamp must migrate, not just mismatched ones.
+        """
+        mem = _published(manager, "missing fingerprint probe about beta")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        expected_hash = manager._embed_content_hash(manager._embedding_text(stored))
+        manager.vectors.upsert(
+            mem.id,
+            [0.2] * 384,
+            {"project": PROJECT, "agent": AGENT, "content_hash": expected_hash},
+        )
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 1
+        assert result["stale_by_fingerprint"] == 1
+        meta = manager.vectors.get_metadata([mem.id])[mem.id]
+        assert meta["model_fingerprint"] == "nano:sha256:newweights"
+
+    def test_heal_noops_when_vintage_current(self, manager: MemoryManager) -> None:
+        """Both freshness keys match ⇒ nothing to do (steady state)."""
+        mem = _published(manager, "vintage current probe about gamma")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        stored = manager.sqlite.get(mem.id)
+        assert stored is not None
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        seeded = manager._vector_metadata(stored)
+        manager.vectors.upsert(mem.id, [0.2] * 384, seeded)
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 0
+        assert result["stale_by_fingerprint"] == 0
+        # The untouched row keeps its seeded vector (no re-embed churn).
+        assert manager.vectors.get_metadata([mem.id])[mem.id] == seeded
+
+    def test_heal_vintage_migration_respects_limit(self, manager: MemoryManager) -> None:
+        """Batch semantics: a vintage migration drains ``limit`` rows per call."""
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        ids = []
+        for i in range(3):
+            mem = _published(manager, f"vintage limit probe {i} about delta")
+            _pipeline_state(manager, mem.id, PipelineState.REFINED)
+            ids.append(mem.id)
+        # All three rows carry pre-swap vectors (old fingerprint).
+        for mid in ids:
+            stored = manager.sqlite.get(mid)
+            assert stored is not None
+            manager._embedder.fingerprint = "nano:sha256:oldweights"
+            manager.vectors.upsert(mid, [0.2] * 384, manager._vector_metadata(stored))
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        first = manager.heal_stale_embeddings(limit=2)
+        assert first["checked"] == 2
+        assert first["healed"] == 2
+        second = manager.heal_stale_embeddings(limit=2)
+        assert second["healed"] == 1
+        third = manager.heal_stale_embeddings(limit=2)
+        assert third["healed"] == 0  # fully migrated, idempotent
+
+    def test_heal_never_touches_quarantined_on_vintage_mismatch(
+        self, manager: MemoryManager
+    ) -> None:
+        """Quarantine is absolute: even the vintage migration skips it."""
+        mem = _published(manager, "quarantined vintage probe about epsilon")
+        _pipeline_state(manager, mem.id, PipelineState.REFINED)
+        _quarantine(manager, mem.id, "secret")
+        manager._embedder.fingerprint = "nano:sha256:oldweights"
+        manager.vectors.upsert(mem.id, [0.5] * 384, {"project": PROJECT, "agent": AGENT})
+        manager._embedder.fingerprint = "nano:sha256:newweights"
+        result = manager.heal_stale_embeddings()
+        assert result["healed"] == 0
+        # The quarantined row keeps its stale vector — untouched.
+        assert "model_fingerprint" not in manager.vectors.get_metadata([mem.id])[mem.id]
+
+
 # ── 13. Lease/reclaim — issue #170 (ADR-0019 Phase C) ─────────────────────────
 
 

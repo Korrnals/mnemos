@@ -74,6 +74,8 @@ and an Obsidian-compatible vault. A Web UI is planned as a separate project
 ### 2. Embedding Layer
 
 - **Default**: `mnema-embed-v1` — bundled local model (~30 MB, int8 ONNX, RU+EN, 384d), works offline
+- Current weights (round 3, 2026-09-09): distilled from **Qwen/Qwen3-Embedding-0.6B** (Apache-2.0), `weights_sha256 3b752e06…`, MRL dimensions 64/128/256/384, opset 15; training corpus ~100k text→teacher-vector pairs including 8086 real store entries (RU 41.9%)
+- **Embedder swaps are vintage-tracked**: every vector stores the fingerprint of the embedder that produced it (`weights_sha256` for the bundled model); vectors cut by a different fingerprint are re-embedded automatically by the background heal sweeper, and `mnemos doctor` reports the remaining vintage-mismatch count
 - **External providers still available**: `onnx` (any HF model), Ollama, `sentence-transformers`
 - Embedding provider configured via config file
 - Embedding caching to avoid repeated computation
