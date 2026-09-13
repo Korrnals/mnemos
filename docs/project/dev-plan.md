@@ -349,7 +349,7 @@ attribution, project-scoped fail-closed, born no-federate. Зависимост�
 ремонт `41ffd9c` по 13 находкам → оба approve). Green-light по interleave:
 директивой владельца 2026-09-13 секвенирование делегировано ТехЛиду —
 решение принято TL по рекомендации АрхКома (interleave, не swap).
-Реализовано: awareness.py (presence_snapshot/project_delta/conlict-hints,
+Реализовано: awareness.py (presence_snapshot/project_delta/conflict-hints,
 двухуровневое доверие с дословной оговоркой R3 и inline-[unverified],
 per-agent слот, ограничение секции top-8), hooks-композиция
 (include_awareness opt-in, off-путь побайтово эквивалентен, закреплено
