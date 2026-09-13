@@ -55,9 +55,12 @@ STALE_SUPERSEDED_GOAL = "superseded_goal"
 class ScenarioAction:
     """One candidate action of the scripted agent (the oracle's unit).
 
-    ``targets`` are artifact stems (paths / task handles). The runner
-    shows the agent ``description`` only; ``targets`` stay runner-side
-    so the judgment layer never leaks into the prompt.
+    ``targets`` are artifact stems (paths / task handles). In
+    agent-facing views the action appears under a NEUTRAL per-scenario
+    id (``a1..aN``, shuffled — ``ground_truth.action_view_map``) with
+    its ``description``; the artifact ``action_id`` and ``targets``
+    stay key-side so neither the judgment layer nor id-prefix classes
+    ever leak into the prompt (review P1).
     """
 
     action_id: str

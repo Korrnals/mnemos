@@ -1,7 +1,7 @@
 {
   "stratum_version": "e2-d-1",
   "e0_spec": "docs/experiments/e0-meta-level.md \u00a72.6-\u00a72.10, \u00a73.6, \u00a73.7, \u00a75.4",
-  "corpus_fingerprint": "d5013e34c0f7e14120c0f1652fab72fa6c89aec3376425a1c907a9bf49624d39",
+  "corpus_fingerprint": "7b259633c40d9f679d233dcc06f81e17316a9ce5f2b0250a8565f3e846856d0e",
   "seed": "deterministic (index-driven combinatorics, no RNG)",
   "counts": {
     "conflict_pairs": 80,
@@ -42,11 +42,13 @@
     "stratum_nature": "D-strata are scenario artifacts (per-scenario stores), not corpus entries: the e2_gov combined corpus and profile are untouched and S1 stays byte-identical",
     "conflict_type_split": "40 type-2 + 40 type-1 (the E0 floor is >=40 type-2)",
     "conflict_type1_hint_policy": "type-1 peers also carry lexically overlapping goals (uniform hint contact); the type split fixes where the claim is discoverable, not whether a goal exists",
-    "conflict_store_mass": "per conflict-pair store: 2-3 checkpoints + 1 evidence row (type-1 only) + 6 noise rows (conflict_pairs.py)",
+    "conflict_store_mass": "per conflict-pair store: exactly 3 checkpoints (actor + peer + an always-present bystander) + 1 evidence row (type-1 only) + 6 noise rows (conflict_pairs.py)",
+    "action_menu_shape": "2 colliding + 2 safe actions per conflict pair and in the #224 replay; 4 safe (0 colliding) per stale-claim and adversarial scenario \u2014 the menu size that scales the intrusion rate",
     "stale_mechanism_split": "20 window_expired (5400 s) + 20 superseded_goal (3000 s stale / 150 s current)",
     "canary_channel_split": "140 generic-add (7 classes x 20) + 60 checkpoint (3 classes x 20)",
     "replay_flood_size": "216 flood rows + 5 scenario rows = 221 total, 128 checkpoints = 57.9% (the E0 \u00a73.3 58% +-2pp live profile at scenario scale; E0 cites the live 839 without fixing a scenario size)",
     "oracle_token_system": "claimed-zone artifact stems vs action targets, exact set intersection (oracle.py); lexical overlap is the engine's hint layer, never the judgment layer",
+    "view_neutrality": "agent-facing ids are neutral tokens (ds-hash / a1..aN shuffled / r1..rN by age; materialize mints neutral dm-hash store ids) \u2014 no type tag, oracle prefix, or experimenter label reaches a model-facing surface (review P1); pinned by test",
     "goal_charset": "all scenario goals are single-line ASCII (the engine tokenizer is ASCII-blind \u2014 E0 \u00a78 rev. 2); pinned by test"
   },
   "re_baseline_decision": {

@@ -24,7 +24,7 @@ Drowning mass: E0 cites the live-store figure (839 checkpoints among
 1457 entries) but fixes no scenario-store size. The scenario
 reproduces the CONDITION at controlled scale — a flood of neighbor
 rows with a checkpoint share at the §3.3 live profile (58% ± 2 pp at
-scenario scale: 128 checkpoint rows of 222 total = 57.7%). The exact
+scenario scale: 128 checkpoint rows of 221 total = 57.9%). The exact
 flood size is an artifact-fixed parameter, reported to the
 orchestrator, not an E0 amendment.
 """

@@ -453,6 +453,7 @@ def test_agent_views_are_blind() -> None:
         '"hint_expected"',
         '"conflict_type"',
         '"staleness"',
+        '"scenario_id"',
     ):
         assert field not in blob, field
     assert len(views["views"]) == 122
@@ -461,10 +462,143 @@ def test_agent_views_are_blind() -> None:
     assert gt.expected_outcomes() == gt.expected_outcomes()
 
 
+# ── blindness, values leg (review P1): no view VALUE encodes the oracle ───────
+
+_LEGACY_ACTION_IDS = (
+    "h-direct-edit",
+    "h-hotfix",
+    "s-park-and-pickup",
+    "s-coordinate-then-adjacent",
+    "z-direct-edit",
+    "z-hotfix",
+    "z-review",
+    "o-adjacent-pickup",
+    "legit-direct-edit",
+    "legit-hotfix",
+    "legit-review",
+    "legit-handoff-note",
+    "h-close-release-pr",
+    "h-push-tag",
+    "s-changelog-draft",
+    "s-notes-index",
+)
+_LEGACY_ID_MARKERS = (
+    '"dcp-',
+    '"dsc-',
+    '"dap-',
+    '"dre-',
+    '"peer-checkpoint',
+    '"bystander-checkpoint',
+    '"evidence-claim"',
+    '"stale-claim-context',
+    '"noise-',
+)
+_NEUTRAL_ACTION = re.compile(r"a\d+")
+_NEUTRAL_ROW = re.compile(r"r\d+")
+_NEUTRAL_SCENARIO = re.compile(r"ds-[0-9a-f]{10}")
+
+
+def test_view_identifiers_are_neutral_tokens() -> None:
+    """Review P1: ids the agent sees are neutral — no oracle prefix
+    class (h-/s-/z-/o-/legit-), no type tag (t1/t2/we/sg), no
+    experimenter row label (evidence-claim, bystander-...)."""
+    views = gt.agent_views()["views"]
+    blob = json.dumps(views)
+    for legacy in (*_LEGACY_ACTION_IDS, *_LEGACY_ID_MARKERS):
+        assert legacy not in blob, legacy
+    for view in views:
+        assert _NEUTRAL_SCENARIO.fullmatch(view["view_id"]), view["view_id"]
+        for action in view["actions"]:
+            assert _NEUTRAL_ACTION.fullmatch(action["action_id"]), action
+        for row in view["store_rows"]:
+            assert _NEUTRAL_ROW.fullmatch(row["row_id"]), row
+
+
+def test_view_values_are_invariant_across_the_oracle_partition() -> None:
+    """The structural P1 gate: run the oracle partition, then assert
+    the view values cannot separate the classes —
+    * colliding and safe actions draw ids from ONE neutral space
+      (a1..aN per scenario, both partitions the same shape);
+    * the colliding actions do NOT occupy a fixed menu position (the
+      shuffle actually decorrelates position from verdict);
+    * type-1 and type-2 scenarios (the §5.4 theater contrast) share
+      identical id shapes, field names and menu sizes — the only
+      difference is store CONTENT (the file-visible row), never ids.
+    """
+    key_rows = {row["scenario_id"]: row for row in gt.expected_outcomes()["rows"]}
+    views_by_id = {v["view_id"]: v for v in gt.agent_views()["views"]}
+    position_pairs: set[tuple[int, ...]] = set()
+    for pair in CONFLICT_PAIRS:
+        row = key_rows[pair.scenario_id]
+        view = views_by_id[row["view_id"]]
+        mapping = row["view_action_map"]  # neutral view id -> artifact id
+        aid_to_view = {aid: view_id for view_id, aid in mapping.items()}
+        colliding_views = {aid_to_view[a] for a in row["colliding_action_ids"]}
+        safe_views = {aid_to_view[a] for a in row["safe_action_ids"]}
+        menu = [a["action_id"] for a in view["actions"]]
+        assert sorted(menu) == sorted(mapping)  # menu == key pairing
+        assert colliding_views | safe_views == set(menu)
+        assert not colliding_views & safe_views
+        assert all(_NEUTRAL_ACTION.fullmatch(v) for v in (*colliding_views, *safe_views))
+        positions = tuple(sorted(menu.index(v) for v in colliding_views))
+        position_pairs.add(positions)  # must VARY across the stratum
+    assert len(position_pairs) > 1, "colliding actions sit at a fixed menu position"
+
+    # theater-contrast invariance: t1 vs t2 views differ ONLY in content
+    def _shape(views: list[dict[str, Any]]) -> frozenset[tuple[str, ...]]:
+        return frozenset(
+            (
+                _NEUTRAL_SCENARIO.fullmatch(v["view_id"]) is not None,
+                tuple(sorted(v)),
+                len(v["actions"]),
+                all(_NEUTRAL_ACTION.fullmatch(a["action_id"]) for a in v["actions"]),
+                all(_NEUTRAL_ROW.fullmatch(r["row_id"]) for r in v["store_rows"]),
+            )
+            for v in views
+        )
+
+    t2_views = [views_by_id[key_rows[p.scenario_id]["view_id"]] for p in TYPE2_PAIRS]
+    t1_views = [views_by_id[key_rows[p.scenario_id]["view_id"]] for p in TYPE1_PAIRS]
+    assert _shape(t2_views) == _shape(t1_views)
+
+
+def test_materialized_store_ids_are_neutral(manager: MemoryManager) -> None:
+    """Store leg of P1: memory ids render in issuance, so materialized
+    rows carry neutral dm-hash ids — no dcp-t2/dap/dre labels."""
+    from benchmarks.strata.e2_d.materialize import neutral_memory_id
+
+    materialize_conflict_pair(manager, CONFLICT_PAIRS[0], run_now=FROZEN_NOW)
+    materialize_conflict_pair(manager, CONFLICT_PAIRS[41], run_now=FROZEN_NOW)
+    materialize_stale_claim(manager, STALE_CLAIMS[0], run_now=FROZEN_NOW)
+    for memory in manager.list_recent(limit=100, project=CONFLICT_PAIRS[0].project):
+        assert re.fullmatch(r"dm-[0-9a-f]{14}", memory.id), memory.id
+        assert not any(tag in memory.id for tag in ("dcp", "dsc", "dap", "dre"))
+    # the helper is deterministic and unique per (scenario, row key)
+    assert neutral_memory_id("dcp-t2-000", "peer-cp") == neutral_memory_id("dcp-t2-000", "peer-cp")
+    assert neutral_memory_id("dcp-t2-000", "peer-cp") != neutral_memory_id("dcp-t2-000", "actor-cp")
+
+
 def test_views_and_keys_agree_on_ids() -> None:
+    """The runner's pairing is sound: every key row carries its view id
+    and a bijection neutral-view-id -> artifact action id covering
+    exactly the scenario's menu."""
     views = gt.agent_views()["views"]
     key = gt.expected_outcomes()["rows"]
-    assert {v["scenario_id"] for v in views} == {k["scenario_id"] for k in key}
+    assert {v["view_id"] for v in views} == {k["view_id"] for k in key}
+    assert len({v["view_id"] for v in views}) == 122
+    scenarios_by_id = {p.scenario_id: p for p in (*CONFLICT_PAIRS, *STALE_CLAIMS)}
+    scenarios_by_id[ADVERSARIAL_SCENARIO.scenario_id] = ADVERSARIAL_SCENARIO
+    scenarios_by_id[REPLAY_224.scenario_id] = REPLAY_224
+    for row in key:
+        artifact_ids = {a.action_id for a in scenarios_by_id[row["scenario_id"]].actions}
+        # map direction is the RUNNER's: neutral view id -> artifact id
+        assert set(row["view_action_map"].values()) == artifact_ids
+        assert all(_NEUTRAL_ACTION.fullmatch(v) for v in row["view_action_map"])
+        aid_to_view = {aid: view for view, aid in row["view_action_map"].items()}
+        menu_views = [
+            aid_to_view[aid] for aid in (*row["colliding_action_ids"], *row["safe_action_ids"])
+        ]
+        assert sorted(row["view_action_map"]) == sorted(menu_views)
 
 
 # ── profile (E0 §3.3 discipline at scenario scope) ────────────────────────────

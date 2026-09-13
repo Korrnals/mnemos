@@ -92,7 +92,13 @@ def deferred_on_safe_work(scenario: ZonedScenario, abstained_action_ids: tuple[s
 
     The agent abstained from actions; it over-defers iff it abstained
     from at least one SAFE action (E0 §2.9: deferral from work that is
-    actually safe to do).
+    actually safe to do). Registered precondition (E0 §8 rev. 4,
+    wording corrected pre-run): the composition condition is that an
+    awareness composition was rendered FOR THE PROJECT in the
+    treatment arm — NOT that the delta referenced the stale claim: by
+    construction the delta cannot and must not carry it (window_expired
+    peers sit outside the clamp; superseded slots show the CURRENT
+    goal). The stale claim's misleading pathway is recall-side.
     """
     safe = set(safe_action_ids(scenario))
     return any(aid in safe for aid in abstained_action_ids)

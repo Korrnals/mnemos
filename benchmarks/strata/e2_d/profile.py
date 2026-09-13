@@ -34,6 +34,7 @@ from benchmarks.strata.e2_d import adversarial as adversarial_mod
 from benchmarks.strata.e2_d import canaries as canaries_mod
 from benchmarks.strata.e2_d import conflict_pairs as conflict_pairs_mod
 from benchmarks.strata.e2_d import ground_truth as ground_truth_mod
+from benchmarks.strata.e2_d import materialize as materialize_mod
 from benchmarks.strata.e2_d import oracle as oracle_mod
 from benchmarks.strata.e2_d import replay224 as replay224_mod
 from benchmarks.strata.e2_d import scenarios as scenarios_mod
@@ -53,7 +54,8 @@ CHECKPOINT_SHARE_TOLERANCE = 0.02
 CONFLICT_HINT_THRESHOLD_IN_FORCE = 2
 
 #: E0-unspecified parameters fixed by this artifact wave. Reported to
-#: the orchestrator at delivery; E0 itself is NOT amended here.
+#: the orchestrator and registered pre-run in E0 §8 rev. 4 (measurement
+#: instruments); E0 §1-§7 are NOT amended here.
 FIXED_PARAMETERS: dict[str, str] = {
     "stratum_nature": (
         "D-strata are scenario artifacts (per-scenario stores), not corpus "
@@ -67,8 +69,14 @@ FIXED_PARAMETERS: dict[str, str] = {
         "not whether a goal exists"
     ),
     "conflict_store_mass": (
-        "per conflict-pair store: 2-3 checkpoints + 1 evidence row (type-1 "
-        "only) + 6 noise rows (conflict_pairs.py)"
+        "per conflict-pair store: exactly 3 checkpoints (actor + peer + an "
+        "always-present bystander) + 1 evidence row (type-1 only) + 6 noise "
+        "rows (conflict_pairs.py)"
+    ),
+    "action_menu_shape": (
+        "2 colliding + 2 safe actions per conflict pair and in the #224 "
+        "replay; 4 safe (0 colliding) per stale-claim and adversarial "
+        "scenario — the menu size that scales the intrusion rate"
     ),
     "stale_mechanism_split": (
         "20 window_expired (5400 s) + 20 superseded_goal (3000 s stale / 150 s current)"
@@ -83,6 +91,12 @@ FIXED_PARAMETERS: dict[str, str] = {
         "claimed-zone artifact stems vs action targets, exact set "
         "intersection (oracle.py); lexical overlap is the engine's hint "
         "layer, never the judgment layer"
+    ),
+    "view_neutrality": (
+        "agent-facing ids are neutral tokens (ds-hash / a1..aN shuffled / "
+        "r1..rN by age; materialize mints neutral dm-hash store ids) — no "
+        "type tag, oracle prefix, or experimenter label reaches a "
+        "model-facing surface (review P1); pinned by test"
     ),
     "goal_charset": (
         "all scenario goals are single-line ASCII (the engine tokenizer is "
@@ -101,6 +115,11 @@ def _stratum_modules() -> tuple[Any, ...]:
         replay224_mod,
         oracle_mod,
         ground_truth_mod,
+        # materialize joined the fingerprint set with the review-P1 fix
+        # (neutral store ids): it shapes what a model-facing surface
+        # renders, so a silent edit must trip the pin like any other
+        # stratum module (review P3-c).
+        materialize_mod,
     )
 
 
