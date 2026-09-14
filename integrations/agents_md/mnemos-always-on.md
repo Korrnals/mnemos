@@ -21,6 +21,9 @@ these rules in every session, unprompted.
   for exactly this.
 - `mnemos_agent_recall` when resuming work as a named agent role.
 
+These are PRIORITY tools: prefer recall over re-deriving, and always save
+before the session ends.
+
 ## Tag contract (every `mnemos_add` / `mnemos_ingest_url` call)
 
 Tags are the searchability backbone of the store. Every write MUST carry:
@@ -53,6 +56,3 @@ caches only pay off when the conversation prefix stays byte-stable.
 - Align system prompts once, at assembly time (`mnemos_align_prefix`);
   dynamic values (timestamps, counters, volatile state) belong in the
   tail, not the prefix.
-
-These are PRIORITY tools: prefer recall over re-deriving, and always save
-before the session ends.

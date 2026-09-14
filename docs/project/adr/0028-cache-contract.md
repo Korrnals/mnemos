@@ -211,7 +211,9 @@ flowchart LR
   merged as PR #305).
 - Wave commits on `feat/cache-contract-phase1`: `f5bfbc4` (deterministic
   id tiebreak in the final RRF ordering), `dbf2c24` (cache-discipline
-  section in the always-on pack and the context-lifecycle skill).
+  section in the always-on pack and the context-lifecycle skill),
+  `989b0b6` (seeded harness ids restoring cross-run byte-identity — the
+  Tech Lead decision of 2026-09-14 the Status line cites).
 - Owner directives: 2026-09-13 (quality-first hard policy), 2026-09-14
   (provider-economics registry as versioned data); owner two-track policy
   (static packs as the only prefix material; no binary request formats);
