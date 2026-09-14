@@ -1,6 +1,8 @@
 # ADR 0029: Search v2 Query Semantics — Per-Token Prefix AND, Soft Project Fallback, and the Graph Leg
 
-**Status:** Proposed (issue #313 slice; independent review pending)
+**Status:** Accepted (independent review 2026-09-15: graph-leg gates F1/F2
+fixed in 7d9ca4c with mutation-verified regression tests; ADR amendments
+F3/F4 landed; short-token follow-up filed as #314)
 **Deciders:** Tech Lead (slice assignment), Senior System Engineer (implementation)
 **Scope:** the FTS5 MATCH expression built from user input (the single
 chokepoint), the FTS OR fallback, the project soft-fallback retry, the
