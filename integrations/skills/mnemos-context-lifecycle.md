@@ -28,6 +28,10 @@ rewrite lifecycle.
 - **Tool output compression (hooks.post_tool_call)** — a tool returned a
   huge output you want substituted by a zero-loss CCR marker, with
   provenance stamped for strict marker validation.
+- **Re-assembly (mid-session)** — only when memory changed materially (a
+  new decision, a rewritten context block that must surface). The
+  assembled block is prefix-stable by design; gratuitous re-assembly
+  rewrites the prefix and discards the cache the session was building.
 
 ## STEPS
 
@@ -91,6 +95,22 @@ rewrite lifecycle.
    the event is idempotent (content-addressed over
    project/agent/session/supersedes/content), so re-delivery cannot
    duplicate writes.
+
+6. **Keep assembly cache-friendly** (provider-agnostic cache discipline):
+
+   - Assemble the context once per session, or on material memory
+     change; mid-session re-assembly is reserved for significant
+     changes only.
+   - The assembled mnemos text is per-call conversation content (tail),
+     NOT a standing prefix — never inject mnemos blocks into the system
+     prompt.
+   - Do not change the MCP tool set or tool schemas mid-session; a tool
+     change invalidates the provider's cache for the entire session.
+   - Prefer append-over-rewrite on compaction: append the new summary
+     after the stable prefix rather than rewriting the prefix.
+   - Align system prompts once, at assembly time
+     (`mnemos_align_prefix`); dynamic values (timestamps, counters,
+     volatile state) go to the tail, never the prefix.
 
 ## DISCIPLINE
 
