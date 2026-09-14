@@ -312,3 +312,27 @@ Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Source: [github.com/
 
 Contributions are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) has the development setup, the branch
 and commit conventions, and the quality gate a change must pass.
+
+---
+
+## 🛠 CI / Релизы — кластерный конвейер `release-pipeline`
+
+Этот проект подключён к общему кластерному конвейеру релизов
+([Korrnals/release-pipeline](https://github.com/Korrnals/release-pipeline),
+K3s `abyss-ai-agent`, namespace `release-pipeline`). GitHub Actions не
+используется (биллинг аккаунта заблокирован) — конвейер и есть штатный путь
+релизов. Релизный артефакт подписывается трёхслойно: SHA256 → SBOM → cosign → GPG.
+
+**Релиз новой версии:**
+1. `VERSION` → релизный коммит (конвенция репо) → тег `vX.Y.Z` → push.
+2. Обновить версию проекта в `projects[]` файла `~/.cache/release-pipeline-values.yaml` и применить:
+   ```bash
+   helm upgrade --install release-pipeline \
+     ~/LABs/Projects/Project-Umbra/release-pipeline/chart/release-pipeline \
+     --kube-context abyss-ai-agent -n release-pipeline \
+     -f ~/.cache/release-pipeline-values.yaml
+   ```
+3. Наблюдение: `kubectl --context abyss-ai-agent -n release-pipeline get jobs`,
+   логи: `kubectl ... logs -f job/release-<proj>-<ver>`.
+
+Подробности (типы проектов, kaniko-контейнеры, teardown): README конвейера.
