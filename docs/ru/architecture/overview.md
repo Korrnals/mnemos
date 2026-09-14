@@ -354,7 +354,7 @@ embedding:
 
 search:
   default_limit: 20
-  hybrid_alpha: 0.7                  # вес семантического поиска (0=FTS, 1=vector)
+  hybrid_alpha: 0.5                  # вес семантического поиска (0=FTS, 1=vector); 0.5 балансирует ноги RRF — при 0.7 доминирование векторной ноги топило FTS-совпадения ранга 1 (issue #300)
 
 api:
   host: 0.0.0.0

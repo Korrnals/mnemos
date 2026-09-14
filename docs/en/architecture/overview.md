@@ -358,7 +358,7 @@ embedding:
 
 search:
   default_limit: 20
-  hybrid_alpha: 0.7                  # semantic search weight (0=FTS, 1=vector)
+  hybrid_alpha: 0.5                  # semantic search weight (0=FTS, 1=vector); 0.5 balances the RRF legs — at 0.7 vector dominance drowned FTS-rank-1 matches (issue #300)
 
 api:
   host: 0.0.0.0

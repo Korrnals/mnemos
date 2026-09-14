@@ -8,18 +8,18 @@
     "weights_sha256": "3b752e0671a50da5c108cb50e49630a66c160f7683afedcf879e1880d84317ba",
     "opset": null
   },
-  "created": "2026-09-13T14:34:51+00:00",
+  "created": "2026-09-14T00:14:52+00:00",
   "metrics": {
     "retrieval": {
-      "precision_at_5": 0.229319,
-      "precision_at_10": 0.119895,
-      "recall_at_5": 0.8637,
-      "recall_at_10": 0.894415,
+      "precision_at_5": 0.245026,
+      "precision_at_10": 0.128796,
+      "recall_at_5": 0.902967,
+      "recall_at_10": 0.939791,
       "ci95": {
-        "precision_at_5": 0.018393,
-        "precision_at_10": 0.009566,
-        "recall_at_5": 0.043607,
-        "recall_at_10": 0.03904
+        "precision_at_5": 0.019228,
+        "precision_at_10": 0.009605,
+        "recall_at_5": 0.03837,
+        "recall_at_10": 0.029406
       },
       "judged_queries": 191,
       "probe_queries": 1,
@@ -68,7 +68,7 @@
       }
     },
     "injection": {
-      "planted_appearances": 211,
+      "planted_appearances": 225,
       "planted_leaks": 0,
       "assemble_leaks": [],
       "assemble_all_planted_surfaced": true
@@ -77,42 +77,42 @@
       "variants": {
         "current": {
           "label": "a9-on x4 (current)",
-          "recall_at_5": 0.8637,
-          "recall_at_10": 0.894415,
-          "precision_at_5": 0.229319,
-          "precision_at_10": 0.119895,
+          "recall_at_5": 0.902967,
+          "recall_at_10": 0.939791,
+          "precision_at_5": 0.245026,
+          "precision_at_10": 0.128796,
           "hybrid_queries": 192,
-          "planted_appearances": 211
+          "planted_appearances": 225
         },
         "a9_off_x4": {
           "label": "a9-off x4",
-          "recall_at_5": 0.866754,
-          "recall_at_10": 0.903141,
-          "precision_at_5": 0.229319,
-          "precision_at_10": 0.121466,
+          "recall_at_5": 0.905585,
+          "recall_at_10": 0.93281,
+          "precision_at_5": 0.245026,
+          "precision_at_10": 0.127225,
           "hybrid_queries": 192,
-          "planted_appearances": 195
+          "planted_appearances": 181
         },
         "pre_a9": {
           "label": "a9-off x2 (pre-A9)",
-          "recall_at_5": 0.879407,
-          "recall_at_10": 0.910122,
-          "precision_at_5": 0.235602,
-          "precision_at_10": 0.123037,
-          "hybrid_queries": 190,
-          "planted_appearances": 135
+          "recall_at_5": 0.905585,
+          "recall_at_10": 0.917103,
+          "precision_at_5": 0.245026,
+          "precision_at_10": 0.125131,
+          "hybrid_queries": 187,
+          "planted_appearances": 132
         },
         "a9_on_x2": {
           "label": "a9-on x2",
-          "recall_at_5": 0.8637,
-          "recall_at_10": 0.894415,
-          "precision_at_5": 0.229319,
-          "precision_at_10": 0.119895,
+          "recall_at_5": 0.902967,
+          "recall_at_10": 0.939791,
+          "precision_at_5": 0.245026,
+          "precision_at_10": 0.128796,
           "hybrid_queries": 192,
-          "planted_appearances": 208
+          "planted_appearances": 225
         }
       },
-      "delta_recall10_current_vs_pre_a9": -0.015707
+      "delta_recall10_current_vs_pre_a9": 0.022688
     },
     "rewrite": {
       "events": 24,
@@ -214,10 +214,10 @@
       "pair": "fts_only_vs_hybrid_rrf",
       "queries": 191,
       "hits_leg_a": 126,
-      "hits_leg_b": 163,
-      "discordant_b": 46,
-      "discordant_c": 9,
-      "p_two_sided": 4.336383137015787e-07,
+      "hits_leg_b": 174,
+      "discordant_b": 48,
+      "discordant_c": 0,
+      "p_two_sided": 7.105427357601002e-15,
       "note": "interim per ADR-0020 (48 judged queries are underpowered for McNemar); the same jig re-targets raw-vs-refined projections when deterministic refined projections exist"
     },
     "s1m": {
@@ -231,18 +231,18 @@
         "opset": null
       },
       "metrics": {
-        "precision_at_5": 0.219895,
-        "precision_at_10": 0.117277,
-        "recall_at_5": 0.863002,
-        "recall_at_10": 0.897906,
-        "mrr": 0.83256,
-        "ndcg_at_5": 0.817398,
-        "ndcg_at_10": 0.831711,
+        "precision_at_5": 0.235602,
+        "precision_at_10": 0.126178,
+        "recall_at_5": 0.902269,
+        "recall_at_10": 0.940663,
+        "mrr": 0.866592,
+        "ndcg_at_5": 0.854676,
+        "ndcg_at_10": 0.870322,
         "ci95": {
-          "precision_at_5": 0.016604,
-          "precision_at_10": 0.00844,
-          "recall_at_5": 0.043918,
-          "recall_at_10": 0.038009
+          "precision_at_5": 0.016962,
+          "precision_at_10": 0.008664,
+          "recall_at_5": 0.037424,
+          "recall_at_10": 0.028683
         },
         "judged_queries": 191,
         "dimension": 384

@@ -299,14 +299,14 @@ Mnemos читает `config.yaml` из текущего каталога или 
 | `mnemos.vault_path` | `~/.mnemos/vault` | Зеркало Obsidian |
 | `mnemos.strict_tag_contract` | `true` | Принуждать контракт тегов (`false` — только для легаси-импортов) |
 | `embedding.provider` | `nano` | `nano` (mnema-embed-v1, встроенная) / `onnx` / `ollama` / `sentence-transformers` |
-| `search.hybrid_alpha` | `0.7` | Вес векторной ноги в RRF (0.0 = чистый FTS, 1.0 = чистый вектор) |
+| `search.hybrid_alpha` | `0.5` | Вес векторной ноги в RRF (0.0 = чистый FTS, 1.0 = чистый вектор). Дефолт перенастроен 0.7 → 0.5: баланс ног не даёт доминированию векторной ноги топить FTS-совпадения ранга 1 (issue #300) |
 | `api.host` / `api.port` | `127.0.0.1` / `8787` | Значения по умолчанию для `mnemos serve` |
 | `llm.provider` / `llm.model` | `ollama` / `qwen2.5:3b` | Синтез конвейера и контекстный фильтр |
 
 Любой из них переопределяется переменными окружения (`MNEMOS_*`, `__` — разделитель вложенности):
 
 ```bash
-MNEMOS_SEARCH__HYBRID_ALPHA=0.5 mnemos search "deployment"
+MNEMOS_SEARCH__HYBRID_ALPHA=0.7 mnemos search "deployment"
 ```
 
 ### Логирование
