@@ -179,6 +179,32 @@ an edge-lookup failure is non-fatal.
   class (common-prefix inflections) but not irregular forms; the
   follow-up in the issue stands.
 
+**Benchmark and harness effects (measured, registered):**
+
+- S1/S1m baselines re-recorded in the same PR per ADR-0020
+  (issuance-path change; precedent: the hybrid_alpha re-tune #302).
+  Measured gain from v2 semantics: reference recall@5 0.9030 → 0.9366 /
+  recall@10 0.9398 → 0.9503; S1m (production embedder) recall@5
+  0.9023 → 0.9285. corpus/model fingerprints unchanged — the deltas are
+  the semantics, not the embedder.
+- The SC-S2 `supersede-refind` gone-probe changed form, not meaning:
+  the pre-v2 probe ("weekly Mondays cadence" as one whole-input phrase)
+  only held because the phrase semantics hid the token "cadence",
+  shared by BOTH projections — a probe asserting "row not findable by
+  ANY token" cannot prove "old projection not served" under any
+  multi-token FTS with a shared token. The v2 probe queries the
+  v1-only token ("Mondays"), the single-term shape that never
+  triggers the OR fallback; the contract assertion is unchanged.
+- Two harness gaps surfaced by the widened result sets (both latent on
+  main — the phrase semantics kept result sets so small the recall
+  boundary was never contested): the e3 runner's cross-run
+  determinism now runs under the seeded id draw of
+  `tests/_seeded_ids.py` (the #280 TL-decision harness pattern —
+  equal-score groups tie-break by id, so a fresh uuid4 draw per collect
+  could flip the boundary row, observed leg A gg-010-pr); the lanes
+  flag-off fixture is re-captured through its own registered
+  procedure (frozen clock + seeded ids), provenance chain updated.
+
 ## Alternatives considered
 
 | Alternative | Why rejected |
