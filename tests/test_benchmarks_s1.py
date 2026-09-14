@@ -29,6 +29,8 @@ from benchmarks.stands.s1_quality.scenarios import (
     scenario_refuse_render,
 )
 
+from tests._seeded_ids import seeded_memory_ids
+
 _BASELINE_KEYS = {
     "baseline_version",
     "stand_version",
@@ -62,8 +64,16 @@ def test_baseline_json_schema_and_fingerprint() -> None:
 
 
 def test_measurement_deterministic_and_gate_green() -> None:
-    first = s1_run.run_measurement()
-    second = s1_run.run_measurement()
+    # Seeded harness ids (TL decision 2026-09-14, #280): the Phase-1 id
+    # tiebreak in MemoryManager.search orders equal-score groups by
+    # Memory.id, which is uuid4 in production — two fresh stores draw
+    # different ids per run, so cross-run byte-identity needs a FIXED id
+    # draw. Each call restarts the seed sequence; ranking semantics are
+    # untouched (tests/_seeded_ids.py).
+    with seeded_memory_ids("s1-determinism"):
+        first = s1_run.run_measurement()
+    with seeded_memory_ids("s1-determinism"):
+        second = s1_run.run_measurement()
     # The reference contour (BLAKE2b pipeline metrics) is byte-exact
     # deterministic. The S1m section is NOT compared byte-exact: the
     # production ONNX embedder is not guaranteed bit-identical across

@@ -55,6 +55,7 @@ from mnemos.models import (
     MemoryStatus,
     PipelineState,
 )
+from tests._seeded_ids import seeded_memory_ids
 
 PROJECT = "asm-proj"
 AGENT = "asm-agent"
@@ -66,14 +67,22 @@ SESSION = "sess-e1"
 # hybrid_alpha 0.7→0.5 re-tune (#300): the fusion weight IS observable
 # assemble output on the default path, so the fixture moved with the
 # re-tune — a registered act (the alpha re-tune PR), not silent drift.
-# Same corpus + frozen assemble clock as the fixture generator. UUIDs are
-# normalized (memory ids are per-run uuid4) — everything else in the dump
+# RE-CAPTURED again for the Phase-1 deterministic id tiebreak (#280, TL
+# decision 2026-09-14): equal-score groups now order by Memory.id. Only
+# the NO-FILE fixture moved — its derived-query recall carries one
+# equal-score tie group, whose order is now the (seeded, fixed) id
+# order instead of the pre-change insertion order. The WITH-FILE
+# fixture (explicit query + applyTo pinning) has NO tie groups and is
+# byte-identical to the pre-tiebreak capture. The generator now pins
+# the fixed seeded-id draw (tests/_seeded_ids.py) instead of per-run
+# uuid4 luck — same corpus + frozen assemble clock. UUIDs are
+# normalized (memory ids are per-run) — everything else in the dump
 # (block order, scores, provenance, key sets, text) is compared
-# byte-for-byte via sha256. With LanesConfig.enabled=False the code must
-# reproduce these hashes; ANY unregistered observable output change on
-# the default path fails here.
+# byte-for-byte via sha256. With LanesConfig.enabled=False the code
+# must reproduce these hashes; ANY unregistered observable output
+# change on the default path fails here.
 
-NO_FILE_FIXTURE_SHA256 = "10205b7f0452635445148a6890015071e386e25d3fa393fe489b6c534819d0d2"
+NO_FILE_FIXTURE_SHA256 = "d46084ef72cdd8557be73a95c2e2a35b770717f0d6090d6ad36bc5cea572b28e"
 WITH_FILE_FIXTURE_SHA256 = "d4efeba81f46c95f55d12e04744be00ac6749dfb2ca9e01b399bdfb46299275f"
 
 FROZEN_ISO = "2026-09-13T12:00:00+00:00"
@@ -380,17 +389,22 @@ class TestFlagOffEquivalence:
         self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Strong version: the flag-off output of the POST-change code is
-        byte-identical (UUID-normalized, frozen clock) to the registered
-        fixture — originally captured on pristine b8968df (pre-lanes),
-        re-captured with the hybrid_alpha 0.5 re-tune (#300, a registered
-        composition change per ADR-0020)."""
+        byte-identical (UUID-normalized, frozen clock, seeded ids) to the
+        registered fixture — originally captured on pristine b8968df
+        (pre-lanes), re-captured with the hybrid_alpha 0.5 re-tune
+        (#300, a registered composition change per ADR-0020), and
+        re-captured again for the Phase-1 deterministic id tiebreak
+        (#280, TL decision 2026-09-14: equal-score groups now order by
+        id, so the fixture needs the fixed seeded-id draw of
+        ``tests/_seeded_ids.py`` instead of per-run uuid4 luck)."""
         _freeze_assemble_clock(monkeypatch, manager)
-        _corpus(manager)
-        no_file = manager.assemble_context(session=SESSION, project=PROJECT)
+        with seeded_memory_ids("lanes-flag-off"):
+            _corpus(manager)
+            no_file = manager.assemble_context(session=SESSION, project=PROJECT)
+            with_file = manager.assemble_context(
+                session=SESSION, project=PROJECT, file="src/handler.py", query="handler deployment"
+            )
         assert _normalized_sha256(no_file) == NO_FILE_FIXTURE_SHA256
-        with_file = manager.assemble_context(
-            session=SESSION, project=PROJECT, file="src/handler.py", query="handler deployment"
-        )
         assert _normalized_sha256(with_file) == WITH_FILE_FIXTURE_SHA256
 
     def test_flag_off_runs_no_lane_queries(

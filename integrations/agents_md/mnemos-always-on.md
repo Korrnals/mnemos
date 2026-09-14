@@ -21,6 +21,9 @@ these rules in every session, unprompted.
   for exactly this.
 - `mnemos_agent_recall` when resuming work as a named agent role.
 
+These are PRIORITY tools: prefer recall over re-deriving, and always save
+before the session ends.
+
 ## Tag contract (every `mnemos_add` / `mnemos_ingest_url` call)
 
 Tags are the searchability backbone of the store. Every write MUST carry:
@@ -34,5 +37,22 @@ Tags are the searchability backbone of the store. Every write MUST carry:
 Without the contract, memory degrades into unstructured noise: project and
 agent-scoped recall stop working.
 
-These are PRIORITY tools: prefer recall over re-deriving, and always save
-before the session ends.
+## Cache discipline (provider-agnostic)
+
+The assembled context is built for prefix reuse — provider KV and prompt
+caches only pay off when the conversation prefix stays byte-stable.
+
+- Assemble the context once per session, or when memory changed
+  materially (a new decision, a saved checkpoint that must surface).
+  Mid-session re-assembly for cosmetic reasons rewrites the prefix and
+  flushes the cache.
+- Assembled mnemos text is per-call conversation content (tail), never a
+  standing prefix: never paste mnemos blocks into the system prompt.
+- Do not change the MCP tool set or tool schemas mid-session — adding,
+  removing, or re-describing tools invalidates the provider's cache for
+  the whole session.
+- On compaction, prefer append-over-rewrite: append the summary after
+  the stable prefix instead of rewriting the prefix itself.
+- Align system prompts once, at assembly time (`mnemos_align_prefix`);
+  dynamic values (timestamps, counters, volatile state) belong in the
+  tail, not the prefix.
