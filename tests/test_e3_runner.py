@@ -29,6 +29,7 @@ from benchmarks.experiments.e3_lanes import runner
 from benchmarks.strata.e2_gov import ground_truth as gt
 
 from mnemos.lanes import B0_TYPE_BOOST_FACTOR
+from tests._seeded_ids import seeded_memory_ids
 
 #: The S1 corpus fingerprint pinned upstream (test_strata_e2_gov) — the
 #: golden 81 inside the combined build must stay byte-identical.
@@ -39,8 +40,20 @@ _QID_RE = re.compile(r"^gg-\d{3}-(ph|pr)$")
 
 @pytest.fixture(scope="module")
 def collected() -> Iterator[tuple[dict, dict]]:
-    """One full collect over the real strata (all three legs)."""
-    manifest, outcomes = runner.collect_run(gt.initial_ledger())
+    """One full collect over the real strata (all three legs).
+
+    Seeded id draw (TL decision 2026-09-14, #280 — same pattern as the
+    S1 measurement and the lanes flag-off fixture): search v2 (issue
+    #313) widens the FTS leg's result sets (per-token prefix terms +
+    the ranked OR fallback), so equal-score groups at the recall
+    boundary are no longer rare — the deterministic tiebreak orders
+    them by ``id``, and a fresh uuid4 draw per collect made the
+    boundary row flip run-to-run (observed: leg A, gg-010-pr). The
+    seeded draw keeps the cross-run identity assertion meaningful
+    without loosening anything the legs measure.
+    """
+    with seeded_memory_ids("e3-runner-determinism"):
+        manifest, outcomes = runner.collect_run(gt.initial_ledger())
     yield manifest, outcomes
 
 
@@ -124,7 +137,12 @@ def test_collect_is_deterministic(collected: tuple[dict, dict]) -> None:
     (the deterministic embedder + fixed corpus order make the legs
     reproducible; the manifest core is content-addressed)."""
     first_manifest, first_outcomes = collected
-    second_manifest, second_outcomes = runner.collect_run(gt.initial_ledger())
+    # Seeded id draw — see the ``collected`` fixture: the deterministic
+    # tiebreak orders equal-score groups by id, so cross-run identity
+    # needs the same id sequence (uuid4 luck otherwise decides which
+    # boundary row survives the top-k cut).
+    with seeded_memory_ids("e3-runner-determinism"):
+        second_manifest, second_outcomes = runner.collect_run(gt.initial_ledger())
     assert second_manifest["run_id"] == first_manifest["run_id"]
     assert second_outcomes["pairs"] == first_outcomes["pairs"]
     assert second_outcomes["g_neg"] == first_outcomes["g_neg"]
