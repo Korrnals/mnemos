@@ -1546,9 +1546,22 @@ class MemoryManager:
         vector_contributed = any(mid not in fts_ids for mid, _ in vector_resolved)
         search_type = "hybrid" if vector_contributed else "fts_only"
 
-        # Apply tag filter post-hoc
+        # Apply tag filter post-hoc.
+        #
+        # Cache contract Phase-1 (#280): deterministic tiebreak. The final
+        # ordering is ``(score desc, id asc)``. A bare ``reverse=True``
+        # sort is stable over the ``scores`` dict insertion order, which
+        # tracks the FTS/vector leg iteration order — for equal fused
+        # scores that order can depend on the vector index state (the
+        # store's top-k tie behaviour), leaking non-determinism into the
+        # retrieval boundary that feeds ``assemble_context``. The explicit
+        # ``id`` key pins equal-score groups to lexicographic order, so
+        # the boundary output is a pure function of the per-id fused
+        # scores; order between DIFFERENT scores is unchanged. This is
+        # the single ranking surface — downstream stages (assemble.py
+        # block ordering) only run stable sorts over this order.
         results: list[SearchResult] = []
-        for mid, score in sorted(scores.items(), key=lambda kv: kv[1], reverse=True):
+        for mid, score in sorted(scores.items(), key=lambda kv: (-kv[1], kv[0])):
             matched: Memory | None = id_to_memory.get(mid)
             if matched is None:
                 continue
