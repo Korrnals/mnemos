@@ -69,15 +69,19 @@ def _fts_only(mgr: MemoryManager) -> None:
 
 
 def _add(
-    mgr: MemoryManager, content: str, *, status: MemoryStatus = MemoryStatus.PUBLISHED
+    mgr: MemoryManager,
+    content: str,
+    *,
+    status: MemoryStatus = MemoryStatus.PUBLISHED,
+    project: str = PROJECT,
 ) -> object:
     data = MemoryCreate(
         content=content,
-        tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:test"],
+        tags=[f"project:{project}", f"agent:{AGENT}", "mnemos:test"],
         source=MemorySource.MCP,
         status=status,
     )
-    return mgr.add(data, project=PROJECT, agent=AGENT)
+    return mgr.add(data, project=project, agent=AGENT)
 
 
 class TestGraphExpansion:
@@ -205,3 +209,72 @@ class TestGraphExpansion:
         assert [e["to_memory_id"] for e in outgoing] == [b.id]
         assert [e["from_memory_id"] for e in incoming] == [a.id]
         assert manager.sqlite.get_incoming_edges(a.id) == []
+
+    def test_explicit_status_drilldown_gates_graph_leg(self, manager) -> None:
+        """Review F1 regression: an explicit ``status=`` drill-down gates the
+        graph leg exactly like the fused legs — an edge must not widen an
+        explicit status request.
+
+        Pre-fix probe: ``search(status=PUBLISHED)`` surfaced a RAW
+        sibling via_graph; ``search(status=ARCHIVED)`` surfaced a
+        PUBLISHED sibling. The graph block only checked the default
+        ``allowed`` set (which an explicit status skips entirely), so
+        the drill-down's status predicate never reached the neighbours.
+        The fixture rows all lexically match the query (the graph leg
+        anchors from FUSED ids, so an anchor row must be findable by
+        the query itself; the siblings differ from the anchors by
+        STATUS, not by tokens — the gates under test are status gates).
+        """
+        query = "zeppelin fleet record"
+        pub = _add(manager, "published zeppelin fleet record entry", status=MemoryStatus.PUBLISHED)
+        raw = _add(manager, "raw zeppelin fleet record draft superseded", status=MemoryStatus.RAW)
+        archived = _add(
+            manager, "archived zeppelin fleet record ancestor", status=MemoryStatus.ARCHIVED
+        )
+        manager.add_memory_edge(pub.id, raw.id, kind="supersedes")
+        manager.add_memory_edge(archived.id, pub.id, kind="supersedes")
+        _fts_only(manager)  # pin: siblings reachable ONLY through the edges
+
+        # status=PUBLISHED: the RAW sibling must not surface.
+        ids = {r.memory.id for r in manager.search(query, status=MemoryStatus.PUBLISHED, limit=5)}
+        assert pub.id in ids
+        assert raw.id not in ids, "RAW sibling leaked through the graph into a PUBLISHED drill-down"
+
+        # status=ARCHIVED: the PUBLISHED sibling must not surface.
+        ids = {r.memory.id for r in manager.search(query, status=MemoryStatus.ARCHIVED, limit=5)}
+        assert archived.id in ids
+        assert pub.id not in ids, (
+            "PUBLISHED sibling leaked through the graph into an ARCHIVED drill-down"
+        )
+
+    def test_scoped_search_never_leaks_cross_project_edges(self, manager) -> None:
+        """Review F2 regression: the A9 authoritative project guard gates the
+        graph leg — a cross-project neighbour must not surface in a scoped
+        search, untagged and uncounted (only the soft-fallback retry may
+        widen the scope, and it tags).
+
+        Pre-fix probe: ``search(project="pa")`` surfaced a project-"pb"
+        sibling via_graph. The edge stores ids only, so the resolve loop
+        had to re-check the SQLite ``Memory.project`` (mirroring the
+        vector-leg A9 guard).
+        """
+        pa_anchor = _add(manager, "anchor lighthouses beacon record")
+        pb_sibling = _add(manager, "superseded lighthouse sibling from pb", project="pb")
+        manager.add_memory_edge(pa_anchor.id, pb_sibling.id, kind="supersedes")
+        _fts_only(manager)
+
+        # Scoped: the pb sibling is invisible, and the result carries NO
+        # fallback tag (the zero scoped page stays a scoped zero — the
+        # soft-fallback retry DID run for the empty page, but the project
+        # gate must hold on the retry's graph leg too; the pb sibling can
+        # never arrive).
+        scoped = manager.search("anchor lighthouses beacon", project=PROJECT, limit=5)
+        assert pa_anchor.id in {r.memory.id for r in scoped}
+        assert all(r.memory.project == PROJECT for r in scoped), "cross-project edge leaked"
+
+        # Unscoped sanity: the same edge DOES expand in the explicit
+        # global mode — the gate is scope-only, not a kill of the leg.
+        unscoped = manager.search("anchor lighthouses beacon", limit=5)
+        by_id = {r.memory.id: r for r in unscoped}
+        assert pb_sibling.id in by_id
+        assert by_id[pb_sibling.id].via_graph

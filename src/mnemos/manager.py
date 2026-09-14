@@ -1414,8 +1414,13 @@ class MemoryManager:
         fused ids are 1-hop expanded along ``memory_edges`` (BOTH
         directions of ``supersedes``); edge-sourced rows not already
         fused are appended with a decayed rank slot and
-        ``via_graph=True`` provenance, passing the SAME status /
-        quarantine / refined_only gates. No edges → the leg is a no-op.
+        ``via_graph=True`` provenance, passing the SAME gates as the
+        fused rows on every axis: project (the A9 authoritative guard —
+        an edge never widens a scope), status (default set AND the
+        explicit ``status=`` drill-down), quarantine (ADR-0019 §5) and
+        refined_only (§4). Headroom-gated: the expansion runs only when
+        the fused legs left room (a full fused page needs no
+        enrichment); no edges → the leg is a no-op.
 
         Status filtering precedence:
           1. Explicit ``status`` — always wins (caller knows what they want).
@@ -1712,15 +1717,17 @@ class MemoryManager:
         # rule: an expansion row's weight is (1-alpha)/(rrf_k +
         # 2*anchor_rank) where anchor_rank is its FIRST anchor's 1-based
         # position in the fused ranking, so the appended block is a pure
-        # function of the fused ranking + the edge table AND can never
-        # outrank its own anchor (the same (1-alpha) FTS weight the fused
-        # rows carry, at a strictly deeper rank position 2*anchor_rank).
-        # The expansion passes the SAME status / quarantine / refined_only
-        # gates as the fused rows (quarantine is absolute per ADR-0019 §5
-        # — an edge is never a side door) and is capped at ``limit`` extra
-        # rows (so a search can at most double). No edges in the store →
-        # the whole leg is a no-op. Rows already surfaced by the fused
-        # legs (by id) are never re-appended via the graph.
+        # function of the fused ranking + the edge table. The expansion
+        # passes the SAME gates as the fused rows on EVERY axis: project
+        # (the A9 authoritative guard, review F2), status (the default
+        # ``allowed`` set AND the explicit ``status=`` drill-down, review
+        # F1), quarantine (absolute per ADR-0019 §5 — an edge is never a
+        # side door) and refined_only (§4). Headroom-gated: the expansion
+        # runs only when the fused legs left room (``len(results) < limit``
+        # — a full fused page needs no enrichment) and is capped at
+        # ``limit`` extra rows (so a search can at most double). No edges
+        # in the store → the whole leg is a no-op. Rows already surfaced by
+        # the fused legs (by id) are never re-appended via the graph.
         if len(results) < limit:
             fused_ids = [r.memory.id for r in results]
             anchor_rank: dict[str, int] = {}
@@ -1735,9 +1742,21 @@ class MemoryManager:
                 neighbour = id_to_memory.get(neighbour_id) or self.sqlite.get(neighbour_id)
                 if neighbour is None:
                     continue  # edge to a deleted row — skip silently
+                # A9 authoritative project guard, mirrored from the vector
+                # resolve loop: the edge is stored by id only, so a
+                # cross-project neighbour would otherwise leak into a
+                # scoped search (review F2 — the edge must not widen the
+                # A9 scope, only the soft-fallback retry may, and it tags).
+                if project and (neighbour.project or "") != project:
+                    continue
                 if tags and not all(t in neighbour.tags for t in tags):
                     continue
-                # Same status policy as the fused rows: default gate.
+                # Same status policy as the fused rows: the default gate
+                # (``allowed``) AND the explicit ``status=`` drill-down
+                # (review F1 — an edge must not widen an explicit status
+                # request any more than the fused legs do).
+                if status is not None and neighbour.status != status:
+                    continue
                 if allowed is not None and not is_context_admissible(neighbour, statuses=allowed):
                     continue
                 # ADR-0019 §5 — absolute quarantine exclusion on the graph path.

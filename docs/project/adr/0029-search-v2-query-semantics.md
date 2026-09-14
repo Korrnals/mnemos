@@ -126,14 +126,27 @@ already fused are appended with the decay rule:
 where `anchor_rank` is the neighbour's FIRST anchor's 1-based position
 in the fused ranking. The `(1-alpha)` factor is the SAME weight the
 FTS-fused rows carry, at a strictly deeper rank position — so an
-expansion row can never outrank its own anchor (the naive
-`1/(rrf_k+2*rank)` WOULD outrank a fused FTS-only anchor at alpha 0.5:
-1/62 > 0.5/61 — caught and fixed by the golden decay test). The
-expansion is capped at `limit` extra rows (a search at most doubles),
-carries `via_graph=True` provenance, and passes the SAME gates: default
-status policy, ADR-0019 §5 absolute quarantine (an edge is never a
-quarantine side door), §4 refined-only. No edges → the leg is a no-op;
-an edge-lookup failure is non-fatal.
+expansion row can never outrank an anchor that itself carries an
+FTS-fused contribution (the naive `1/(rrf_k+2*rank)` WOULD outrank a
+fused FTS-only anchor at alpha 0.5: 1/62 > 0.5/61 — caught and fixed
+by the golden decay test). **Alpha-scope caveat (review F4):** the
+never-outranks-its-anchor invariant is asymmetric — it holds for
+anchors with an FTS-fused score at any alpha, but a VECTOR-ONLY rank-1
+anchor at a caller-passed `hybrid_alpha < 0.5` can be outranked by its
+own neighbour (e.g. alpha 0.3: anchor 0.3/61 < neighbour 0.7/62). The
+default `alpha = 0.5` (and any value ≥ 0.5) is safe; a below-0.5 alpha
+is an explicit caller trade of FTS weight for vector weight, accepted
+residual. The expansion is headroom-gated (runs only when the fused
+legs left room — `len(results) < limit`, a full fused page needs no
+enrichment) and capped at `limit` extra rows (a search at most
+doubles), carries `via_graph=True` provenance, and passes the SAME
+gates as the fused rows on EVERY axis: the default status policy AND
+the explicit `status=` drill-down (review F1 — an edge never widens an
+explicit status request), the A9 authoritative project guard for
+scoped searches (review F2 — an edge never widens the scope either;
+only the soft-fallback retry may, and it tags), ADR-0019 §5 absolute
+quarantine (an edge is never a quarantine side door), §4 refined-only.
+No edges → the leg is a no-op; an edge-lookup failure is non-fatal.
 
 ## Consequences
 
