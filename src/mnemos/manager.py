@@ -160,6 +160,18 @@ def _lock_is_stale(locked_at_iso: str, threshold_hours: int) -> bool:
 # under-fills the top-N).
 VECTOR_LEG_OVERFETCH_FACTOR: Final[int] = 4
 
+# mnemos #282 — cap for the session-keyed first-assembly timestamp registry
+# (``MemoryManager._retrieval_iso``). FIFO past the cap: the registry exists
+# so a harness pinning an assembled block gets a byte-stable
+# ``retrieved=<iso>`` across one session's assemblies; past 10_000 distinct
+# session ids entries are evicted by FIRST-ASSEMBLY order (FIFO, not LRU —
+# re-hits do not refresh position). A still-active old session evicted by a
+# flood of new ones re-stamps on its next assembly — a mid-session prefix
+# change of the same failure class as a process restart, accepted (the
+# registry is in-memory and single-process anyway). dict insertion order is
+# FIFO for free — no LRU bookkeeping.
+RETRIEVAL_ISO_REGISTRY_CAP: Final[int] = 10_000
+
 
 @dataclass(frozen=True, slots=True)
 class IssuanceScan:
@@ -361,6 +373,16 @@ class MemoryManager:
         # optimization, not storage).
         self._assemble_async: dict[str, tuple[dict[str, Any], str]] = {}
         self._assemble_async_lock: threading.Lock = threading.Lock()
+        # mnemos #282 — session-keyed registry of FIRST-assembly timestamps
+        # for the provenance ``retrieved=<iso>`` segment (see
+        # :meth:`retrieval_iso`): stable within one session so the block
+        # prefix stays byte-identical across the session's assemblies
+        # (KV-cache friendly), distinct across sessions. In-memory and
+        # single-tenant, capped by RETRIEVAL_ISO_REGISTRY_CAP with
+        # oldest-first eviction — mirrors ``_assemble_async`` above; a
+        # restart re-stamps every session on its next assembly.
+        self._retrieval_iso: dict[str, str] = {}
+        self._retrieval_iso_lock: threading.Lock = threading.Lock()
 
     @property
     def embedder(self) -> EmbeddingProvider:
@@ -3524,6 +3546,32 @@ class MemoryManager:
         return self._processor_thread is not None and self._processor_thread.is_alive()
 
     # ── CacheAligner (P1-5) ────────────────────────────────────────────────
+
+    def retrieval_iso(self, session: str) -> str:
+        """Session-scoped first-assembly ISO stamp for ``retrieved=<iso>``.
+
+        mnemos #282: the provenance timestamp must be STABLE within one
+        session's lifetime (byte-stable block prefixes for harness-side
+        KV caching) and DIFFERENT across sessions. The first assembly of
+        a session stamps ``now()`` and caches it; every later assembly of
+        the same session reuses the cached stamp. Past
+        ``RETRIEVAL_ISO_REGISTRY_CAP`` distinct sessions entries are
+        evicted FIFO by first-assembly order — an evicted session
+        (including a still-active one displaced by a flood of new
+        sessions) simply re-stamps on its next assembly, same failure
+        class as a process restart. The registry is in-memory and
+        PER-PROCESS (mirrors ``_assemble_async``): multi-worker
+        deployments stamp independently per worker.
+        """
+        with self._retrieval_iso_lock:
+            iso = self._retrieval_iso.get(session)
+            if iso is None:
+                iso = datetime.now(UTC).isoformat()
+                self._retrieval_iso[session] = iso
+                while len(self._retrieval_iso) > RETRIEVAL_ISO_REGISTRY_CAP:
+                    oldest = next(iter(self._retrieval_iso))
+                    del self._retrieval_iso[oldest]
+            return iso
 
     def align_prefix(self, text: str, *, profile: str | None = None) -> dict[str, Any]:
         """Relocate dynamic content to the end of ``text`` for prefix stability.

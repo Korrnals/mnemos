@@ -285,6 +285,71 @@ class TestProvenance:
         assert result["blocks"]
         assert PROVENANCE_RE.match(result["blocks"][0]["provenance"]) is not None
 
+    # ── mnemos #282 — session-scoped retrieved=<iso> (byte-stable prefix) ──
+
+    def test_retrieved_stamp_session_scoped_byte_stable(self, manager: MemoryManager) -> None:
+        """#282 Finding 1 — same session, two assemblies → byte-identical text.
+
+        The ``retrieved=<iso>`` provenance segment used to be stamped
+        per call, invalidating the KV-cache prefix of every pinned block
+        at its first character on every assembly. It is now stamped on
+        the session's FIRST assembly and reused, so two assemblies of
+        the same session (same seeded content) are byte-identical.
+        """
+        _add(manager, PROSE_CONTENT)
+        _add(manager, CODE_CONTENT)
+        result1 = manager.assemble_context(session=SESSION, project=PROJECT)
+        result2 = manager.assemble_context(session=SESSION, project=PROJECT)
+        assert result1["blocks"]
+        assert result2["blocks"]
+        # The block prefixes (provenance lines) are byte-identical.
+        assert [b["provenance"] for b in result1["blocks"]] == [
+            b["provenance"] for b in result2["blocks"]
+        ]
+        # And therefore the whole assembled text is byte-identical.
+        assert result1["text"] == result2["text"]
+
+    def test_retrieved_stamp_differs_across_sessions(self, manager: MemoryManager) -> None:
+        """#282 — different sessions get different stamps; format intact."""
+        _add(manager, PROSE_CONTENT)
+        r_a = manager.assemble_context(session="sess-alpha", project=PROJECT)
+        r_b = manager.assemble_context(session="sess-bravo", project=PROJECT)
+        assert r_a["blocks"] and r_b["blocks"]
+
+        def _iso(result: dict) -> str:
+            match = PROVENANCE_RE.match(result["blocks"][0]["provenance"])
+            assert match is not None, "provenance format drift"
+            # The stamp still parses as an ISO-8601 timestamp.
+            from datetime import datetime
+
+            datetime.fromisoformat(match.group("iso"))
+            return match.group("iso")
+
+        iso_a, iso_b = _iso(r_a), _iso(r_b)
+        # Distinct sessions never share a first-assembly stamp when their
+        # first assemblies are distinct calls (consecutive now() calls).
+        assert iso_a != iso_b
+        # Same session keeps its stamp (registry hit, not re-stamp).
+        r_a2 = manager.assemble_context(session="sess-alpha", project=PROJECT)
+        assert _iso(r_a2) == iso_a
+
+    def test_retrieval_iso_registry_bound_fifo(self, manager: MemoryManager) -> None:
+        """#282 — the session registry is bounded, oldest-first FIFO prune."""
+        from mnemos.manager import RETRIEVAL_ISO_REGISTRY_CAP
+
+        assert manager.retrieval_iso("sess-first") == manager.retrieval_iso("sess-first")
+        # Fill past the cap: cap-1 more sessions (sess-first still held).
+        for i in range(RETRIEVAL_ISO_REGISTRY_CAP - 1):
+            manager.retrieval_iso(f"sess-flood-{i}")
+        assert len(manager._retrieval_iso) == RETRIEVAL_ISO_REGISTRY_CAP
+        assert "sess-first" in manager._retrieval_iso
+        # One more session evicts the OLDEST (sess-first) — it re-stamps.
+        manager.retrieval_iso("sess-overflow")
+        assert len(manager._retrieval_iso) == RETRIEVAL_ISO_REGISTRY_CAP
+        assert "sess-first" not in manager._retrieval_iso
+        first_iso = manager.retrieval_iso("sess-first")
+        assert manager._retrieval_iso["sess-first"] == first_iso
+
 
 # ── Secret scan (mandatory stage) ─────────────────────────────────────────────
 

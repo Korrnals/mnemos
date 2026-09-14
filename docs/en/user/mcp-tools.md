@@ -1247,6 +1247,9 @@ Every injected block carries a provenance line, exact format:
 ```
 
 `pipeline=` is omitted when the row's `pipeline_state` is NULL (legacy rows).
+`retrieved=` is session-scoped (#282): stamped on the session's first
+assembly and stable across all later assemblies of the same session, so
+the block prefix is byte-stable for harness-side KV caching.
 
 ### Input
 

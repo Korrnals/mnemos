@@ -573,6 +573,9 @@ counts; refuse mode drops the block) → CacheAligner → token budget. Every
 injected block carries a provenance line
 `[mnemos:<id> project=<slug> status=<status> origin=<source> pipeline=<phase> v=<n> retrieved=<iso>]`
 (`pipeline=` is omitted on legacy rows with NULL pipeline_state).
+`retrieved=` is session-scoped (#282): stamped on the session's first
+assembly and stable across all later assemblies of the same session, so
+the block prefix is byte-stable for harness-side KV caching.
 
 **Request body**
 
