@@ -2,8 +2,15 @@
 
 Sits after CORS, before routes.  Logic:
 
-- Bypass list: ``/health``, ``/auth/login``, ``/auth/verify``, ``/docs``,
-  ``/redoc``, ``/openapi.json``.  All other paths require a valid session.
+- Bypass list: ``/health``, ``/auth/login``, ``/auth/verify`` are always
+  bypassed. ``/docs``, ``/redoc``, ``/openapi.json`` and the metrics
+  endpoints (``/metrics``, ``/api/v1/metrics``) are bypassed ONLY on
+  loopback binds — on non-loopback binds they require a valid session
+  (issue #249: the metrics exposition exports
+  ``mnemos_memories_by_project{project=...}`` and
+  ``mnemos_memories_by_agent{agent=...}`` gauges, so unauthenticated
+  exposure is a reconnaissance-grade surface, CWE-200). All other paths
+  require a valid session.
 - Trust-zone resolution: if ``api.auth_enabled`` is ``False`` AND
   ``api.host`` is a loopback address (``127.0.0.1`` / ``::1`` /
   ``localhost``), the middleware is a no-op (local-desktop scenario, ADR §
@@ -43,10 +50,20 @@ from mnemos.api.client_ip import resolve_client_ip
 
 logger = logging.getLogger(__name__)
 
-# Paths that always bypass auth (health + metrics are public by design).
-# Docs endpoints (/docs, /redoc, /openapi.json) are only bypassed on loopback
-# binds — see ``_get_bypass_paths``. On non-loopback binds they require auth
-# to avoid leaking API schema to unauthenticated callers.
+# Paths that always bypass auth. Health/login/verify are public by design;
+# federation pull is public to the *middleware* because it authenticates
+# itself per-peer (see below).
+#
+# Docs endpoints (/docs, /redoc, /openapi.json) AND metrics endpoints
+# (/metrics, /api/v1/metrics) are only bypassed on loopback binds — see
+# ``_get_bypass_paths``. On non-loopback binds they require auth:
+# docs leak the API schema, and metrics (issue #249) leak operational
+# intelligence — the exposition exports per-project and per-agent gauges
+# (``mnemos_memories_by_project``, ``mnemos_memories_by_agent``), which is
+# reconnaissance-grade information for an unauthenticated remote caller
+# (CWE-200). Loopback binds keep both open: local scrapers (e.g. a
+# Prometheus agent scraping localhost) and local dev tooling rely on
+# unauthenticated access there.
 #
 # ``/api/v1/federation/pull`` is bypassed unconditionally because federation
 # peers authenticate with a per-peer bearer token (``mnk_fed_<peer_id>_*``,
@@ -74,13 +91,16 @@ def _get_bypass_paths(host: str) -> frozenset[str]:
     """Return the set of paths that bypass auth for the given bind host.
 
     On loopback binds, docs and metrics endpoints are exposed without auth
-    for dev convenience. On non-loopback binds, docs endpoints require auth
-    (they leak API schema); metrics remain public (they carry no secrets and
-    are typically scraped by a local agent).
+    for dev convenience and for local scrapers (a Prometheus agent scraping
+    localhost must not need operator credentials). On non-loopback binds
+    both require auth: docs leak the API schema, and metrics (issue #249)
+    export ``mnemos_memories_by_project`` / ``mnemos_memories_by_agent``
+    gauges — operational intelligence an unauthenticated remote caller
+    must not see (CWE-200).
     """
     paths: set[str] = set(_ALWAYS_BYPASS)
-    paths |= _METRICS_BYPASS
     if _is_loopback_host(host):
+        paths |= _METRICS_BYPASS
         paths |= _DOCS_BYPASS
     return frozenset(paths)
 

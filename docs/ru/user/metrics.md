@@ -195,6 +195,26 @@ scrape_configs:
     metrics_path: /api/v1/metrics
 ```
 
+**Авторизация (#249):** эндпоинты метрик обходят авторизацию **только на
+loopback-биндах** (локальному Prometheus-агенту, скрейпящему `localhost`,
+учётные данные не нужны). На не-loopback биндах (`api.host` — не loopback
+адрес) оба эндпоинта `/api/v1/metrics` и `/metrics` требуют
+аутентифицированную сессию: экспозиция отдаёт гейджи
+`mnemos_memories_by_project` / `mnemos_memories_by_agent`, поэтому
+неаутентифицированный удалённый доступ — разведывательная поверхность
+(CWE-200). Удалённый скрейпер аутентифицируется bearer-заголовком:
+
+```yaml
+scrape_configs:
+  - job_name: mnemos
+    static_configs:
+      - targets: ["mnemos.example.internal:8787"]
+    metrics_path: /api/v1/metrics
+    authorization:
+      type: Bearer
+      credentials: <mnk_-токен, созданный с --no-totp>
+```
+
 ### Legacy `GET /metrics`
 
 Старый эндпоинт `GET /metrics` возвращает `stats()` JSON (не Prometheus
