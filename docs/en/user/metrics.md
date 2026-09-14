@@ -194,6 +194,26 @@ scrape_configs:
     metrics_path: /api/v1/metrics
 ```
 
+**Authentication (#249):** the metrics endpoints bypass auth **only on
+loopback binds** (a local Prometheus agent scraping `localhost` needs no
+credentials). On non-loopback binds (`api.host` other than a loopback
+address) both `/api/v1/metrics` and `/metrics` require an authenticated
+session — the exposition exports `mnemos_memories_by_project` /
+`mnemos_memories_by_agent` gauges, so unauthenticated remote access is a
+reconnaissance-grade surface (CWE-200). A remote scraper authenticates
+with a bearer header:
+
+```yaml
+scrape_configs:
+  - job_name: mnemos
+    static_configs:
+      - targets: ["mnemos.example.internal:8787"]
+    metrics_path: /api/v1/metrics
+    authorization:
+      type: Bearer
+      credentials: <mnk_ token created with --no-totp>
+```
+
 ### Legacy `GET /metrics`
 
 The older `GET /metrics` endpoint returns `stats()` JSON (not Prometheus

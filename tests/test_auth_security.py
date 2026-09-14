@@ -1,17 +1,20 @@
 """Security tests for T-AUTH — each test covers a STRIDE row from ADR-0014.
 
 Named tests per the ADR test requirements:
-  - test_non_loopback_bind_refuses_without_auth_and_totp       (startup guard)
-  - test_state_changing_endpoint_rejects_cookie_only_request   (T3 CSRF)
-  - test_totp_brute_force_locks_token                          (T4)
-  - test_token_replay_after_revoke_returns_401                 (T1)
+  - test_non_loopback_bind_refuses_without_auth_and_totp        (startup guard)
+  - test_state_changing_endpoint_rejects_cookie_only_request    (T3 CSRF)
+  - test_totp_brute_force_locks_token                           (T4)
+  - test_token_replay_after_revoke_returns_401                  (T1)
   - test_totp_secret_unreadable_without_master_key             (T11 / T1)
   - test_bearer_token_not_accepted_in_query_string             (T2)
-  - test_loopback_bypass_auth_disabled                         (trust zone)
-  - test_non_loopback_with_auth_disabled_blocked               (auth_enabled=False + non-loopback)
-  - test_unauthenticated_request_returns_401                   (auth_enabled=True, no session)
-  - test_totp_invalid_code_returns_401                         (T4)
-  - test_challenge_invalidated_after_max_attempts              (T6)
+  - test_loopback_bypass_auth_disabled                          (trust zone)
+  - test_non_loopback_with_auth_disabled_blocked                (auth_enabled=False + non-loopback)
+  - test_unauthenticated_request_returns_401                    (auth_enabled=True, no session)
+  - test_totp_invalid_code_returns_401                          (T4)
+  - test_challenge_invalidated_after_max_attempts               (T6)
+  - test_non_loopback_metrics_unauthenticated_returns_401        (#249, CWE-200)
+  - test_loopback_metrics_scrape_without_token_ok               (#249, local scrapers)
+  - test_non_loopback_metrics_authenticated_session_ok          (#249, scrape with session)
 """
 
 from __future__ import annotations
@@ -236,6 +239,81 @@ class TestAuthRequired:
             r = tc.get(f"/memories?token={session_plaintext}")
             assert r.status_code == 401
         _cleanup(mgr)
+
+
+# ---------------------------------------------------------------------------
+# Issue #249: metrics auth boundary (CWE-200)
+# ---------------------------------------------------------------------------
+
+
+class TestMetricsAuthBoundary:
+    """Issue #249: on non-loopback binds the metrics endpoints
+    (``/metrics``, ``/api/v1/metrics``) must require auth — the Prometheus
+    exposition exports ``mnemos_memories_by_project`` /
+    ``mnemos_memories_by_agent`` gauges, so unauthenticated remote access
+    is a reconnaissance-grade surface (CWE-200). On loopback binds both
+    stay open so local scrapers (Prometheus agents scraping localhost)
+    keep working without operator credentials."""
+
+    def test_non_loopback_metrics_unauthenticated_returns_401(self, tmp_settings):
+        """Non-loopback bind (0.0.0.0) + auth_enabled=True: a request to
+        either metrics endpoint WITHOUT a token must be rejected with 401."""
+        # Build a minimal app that skips the startup guard (no lifespan),
+        # then manually set api_config + auth_store — the same pattern as
+        # test_non_loopback_with_auth_disabled_blocked above.
+        test_app = FastAPI(title="MetricsAuthTest", version="0.0.1")
+        for route in app.routes:
+            test_app.routes.append(route)
+        test_app.add_middleware(AuthMiddleware)
+        test_app.state.api_config = ApiConfig(host="0.0.0.0", auth_enabled=True)
+        store = AuthStore(tmp_settings.db_path)
+        test_app.state.auth_store = store
+        try:
+            with TestClient(test_app) as tc:
+                r = tc.get("/api/v1/metrics")
+                assert r.status_code == 401, (
+                    "#249 regression: /api/v1/metrics must require auth on non-loopback binds"
+                )
+                r2 = tc.get("/metrics")
+                assert r2.status_code == 401, (
+                    "#249 regression: /metrics must require auth on non-loopback binds"
+                )
+        finally:
+            store.close()
+
+    def test_loopback_metrics_scrape_without_token_ok(self, tmp_settings):
+        """Loopback bind + auth_enabled=True: both metrics endpoints stay
+        open without a token (local scrapers unaffected)."""
+        test_app, mgr = _make_app(tmp_settings, auth_enabled=True)
+        with TestClient(test_app) as tc:
+            r = tc.get("/api/v1/metrics")
+            assert r.status_code == 200
+            r2 = tc.get("/metrics")
+            assert r2.status_code == 200
+        _cleanup(mgr)
+
+    def test_non_loopback_metrics_authenticated_session_ok(self, tmp_settings):
+        """Non-loopback bind + auth_enabled=True: a caller WITH a valid
+        session can still scrape both metrics endpoints (200)."""
+        test_app = FastAPI(title="MetricsAuthOkTest", version="0.0.1")
+        for route in app.routes:
+            test_app.routes.append(route)
+        test_app.add_middleware(AuthMiddleware)
+        test_app.state.api_config = ApiConfig(host="0.0.0.0", auth_enabled=True)
+        store = AuthStore(tmp_settings.db_path)
+        test_app.state.auth_store = store
+        try:
+            with TestClient(test_app) as tc:
+                token_id, _plaintext = store.create_token()
+                session_plaintext, _ = store.create_session(token_id=token_id, ttl_sec=3600)
+                for path in ("/api/v1/metrics", "/metrics"):
+                    r = tc.get(
+                        path,
+                        headers={"Authorization": f"Bearer {session_plaintext}"},
+                    )
+                    assert r.status_code == 200, f"#249: authenticated scrape of {path} must work"
+        finally:
+            store.close()
 
 
 # ---------------------------------------------------------------------------
