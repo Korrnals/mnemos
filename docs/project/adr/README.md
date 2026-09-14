@@ -53,8 +53,9 @@ documented elsewhere, or anything that fits in a code comment.
 | [0022](0022-licensing-foundation.md) | Licensing Foundation (Apache-2.0 core, open-core monetization, FSL triggers) | Accepted | 2026-09-03 |
 | [0023](0023-mcp-core-dependency.md) | MCP SDK moves into core dependencies (`mcp>=2.0,<3.0`) | Accepted | 2026-09-06 |
 | [0024](0024-unified-harness-connection.md) | Unified harness connection via `mnemos connect` over a harness-profile registry | Accepted | 2026-09-06 |
-| [0025](0025-memory-meta-level-lanes.md) | Memory meta-level: retrieval lanes and area manifests (experiment precedes implementation; brain metaphor = narrative only) | Accepted (with conditions) | 2026-09-08 |
+| [0025](0025-memory-meta-level-lanes.md) | Memory meta-level: retrieval lanes and area manifests (experiment precedes implementation; brain metaphor = narrative only) | Lanes leg FALSIFIED (ratified 2026-09-14); acceptance superseded for the lanes leg | 2026-09-08 |
 | [0026](0026-memory-value-observability.md) | Memory-value observability: passive metrics sidecar + S5 replay stand + F8 metric family | Accepted (with conditions) | 2026-09-09 |
+| [0027](0027-multi-context-memory.md) | Multi-context memory: compose existing context levels now; task primitive behind a pre-registered experiment gate | Accepted | 2026-09-14 |
 
 ## Themes
 
