@@ -78,6 +78,11 @@ _V2_TEXT = (
     "rolls to the next unfrozen slot instead of the next Monday."
 )
 _V1_ONLY_QUERY = "weekly Mondays cadence"
+# The v1-only lexical marker for the SC-S2 gone-probe: "Mondays" occurs in
+# _V1_TEXT and nowhere in _V2_TEXT ("Monday 06:00" is not the plural token),
+# while "cadence" is shared by BOTH projections (search v2, issue #313 —
+# see scenario_supersede_refind).
+_V1_UNIQUE_TOKEN = "Mondays"
 _V2_ONLY_QUERY = "weekend freeze window"
 _CCR_TEXT = (
     "Lanternkeep release checklist, long form. Verify the wheel version "
@@ -219,7 +224,19 @@ def scenario_supersede_refind(mgr: MemoryManager) -> dict[str, Any]:
     served = healed.effective_content()
     with fts_only_leg():
         v2_found_fts = memory.id in _result_ids(mgr, _V2_ONLY_QUERY, entry.project)
-        v1_gone_fts = memory.id not in _result_ids(mgr, _V1_ONLY_QUERY, entry.project)
+        # Search v2 (issue #313, ADR-0029): the gone-check must prove the
+        # OLD PROJECTION is not served, so it probes a token that exists
+        # ONLY in the v1 projection ("Mondays"; "cadence" is shared by
+        # both projections). The pre-v2 whole-phrase probe ("weekly
+        # Mondays cadence") only worked because the M15.2 phrase
+        # semantics hid the shared token; under v2 semantics the AND leg
+        # is empty and the ranked OR fallback legitimately re-surfaces
+        # the row — which serves the NEW projection (the contract under
+        # test), not the old one. A single-token probe is also the exact
+        # shape that never triggers the OR fallback (single-term queries
+        # do not retry), so the flag stays a strict stale-projection
+        # tripwire under both query generations.
+        v1_gone_fts = memory.id not in _result_ids(mgr, _V1_UNIQUE_TOKEN, entry.project)
     serves_new = _V2_TEXT[:40] in served and _V1_TEXT[:40] not in served
     return {
         "scenario": "supersede-refind",
