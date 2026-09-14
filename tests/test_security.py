@@ -185,18 +185,24 @@ class TestFts5Escaping:
         assert manager.sqlite.count() >= 0
 
     def test_fts_build_escapes_special_chars(self) -> None:
-        """Unit test of the static escape helper."""
+        """Unit test of the static escape helper (search v2, issue #313).
+
+        The v2 builder emits per-token quoted prefix terms. The invariant
+        the M15.2 baseline established is preserved: no FTS5 special
+        char from user input survives into the emitted expression
+        outside OUR OWN quoting/star scaffolding.
+        """
         from mnemos.storage.sqlite_store import SQLiteStore
 
-        # All FTS5 special chars must be stripped.
         out = SQLiteStore._build_fts_query('"a*b(c):d"')
-        # Output is wrapped in double quotes (literal phrase). The inner
-        # special chars are replaced with whitespace and collapsed.
-        assert out.startswith('"') and out.endswith('"')
-        # No FTS5 special chars remain in the inner phrase.
-        inner = out[1:-1]
-        for ch in ('"', "'", "*", "(", ")", ":"):
-            assert ch not in inner
+        # v2 shape: one sanitised token, quoted, with the builder-owned
+        # prefix star. The user's `*` is gone; the trailing `*` is ours.
+        assert out == '"a b c d"*'
+        # Every emitted AND term is a quoted token — unquoted user text
+        # can never reach the MATCH expression. A user-typed `AND` here
+        # becomes a QUOTED literal token (`"AND"`), losing operator power.
+        multi = SQLiteStore._build_fts_query('x" AND (col:"y')
+        assert multi == '"x"* AND "AND"* AND "col y"*'
 
     def test_fts_build_empty_input(self) -> None:
         """Empty / whitespace input must not raise and must produce safe MATCH."""
@@ -208,6 +214,110 @@ class TestFts5Escaping:
         assert SQLiteStore._build_fts_query("") == f'"{sentinel}"'
         assert SQLiteStore._build_fts_query("   ") == f'"{sentinel}"'
         assert SQLiteStore._build_fts_query("***") == f'"{sentinel}"'  # all special
+
+
+class TestFts5EscapingV2:
+    """Search v2 (issue #313) — injection safety of the per-token prefix builder.
+
+    The v2 builder changes the EMITTED shape (per-token `"tok"*` AND
+    join instead of one whole-input phrase) but must preserve the M15.2
+    hardening invariant: every MATCH expression built from user input
+    must be valid FTS5 AND contain no un-escaped user text — no NEAR, no
+    column filters, no operator injection, no unbalanced quoting.
+    """
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            '" OR col:"content',
+            '"; DROP TABLE memories; --',
+            "anything* NEAR whatever",
+            "(hack)",
+            "tag:admin",
+            '***"""((()))***',
+            'a" OR "b',
+            "col : (NEAR) *",
+            '""""',
+            '"*',
+            "NEAR(",
+            "content:x AND title:y",
+        ],
+    )
+    def test_builder_output_always_executes(self, hostile: str) -> None:
+        """Built MATCH expression must be valid FTS5 for ANY user input."""
+        import sqlite3
+
+        from mnemos.storage.sqlite_store import fts_query_v2
+
+        con = sqlite3.connect(":memory:")
+        con.execute('CREATE VIRTUAL TABLE t USING fts5(c, tokenize="unicode61")')
+        con.execute("INSERT INTO t VALUES ('hello world')")
+        expr = fts_query_v2(hostile)
+        # Must not raise: a syntax error here would 500 every hostile query.
+        con.execute("SELECT * FROM t WHERE t MATCH ?", (expr,)).fetchall()
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            '" OR col:"content',
+            '"; DROP TABLE memories; --',
+            "anything* NEAR whatever",
+            "(hack)",
+            "tag:admin",
+            "content:x AND title:y",
+            "NEAR( a b )",
+        ],
+    )
+    def test_builder_output_has_no_operator_syntax(self, hostile: str) -> None:
+        """No un-escaped user token may carry FTS5 operator power.
+
+        The builder's own scaffolding is exactly: `"` quoting, the
+        trailing `*` prefix operator it appends, ` AND `/` OR ` joins,
+        and parens around hyphen alternatives. Every USER-surviving
+        substring must sit inside the builder's quotes — asserted here
+        by rebuilding each sanitised token's quoted form and requiring
+        it to appear in the expression.
+        """
+        from mnemos.storage.sqlite_store import _fts_tokenize, fts_query_v2
+
+        expr = fts_query_v2(hostile)
+        for tok in _fts_tokenize(hostile):
+            assert f'"{tok}"' in expr, (tok, expr)
+        # NEAR is only ever a quoted literal token, never an operator:
+        # an operator NEAR would have to appear outside quotes.
+        if "NEAR" in expr:
+            assert '"NEAR"' in expr and " NEAR(" not in expr
+
+    def test_star_is_builder_owned_only(self) -> None:
+        """Every `*` in the expression is the builder's prefix operator.
+
+        The user's own `*` is stripped during sanitisation; the only
+        stars left are the ones the builder appends at token ends (or
+        inside its hyphen OR-alternatives). This is what keeps user
+        input from minting prefix/NEAR operators.
+        """
+        from mnemos.storage.sqlite_store import fts_query_terms
+
+        for hostile in ["anything* NEAR whatever", '"* OR "*', "a*b*c"]:
+            expr_terms = fts_query_terms(hostile)
+            for term in expr_terms:
+                # strip the builder scaffolding: quotes, trailing *, parens, OR
+                core = term.replace("(", "").replace(")", "").replace(" AND ", " ")
+                for part in core.split(" OR "):
+                    assert part.startswith('"') and part.endswith('"*'), part
+
+    def test_fts_search_survives_and_stays_safe(self, manager, sample_memory) -> None:
+        """End-to-end: hostile queries execute, return lists, match nothing."""
+        for hostile in (
+            '" OR col:"content',
+            "anything* NEAR whatever",
+            "content:x AND title:y",
+        ):
+            results = manager.sqlite.fts_search(hostile, limit=5)
+            assert isinstance(results, list)
+            # Operator injection would have matched the stored sample row
+            # via a column pivot; sanitised tokens must not.
+            assert all(r[0].id != sample_memory.id for r in results)
 
 
 class TestSqlInjectionSafe:

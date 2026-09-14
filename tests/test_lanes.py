@@ -82,8 +82,8 @@ SESSION = "sess-e1"
 # must reproduce these hashes; ANY unregistered observable output
 # change on the default path fails here.
 
-NO_FILE_FIXTURE_SHA256 = "d46084ef72cdd8557be73a95c2e2a35b770717f0d6090d6ad36bc5cea572b28e"
-WITH_FILE_FIXTURE_SHA256 = "d4efeba81f46c95f55d12e04744be00ac6749dfb2ca9e01b399bdfb46299275f"
+NO_FILE_FIXTURE_SHA256 = "9e08a4496199fc7a6444e1e6927b5ed22cdf2eab5c72a94f9ceec89e0660caf1"
+WITH_FILE_FIXTURE_SHA256 = "3ed0db35035dc6e3a6d9fa8157da18fed3d31ce7a10cb460180723ba5294ac30"
 
 FROZEN_ISO = "2026-09-13T12:00:00+00:00"
 FROZEN = datetime.fromisoformat(FROZEN_ISO)
@@ -392,11 +392,16 @@ class TestFlagOffEquivalence:
         byte-identical (UUID-normalized, frozen clock, seeded ids) to the
         registered fixture — originally captured on pristine b8968df
         (pre-lanes), re-captured with the hybrid_alpha 0.5 re-tune
-        (#300, a registered composition change per ADR-0020), and
-        re-captured again for the Phase-1 deterministic id tiebreak
-        (#280, TL decision 2026-09-14: equal-score groups now order by
-        id, so the fixture needs the fixed seeded-id draw of
-        ``tests/_seeded_ids.py`` instead of per-run uuid4 luck)."""
+        (#300, a registered composition change per ADR-0020), re-captured
+        again for the Phase-1 deterministic id tiebreak (#280, TL
+        decision 2026-09-14: equal-score groups now order by id, so the
+        fixture needs the fixed seeded-id draw of ``tests/_seeded_ids.py``
+        instead of per-run uuid4 luck), and re-captured once more for
+        search v2 (issue #313, ADR-0029: the FTS leg now emits per-token
+        prefix terms with the ranked OR fallback — the query-bearing
+        assembly's recall output changed, a registered issuance-path
+        change per ADR-0020; the query-less no-file output is unchanged
+        in shape and re-pinned for continuity)."""
         _freeze_assemble_clock(monkeypatch, manager)
         with seeded_memory_ids("lanes-flag-off"):
             _corpus(manager)

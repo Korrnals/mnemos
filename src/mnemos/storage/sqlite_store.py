@@ -100,6 +100,141 @@ _FIELD_UPDATERS: dict[str, str] = {
 # https://www.sqlite.org/fts5.html#fts5_strings — see `_build_fts_query`.
 _FTS5_SPECIAL_CHARS = re.compile(r'["\'\*\(\):]')
 
+# ── Search v2 FTS query builder (issue #313) ─────────────────────────────────
+#
+# The M15.2 baseline wrapped the WHOLE user input in one double-quoted
+# phrase. Live probes against the production DB showed two defects:
+#   1. multi-token queries became adjacency phrases ("GWS конвейер" → 0
+#      hits although both words exist in one document far apart);
+#   2. prefix matching was disabled, so inflected RU/EN forms were
+#      invisible (конвейер → 49 vs конвейер* → 77).
+# The v2 builder keeps the SAME injection-safety invariant (M15.2: no
+# un-escaped user text reaches MATCH) while fixing both: every token is
+# individually quoted with a trailing prefix star — a one-token quoted
+# phrase with a prefix operator is valid FTS5 and injection-safe (the
+# quotes guarantee no operator parsing INSIDE the token, the star is OUR
+# suffix, never user input).
+
+# Placeholder emitted when sanitisation empties the input. FTS5's `""` is
+# a syntax error, so a nonsense unique phrase is the zero-rows-without-
+# raising representation (unchanged from M15.2).
+_FTS_NO_MATCH_PLACEHOLDER: Final[str] = "__mnemos_fts5_no_match_placeholder__"
+
+# Term cap for the AND join. Long user queries are truncated to the
+# first N terms — a bounded MATCH expression keeps the query plan cheap
+# and blocks runaway conjunctive dead-ends (every added AND term can only
+# shrink the result set).
+_FTS_TERM_CAP: Final[int] = 8
+
+
+def _fts_quote_prefix(token: str) -> str:
+    """Emit one sanitised token as a quoted FTS5 prefix term `"tok"*`.
+
+    The FTS5 query-syntax chars (`" ' * ( ) :`) are stripped per token;
+    an emptied token sanitises to ``None`` upstream. The trailing ``*``
+    is appended BY THE BUILDER (never user input), so the term can never
+    pivot into operator syntax.
+    """
+    return '"' + token + '"*'
+
+
+def _fts_tokenize(user_query: str) -> list[str]:
+    """Whitespace-tokenise ``user_query`` and sanitise each token.
+
+    Returns the de-duplicated (first occurrence order) list of non-empty
+    sanitised tokens. FTS5 special chars are stripped per token (the
+    ``_FTS5_SPECIAL_CHARS`` class — single source of truth with the M15.2
+    baseline); a token that sanitises to empty is dropped.
+    """
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for raw in (user_query or "").split():
+        tok = _FTS5_SPECIAL_CHARS.sub(" ", raw)
+        tok = re.sub(r"\s+", " ", tok).strip()
+        if tok and tok not in seen:
+            seen.add(tok)
+            tokens.append(tok)
+    return tokens
+
+
+def _fts_expand_hyphen(token: str) -> str:
+    """One AND/OR term for a (possibly hyphenated) SANITISED RAW token.
+
+    ``unicode61`` (the memories_fts tokenizer) splits on hyphens, so a
+    document containing ``release-trigger`` is indexed as the two tokens
+    ``release`` and ``trigger`` — a bare quoted ``"release-trigger"*``
+    can NEVER match it, while a plain ``release trigger`` query matches
+    both spellings. For tokens containing a hyphen the builder therefore
+    emits an OR-alternative:
+
+        ("release-trigger"* OR "release"*)
+
+    — the full spelling first (exact identifier hit when the whole
+    string occurs contiguously), the head segment as the permissive
+    alternative (covers the split-index case and the de-hyphenated
+    prose spelling). Non-hyphenated tokens pass through as a plain
+    quoted prefix term. ``token`` must be SANITISED raw text (no quotes
+    of its own — both variants are quoted HERE, exactly once).
+    """
+    if "-" not in token:
+        return _fts_quote_prefix(token)
+    head = token.split("-", 1)[0]
+    if not head:  # leading hyphen — nothing sane to OR; plain prefix term
+        return _fts_quote_prefix(token)
+    return f"({_fts_quote_prefix(token)} OR {_fts_quote_prefix(head)})"
+
+
+def fts_query_terms(user_query: str) -> list[str]:
+    """Sanitised AND-term list for ``user_query`` (the v2 builder's terms).
+
+    Each returned term is a quoted prefix term (``"tok"*``) or a
+    hyphen-expanded OR-alternative (``("tok-a"* OR "tok"*)``). Truncated
+    to ``_FTS_TERM_CAP``. The empty list means "no match" (sanitisation
+    emptied the input).
+    """
+    return [_fts_expand_hyphen(tok) for tok in _fts_tokenize(user_query)[:_FTS_TERM_CAP]]
+
+
+def fts_query_v2(user_query: str) -> str:
+    """Build the safe FTS5 MATCH expression — per-token prefix AND join.
+
+    Search v2 semantics (issue #313), preserving the M15.2 hardening
+    (every token quoted — no NEAR, no column filters, no operator
+    injection possible):
+
+      * multi-token queries AND their per-token prefix terms — words no
+        longer need adjacency or order (defect 1);
+      * the trailing ``*`` per token re-enables prefix matching, which
+        is the zero-migration morphology fix for inflected RU/EN forms
+        (defect 2 — конвейер now matches конвейер/конвейера/конвейеры);
+      * hyphenated identifiers get an OR-alternative per term (the
+        unicode61 tokenizer splits on hyphens — see
+        ``_fts_expand_hyphen``);
+      * the term count is capped (``_FTS_TERM_CAP``) — long queries
+        truncate instead of building a runaway conjunctive expression.
+
+    Empty sanitisation returns the no-match placeholder phrase (the
+    M15.2 ``""``-is-a-syntax-error workaround, unchanged).
+    """
+    terms = fts_query_terms(user_query)
+    if not terms:
+        return f'"{_FTS_NO_MATCH_PLACEHOLDER}"'
+    return " AND ".join(terms)
+
+
+def fts_join_or(terms: list[str]) -> str:
+    """OR join of the SAME v2 prefix terms — the zero-AND fallback leg.
+
+    Built from the builder's OWN sanitised term list (never raw user
+    input), so the expression inherits the injection safety of
+    ``fts_query_v2``. bm25 still ranks the wider recall set, so the
+    fallback is ranked, not a flood.
+    """
+    if not terms:
+        return f'"{_FTS_NO_MATCH_PLACEHOLDER}"'
+    return " OR ".join(terms)
+
+
 # ADR-0018 Phase 1 — the memory_edges table supports exactly one edge
 # kind. Expanding this set requires updating the SQL CHECK constraint on
 # memory_edges (schema migration), this whitelist, and the manager
@@ -1912,27 +2047,27 @@ class SQLiteStore:
     ) -> list[tuple[Memory, float]]:
         """FTS5 full-text search with optional project/agent/status filters.
 
-        M15.2 hardening: the user-supplied `query` is escaped via
-        `_build_fts_query` (FTS5 special chars stripped, rest wrapped in
-        double quotes — disables FTS5 prefix/NEAR/column syntax). The
-        optional filter columns are bound parameters, never interpolated.
-        The SQL body is built by string-concatenating static fragments +
-        `?` placeholders, so the resulting statement contains no
-        user-controlled identifiers (B608-safe).
+        M15.2 hardening (search v2, issue #313): the user-supplied `query`
+        is sanitised by `fts_query_v2` — every token is stripped of FTS5
+        query-syntax chars and emitted as a QUOTED PREFIX term (`"tok"*`),
+        so no un-escaped user text reaches MATCH (no NEAR, no column
+        filters, no operator injection). Multi-token queries join with
+        AND; when the AND query yields zero rows the call retries ONCE
+        with the same prefix terms joined by OR (bm25 ranks the wider
+        recall set) and logs the fallback. The optional filter columns
+        are bound parameters, never interpolated. The SQL body is built
+        by string-concatenating static fragments + `?` placeholders, so
+        the resulting statement contains no user-controlled identifiers
+        (B608-safe).
         """
         conn = self._get_conn()
-        fts_query = self._build_fts_query(query)
         where_parts: list[str] = ["memories_fts MATCH ?"]
-        params: list[Any] = [fts_query]
         if project:
             where_parts.append("m.project = ?")
-            params.append(project)
         if agent:
             where_parts.append("m.agent = ?")
-            params.append(agent)
         if status:
             where_parts.append("m.status = ?")
-            params.append(status.value)
         where_clause = " AND ".join(where_parts)
         # B608: where_clause is composed of static fragments + `?` placeholders.
         # No user input is interpolated. rank column is from FTS5 itself.
@@ -1944,16 +2079,39 @@ class SQLiteStore:
             "ORDER BY f.rank "
             "LIMIT ?"
         )
-        params.append(limit)
-        try:
-            rows = conn.execute(sql, params).fetchall()
-        except sqlite3.OperationalError as exc:
-            if "missing row" in str(exc) or "content table" in str(exc):
-                logger.warning("FTS5 index corrupted, auto-rebuilding: %s", exc)
-                self.rebuild_fts_index()
-                rows = conn.execute(sql, params).fetchall()
-            else:
+
+        def _run(match_expr: str) -> list[Any]:
+            params: list[Any] = [match_expr]
+            if project:
+                params.append(project)
+            if agent:
+                params.append(agent)
+            if status:
+                params.append(status.value)
+            params.append(limit)
+            try:
+                return conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError as exc:
+                if "missing row" in str(exc) or "content table" in str(exc):
+                    logger.warning("FTS5 index corrupted, auto-rebuilding: %s", exc)
+                    self.rebuild_fts_index()
+                    return conn.execute(sql, params).fetchall()
                 raise
+
+        # Search v2 (issue #313): AND over per-token prefix terms first; on
+        # zero rows retry ONCE with the OR join of the same terms (bm25
+        # still ranks the wider recall set). Zero after both -> the
+        # caller's remaining legs decide (vector leg / project
+        # soft-fallback stay available). Single-token queries never
+        # OR-retry: OR degenerates to the same single-term query.
+        terms = fts_query_terms(query)
+        rows = _run(fts_query_v2(query))
+        if not rows and len(terms) > 1:
+            logger.info(
+                "fts_search: AND query matched 0 rows, retrying with OR join (%d terms)",
+                len(terms),
+            )
+            rows = _run(fts_join_or(terms))
         results: list[tuple[Memory, float]] = []
         for row in rows:
             memory = self._row_to_memory(row)
@@ -1965,25 +2123,21 @@ class SQLiteStore:
     def _build_fts_query(user_query: str) -> str:
         """Convert user input into a safe FTS5 MATCH expression.
 
-        Strategy (per https://www.sqlite.org/fts5.html#fts5_strings):
-          1. Strip FTS5 query-syntax special chars: `* " ' ( ) :`
-             (the apostrophe is stripped defensively; we then wrap in
-             double quotes which themselves become literal).
-          2. Collapse runs of whitespace.
-          3. Wrap the result in double quotes — FTS5 treats the contents
-             of a double-quoted string as a literal phrase with no
-             operator parsing (no prefix `*`, no NEAR, no column filters).
+        Search v2 (issue #313): thin compatibility wrapper over
+        :func:`fts_query_v2` (per-token quoted PREFIX terms joined by
+        AND). Kept as the single historical chokepoint so the M15.2
+        security tests keep a stable symbol to pin; the strategy notes
+        below describe the M15.2 baseline the wrapper superseded.
 
-        If sanitization empties the input, we return a literal phrase
-        containing a deliberately-unique token. FTS5's `""` is a syntax
-        error, so we cannot return an empty phrase; a nonsense phrase
-        yields zero rows without raising.
+        M15.2 baseline (superseded semantics): strip the FTS5
+        query-syntax special chars ``* " ' ( ) :`` and wrap the WHOLE
+        input in one double-quoted phrase. That disabled operator
+        injection (kept in v2: every term is individually quoted) but
+        made multi-token queries adjacency phrases and killed prefix /
+        morphology matching — the two defects search v2 fixes (issue
+        #313: multi-token AND and inflected-form recall).
         """
-        cleaned = _FTS5_SPECIAL_CHARS.sub(" ", user_query or "")
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        if not cleaned:
-            return '"__mnemos_fts5_no_match_placeholder__"'
-        return '"' + cleaned + '"'
+        return fts_query_v2(user_query)
 
     # ── Aggregates ────────────────────────────────────────────────────────
 
@@ -2804,6 +2958,29 @@ class SQLiteStore:
             "FROM memory_edges WHERE from_memory_id = ? AND kind = ? "
             "ORDER BY created_at ASC",
             (from_memory_id, kind),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_incoming_edges(
+        self,
+        to_memory_id: str,
+        *,
+        kind: str = "supersedes",
+    ) -> list[dict[str, Any]]:
+        """Return direct incoming edges for ``to_memory_id`` (no expansion).
+
+        Search v2 graph leg (issue #313): the 1-hop expansion walks BOTH
+        directions of ``supersedes`` — a fused hit surfaces the newer
+        version that replaced it (incoming, this method) AND the older
+        sibling it replaced (outgoing, ``get_direct_edges``). Same shape
+        and ordering contract as ``get_direct_edges``.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT from_memory_id, to_memory_id, kind, created_at "
+            "FROM memory_edges WHERE to_memory_id = ? AND kind = ? "
+            "ORDER BY created_at ASC",
+            (to_memory_id, kind),
         ).fetchall()
         return [dict(r) for r in rows]
 

@@ -57,6 +57,7 @@ documented elsewhere, or anything that fits in a code comment.
 | [0026](0026-memory-value-observability.md) | Memory-value observability: passive metrics sidecar + S5 replay stand + F8 metric family | Accepted (with conditions) | 2026-09-09 |
 | [0027](0027-multi-context-memory.md) | Multi-context memory: compose existing context levels now; task primitive behind a pre-registered experiment gate | Accepted | 2026-09-14 |
 | [0028](0028-cache-contract.md) | Cache contract: prefix-stable content supply, tail discipline, and the harness boundary | Accepted | 2026-09-14 |
+| [0029](0029-search-v2-query-semantics.md) | Search v2 query semantics: per-token prefix AND, soft project fallback, graph leg, embedding_id stamp | Accepted | 2026-09-15 |
 
 ## Themes
 

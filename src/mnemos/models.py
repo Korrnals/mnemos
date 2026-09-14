@@ -595,6 +595,18 @@ class SearchResult(BaseModel):
     memory: Memory
     score: float
     search_type: str  # "semantic" | "fts" | "hybrid"
+    # Search v2 provenance (issue #313) — optional, backward-compatible:
+    # absent fields mean "ordinary fused hit" (the pre-v2 contract).
+    # ``project_scope_fallback``: the row surfaced because the scoped
+    # search found nothing and the caller retried WITHOUT the project
+    # scope (soft fallback) — the row is CROSS-PROJECT relative to the
+    # original request and the caller must be able to see that.
+    project_scope_fallback: bool = False
+    # ``via_graph``: the row was appended by the 1-hop memory_edges
+    # expansion (supersedes neighbours of fused hits), not by lexical /
+    # vector matching. Edge-sourced rows pass the same status /
+    # quarantine / refined_only gates as every other result.
+    via_graph: bool = False
 
 
 # ── Trace model (M6 — explainability layer) ────────────────────────────────────

@@ -710,6 +710,39 @@ def reindex_cmd(
     mgr.close()
 
 
+# ── search v2 maintenance (issue #313) ──────────────────────────────────────
+
+
+@app.command(name="backfill-embedding-ids")
+def backfill_embedding_ids_cmd(
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help=(
+            "Write the stamps (default is a dry run that only reports the "
+            "counts: an operator reviews and then re-runs with --apply)."
+        ),
+    ),
+    config: str = ConfigOption,
+) -> None:
+    """Stamp memories.embedding_id from the vector store (search v2, issue #313).
+
+    Pre-v2 writes never set the column (live DB: NULL for every row) —
+    the vector leg still RESOLVED by memory id and worked; the column is
+    diagnostics. Idempotent; new writes are stamped automatically from
+    search v2 on. Dry run by default: run without --apply first.
+    """
+    mgr = get_manager(config)
+    result = mgr.backfill_embedding_ids(dry_run=not apply)
+    if not apply:
+        console.print("  [cyan]dry run (no writes)[/cyan] — re-run with --apply to stamp")
+    console.print(f"  [cyan]vectors in store: {result['vectors_total']}[/cyan]")
+    console.print(f"  [yellow]missing embedding_id: {result['missing']}[/yellow]")
+    console.print(f"  [green]stamped: {result['stamped']}[/green]")
+    console.print(f"  already set (skipped): {result['skipped_already_set']}")
+    mgr.close()
+
+
 # ── filter (M10) ───────────────────────────────────────────────────────────────
 
 
