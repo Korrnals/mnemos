@@ -50,6 +50,8 @@ from benchmarks.stands.s1_quality.harness import (
     vector_predicate_off,
 )
 
+from tests._seeded_ids import seeded_memory_ids
+
 pytestmark = pytest.mark.golden
 
 
@@ -91,8 +93,17 @@ class FullMeasurement(TypedDict):
 
 
 def _run_full_measurement(root: Path) -> FullMeasurement:
-    """One complete deterministic pass: corpus → all metrics."""
-    with fresh_golden_manager(root) as (mgr, slug_to_id):
+    """One complete deterministic pass: corpus → all metrics.
+
+    Seeded harness ids (TL decision 2026-09-14, #280): the Phase-1 id
+    tiebreak makes tie order a function of ``Memory.id``, which is uuid4
+    in production — a fresh golden store draws fresh ids per run, so the
+    cross-run byte-identity this suite asserts (and the floors below)
+    needs a FIXED id draw. The seed context restarts per call: two runs
+    of this function mint the same sequence. Ranking semantics are
+    untouched — see tests/_seeded_ids.py.
+    """
+    with seeded_memory_ids("golden-d5"), fresh_golden_manager(root) as (mgr, slug_to_id):
         current = measure_search(mgr, slug_to_id, label="a9-on x4 (current)")
         with vector_predicate_off():
             off_x4 = measure_search(mgr, slug_to_id, label="a9-off x4")
