@@ -2,12 +2,14 @@
 
 The federated write paths (:func:`mnemos.cli.sync.run_sync_import`,
 :func:`mnemos.cli.import_._import_json` and — since #245 — the
-SQLite-snapshot merge :func:`mnemos.cli.import_._import_sqlite`) persist
-peer-status rows DIRECTLY through ``sqlite.save`` — a PUBLISHED record
-arriving from peering never met the Phase A publication gate, so a secret
-or injection payload could land visible. Since Phase D every imported row
-passes ``gate_imported_memory`` (the SAME single gate point the server
-uses, audited as ``path=federation-import``):
+SQLite-snapshot merge :func:`mnemos.cli.import_._import_sqlite`, plus —
+since #259 — the SQLite-snapshot RESTORE post-swap sweep
+:func:`mnemos.cli.import_._gate_restored_rows`) persist peer-status
+rows DIRECTLY through ``sqlite.save`` — a PUBLISHED record
+arriving from peering never met the Phase A publication gate, so a
+secret or injection payload could land visible. Since Phase D every
+imported row passes ``gate_imported_memory`` (the SAME single gate
+point the server uses, audited as ``path=federation-import``):
 
 * positive danger signal / scanner error (fail-closed) → stored RAW +
   ``pipeline_state=None`` — zero-loss, invisible, no embed;
@@ -194,6 +196,7 @@ def _snapshot_file(
     memories: list[Memory],
     *,
     corrupt: Callable[[sqlite3.Connection], None] | None = None,
+    embed_rows: bool = False,
 ) -> Path:
     """Craft a SQLite-snapshot tar.gz BY HAND carrying peer rows as-is.
 
@@ -209,29 +212,51 @@ def _snapshot_file(
     tar — a direct ``sqlite3`` UPDATE hook for planting a row no Memory/
     manager path could ever write (invalid JSON column, bad enum, …),
     i.e. the malformed-payload half of the tampered-snapshot threat model.
+
+    ``embed_rows`` (optional): also embed every PUBLISHED row into the
+    snapshot's ``vectors.db`` and tar it alongside ``mnemos.db`` — the
+    full image ``_build_sqlite_snapshot`` produces and
+    ``restore_sqlite_snapshot`` swaps back (#259: the restored embeds are
+    LIVE after the swap, so a gate refusal must evict them).
     """
     with TemporaryDirectory() as tmpdir:
         settings = _settings(Path(tmpdir))
         mgr = MemoryManager(settings)
+        # upsert_embedding below must not reach a real embedder.
+        mock_embedder = MagicMock()
+        mock_embedder.embed.return_value = [0.1] * 384
+        mgr._embedder = mock_embedder
         try:
             for mem in memories:
                 mgr.sqlite.save(mem)
+            if embed_rows:
+                for mem in memories:
+                    if mem.status == MemoryStatus.PUBLISHED:
+                        mgr.upsert_embedding(mem)
             if corrupt is not None:
                 corrupt(mgr.sqlite._get_conn())
-            # WAL checkpoint so the on-disk file contains every committed
+            # WAL checkpoint so the on-disk files contain every committed
             # row (mirrors _build_sqlite_snapshot in cli/export.py).
-            conn = mgr.sqlite._get_conn()
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            conn.commit()
+            for store_conn in (mgr.sqlite._get_conn(), mgr.vectors._conn()):
+                store_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                store_conn.commit()
             mgr.close()
             db_bytes = settings.db_path.read_bytes()
+            vectors_path = settings.mnemos.data_dir / "vectors.db"
+            vectors_bytes = vectors_path.read_bytes() if embed_rows else None
         finally:
             mgr.close()
-    info = tarfile.TarInfo(name="mnemos.db")
-    info.size = len(db_bytes)
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        tar.addfile(info, io.BytesIO(db_bytes))
+        for name, payload in (
+            ("mnemos.db", db_bytes),
+            ("vectors.db", vectors_bytes),
+        ):
+            if payload is None:
+                continue
+            info = tarfile.TarInfo(name=name)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
     path.write_bytes(buf.getvalue())
     return path
 
@@ -652,3 +677,149 @@ class TestSqliteMergeGate:
         assert good is not None
         assert good.status == MemoryStatus.PUBLISHED, "peer status kept on the clean row"
         assert mgr.search("girder", project=PROJECT), "clean row FTS-searchable after save()"
+
+
+# ── SQLite-snapshot restore path (#259) ───────────────────────────────────────
+
+
+class TestSqliteRestoreGate:
+    def test_sqlite_restore_published_secret_stored_raw_invisible(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """The #259 headline: a tampered snapshot restored via the sqlite
+        RESTORE path (raw file swap — the swap itself applies no gate)
+        still lands its PUBLISHED danger row RAW + pipeline_state=None
+        after the post-restore gate sweep: zero-loss, invisible, warned.
+        The clean row keeps PUBLISHED, joins the refine queue and stays
+        FTS-searchable."""
+        clean_id = "cccccccc-0000-0000-0000-000000000012"
+        dirty_id = "dddddddd-0000-0000-0000-000000000013"
+        src = _snapshot_file(
+            tmp_path / "snapshot-restore-secret.tar.gz",
+            [
+                _peer_memory(clean_id, "clean snapshot body about the windlass gearbox"),
+                _peer_memory(
+                    dirty_id, f"planted row with aws key {FAKE_AWS_KEY} for the exfil runbook"
+                ),
+            ],
+        )
+
+        result = run_import(mgr, src, mode=ImportMode.RESTORE, confirm=True)
+
+        assert result.errors == []
+        assert result.imported == 2  # both rows stored (zero-loss), not dropped
+        dirty = mgr.sqlite.get(dirty_id)
+        assert dirty is not None
+        assert FAKE_AWS_KEY in dirty.content, "zero-loss: the content itself is kept"
+        assert dirty.status == MemoryStatus.RAW, "restored visibility refused"
+        assert dirty.pipeline_state is None, "outside the refine intake"
+        # Id-based (not empty-result): the mock embedder gives every
+        # admitted+embedded row the SAME vector, so the hybrid vector leg
+        # matches a clean neighbour on any term — the property under test
+        # is that the REFUSED row never appears in the results.
+        assert all(r.memory.id != dirty_id for r in mgr.search("exfil", project=PROJECT)), (
+            "refused row invisible to issuance"
+        )
+        assert not mgr.vectors.has(dirty_id), "no embed for a refused row"
+        assert any("danger-gate refusal" in w for w in result.warnings)
+        clean = mgr.sqlite.get(clean_id)
+        assert clean is not None
+        assert clean.status == MemoryStatus.PUBLISHED, "clean row keeps its status"
+        assert clean.pipeline_state == PipelineState.PENDING, "clean row joins the refine queue"
+        assert mgr.search("windlass", project=PROJECT), "clean row FTS-searchable after the sweep"
+        intake_ids = {m.id for m in mgr.sqlite.list_refine_intake()}
+        assert dirty_id not in intake_ids, "refused row must stay outside the refine queue"
+        assert clean_id in intake_ids, "clean row is refine-eligible"
+
+    def test_sqlite_restore_refusal_evicts_restored_embed(
+        self, mgr: MemoryManager, tmp_path: Path
+    ) -> None:
+        """N1 demotion hygiene on restore: the snapshot tar carries
+        vectors.db too (the full image ``_build_sqlite_snapshot``
+        produces), so a refused row's embed is LIVE in the store after
+        the file swap — the sweep must evict it, while the admitted
+        row's embed survives."""
+        clean_id = "eeeeeeee-0000-0000-0000-000000000014"
+        dirty_id = "ffffffff-0000-0000-0000-000000000015"
+        src = _snapshot_file(
+            tmp_path / "snapshot-restore-embeds.tar.gz",
+            [
+                _peer_memory(clean_id, "clean embedded row about the log girder"),
+                _peer_memory(dirty_id, f"embedded row carrying {FAKE_AWS_KEY} in the body"),
+            ],
+            embed_rows=True,
+        )
+
+        result = run_import(mgr, src, mode=ImportMode.RESTORE, confirm=True)
+
+        assert result.errors == []
+        assert any("danger-gate refusal" in w for w in result.warnings)
+        assert not mgr.vectors.has(dirty_id), "restored embed evicted on refusal"
+        assert mgr.vectors.has(clean_id), "admitted row's embed kept"
+        assert mgr.search("girder", project=PROJECT), "admitted row searchable"
+        # Id-based — see test 1: the identical mock vectors make the clean
+        # neighbour match any term on the vector leg; only the refused
+        # row's absence is the gate property.
+        assert all(r.memory.id != dirty_id for r in mgr.search("carrying", project=PROJECT)), (
+            "refused row out of search"
+        )
+
+    def test_sqlite_restore_corrupt_row_does_not_abort_gate_sweep(
+        self, mgr: MemoryManager, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Review P2 regression: one corrupt (unmaterialisable) row must
+        not abort the sweep. The first fix's single ``list_all`` fetch
+        raised on the corrupt row BEFORE any row was gated — the whole
+        store went ungated (fail-open) and the planted PUBLISHED danger
+        row stayed searchable: the #259 hole survived. Now: the danger
+        row is demoted despite the corrupt sibling, the corrupt row is
+        a per-row error, the clean row is gated, and the operator sees
+        the extent via the "N of M rows left ungated" warning."""
+        clean_id = "16161616-0000-0000-0000-000000000016"
+        dirty_id = "17171717-0000-0000-0000-000000000017"
+        corrupt_id = "18181818-0000-0000-0000-000000000018"
+
+        def corrupt_tags(conn: sqlite3.Connection) -> None:
+            conn.execute("UPDATE memories SET tags = ? WHERE id = ?", ("{not json", corrupt_id))
+            conn.commit()
+
+        src = _snapshot_file(
+            tmp_path / "snapshot-restore-corrupt.tar.gz",
+            [
+                _peer_memory(clean_id, "clean snapshot body about the capstan winch"),
+                _peer_memory(
+                    dirty_id, f"planted row with aws key {FAKE_AWS_KEY} for the exfil runbook"
+                ),
+                _peer_memory(corrupt_id, "row whose tags column is corrupt"),
+            ],
+            corrupt=corrupt_tags,
+        )
+
+        with caplog.at_level("WARNING", logger="mnemos.manager"):
+            result = run_import(mgr, src, mode=ImportMode.RESTORE, confirm=True)
+
+        assert result.imported == 3, "all snapshot rows restored (zero-loss)"
+        # The corrupt row is a per-row error, not a sweep abort.
+        assert any(err.startswith(f"memory {corrupt_id}:") for err in result.errors)
+        # The operator sees the ungated extent (P3-1).
+        assert any("1 of 3 rows left ungated" in w for w in result.warnings)
+        # The danger row is demoted DESPITE the corrupt sibling.
+        dirty = mgr.sqlite.get(dirty_id)
+        assert dirty is not None
+        assert FAKE_AWS_KEY in dirty.content
+        assert dirty.status == MemoryStatus.RAW, "corrupt sibling must not shield a danger row"
+        assert dirty.pipeline_state is None
+        assert all(r.memory.id != dirty_id for r in mgr.search("exfil", project=PROJECT)), (
+            "planted danger row must not survive via a corrupt sibling"
+        )
+        assert any("danger-gate refusal" in w for w in result.warnings)
+        # The clean row is gated normally.
+        clean = mgr.sqlite.get(clean_id)
+        assert clean is not None
+        assert clean.status == MemoryStatus.PUBLISHED
+        assert clean.pipeline_state == PipelineState.PENDING
+        assert mgr.search("capstan", project=PROJECT), "clean row still gated + searchable"
+        # P3-2: the sweep audits under its own discriminator.
+        audit = [r for r in caplog.records if "publish gate" in r.message]
+        assert audit, "gate audit lines present"
+        assert all("path=federation-restore" in r.message for r in audit)

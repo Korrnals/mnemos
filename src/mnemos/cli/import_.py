@@ -9,7 +9,10 @@ Two modes:
   for published memories.
 * **restore** (destructive) — wipe all memories, vectors, and projects,
   then import. Requires ``--confirm``. For SQLite format, the raw DB
-  files are replaced (after an optional backup).
+  files are replaced (after an optional backup); because a file swap
+  lands rows without any gate pass, a post-restore gate sweep (#259)
+  re-runs the danger gate over every restored row — refusals are
+  demoted RAW (zero-loss, invisible) exactly as on the other paths.
 
 ``--dry-run`` validates the export without writing.
 
@@ -29,6 +32,10 @@ Import validation (ArchCom 2026-07-17 federation contract §3.1, issue #86):
   positive danger signal or scanner error stores the row RAW with
   ``pipeline_state=NULL`` (zero-loss, invisible); a clean row keeps the
   peer's status and joins the refine queue (``pipeline_state=pending``).
+  The SQLite RESTORE path is the one exception to "before the write":
+  it swaps raw DB files (#259), so the gate runs as an immediate
+  post-restore sweep over every restored row — same verdicts, same
+  warnings, applied in place (audited as ``path=federation-restore``).
 * **Schema drift** — fields not in the current ``Memory`` schema are
   rejected with a field-level error.
 """
@@ -383,7 +390,9 @@ def _memory_from_export(entry: dict[str, Any]) -> Memory:
 # ── Federation-import danger gate (#166, ADR-0019 Phase D) ────────────────────
 
 
-def gate_imported_memory(mgr: MemoryManager, memory: Memory) -> tuple[Memory, bool]:
+def gate_imported_memory(
+    mgr: MemoryManager, memory: Memory, *, path: str = "federation-import"
+) -> tuple[Memory, bool]:
     """Run the Phase A danger gate over one imported/federated row (#166).
 
     The federated write paths (:func:`run_sync_import` in cli/sync.py and
@@ -395,7 +404,7 @@ def gate_imported_memory(mgr: MemoryManager, memory: Memory) -> tuple[Memory, bo
     gate point the server uses (``MemoryManager._publish_gate_detection``
     — :func:`mnemos.danger_detectors.detect` over the served projection
     and the title, fail-closed, audited as
-    ``publish gate: … path=federation-import``) and applies the verdict
+    ``publish gate: … path=<path>``) and applies the verdict
     in place:
 
     * positive signal OR scanner error (fail-closed) → ``status=RAW`` +
@@ -407,12 +416,19 @@ def gate_imported_memory(mgr: MemoryManager, memory: Memory) -> tuple[Memory, bo
       Non-NULL peer states (``refined``, ``quarantined``, …) are never
       clobbered — a peer's quarantine verdict must survive import.
 
+    ``path`` is the audit discriminator passed through to
+    ``_publish_gate_detection``: ``federation-import`` (the default) for
+    the sync/JSON/merge import surfaces, ``federation-restore`` for the
+    post-restore sweep (:func:`_gate_restored_rows`, #259). The refusal
+    WARNING strings on every surface keep the historical
+    ``federation-import`` label by convention.
+
     Returns ``(memory, admitted)`` — the mutated row (the caller saves
     it) and whether the gate admitted the peer's visibility. Never
     raises on a detector verdict: ``detect`` returns scanner errors
     inside its result.
     """
-    detection = type(mgr)._publish_gate_detection(memory, path="federation-import")
+    detection = type(mgr)._publish_gate_detection(memory, path=path)
     if detection.error is not None or detection.positive:
         memory.status = MemoryStatus.RAW
         memory.pipeline_state = None
@@ -581,6 +597,103 @@ def _reembed(mgr: MemoryManager, memory: Memory) -> None:
         logger.warning("re-embedding failed for memory %s: %s", memory.id, exc)
 
 
+def _gate_restored_rows(mgr: MemoryManager, result: ImportResult) -> None:
+    """Post-restore danger-gate sweep (#259, ADR-0019 Phase D).
+
+    ``restore_sqlite_snapshot`` swaps the raw DB files, so the snapshot's
+    rows land in the live store WITHOUT ever meeting the publication
+    gate — a tampered snapshot could restore PUBLISHED danger rows
+    straight into visibility (the #259 trust-boundary hole; same class
+    as the JSON gate #166 and the merge gate #245). Unlike those
+    pre-write gates, a file swap can only be gated post-hoc: this sweep
+    walks every restored row through the SAME single gate point
+    (``gate_imported_memory``, idempotent — it judges content danger,
+    not write-path origin) and persists the verdict in place through
+    ``mgr.sqlite.save`` — the tested write path that keeps the FTS5
+    external-content index consistent (see the merge-branch comment in
+    :func:`_import_sqlite` about why raw SQL breaks it).
+
+    RESTORE remains a SELF-restore (#254): rows are deliberately NOT
+    stamped ``federated_origin`` — this sweep changes visibility
+    enforcement only, not origin semantics.
+
+    Column preservation (verified, deliberate): post-swap rows go
+    through ``save()``'s UPDATE branch, which omits the ``workflow_*``
+    and ``rewrite_*`` families from SET — snapshot-planted workflow
+    locks and rewrite provenance therefore survive the sweep unchanged
+    (the merge branch's DROP/NULL note applies only to new-row INSERTs).
+    A malicious snapshot can still mint C10 rewrite columns via restore;
+    accepted under the #254 self-restore position — visibility
+    enforcement is this sweep's scope.
+    """
+    # The store's aggregate caches (tags/counts/graph) still describe
+    # the PRE-swap DB — close() drops only the connection.
+    mgr.sqlite._invalidate_caches()
+    ungated = 0
+    try:
+        total = mgr.sqlite.count()
+        # Raw rows through the STORE'S OWN connection — NOT list_all:
+        # list_all materialises every row via ``_row_to_memory`` inside
+        # one list comprehension, so a single corrupt row (invalid JSON
+        # in a column, plantable by a tampered snapshot with ONE UPDATE)
+        # raises before ANY row is returned and the whole store goes
+        # ungated — fail-open, the exact #259 threat (review P2). The
+        # raw fetch + per-row ``_row_to_memory`` below (the merge
+        # branch's idiom) isolates the failure to the corrupt row.
+        raw_rows = mgr.sqlite._get_conn().execute("SELECT * FROM memories").fetchall()
+    except Exception as exc:
+        # Connection/store-level failure only — no row was gated.
+        result.errors.append(f"post-restore gate sweep: store unreadable: {exc}")
+        return
+    for row in raw_rows:
+        # Label errors by id when the column is readable — a corrupt
+        # snapshot row may not even carry one (keys-set idiom mirrors
+        # the merge branch).
+        cols = set(row.keys())
+        mem_id = row["id"] if "id" in cols else "?"
+        try:
+            memory = mgr.sqlite._row_to_memory(row)
+            # Status-based, mirroring the JSON overwrite branch: a
+            # PUBLISHED restored row was embedded when the snapshot was
+            # taken (the tar may carry vectors.db — the embed is live
+            # after the swap).
+            was_embedded = memory.status == MemoryStatus.PUBLISHED
+            memory, admitted = gate_imported_memory(mgr, memory, path="federation-restore")
+            mgr.sqlite.save(memory)
+            if not admitted:
+                result.warnings.append(
+                    f"memory {memory.id}: stored RAW — federation-import "
+                    "danger-gate refusal (zero-loss, invisible)"
+                )
+                if was_embedded:
+                    # N1 demotion hygiene (mirrors the JSON refusal path
+                    # and MemoryManager.update): the restored embed is
+                    # stale the moment the row is demoted. Non-fatal —
+                    # the resolve-time status guard already keeps the
+                    # row out of search results.
+                    try:
+                        mgr.vectors.delete(memory.id)
+                    except Exception as exc:
+                        logger.warning("stale embed delete on restore refusal (non-fatal): %s", exc)
+            else:
+                _reembed(mgr, memory)
+        except Exception as exc:
+            # Per-row isolation, mirroring the merge loop: one bad row
+            # (unreadable columns, invalid enum, failing save) is
+            # recorded and skipped — every servable row is still gated.
+            # An unreadable row is unservable by ANY canonical read path
+            # (get/list/search all reconstruct via ``_row_to_memory``),
+            # so it cannot leak into issuance.
+            ungated += 1
+            result.errors.append(f"memory {mem_id}: {exc}")
+            continue
+    if ungated:
+        result.warnings.append(
+            f"post-restore gate sweep: {ungated} of {total} rows left ungated (unreadable)"
+        )
+    mgr.sqlite._invalidate_caches()
+
+
 # ── SQLite import ─────────────────────────────────────────────────────────────
 
 
@@ -634,6 +747,13 @@ def _import_sqlite(
 
     if mode == ImportMode.RESTORE:
         restore_sqlite_snapshot(mgr, snapshot, backup_current=backup_dir)
+        # #259 (ADR-0019 Phase D): the swap above landed the snapshot's
+        # rows in the live store without any gate pass — sweep every
+        # restored row through the SAME publication gate as the
+        # JSON/merge imports BEFORE the result is reported. RESTORE
+        # rows stay unstamped (#254 self-restore semantics); the sweep
+        # enforces visibility only.
+        _gate_restored_rows(mgr, result)
         result.imported = snapshot_count
     else:
         # Merge for SQLite = read memories from snapshot, insert missing.
