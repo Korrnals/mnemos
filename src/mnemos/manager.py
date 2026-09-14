@@ -352,6 +352,12 @@ class MemoryManager:
         self._search_stats: dict[str, Any] = {
             "requests_total": 0,
             "cross_project_requests_total": 0,
+            # Search v2 (issue #313): scoped searches that returned 0
+            # rows and were retried without the scope (soft fallback).
+            # Distinct from cross_project_requests_total: a fallback is a
+            # DRIFT signal (the scoped data lives under another slug),
+            # not an explicit global-mode request.
+            "project_scope_fallback_total": 0,
             "latency_samples_ms": [],
             "results_counts": [],
         }
@@ -1377,7 +1383,7 @@ class MemoryManager:
         include_raw: bool = False,
         refined_only: bool = False,
     ) -> list[SearchResult]:
-        """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion.
+        """Hybrid search: FTS5 + vector + Reciprocal Rank Fusion + graph leg.
 
         A9 (ArchCom 2026-08-27) — project scoping is PRE-RRF on BOTH legs:
         the FTS leg passes ``project`` to ``fts_search`` as before, and the
@@ -1388,6 +1394,28 @@ class MemoryManager:
         of ``None`` (or empty) is the EXPLICIT global mode: the search is
         cross-project by definition and is counted in
         ``search_stats()["cross_project_requests_total"]`` for audit.
+
+        Search v2 (issue #313) — PROJECT SOFT FALLBACK: a scoped search
+        that returns ZERO rows is retried ONCE without the scope (the
+        A9 pre-RRF predicate is unchanged — the fallback is a NEW OUTER
+        retry, not a change to A9 semantics; the retry itself runs in the
+        explicit global mode). Results that surface ONLY via the retry
+        carry ``project_scope_fallback=True`` so the caller can see they
+        are cross-project relative to the original request, and the event
+        is counted in ``search_stats()["project_scope_fallback_total"]``.
+        Deliberately NOT retried: ``status``-drilled queries — a drill-
+        down is the caller asserting the row's lifecycle, and an unscoped
+        retry would resurface junk from other projects' lanes (the same
+        status policy is KEPT on the retry; the guard here is that a
+        scoped ``status=`` query returning zero is information, not a
+        scope-drift candidate).
+
+        Graph leg v1 (issue #313): after RRF fusion, the top-``limit``
+        fused ids are 1-hop expanded along ``memory_edges`` (BOTH
+        directions of ``supersedes``); edge-sourced rows not already
+        fused are appended with a decayed rank slot and
+        ``via_graph=True`` provenance, passing the SAME status /
+        quarantine / refined_only gates. No edges → the leg is a no-op.
 
         Status filtering precedence:
           1. Explicit ``status`` — always wins (caller knows what they want).
@@ -1408,15 +1436,107 @@ class MemoryManager:
         status='published', and the external payloads carry no
         pipeline_state, so the caller could not even detect the
         contamination). Direct ``get`` by id stays the documented
-        residual access until the B2 retraction render.
+        residual access until the B2 retraction render. The graph
+        expansion path runs the SAME absolute quarantine predicate — an
+        edge neighbour is never a quarantine side door.
 
         ADR-0019 §4 — ``refined_only=True`` additionally keeps only
         entries whose served projection is the refined one
         (``pipeline_state='refined'``); NULL/legacy pipeline_state rows
         never match. Composable with every status mode above.
         """
-        alpha = hybrid_alpha if hybrid_alpha is not None else self.settings.search.hybrid_alpha
         _t0 = time.monotonic()
+
+        scoped = self._search_core(
+            query,
+            tags=tags,
+            project=project,
+            agent=agent,
+            status=status,
+            limit=limit,
+            hybrid_alpha=hybrid_alpha,
+            include_raw=include_raw,
+            refined_only=refined_only,
+        )
+
+        results = scoped
+        scope_fallback_used = False
+        # Search v2 (issue #313): project soft fallback — ZERO in-scope
+        # rows on BOTH legs (pre-RRF predicates decided nothing survives)
+        # → ONE retry without the scope. The retry keeps the SAME status /
+        # include_raw / refined_only policy (no junk resurfacing); only the
+        # project scope is dropped. Not triggered for the explicit global
+        # mode (project=None is already unscoped) and not for status
+        # drill-downs (see the docstring rationale).
+        if project and not results and status is None:
+            logger.info(
+                "search: project=%s scoped search returned 0 rows — "
+                "retrying without the scope (soft fallback)",
+                project,
+            )
+            results = self._search_core(
+                query,
+                tags=tags,
+                project=None,
+                agent=agent,
+                status=status,
+                limit=limit,
+                hybrid_alpha=hybrid_alpha,
+                include_raw=include_raw,
+                refined_only=refined_only,
+            )
+            for r in results:
+                r.project_scope_fallback = True
+            scope_fallback_used = bool(results)
+
+        # Record search instrumentation (in-memory, resets on restart).
+        latency_ms = (time.monotonic() - _t0) * 1000.0
+        with self._search_stats_lock:
+            self._search_stats["requests_total"] = int(self._search_stats["requests_total"]) + 1
+            # A9: ``project=None`` (or empty) is the EXPLICIT global mode —
+            # a cross-project search. Surfaced in ``search_stats()`` for
+            # audit (every project-scoped call stays out of this counter).
+            if not project:
+                self._search_stats["cross_project_requests_total"] = (
+                    int(self._search_stats["cross_project_requests_total"]) + 1
+                )
+            if scope_fallback_used:
+                self._search_stats["project_scope_fallback_total"] = (
+                    int(self._search_stats["project_scope_fallback_total"]) + 1
+                )
+            samples: list[float] = self._search_stats["latency_samples_ms"]
+            samples.append(latency_ms)
+            # Cap samples to avoid unbounded growth in long-running processes.
+            if len(samples) > 1000:
+                del samples[: len(samples) - 1000]
+            counts: list[int] = self._search_stats["results_counts"]
+            counts.append(len(results))
+            if len(counts) > 1000:
+                del counts[: len(counts) - 1000]
+        return results
+
+    def _search_core(
+        self,
+        query: str,
+        *,
+        tags: list[str] | None,
+        project: str | None,
+        agent: str | None,
+        status: MemoryStatus | None,
+        limit: int,
+        hybrid_alpha: float | None,
+        include_raw: bool,
+        refined_only: bool,
+    ) -> list[SearchResult]:
+        """One scoped pass of the hybrid search (FTS + vector + RRF + graph).
+
+        ``MemoryManager.search`` is the public surface (soft-fallback
+        orchestration + stats); this is the single-pass core it calls —
+        with the project scope it was given, unchanged A9 pre-RRF
+        predicates. Kept private: the fallback decision belongs to the
+        orchestrator, not the core.
+        """
+        alpha = hybrid_alpha if hybrid_alpha is not None else self.settings.search.hybrid_alpha
 
         # Resolve the status filter applied to the FTS leg.
         # fts_search treats status=None as "no filter", so we only pass a
@@ -1584,27 +1704,86 @@ class MemoryManager:
             results.append(SearchResult(memory=matched, score=score, search_type=search_type))
             if len(results) >= limit:
                 break
-        # Record search instrumentation (in-memory, resets on restart).
-        latency_ms = (time.monotonic() - _t0) * 1000.0
-        with self._search_stats_lock:
-            self._search_stats["requests_total"] = int(self._search_stats["requests_total"]) + 1
-            # A9: ``project=None`` (or empty) is the EXPLICIT global mode —
-            # a cross-project search. Surfaced in ``search_stats()`` for
-            # audit (every project-scoped call stays out of this counter).
-            if not project:
-                self._search_stats["cross_project_requests_total"] = (
-                    int(self._search_stats["cross_project_requests_total"]) + 1
+
+        # ── Graph leg v1 (issue #313) ─────────────────────────────────────
+        # 1-hop expansion along memory_edges (supersedes, BOTH directions)
+        # from the top-``limit`` fused ids. Edge-sourced rows that are NOT
+        # already fused get appended with a decayed RRF slot — deterministic
+        # rule: an expansion row's weight is (1-alpha)/(rrf_k +
+        # 2*anchor_rank) where anchor_rank is its FIRST anchor's 1-based
+        # position in the fused ranking, so the appended block is a pure
+        # function of the fused ranking + the edge table AND can never
+        # outrank its own anchor (the same (1-alpha) FTS weight the fused
+        # rows carry, at a strictly deeper rank position 2*anchor_rank).
+        # The expansion passes the SAME status / quarantine / refined_only
+        # gates as the fused rows (quarantine is absolute per ADR-0019 §5
+        # — an edge is never a side door) and is capped at ``limit`` extra
+        # rows (so a search can at most double). No edges in the store →
+        # the whole leg is a no-op. Rows already surfaced by the fused
+        # legs (by id) are never re-appended via the graph.
+        if len(results) < limit:
+            fused_ids = [r.memory.id for r in results]
+            anchor_rank: dict[str, int] = {}
+            for pos, anchor_id in enumerate(fused_ids, start=1):
+                for neighbour_id in sorted(self._graph_adjacent(anchor_id)):
+                    if neighbour_id in anchor_rank or neighbour_id in scores:
+                        continue  # first anchor wins; fused rows never re-surface
+                    anchor_rank[neighbour_id] = pos
+            for neighbour_id, pos in anchor_rank.items():
+                if len(results) >= limit + limit:
+                    break
+                neighbour = id_to_memory.get(neighbour_id) or self.sqlite.get(neighbour_id)
+                if neighbour is None:
+                    continue  # edge to a deleted row — skip silently
+                if tags and not all(t in neighbour.tags for t in tags):
+                    continue
+                # Same status policy as the fused rows: default gate.
+                if allowed is not None and not is_context_admissible(neighbour, statuses=allowed):
+                    continue
+                # ADR-0019 §5 — absolute quarantine exclusion on the graph path.
+                if is_quarantined(neighbour):
+                    continue
+                # ADR-0019 §4 — refined_only gates the graph leg identically.
+                if refined_only and neighbour.pipeline_state != PipelineState.REFINED:
+                    continue
+                decayed = (1.0 - alpha) / (rrf_k + 2 * pos)
+                results.append(
+                    SearchResult(
+                        memory=neighbour,
+                        score=decayed,
+                        search_type=search_type,
+                        via_graph=True,
+                    )
                 )
-            samples: list[float] = self._search_stats["latency_samples_ms"]
-            samples.append(latency_ms)
-            # Cap samples to avoid unbounded growth in long-running processes.
-            if len(samples) > 1000:
-                del samples[: len(samples) - 1000]
-            counts: list[int] = self._search_stats["results_counts"]
-            counts.append(len(results))
-            if len(counts) > 1000:
-                del counts[: len(counts) - 1000]
         return results
+
+    # ── Graph leg v1 helpers (issue #313) ─────────────────────────────────
+
+    def _graph_adjacent(self, memory_id: str, *, kind: str = "supersedes") -> set[str]:
+        """1-hop neighbour ids along ``memory_edges`` (both directions).
+
+        Superseding→superseded (outgoing) and superseded→superseding
+        (incoming): a search hit should surface BOTH sides of a
+        supersedes pair — the newer version that replaced the hit AND the
+        older sibling it replaced. Returns the neighbour ids only (the
+        caller excludes / resolves them); a missing memory id simply has
+        no rows in memory_edges.
+        """
+        neighbours: set[str] = set()
+        try:
+            for edge in self.sqlite.get_direct_edges(memory_id, kind=kind):
+                neighbours.add(str(edge["to_memory_id"]))
+            incoming = self.sqlite.get_incoming_edges(memory_id, kind=kind)
+            for edge in incoming:
+                neighbours.add(str(edge["from_memory_id"]))
+        except Exception as exc:
+            # The leg is a no-op on ANY failure — graph enrichment must
+            # never break the search it decorates.
+            logger.warning(
+                "graph leg: edge lookup failed (non-fatal) for %s: %s", memory_id[:8], exc
+            )
+        neighbours.discard(memory_id)  # self-edges are rejected at write time
+        return neighbours
 
     def agent_recall(self, query: AgentRecallQuery) -> list[SearchResult]:
         """M3 — per-agent recall: recent entries + optional hybrid search.
@@ -2359,6 +2538,10 @@ class MemoryManager:
             # A9: searches that ran in the explicit global mode
             # (``project=None``) — cross-project by definition.
             "cross_project_requests_total": int(self._search_stats["cross_project_requests_total"]),
+            # Search v2 (issue #313): scoped searches that returned 0 rows
+            # and were retried without the scope — the project-drift
+            # (scope slug vs stored slug) audit signal.
+            "project_scope_fallback_total": int(self._search_stats["project_scope_fallback_total"]),
             "avg_latency_ms": avg_latency_ms,
             "avg_results": avg_results,
         }
@@ -2400,6 +2583,7 @@ class MemoryManager:
             "search": {
                 "requests_total": s_stats["requests_total"],
                 "cross_project_requests_total": s_stats["cross_project_requests_total"],
+                "project_scope_fallback_total": s_stats["project_scope_fallback_total"],
                 "avg_latency_ms": s_stats["avg_latency_ms"],
                 "avg_results": s_stats["avg_results"],
             },

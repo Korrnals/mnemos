@@ -2961,6 +2961,29 @@ class SQLiteStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_incoming_edges(
+        self,
+        to_memory_id: str,
+        *,
+        kind: str = "supersedes",
+    ) -> list[dict[str, Any]]:
+        """Return direct incoming edges for ``to_memory_id`` (no expansion).
+
+        Search v2 graph leg (issue #313): the 1-hop expansion walks BOTH
+        directions of ``supersedes`` — a fused hit surfaces the newer
+        version that replaced it (incoming, this method) AND the older
+        sibling it replaced (outgoing, ``get_direct_edges``). Same shape
+        and ordering contract as ``get_direct_edges``.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT from_memory_id, to_memory_id, kind, created_at "
+            "FROM memory_edges WHERE to_memory_id = ? AND kind = ? "
+            "ORDER BY created_at ASC",
+            (to_memory_id, kind),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_memory_id_by_rewrite_event_key(self, event_key: str) -> str | None:
         """Return the memory id carrying ``rewrite_event_key``.
 
