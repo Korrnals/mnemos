@@ -2,12 +2,20 @@
 
 Catches version drift between the two release markers BEFORE it reaches a
 tag or a PyPI upload. Fail-loud, no fallbacks.
+
+Also guards the import pin (#288): the suite must import THIS checkout's
+``mnemos``, not a shadow install (user-site editable / .venv / another
+checkout). The conftest front-pin enforces it at collection time; the
+test below re-asserts the invariant so any session that collects this
+file (e.g. one bypassing conftest via ``--noconftest``) still fails loud.
 """
 
 from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+
+import mnemos
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,4 +29,21 @@ def test_version_file_matches_pyproject() -> None:
     assert version_file == pyproject_version, (
         f"version drift: VERSION={version_file!r} != "
         f"pyproject.version={pyproject_version!r} — bump both synchronously (#204)"
+    )
+
+
+def test_mnemos_import_provenance_pinned_to_checkout() -> None:
+    """`import mnemos` must resolve to THIS checkout's src/mnemos (#288).
+
+    A shadow import (user-site editable install / .venv / another checkout
+    on PYTHONPATH) once made the suite silently test a stale build and
+    produced 7 phantom TestSweeperVintageFingerprint failures. The
+    conftest front-pin normally prevents this; this assert documents the
+    invariant at test level and fails loud if the pin is ever bypassed.
+    """
+    resolved = Path(mnemos.__file__).resolve()
+    expected = (REPO_ROOT / "src" / "mnemos" / "__init__.py").resolve()
+    assert resolved == expected, (
+        f"mnemos shadow-imported from {resolved} — expected {expected}. "
+        "The suite MUST run against this checkout's src/ (#288)."
     )

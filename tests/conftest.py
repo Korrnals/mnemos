@@ -19,14 +19,56 @@ Rate-limiter reset
 The ``reset_rate_limiter`` autouse fixture clears the in-process slowapi
 storage before every test so one test's calls do not bleed into the next
 test's quota (all TestClient requests share ``host="testclient"``).
+
+Import pin (#288)
+-----------------
+``src/`` of THIS checkout is front-pinned on ``sys.path`` before any
+``mnemos`` import, with a fail-loud provenance assert on
+``mnemos.__file__``. A version-skew shadow-import (user-site editable
+install / ``.venv`` / another checkout on ``PYTHONPATH``) once silently
+pointed the suite at a stale build and produced 7 phantom sweeper
+failures — the pin makes that impossible to miss instead.
 """
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Import pin (#288) — the suite MUST import THIS checkout's mnemos
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+
+# Unconditional front-pin: whichever interpreter/environment runs pytest,
+# `import mnemos` hits <checkout>/src first — ahead of any shadow install
+# (user-site editable, .venv, another checkout on PYTHONPATH). Note: this
+# pin does not itself cover the gitignored gRPC stubs in
+# federation/gen/python/ — those are loaded by src/mnemos/_mesh_gen.py
+# via a path resolved from its own __file__, so pinning the package
+# transitively pins the generated stubs to the same checkout as well.
+# A hook-based __editable__ install (MetaPathFinder) intercepts imports
+# before sys.path is consulted — the pin cannot win there; the provenance
+# assert below is what converts that skew into a loud collection-time
+# failure instead of phantom test results.
+sys.path.insert(0, str(SRC_ROOT))
+
+import mnemos  # noqa: E402  — deliberately AFTER the sys.path pin
+
+_resolved = Path(mnemos.__file__).resolve()
+_expected = (SRC_ROOT / "mnemos" / "__init__.py").resolve()
+assert _resolved == _expected, (
+    "mnemos imported from the wrong checkout: "
+    f"{_resolved} — the test suite MUST run against {SRC_ROOT}. "
+    "A shadow install (user-site editable / .venv / another checkout) "
+    "shadow-imports a stale build and produces phantom failures (#288)."
+)
+del _resolved, _expected
 
 # ---------------------------------------------------------------------------
 # Minimal MCP stubs - only installed when mcp is not already present
