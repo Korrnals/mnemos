@@ -478,6 +478,15 @@ class MemoryManager:
         binds the stamped ``content_hash`` to that fact. Raises on
         embedder/vector failure — the caller owns the degradation policy
         (non-fatal everywhere: the sweeper heals).
+
+        Search v2 (issue #313): the store row's ``embedding_id`` is
+        stamped here, after the vector write succeeds. The VectorStore
+        keys embeddings by the memory id, so ``embedding_id`` records
+        "a live vector row exists for this memory" — the diagnostic
+        join the pre-v2 write path never filled (live DB: NULL for
+        1644/1644 rows). Non-fatal: a stamp failure is logged, never
+        raised — the vector leg itself already resolved by id before
+        this fix; the column is diagnostics, not a runtime dependency.
         """
         emb = self.embedder.embed(self._embedding_text(memory))
         metadata = self._vector_metadata(memory)
@@ -487,6 +496,11 @@ class MemoryManager:
             memory.id[:8],
             metadata["content_hash"],
         )
+        try:
+            self.sqlite.update_fields(memory.id, embedding_id=memory.id)
+            memory.embedding_id = memory.id
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("embedding_id stamp failed (non-fatal) for %s: %s", memory.id[:8], exc)
 
     @staticmethod
     def _scan_and_tag(tags: list[str], content: str) -> tuple[list[str], dict[str, int] | None]:
@@ -3435,6 +3449,83 @@ class MemoryManager:
             "indexed": indexed,
             "failed": failed,
             "skipped_quarantined": skipped_quarantined,
+        }
+
+    def backfill_embedding_ids(
+        self, *, dry_run: bool = True, batch_size: int = 500
+    ) -> dict[str, Any]:
+        """Set ``memories.embedding_id`` from the vector store, by id join.
+
+        Search v2 (issue #313): the pre-v2 write path never stamped
+        ``memories.embedding_id`` (live DB: NULL for 1644/1644 rows), so
+        the column was a diagnostic trap — the vector leg always
+        RESOLVED by memory id and worked; the column just never said so.
+        This one-off backfill closes the gap for existing rows: every
+        memory id that HAS a live vector row gets ``embedding_id = id``
+        (the VectorStore keys embeddings by the memory id — see
+        ``upsert_embedding``, which stamps new writes from search v2 on).
+
+        Idempotent: re-running matches nothing new; rows whose
+        ``embedding_id`` is already set are skipped, rows whose vector
+        is gone are left NULL (the column records "live vector exists",
+        never a lie). Quarantined rows are still backfilled — the
+        column is storage bookkeeping, not an issuance path; the
+        quarantine gates live in ``search``/``get`` and are unaffected.
+
+        Args:
+            dry_run: report the counts WITHOUT writing (the CLI default —
+                an operator runs the real pass explicitly).
+            batch_size: UPDATE commit cadence; the join itself is one
+                pass over ``vectors.db`` ids.
+
+        Returns:
+            ``{"missing": rows to stamp, "stamped": rows actually stamped
+            (0 in dry-run), "skipped_already_set": rows already stamped,
+            "vectors_total": vector rows in the store}``.
+        """
+        vector_ids: set[str] = set(self.vectors.all_ids())
+        missing: list[str] = []
+        skipped = 0
+        # One pass over the store; the id-keyed membership check against
+        # the vector set is the whole "join".
+        for mem in self.sqlite.list_all(limit=1_000_000):
+            if mem.embedding_id:
+                skipped += 1
+                continue
+            if mem.id in vector_ids:
+                missing.append(mem.id)
+        if dry_run:
+            logger.info(
+                "backfill_embedding_ids: dry_run missing=%d "
+                "skipped_already_set=%d vectors_total=%d",
+                len(missing),
+                skipped,
+                len(vector_ids),
+            )
+            return {
+                "missing": len(missing),
+                "stamped": 0,
+                "skipped_already_set": skipped,
+                "vectors_total": len(vector_ids),
+            }
+        stamped = 0
+        for start in range(0, len(missing), batch_size):
+            batch = missing[start : start + batch_size]
+            for mid in batch:
+                if self.sqlite.update_fields(mid, embedding_id=mid):
+                    stamped += 1
+        logger.info(
+            "backfill_embedding_ids: stamped=%d missing=%d skipped_already_set=%d vectors_total=%d",
+            stamped,
+            len(missing),
+            skipped,
+            len(vector_ids),
+        )
+        return {
+            "missing": len(missing),
+            "stamped": stamped,
+            "skipped_already_set": skipped,
+            "vectors_total": len(vector_ids),
         }
 
     # ── Background processor ──────────────────────────────────────────────

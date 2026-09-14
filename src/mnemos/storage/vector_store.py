@@ -194,6 +194,17 @@ class VectorStore:
             conn.execute("SELECT 1 FROM embeddings WHERE id=? LIMIT 1", (memory_id,)).fetchone()
         )
 
+    def all_ids(self) -> list[str]:
+        """All embedding row ids (the memory ids that have live vectors).
+
+        Search v2 (issue #313): backs ``MemoryManager.backfill_embedding_ids``
+        — the id-keyed join that stamps ``memories.embedding_id`` for rows
+        whose vector exists. Ids are written by the manager on every upsert
+        (the memory id IS the vector key), so this projects no user data.
+        """
+        rows = self._conn().execute("SELECT id FROM embeddings").fetchall()
+        return [str(r[0]) for r in rows]
+
     def get_metadata(self, ids: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch the stored metadata blob per id (ADR-0019 B2a freshness).
 
