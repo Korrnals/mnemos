@@ -83,7 +83,7 @@ All settings are env-overridable via the `MNEMOS_` prefix. Nested keys use `__` 
 | `MNEMOS_MNEMOS__STRICT_TAG_CONTRACT` | `true` | Enforce M2 tag schema |
 | `MNEMOS_API__HOST` | `127.0.0.1` | Default for `mnemos serve` |
 | `MNEMOS_API__PORT` | `8787` | Default for `mnemos serve` |
-| `MNEMOS_SEARCH__HYBRID_ALPHA` | `0.7` | Vector weight in RRF fusion |
+| `MNEMOS_SEARCH__HYBRID_ALPHA` | `0.5` | Vector weight in RRF fusion |
 | `MNEMOS_EMBEDDING__PROVIDER` | `nano` | `nano` (mnema-embed-v1, bundled) / `onnx` / `ollama` / `sentence-transformers` |
 | `MNEMOS_LLM__PROVIDER` | `ollama` | LLM for synthesis + context filter |
 | `MNEMOS_LLM__MODEL` | `qwen2.5:3b` | LLM model name |
