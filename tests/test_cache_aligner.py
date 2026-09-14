@@ -3,8 +3,10 @@
 Inspired by headroom's CacheAligner
 (https://github.com/headroomlabs-ai/headroom, Apache 2.0). These tests
 verify our original implementation: dynamic span extraction, prefix
-stability, determinism, profile-aware behaviour, and that code identifiers
-are not mangled.
+stability, determinism, profile-aware behaviour, code identifiers not
+mangled, and CCR markers staying atomic (mnemos #282 — protected from
+extraction in every profile so the ``mnemos_retrieve`` round-trip
+survives alignment).
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from mnemos.cache_aligner import align
+from mnemos.ccr import build_marker, parse_marker
 from mnemos.config import Settings
 from mnemos.manager import MemoryManager
 
@@ -376,3 +379,79 @@ class TestTimestampNotSplitIntoDate:
         )
         assert kinds == ["timestamp"]
         assert "date" not in kinds
+
+
+# ── mnemos #282 — CCR markers are atomic (protected in ALL profiles) ────────────
+
+
+class TestCCRMarkerAtomic:
+    """#282 Finding 2 — the aligner must never mangle a CCR marker.
+
+    A marker ``[compressed: <hash> | N→M chars | retrieve via
+    mnemos_retrieve]`` carries a 64-hex hash that the bare-token pattern
+    matches in token-extracting profiles (log/terminal/web/default).
+    Relocating the hash to the trailing Dynamic-context block destroys
+    the marker line and breaks the ``mnemos_retrieve`` round-trip. The
+    marker span is therefore protected from extraction in EVERY profile
+    (code/docs skip tokens, but the protection is generic — any kind
+    overlapping a marker region is dropped).
+    """
+
+    MARKER = build_marker("f" * 64, 5000, 500)
+    # Ordinary dynamic content around the marker: an ISO timestamp and a
+    # uuid — these MUST still be extracted (the aligner still works).
+    TEXT = (
+        "Pipeline report for the batch job.\n"
+        "Job 550e8400-e29b-41d4-a716-446655440000 started at "
+        "2026-09-14T10:30:00Z and produced:\n"
+        f"{MARKER}\n"
+        "That is the compressed summary of the run."
+    )
+    PROFILES = (None, "code", "docs", "default", "log", "terminal", "web")
+
+    def test_marker_byte_identical_in_place_all_profiles(self) -> None:
+        for profile in self.PROFILES:
+            result = align(self.TEXT, profile=profile)
+            context = f"profile={profile!r}"
+            # The marker line is byte-identical...
+            assert self.MARKER in result["aligned_text"], context
+            # ...and stays at its ORIGINAL position: inside the body,
+            # not relocated to the trailing Dynamic-context block.
+            body = result["aligned_text"].split("--- Dynamic context ---")[0]
+            assert self.MARKER in body, f"{context}: marker relocated out of the body"
+            # The 64-hex hash is never an extracted span of any kind.
+            assert all(s["value"] != "f" * 64 for s in result["extracted"]), (
+                f"{context}: marker hash extracted: {[s['value'] for s in result['extracted']]}"
+            )
+            # The whole marker span is untouched — parseable end-to-end.
+            parsed = parse_marker(result["aligned_text"])
+            assert parsed is not None, f"{context}: marker no longer parseable"
+            assert parsed["hash"] == "f" * 64
+            assert parsed["original_chars"] == 5000
+            assert parsed["compressed_chars"] == 500
+
+    def test_ordinary_dynamic_content_still_extracted(self) -> None:
+        """The protection is marker-specific — the aligner still works."""
+        # Profiles that extract timestamps/uuids (all of them do — only
+        # tokens are profile-skipped) must still relocate both.
+        for profile in self.PROFILES:
+            result = align(self.TEXT, profile=profile)
+            values = {s["value"] for s in result["extracted"]}
+            context = f"profile={profile!r}"
+            assert "550e8400-e29b-41d4-a716-446655440000" in values, context
+            assert "2026-09-14T10:30:00Z" in values, context
+            assert result["moved_chars"] > 0, context
+
+    def test_marker_only_no_extraction_noop(self) -> None:
+        """A lone marker line is a complete no-op (nothing to extract)."""
+        result = align(self.MARKER)
+        assert result["extracted"] == []
+        assert result["aligned_text"] == self.MARKER
+        assert result["prefix_stabilized"] is False
+
+    def test_marker_hash_never_in_dynamic_block(self) -> None:
+        """The hash never leaks into the trailing block listing."""
+        result = align(self.TEXT, profile="default")
+        tail = result["aligned_text"].split("--- Dynamic context ---")[1]
+        assert "f" * 64 not in tail
+        assert "token: " not in tail

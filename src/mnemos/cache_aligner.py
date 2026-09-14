@@ -22,7 +22,10 @@ dynamic values still reach the model, just from the tail.
 The extractor is conservative: it only matches well-formed dynamic
 literals (ISO timestamps, UUIDs, ``sess-``/``session:`` ids, bare hex/base64
 tokens of sufficient entropy). Code identifiers, file paths, and prose are
-not mangled.
+not mangled. CCR markers (``[compressed: <hash> | …]``) are ATOMIC
+protected regions in EVERY profile — a marker whose hash is relocated to
+the trailing block is unreadable and breaks the ``mnemos_retrieve``
+round-trip (mnemos #282).
 
 Determinism: same input always produces the same output (patterns are
 applied in a fixed order; extracted spans are sorted by position).
@@ -32,6 +35,8 @@ from __future__ import annotations
 
 import re
 from typing import Any
+
+from mnemos.ccr import CCR_MARKER_RE
 
 # ── Dynamic-content patterns ─────────────────────────────────────────────────
 # Ordered by specificity (most specific first) so e.g. an ISO timestamp is
@@ -88,25 +93,52 @@ _PROFILE_SKIP: dict[str, set[str]] = {
     "docs": {"token"},
 }
 
+# mnemos #282 — CCR markers are ATOMIC: protected from extraction in ALL
+# profiles. A marker `[compressed: <hash> | N→M chars | retrieve via
+# mnemos_retrieve]` carries a 64-hex hash that _TOKEN_RE happily matches
+# in token-extracting profiles (log/terminal/web/default) — the hash would
+# be relocated to the trailing Dynamic-context block, destroying the marker
+# line and with it the model's ability to read the hash for
+# mnemos_retrieve. The span (from `mnemos.ccr`, the single source of truth
+# for the marker shape) is collected FIRST and any dynamic span of ANY kind
+# overlapping it is dropped, so the marker stays byte-identical in place.
 
-def _extract_spans(text: str, skip: set[str] | None) -> list[dict[str, Any]]:
+
+def _protected_marker_spans(text: str) -> list[tuple[int, int]]:
+    """CCR marker spans in ``text`` — extraction-excluded regions."""
+    return [(m.start(), m.end()) for m in CCR_MARKER_RE.finditer(text)]
+
+
+def _extract_spans(
+    text: str,
+    skip: set[str] | None,
+    protected: list[tuple[int, int]] | None = None,
+) -> list[dict[str, Any]]:
     """Find all dynamic spans in ``text``.
 
     Returns a list of ``{"kind","value","start","end"}`` dicts sorted by
     ``start``. Overlapping matches are resolved by earliest start then
     longest match — a timestamp wins over a bare date overlapping its tail.
+
+    ``protected`` (mnemos #282) lists regions (``(start, end)``) that no
+    dynamic span may touch — CCR marker spans in every profile. Any span
+    of any kind overlapping a protected region is dropped, so a marker
+    stays byte-identical at its original position.
     """
     raw: list[dict[str, Any]] = []
     for kind, rx in _PATTERNS:
         if skip and kind in skip:
             continue
         for m in rx.finditer(text):
+            start, end = m.start(), m.end()
+            if protected and any(start < p_end and end > p_start for p_start, p_end in protected):
+                continue
             raw.append(
                 {
                     "kind": kind,
                     "value": m.group(0),
-                    "start": m.start(),
-                    "end": m.end(),
+                    "start": start,
+                    "end": end,
                 }
             )
     if not raw:
@@ -162,6 +194,10 @@ def align(
           longer than the original prefix up to the first dynamic span).
         - ``moved_chars`` — total characters relocated (sum of span
           lengths).
+
+        CCR markers (``[compressed: …]``) are never extracted — see
+        ``_extract_spans`` (mnemos #282): they stay byte-identical at
+        their original position in every profile.
     """
     if not text:
         return {
@@ -183,7 +219,11 @@ def align(
     # per-kind toggles). Either source may be None/empty.
     profile_skip = _PROFILE_SKIP.get(profile or "") if profile else None
     skip = profile_skip | skip_kinds if profile_skip and skip_kinds else profile_skip or skip_kinds
-    spans = _extract_spans(text, skip)
+    # mnemos #282 — CCR marker spans are protected BEFORE any dynamic
+    # pattern runs (all profiles, no profile can opt out): a relocated
+    # marker hash breaks the mnemos_retrieve round-trip.
+    protected = _protected_marker_spans(text)
+    spans = _extract_spans(text, skip, protected=protected)
     if not spans:
         return {
             "aligned_text": text,

@@ -22,7 +22,11 @@ Marker format
 ``[compressed: <hash> | <N>→<M> chars | retrieve via mnemos_retrieve]``
 
 The marker is the *only* overhead added on top of the filtered content.
-It is short, parseable, and LLM-friendly.
+It is short, parseable, and LLM-friendly. Its full span
+(``CCR_MARKER_RE``) is ATOMIC downstream: the CacheAligner protects it
+from dynamic-span extraction in every profile (mnemos #282) — a marker
+whose 64-hex hash is relocated to a trailing block is unreadable and
+breaks the ``mnemos_retrieve`` round-trip.
 """
 
 from __future__ import annotations
@@ -41,11 +45,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Marker: [compressed: <hash> | 5000→500 chars | retrieve via mnemos_retrieve]
-_MARKER_RE = re.compile(
+# Exported (mnemos #282): the CacheAligner consumes this SAME pattern to
+# treat CCR marker spans as atomic protected regions — never duplicate the
+# shape in another module (single source of truth for what a marker is).
+CCR_MARKER_RE: re.Pattern[str] = re.compile(
     r"\[compressed:\s*(?P<hash>[0-9a-f]{64})\s*\|"
     r"\s*(?P<orig>\d+)→(?P<comp>\d+)\s*chars\s*\|"
     r"\s*retrieve via mnemos_retrieve\]"
 )
+# Internal historical name (kept: existing references inside this module).
+_MARKER_RE = CCR_MARKER_RE
 
 
 def content_hash(text: str) -> str:

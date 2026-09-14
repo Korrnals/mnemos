@@ -490,6 +490,20 @@ class _FrozenDatetime(datetime):
         return FROZEN if tz is not None else FROZEN.replace(tzinfo=None)
 
 
+def _freeze_retrieval_clock(monkeypatch: pytest.MonkeyPatch, target: MemoryManager) -> None:
+    """Freeze the retrieval timestamp source (mnemos #282 migration).
+
+    The provenance ``retrieved=<iso>`` stamp moved from a per-call
+    ``assemble.py`` ``datetime.now()`` to the manager's session-keyed
+    registry (``MemoryManager.retrieval_iso``), so the freeze point moves
+    with it: pin the manager's clock and drop any live-clock stamp
+    already cached for this session so the next assembly re-stamps
+    frozen.
+    """
+    monkeypatch.setattr("mnemos.manager.datetime", _FrozenDatetime)
+    target._retrieval_iso.pop(SESSION, None)
+
+
 class TestOffPathEquivalence:
     def test_pre_llm_call_off_is_byte_identical_to_assemble(
         self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
@@ -497,7 +511,7 @@ class TestOffPathEquivalence:
         """Flag ABSENT (the default) → the hook output is EXACTLY the
         pre-#254 shape: assemble result + the two enrichment keys, nothing
         else (no awareness key anywhere, byte-for-byte)."""
-        monkeypatch.setattr("mnemos.assemble.datetime", _FrozenDatetime)
+        _freeze_retrieval_clock(monkeypatch, manager)
         _knowledge(manager, "off-path equivalence knowledge body about quokka")
         direct = manager.assemble_context(
             session=SESSION, project=PROJECT, query="quokka", agent=AGENT
@@ -549,7 +563,7 @@ class TestOffPathEquivalence:
     def test_off_path_repeat_runs_identical(
         self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("mnemos.assemble.datetime", _FrozenDatetime)
+        _freeze_retrieval_clock(monkeypatch, manager)
         _knowledge(manager, "repeat run body for byte stability")
         first = dispatch_hook(
             manager, action="pre_llm_call", session=SESSION, project=PROJECT, agent=AGENT
@@ -563,7 +577,7 @@ class TestOffPathEquivalence:
     def test_flag_on_appends_awareness_last(
         self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("mnemos.assemble.datetime", _FrozenDatetime)
+        _freeze_retrieval_clock(monkeypatch, manager)
         _knowledge(manager, "flag-on composition body for tail placement")
         _checkpoint(
             manager, goals="neighbor is active here", agent=NEIGHBOR, session=NEIGHBOR_SESSION
@@ -831,7 +845,7 @@ class TestTailGuard:
     def test_lanes_on_awareness_still_last(
         self, lanes_manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("mnemos.assemble.datetime", _FrozenDatetime)
+        _freeze_retrieval_clock(monkeypatch, lanes_manager)
         lanes_manager.add(
             MemoryCreate(
                 content="# Handler rule\nAlways run ruff before committing handler code.",

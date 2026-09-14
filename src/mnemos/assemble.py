@@ -47,7 +47,11 @@ Design decisions (flagged for ArchCom ratification in the #125 report):
   marker version; the legacy ``retrieved`` timestamp stays last).
   ``origin=`` renders the server-side ``source`` column and is always
   present (ADR-0025 P0: mint provenance) — row-static, so the
-  CacheAligner tail ordering above is unaffected.
+  CacheAligner tail ordering above is unaffected. ``retrieved=<iso>``
+  is SESSION-scoped (#282): the manager stamps it on the session's
+  FIRST assembly and reuses it for every later assembly of the same
+  session, so the block prefix is byte-stable across turns
+  (KV-cache friendly); different sessions get different stamps.
 * **Provenance vs CacheAligner order** — the aligner relocates ISO
   timestamps to the tail, which would gut the ``retrieved=<iso>`` field of
   a provenance line if alignment ran after wrapping. Blocks are therefore
@@ -100,7 +104,6 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -201,10 +204,14 @@ def build_provenance(memory: Memory, retrieved_iso: str, *, project: str | None 
     Phase B); ``v=`` is ``marker_version`` (1 from day one, incremented
     on every served-projection swap). The legacy ``retrieved=<iso>``
     timestamp stays the final segment (ADR-0017 D1 contract; the
-    CacheAligner ordering decision depends on it). ``origin=`` renders
-    the server-side ``source`` column (ADR-0025 P0: mint provenance;
-    groundwork for origin-aware pin guards) — always present, row-static,
-    and never a client-mintable tag/metadata value.
+    CacheAligner ordering decision depends on it) and is SESSION-scoped
+    (#282): callers pass the manager's first-assembly stamp for the
+    session (``MemoryManager.retrieval_iso``) — stable across the
+    session's assemblies, so byte-stable block prefixes — and distinct
+    across sessions. ``origin=`` renders the server-side ``source``
+    column (ADR-0025 P0: mint provenance; groundwork for origin-aware
+    pin guards) — always present, row-static, and never a
+    client-mintable tag/metadata value.
 
     ADR-0019 anti-TOCTOU: the marker is built from the SAME ``Memory``
     snapshot the served projection was cut from — never a re-read of
@@ -825,7 +832,11 @@ def assemble_context(
 
     delivery = "async" if mode == "async" else "sync"
     content_type: str | None = mode if mode in _CONTENT_TYPE_MODES else None
-    retrieved_iso = datetime.now(UTC).isoformat()
+    # mnemos #282 — session-scoped first-assembly stamp (NOT per-call):
+    # stable across this session's assemblies so the block prefix stays
+    # byte-identical for harness-side KV caching; distinct across sessions.
+    # The bounded registry lives on the manager (MemoryManager.retrieval_iso).
+    retrieved_iso = mgr.retrieval_iso(session)
     # ADR-0025 E1 — the ONE switch (LanesConfig.enabled, default False):
     # read once, threaded to the recall sub-stage and the budget stage.
     lanes_enabled = mgr.settings.lanes.enabled

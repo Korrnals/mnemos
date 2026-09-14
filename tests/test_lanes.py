@@ -183,8 +183,22 @@ def _corpus(mgr: MemoryManager) -> None:
     _add(mgr, KNOW_C, [f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:learning"])
 
 
-def _freeze_assemble_clock(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("mnemos.assemble.datetime", _FrozenDatetime)
+def _freeze_assemble_clock(monkeypatch: pytest.MonkeyPatch, target: MemoryManager) -> None:
+    """Freeze the retrieval timestamp source for byte-identical outputs.
+
+    mnemos #282: the provenance ``retrieved=<iso>`` stamp moved from a
+    per-call ``assemble.py`` ``datetime.now()`` to the manager's
+    session-keyed registry (``MemoryManager.retrieval_iso``), so the
+    freeze point moves with it. ``_FrozenDatetime`` pins the first
+    assembly of every session to FROZEN_ISO; later assemblies reuse the
+    registry entry, preserving the frozen-clock byte-identity guarantees
+    these tests exist to hold.
+    """
+    monkeypatch.setattr("mnemos.manager.datetime", _FrozenDatetime)
+    # Sessions already stamped (a manager pre-warmed by an earlier call
+    # in the same test) must also freeze — drop their registry entries so
+    # the next assembly re-stamps under the frozen clock.
+    target._retrieval_iso.pop(SESSION, None)
 
 
 # ── Happy path: lanes on ──────────────────────────────────────────────────────
@@ -370,7 +384,7 @@ class TestFlagOffEquivalence:
         fixture — originally captured on pristine b8968df (pre-lanes),
         re-captured with the hybrid_alpha 0.5 re-tune (#300, a registered
         composition change per ADR-0020)."""
-        _freeze_assemble_clock(monkeypatch)
+        _freeze_assemble_clock(monkeypatch, manager)
         _corpus(manager)
         no_file = manager.assemble_context(session=SESSION, project=PROJECT)
         assert _normalized_sha256(no_file) == NO_FILE_FIXTURE_SHA256
@@ -436,7 +450,7 @@ class TestFlagOffEquivalence:
                     _walk(item)
 
         _corpus(manager)
-        _freeze_assemble_clock(monkeypatch)
+        _freeze_assemble_clock(monkeypatch, manager)
         _walk(manager.assemble_context(session=SESSION, project=PROJECT))
         _walk(
             manager.assemble_context(
@@ -447,7 +461,7 @@ class TestFlagOffEquivalence:
     def test_flag_off_repeat_runs_byte_identical(
         self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _freeze_assemble_clock(monkeypatch)
+        _freeze_assemble_clock(monkeypatch, manager)
         _corpus(manager)
         first = manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
         second = manager.assemble_context(session=SESSION, project=PROJECT, query="handler")
@@ -515,7 +529,7 @@ class TestOrderingStability:
     ) -> None:
         """Same session, repeated assemblies → byte-stable block order under
         lane ordering (the deterministic KV-cache prefix, H2)."""
-        _freeze_assemble_clock(monkeypatch)
+        _freeze_assemble_clock(monkeypatch, lanes_manager)
         _corpus(lanes_manager)
         first = lanes_manager.assemble_context(
             session=SESSION, project=PROJECT, query="handler deployment"
