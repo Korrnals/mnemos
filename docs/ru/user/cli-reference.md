@@ -83,7 +83,7 @@ MNEMOS_LOGGING__LEVEL=DEBUG mnemos serve
 | `MNEMOS_MNEMOS__STRICT_TAG_CONTRACT` | `true` | Соблюдение схемы тегов M2 |
 | `MNEMOS_API__HOST` | `127.0.0.1` | Адрес по умолчанию для `mnemos serve` |
 | `MNEMOS_API__PORT` | `8787` | Порт по умолчанию для `mnemos serve` |
-| `MNEMOS_SEARCH__HYBRID_ALPHA` | `0.7` | Вес вектора в RRF-слиянии |
+| `MNEMOS_SEARCH__HYBRID_ALPHA` | `0.5` | Вес вектора в RRF-слиянии |
 | `MNEMOS_EMBEDDING__PROVIDER` | `nano` | `nano` (mnema-embed-v1, встроенная) / `onnx` / `ollama` / `sentence-transformers` |
 | `MNEMOS_LLM__PROVIDER` | `ollama` | LLM для синтеза и контекстного фильтра |
 | `MNEMOS_LLM__MODEL` | `qwen2.5:3b` | Имя LLM-модели |

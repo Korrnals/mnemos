@@ -22,7 +22,10 @@ embedding:
 
 search:
   default_limit: 20
-  hybrid_alpha: 0.7
+  # 0.5 balances FTS/vector legs: the vector dominance at 0.7 drowned
+  # FTS-rank-1 matches (measured on both embedder regimes: governance
+  # +5.2pp, knowledge +3.9pp, zero G-neg displacement — issue #300).
+  hybrid_alpha: 0.5
 
 api:
   host: 127.0.0.1

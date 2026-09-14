@@ -60,18 +60,21 @@ PROJECT = "asm-proj"
 AGENT = "asm-agent"
 SESSION = "sess-e1"
 
-# ── Flag-off equivalence fixtures (captured on pristine b8968df) ──────────────
+# ── Flag-off equivalence fixtures ───────────────────────────────────────────
 #
-# Same corpus + frozen assemble clock as the fixture generator run against
-# the PRE-CHANGE tree (commit b8968df, before any lanes code existed).
-# UUIDs are normalized (memory ids are per-run uuid4) — everything else in
-# the dump (block order, scores, provenance, key sets, text) is compared
-# byte-for-byte via sha256. With LanesConfig.enabled=False the post-change
-# code must reproduce these hashes; ANY observable output change on the
-# default path fails here.
+# Captured on pristine b8968df (pre-lanes), then RE-CAPTURED after the
+# hybrid_alpha 0.7→0.5 re-tune (#300): the fusion weight IS observable
+# assemble output on the default path, so the fixture moved with the
+# re-tune — a registered act (the alpha re-tune PR), not silent drift.
+# Same corpus + frozen assemble clock as the fixture generator. UUIDs are
+# normalized (memory ids are per-run uuid4) — everything else in the dump
+# (block order, scores, provenance, key sets, text) is compared
+# byte-for-byte via sha256. With LanesConfig.enabled=False the code must
+# reproduce these hashes; ANY unregistered observable output change on
+# the default path fails here.
 
-NO_FILE_FIXTURE_SHA256 = "98988e3f744924583d40b00ed5da9874e5d5050d544dab360b2f27cbf2fe5655"
-WITH_FILE_FIXTURE_SHA256 = "f50553fb02643386976f1b920c5b7026d901407ffc767da26e99cfcd999fc450"
+NO_FILE_FIXTURE_SHA256 = "10205b7f0452635445148a6890015071e386e25d3fa393fe489b6c534819d0d2"
+WITH_FILE_FIXTURE_SHA256 = "d4efeba81f46c95f55d12e04744be00ac6749dfb2ca9e01b399bdfb46299275f"
 
 FROZEN_ISO = "2026-09-13T12:00:00+00:00"
 FROZEN = datetime.fromisoformat(FROZEN_ISO)
@@ -363,9 +366,10 @@ class TestFlagOffEquivalence:
         self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Strong version: the flag-off output of the POST-change code is
-        byte-identical (UUID-normalized, frozen clock) to the output of the
-        PRE-change tree — the fixture hashes were captured on pristine
-        b8968df before any lanes code existed."""
+        byte-identical (UUID-normalized, frozen clock) to the registered
+        fixture — originally captured on pristine b8968df (pre-lanes),
+        re-captured with the hybrid_alpha 0.5 re-tune (#300, a registered
+        composition change per ADR-0020)."""
         _freeze_assemble_clock(monkeypatch)
         _corpus(manager)
         no_file = manager.assemble_context(session=SESSION, project=PROJECT)

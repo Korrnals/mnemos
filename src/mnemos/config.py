@@ -112,7 +112,13 @@ class EmbeddingConfig(BaseModel):
 
 class SearchConfig(BaseModel):
     default_limit: int = 20
-    hybrid_alpha: float = Field(default=0.7, ge=0.0, le=1.0)
+    # 0.5 balances the RRF legs (issue #300 probe): at alpha 0.7 the vector
+    # leg structurally subordinates any FTS-only match (an FTS-rank-1 hit
+    # scores 0.3/61 < a pure-vector rank-1 at 0.7/61); at alpha 0.5 they tie,
+    # so FTS-rank-1 matches stop drowning. Measured on both embedder
+    # regimes: governance +5.2pp (nano) / +1.04pp (lexical), knowledge
+    # recall@5 +3.9pp (nano) / +3.7pp (lexical), zero G-neg displacement.
+    hybrid_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class ApiConfig(BaseModel):

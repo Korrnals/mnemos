@@ -149,7 +149,12 @@ from mnemos.awareness import DELTA_MAX_WINDOW_SEC, PRESENCE_WINDOW_SEC  # noqa: 
 from mnemos.config import Settings  # noqa: E402
 from mnemos.manager import MemoryManager  # noqa: E402
 
-RUNNER_VERSION = "e3-d-runner-1"
+RUNNER_VERSION = "e3-d-runner-2"
+#: Manifest schema version that started pinning ``retrieval.hybrid_alpha``
+#: (probe finding 6, issue #300). Older recorded runs predate the key and
+#: stay valid as history — verify_manifest gates on this, not on a blanket
+#: required-field check that would retroactively invalidate them.
+PINNED_RETRIEVAL_FROM = "e3-d-runner-2"
 E0_SPEC = "docs/experiments/e0-meta-level.md §1.3, §2.6-§2.10, §3.6, §3.7, §5.4, §6.1, §6.6"
 EXPERIMENT = "e3-d"
 
@@ -510,8 +515,11 @@ DAP_001_CONTRACT: dict[str, str] = {
 # ── store construction (per scenario, per leg) ─────────────────────────────────
 
 
-def _fresh_manager(root: Path) -> MemoryManager:
-    """A fresh isolated store in the strata-tests runtime shape."""
+def _scenario_settings(root: Path) -> Settings:
+    """Settings for a fresh isolated store in the strata-tests runtime
+    shape. Shared by ``_fresh_manager`` and the manifest pin below so
+    the pinned retrieval weight can never drift from what the legs
+    actually run under."""
     settings = Settings(
         mnemos={
             "vault_path": str(root / "vault"),
@@ -521,7 +529,12 @@ def _fresh_manager(root: Path) -> MemoryManager:
         scanner={"enabled": False},
     )
     settings.resolve_paths()
-    mgr = MemoryManager(settings)
+    return settings
+
+
+def _fresh_manager(root: Path) -> MemoryManager:
+    """A fresh isolated store in the strata-tests runtime shape."""
+    mgr = MemoryManager(_scenario_settings(root))
     mgr._embedder = LexicalHashEmbedder()  # deterministic; the forged-row add path
     return mgr
 
@@ -578,6 +591,13 @@ def build_manifest() -> dict[str, Any]:
         "experiment": EXPERIMENT,
         "e0_spec": E0_SPEC,
         "legs": {leg.leg: leg.config_dict() for leg in LEGS},
+        "retrieval": {
+            # The RRF fusion weight the scenario stores run under — the
+            # config default of the shared _scenario_settings shape, not
+            # a leg parameter (probe finding 6, #300). The root argument
+            # is inert: only the search defaults are read.
+            "hybrid_alpha": _scenario_settings(ROOT / ".manifest-pin").search.hybrid_alpha,
+        },
         "probe_policy": dict(PROBE_POLICY),
         "scenario_clock": {
             "run_now": RUN_NOW.isoformat(),
@@ -665,6 +685,13 @@ def verify_manifest(manifest: dict[str, Any]) -> None:
     missing = required - set(manifest)
     if missing:
         raise AssertionError(f"manifest missing fields: {sorted(missing)}")
+    if manifest["runner_version"] == PINNED_RETRIEVAL_FROM and "retrieval" not in manifest:
+        # Probe finding 6 (#300): from runner-2 the manifest core must pin
+        # the fusion weight; runner-1 history predates the key and stays
+        # valid as-is.
+        raise AssertionError(
+            f"runner_version {PINNED_RETRIEVAL_FROM} must pin retrieval.hybrid_alpha"
+        )
     body = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
     expected = _sha256(_canonical_json(body))
     if manifest["manifest_sha256"] != expected:

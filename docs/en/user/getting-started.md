@@ -258,14 +258,14 @@ Mnemos reads `config.yaml` from the current directory or `~/.mnemos/config.yaml`
 | `mnemos.vault_path` | `~/.mnemos/vault` | Obsidian mirror |
 | `mnemos.strict_tag_contract` | `true` | Enforce the tag contract (set `false` only for legacy imports) |
 | `embedding.provider` | `nano` | `nano` (mnema-embed-v1, bundled) / `onnx` / `ollama` / `sentence-transformers` |
-| `search.hybrid_alpha` | `0.7` | Weight of the vector leg in RRF (0.0 = pure FTS, 1.0 = pure vector) |
+| `search.hybrid_alpha` | `0.5` | Weight of the vector leg in RRF (0.0 = pure FTS, 1.0 = pure vector). Default re-tuned 0.7 → 0.5: leg balance stops vector dominance from drowning FTS-rank-1 matches (issue #300) |
 | `api.host` / `api.port` | `127.0.0.1` / `8787` | `mnemos serve` defaults |
 | `llm.provider` / `llm.model` | `ollama` / `qwen2.5:3b` | Pipeline synthesis & context filter |
 
 Any of these can be overridden by env vars (`MNEMOS_*`, with `__` for nesting):
 
 ```bash
-MNEMOS_SEARCH__HYBRID_ALPHA=0.5 mnemos search "deployment"
+MNEMOS_SEARCH__HYBRID_ALPHA=0.7 mnemos search "deployment"
 ```
 
 ### Logging

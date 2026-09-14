@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`search.hybrid_alpha` default 0.7 → 0.5 — balanced RRF fusion (quick win, issue #300)** (`src/mnemos/config.py`, `config.example.yaml` + `config.container.yaml`, docs EN+RU (incl. cli-reference env defaults), e3 run manifests) — one constant: the RRF fusion weight now balances the FTS/vector legs. At alpha 0.7 the vector leg structurally subordinated any FTS-only match (an FTS-rank-1 hit scored 0.3/61 < a pure-vector rank-1 at 0.7/61); at alpha 0.5 they tie, so FTS-rank-1 matches stop drowning by construction — no special-case code. Measured on both embedder regimes (probe, issue #300): governance top-5 68→73/96 nano (+5.2pp, the full B1 recoverable set) / 68→69/96 lexical (+1.04pp); knowledge recall@5 +3.9pp nano / +3.7pp lexical; G-neg top-5 composition byte-identical (zero displacement). Per-call `hybrid_alpha=` overrides (manager/SDK/MCP) unchanged. Event-driven S1/S1m re-baseline per ADR-0020 (composition-algorithm change): recall@5 0.8637→0.902967 (S1 hybrid) / 0.863002→0.902269 (S1m nano); model fingerprint unchanged — fusion, not embedder. e3 run manifests now pin `retrieval.hybrid_alpha` in the content-addressed core (probe finding 6) so a future default re-tune is visible to e3 content-addressing; recorded runner-1 runs stay valid as history (version-gated verify).
+
 ## [4.2.0] - 2026-09-13
 
 ### Added

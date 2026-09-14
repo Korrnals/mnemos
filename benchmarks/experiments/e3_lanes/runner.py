@@ -84,7 +84,12 @@ from mnemos import __version__ as mnemos_version  # noqa: E402
 from mnemos.assemble import DEFAULT_BUDGET, assemble_context  # noqa: E402
 from mnemos.lanes import B0_TYPE_BOOST_FACTOR  # noqa: E402
 
-RUNNER_VERSION = "e3-lanes-runner-1"
+RUNNER_VERSION = "e3-lanes-runner-2"
+#: Manifest schema version that started pinning ``retrieval.hybrid_alpha``
+#: (probe finding 6, issue #300). Older recorded runs predate the key and
+#: stay valid as history — verify_manifest gates on this, not on a blanket
+#: required-field check that would retroactively invalidate them.
+PINNED_RETRIEVAL_FROM = "e3-lanes-runner-2"
 E0_SPEC = "docs/experiments/e0-meta-level.md §1.1, §2.3, §2.4, §4.1, §6.1, §6.6"
 EXPERIMENT = "e3-lanes"
 
@@ -204,6 +209,11 @@ def build_manifest(ledger: dict[str, Any]) -> dict[str, Any]:
         "legs": {leg.leg: leg.config_dict() for leg in LEGS},
         "equal_budget": E3_TOKEN_BUDGET,
         "top_k": TOP_K,
+        "retrieval": {
+            # The fusion weight the leg searches run under — the config
+            # default, not a leg parameter (probe finding 6, #300).
+            "hybrid_alpha": _leg_hybrid_alpha(),
+        },
         "denominator": gt.ANALYZED_DENOMINATOR,
         "ledger": {
             "artifact": "benchmarks/strata/e2_gov/adjudication_ledger.json",
@@ -233,6 +243,22 @@ def _s1_corpus_fingerprint() -> str:
     from benchmarks.stands.s1_quality import run as s1_run
 
     return s1_run.corpus_fingerprint()
+
+
+def _leg_hybrid_alpha() -> float:
+    """The RRF fusion weight every leg search runs under.
+
+    Leg stores are built via ``fresh_experimental_manager`` →
+    ``golden_settings``, which does not override ``search`` — the config
+    default governs the fusion. Pinned into the manifest core (probe
+    finding 6, issue #300) so a default alpha re-tune changes the
+    content-addressed core hash instead of silently re-running under a
+    different composition algorithm. The root argument is inert: only
+    the search defaults are read, no store is ever built there.
+    """
+    from benchmarks.stands.s1_quality.harness import golden_settings
+
+    return golden_settings(ROOT / ".manifest-pin").search.hybrid_alpha
 
 
 def _core(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -278,6 +304,13 @@ def verify_manifest(manifest: dict[str, Any]) -> None:
     missing = required - set(manifest)
     if missing:
         raise AssertionError(f"manifest missing fields: {sorted(missing)}")
+    if manifest["runner_version"] == PINNED_RETRIEVAL_FROM and "retrieval" not in manifest:
+        # Probe finding 6 (#300): from runner-2 the manifest core must pin
+        # the fusion weight; runner-1 history predates the key and stays
+        # valid as-is.
+        raise AssertionError(
+            f"runner_version {PINNED_RETRIEVAL_FROM} must pin retrieval.hybrid_alpha"
+        )
     body = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
     expected = _sha256(_canonical_json(body))
     if manifest["manifest_sha256"] != expected:
