@@ -154,7 +154,7 @@ chunks; a `ccr_cache` version bump on any re-fragmentation.
 
 | # | Invariant |
 |---|---|
-| 1 | Byte-stability of prefixes: any new sort input lands strictly after id-tiebreak (epic #280 Phase-1), with integer weights; assembled text stays a per-call tail |
+| 1 | Byte-stability of prefixes: any new sort input lands strictly after the id-tiebreak wave of epic #280, with integer weights; assembled text stays a per-call tail |
 | 2 | Lanes stay default-off; the E3 verdict is not revisited without a new class of data |
 | 3 | Awareness stays tail-only, never-pinnable, born no-federate; task/doc mechanics never touch payload presence/delta or the `awr:*` cursors |
 | 4 | CCR marker atomicity; re-fragmentation/re-chunking bumps the cache version in the same transaction |
@@ -200,8 +200,8 @@ chunks; a `ccr_cache` version bump on any re-fragmentation.
   convention-drift risk until a measured pattern justifies a table.
 - #248 remains open: pinned projections stay blocked, which deliberately
   constrains the shape of Phase-0 lens presets.
-- Sequencing debt: new sort inputs queue behind the in-flight id-tiebreak
-  wave (#280) — two unstable sort waves back to back are forbidden.
+- Sequencing debt: new sort inputs queue behind the id-tiebreak wave of
+  epic #280 — two unstable sort waves back to back are forbidden.
 
 ## Alternatives considered
 
