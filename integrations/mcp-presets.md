@@ -156,7 +156,7 @@ Restart Pi (or run `/reload` inside a session) and the `mnemos_*` tools
 appear; `/mnemos` reconnects the bridge on demand. Manual fallback — copy
 `integrations/extensions/mnemos-mcp.ts` from the repo into
 `~/.pi/agent/extensions/`. Override the server binary with the
-`MNEMOS_BIN` environment variable when `mnemos` is not on `PATH`.
+`VESMARO_BIN` environment variable when `mnemos` is not on `PATH`.
 
 Note: Pi also reads `~/.agents/skills/`; when both the `pi` and `agents`
 targets are deployed, prefer `--target pi` to avoid duplicate skill
@@ -225,15 +225,15 @@ canonical names remain the documented form and win when both are set:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MNEMOS_MNEMOS__DATA_DIR` | `~/.mnemos/data` | SQLite store location |
-| `MNEMOS_MNEMOS__VAULT_PATH` | `~/.mnemos/vault` | Obsidian vault mirror |
+| `VESMARO_MNEMOS__DATA_DIR` | `~/.mnemos/data` | SQLite store location |
+| `VESMARO_MNEMOS__VAULT_PATH` | `~/.mnemos/vault` | Obsidian vault mirror |
 
 Example — Claude Code with an explicit store path (expanded by your shell):
 
 ```bash
 claude mcp add --scope user mnemos \
-  --env MNEMOS_MNEMOS__DATA_DIR="$HOME/.mnemos/data" \
-  --env MNEMOS_MNEMOS__VAULT_PATH="$HOME/.mnemos/vault" \
+  --env VESMARO_MNEMOS__DATA_DIR="$HOME/.mnemos/data" \
+  --env VESMARO_MNEMOS__VAULT_PATH="$HOME/.mnemos/vault" \
   -- mnemos mcp-server
 ```
 

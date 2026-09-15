@@ -35,9 +35,9 @@ args = ["mcp-server"]
 ```
 
 Ready-made one-liners for major harnesses: [mcp-presets.md](mcp-presets.md).
-No env vars are required; optional `MNEMOS_MNEMOS__DATA_DIR` /
-`MNEMOS_MNEMOS__VAULT_PATH` tune store locations — the shorter
-`MNEMOS_DATA_DIR` / `MNEMOS_VAULT__VAULT_PATH` forms also work again as
+No env vars are required; optional `VESMARO_MNEMOS__DATA_DIR` /
+`VESMARO_MNEMOS__VAULT_PATH` tune store locations — the shorter
+`VESMARO_DATA_DIR` / `VESMARO_VAULT__VAULT_PATH` (legacy compat aliases) forms also work again as
 compatibility aliases since the #139 fix, canonical names preferred
 (loopback needs no API key — never put secrets in the entry).
 

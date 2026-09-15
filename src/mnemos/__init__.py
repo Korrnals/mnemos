@@ -59,7 +59,7 @@ class _VesmaroAliasFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def __init__(self) -> None:
         self._pending: dict[str, str] = {}
 
-    def find_spec(self, fullname: str, path: object = None, target: object = None):  # noqa: ANN001
+    def find_spec(self, fullname: str, path: object = None, target: object = None):
         if not fullname.startswith("mnemos."):
             return None
         if fullname == "mnemos":
@@ -76,7 +76,7 @@ class _VesmaroAliasFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         self._pending[fullname] = vesmaro_name
         return importlib.machinery.ModuleSpec(fullname, self)
 
-    def create_module(self, spec):  # noqa: ANN001, ANN201
+    def create_module(self, spec):
         # Return the ORIGINAL vesmaro module object — import machinery will
         # register it under the mnemos name (true alias, same object).
         vesmaro_name = self._pending.pop(spec.name, None)
@@ -84,7 +84,7 @@ class _VesmaroAliasFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
             raise ImportError(f"mnemos shim: unexpected spec {spec.name!r}")
         return sys.modules[vesmaro_name]
 
-    def exec_module(self, module) -> None:  # noqa: ANN001
+    def exec_module(self, module) -> None:
         return None  # already fully executed as vesmaro
 
 
