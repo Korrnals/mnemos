@@ -75,6 +75,7 @@
 | 2026-09-13 | Волна «E3-runner ∥ D-страты» (+ параллельные треки дня) | E3-runner + #277 [PR #283](https://github.com/Korrnals/mnemos/pull/283) (закрывает #277: ledger-aware worksheet вне fingerprint-множества, замороженное правило 20% double-annotation, run-манифесты content-addressed, структурный запрет статистики в артефактах, отказ записи без --record, B0 = type_boost×10 за mutex; P2 → ремонт → approve); E2 волна 2 D-страты [PR #286](https://github.com/Korrnals/mnemos/pull/286) (80 пар 40/40 ceteris-paribus, 40 stale 20/20, 200 канарок false-drop 0, adversarial, #224-replay 57.9%, оракул D1/D4; P1 слепота id-префиксов + P2 D4-предусловие → ремонт → approve; привязка к реальному движку). Формат-долг #285 → [PR #287](https://github.com/Korrnals/mnemos/pull/287); изоляция-баг #285 → [#288](https://github.com/Korrnals/mnemos/issues/288). E0-амендменты: rev.3 (B0 + 20% + fingerprint), rev.4 (D-оракул + нейтрализация слепоты), rev.5-open (H4 floor → **0.8191** от S1m-блока: 0.8745→0.8630 после round-3 ребейзлайна #285; гибрид-блок перенесён неперемерянным → [#292](https://github.com/Korrnals/mnemos/issues/292), [PR #290](https://github.com/Korrnals/mnemos/pull/290) (open))(https://github.com/Korrnals/mnemos/pull/290)). Параллельно в main: #285 (round-3 эмбеддер, owner-approved), #289 (pip-audit-адвайзори, закрывает #267). Сьют main: **3341 passed / 3 skipped**, bench-s1 gate PASS по новому базлайну, format/lint/mypy/doctor/version зелёные. Датированное TL-решение (2026-09-13, до любого D-сравнения): type-2 поднять 40→80 добавлением пар по raise-правилу §3.6 (мощность 0.62→0.70 при MDE +20pp; 80% при ≈+25pp; остаток регистрируется честно) — исполнение в волне D-runner |
 | 2026-09-14 | Вердикт-волна lanes: первый записанный прогон → фальсификация ратифицирована | D-runner волна [PR #294](https://github.com/Korrnals/mnemos/pull/294) (type-2 40→80 по датированному TL-решению + D-раннер с теми же анти-HARKing гарантиями; E0 rev.6-8: рейз, probe-политика + scope, условные мощности + эффективное n=32; двойное approve). **Первый записанный прогон** `e3-lanes-56c568297ad6` (A/B/B0, владелец-авторизован «до конца»): §5.1 фальсификатор — B 0.1250 vs B0 0.7396 (−61.5pp, McNemar p=4.4e-16); run-ledger [PR #296](https://github.com/Korrnals/mnemos/pull/296). АрхКом (c7db3c37): фальсификация РАТИФИЦИРОВАНА + ceiling-анализ (движок безупречен, 12/96 = структурный потолок query-blind префикса на per-query-gold страте; B1-редизайн = новая предрегистрация с жертвой H2) + H4b-маскалибровка (порог ниже шанс-базлайна; displacement-дизайн для будущих регистраций). Продуктовая поза: lanes остаются за default-off как проверенно-инертная возможность; B0 «выживает» (+3.1pp) — смена дефолта = решение владельца; D/C-ноги не затронуты. Сьют: 3360/3 → +19; ADR-0025 статус → FALSIFIED |
 | 2026-09-15 | Search v2 follow-up: short-token guard [#314](https://github.com/Korrnals/mnemos/issues/314) | Гард дегенеративных коротких токенов в v2-билдере FTS (закрывает residual ADR-0029; дефект релевантности из ревью #313, поверх merged [#315](https://github.com/Korrnals/mnemos/pull/315)): 1-символьные токены и RU/EN-стоп-слова (модульный `frozenset`) выпадают до AND-join — больше не коллапсируют bm25 idf и не заглушают AND до LIMIT-шума; `isupper()`-акронимы (IT/QA/DB/CI/ML/GWS, AND-как-литерал) и цифро-идентификаторы (v2, x1, p0) выживают структурно; never-empty фолбэк (полностью дегенератный запрос сохраняет свои токены); гард до кэпа (`_FTS_TERM_CAP` — выпавшие не съедают бюджет). Golden-сьют: секция 8 «Degenerate short tokens» (+11 тестов); security-пин инжекционной безопасности обновлён под гард. Остаток честно записан: idf-floor query-time гард (опция 3 #314) не построен — нет read-path корпусной статистики |
+| 2026-09-15 | АрхКом: Memory Graph → «самозаправляющийся граф» (ревизия роадмапа) | Владелец обнаружил потерю инициативы «Memory Graph + Learning Loop» (очередь АрхКома с 2026-08-21, TL-рекомендация P1; при вычистке очереди 2026-08-31 не переоформлена — disposition отсутствовал, в dev-plan выжил только D2-хвост [#172](https://github.com/Korrnals/mnemos/issues/172)). Комитет (TL chair + Product Architect + Senior System Engineer + Senior Security Engineer, все conditional → сходимость в фазе критики) принял **accept-staged**: прод-факт 1662 записи / 0 рёбер опроверг теорию топлива от харнессов ⇒ топливо прежде механики. A0 (S–M): миграция видов (`relates_to`+веса+provenance/scope, одноразовое окно пустой таблицы), детерминированный авто-минтинг `relates_to` на write (без LLM, без supersede-решений), capture used/rejected в `edge_stats` (`event_id` PK, append-only, volume-cap), I1–I3 mutation-verified ДО включения 1-hop walk — acceptance: minting-rate + `via_graph`>0, guard recall@5 ≥ 0.9409. A1 (M) за гейтом плотности edges/100 ≥ 50 (revisitable на A0-review): BFS-2 прикладной уровнями, feedback APPLY rank-only, `graph_epoch` в cache key. B/C — Later (C за отдельной threat-model сессией). Линия едет мажорным 4.4.0; 4.3.0 не тронут; D2 #172 слит в эпик. Инварианты I1–I9 + процессные анти-потеря-фиксы (рекомендация → issue ≤48ч; disposition на каждый item при вычистке; dev-plan = derived state) — ADR-0030 `docs/project/adr/0030-memory-graph-self-fueling.md`; mnemos `d11debf8`/`1d4bf66e`; план — §4c |
 
 ## 4. DAG ближайших волн
 
@@ -417,7 +418,7 @@ flowchart TD
     F1["Ф1 · МИНИМАЛЬНЫЙ ЭКСПЕРИМЕНТ (S5)<br/>A: B0+type_boost · B: эмуляция task-контекста<br/>C: честный tag-фильтр · предрегистрация ДО"]
     F2["Ф2 · TASK-ПРИМИТИВ ЗА ФЛАГОМ<br/>default-off · только при PASS<br/>форма (колонка/тег/таблица) — по данным Ф1"]
     F3["Ф3 · DOCS-AS-MEMORY<br/>born-quarantine + danger-sweep<br/>+ bump ccr_cache при рефрагментации"]
-    D2["D2 #172 · кросс-граф — СВОЯ линия<br/>(после id-tiebreak #280; worst-link<br/>транзитивность no-federate)"]
+    D2["D2 #172 · кросс-граф — слит в эпик<br/>«Memory Graph» (АрхКом 2026-09-15,<br/>см. §4c; worst-link no-federate = I4)"]
     GATE{{"PASS / FAIL / NO-DATA"}}
     XF["Фиксация в ADR-0027:<br/>примитив не строится"]
     F0 --> F1 --> GATE
@@ -495,6 +496,78 @@ flowchart TD
 результат, а не провал эксперимента.
 
 
+## 4c. Memory Graph — самозаправляющийся граф (АрхКом 2026-09-15)
+
+> **Источник:** АрхКом 2026-09-15 (вердикт accept-staged; ADR-0030
+> `docs/project/adr/0030-memory-graph-self-fueling.md`; mnemos-решение
+> `d11debf8`, контракт `1d4bf66e`). Ревизия вскрыла потерю инициативы
+> «Memory Graph + Learning Loop» (очередь с 2026-08-21, P1-рекомендация;
+> слилась в очередь при вычистке 31.08 без disposition). Решающий
+> прод-факт: 1662 записи / 0 рёбер — харнессы события не шлют, всякая
+> механика над пустой таблицей есть no-op ⇒ топливо прежде механики.
+> D2 [#172](https://github.com/Korrnals/mnemos/issues/172) слит в этот
+> эпик как downstream-слайс.
+
+### Дорожная карта (accept-staged: топливо прежде механики)
+
+```mermaid
+flowchart TD
+    A0["A0 · ТОПЛИВО (S–M) · линия 4.4.0<br/>миграция: relates_to + веса + provenance/scope<br/>(окно пустой таблицы одноразовое)<br/>авто-минтинг relates_to на write<br/>(FTS+vector top-1..3, без LLM)<br/>capture used/rejected → edge_stats<br/>I1–I3 mutation-verified ДО walk"]
+    GA{{"A0-review:<br/>minting-rate + via_graph>0?<br/>edges/100 → перебазелировать порог"}}
+    A1["A1 · МЕХАНИКА (M) · unlock edges/100 ≥ 50<br/>BFS-2 прикладной уровнями (caps)<br/>feedback APPLY rank-only bounded Δ<br/>graph_epoch в cache key"]
+    LR["Later · фазы B/C<br/>B: sidecar (default-OFF), gap detection<br/>C: консолидация, авто-supersedes за флагом<br/>— C за отдельной threat-model сессией"]
+    D2S["D2 #172 · каскад цитирований + CCR-индекс<br/>— downstream-слайс эпика"]
+    A0 --> GA
+    GA -- "плотность достигнута" --> A1
+    GA -. "топливо не едет" .-> A0R["A0-retune: порог минтинга /<br/>candidate-set калибровка"]
+    A1 -. после телеметрии .-> LR
+    A1 -.-> D2S
+    classDef phase fill:#daf5da,stroke:#3d8b3d
+    classDef gate fill:#fff3c4,stroke:#b8860b
+    classDef later fill:#e8e8f8,stroke:#5b5b9e
+    class A0,A1 phase
+    class GA gate
+    class LR,D2S,A0R later
+```
+
+### Чеклист эпика
+
+- [ ] **A0 — топливо:** миграция `memory_edges` (CHECK `supersedes`+`relates_to`,
+      `weight` DEFAULT, `provenance`, `scope`; whitelist `_EDGE_KINDS` синхронно);
+      авто-минтинг на write (candidate-set исключает `mnemos:no-federate`, §5-карантин,
+      чужие проекты); `edge_stats` финальной схемой с первого дня (`event_id` PK,
+      scope-поля, volume-cap, bounded-клэмп); инварианты I1–I3 — mutation-verified
+      тесты в том же PR, до включения 1-hop walk `relates_to`; acceptance:
+      minting-rate телеметрия + доля поисков `via_graph=True` > 0; guard:
+      reference recall@5 ≥ 0.9409; каждая нога default-off флагом до валидации.
+- [ ] **A1 — механика** (unlock-гейт слияния — `edges/100 ≥ 50`, экспертный,
+      revisitable на A0-review; ranking-feature unlock, НЕ access-гейт): BFS-2
+      прикладной уровнями (fanout-cap + total-work-cap, «first anchor wins»,
+      id-tiebreak ADR-0028 не трогаем); feedback APPLY (rank-only, bounded Δ
+      per-principal, uniform-404); `graph_epoch` в cache key CCR/assemble_context.
+- [ ] **Later:** фаза B (sidecar-верификация default-OFF + gap detection — после
+      телеметрии A0/A1); фаза C (Contradicts/DerivedFrom, write-time консолидация,
+      авто-supersedes за флагом) — блокируется отдельной threat-model сессией.
+- [ ] **D2 [#172]** (downstream-слайс): каскад цитирований + CCR-индекс на
+      накопленном рёберном топливе.
+
+### Инварианты (связывающие, канон — ADR-0030 приложение)
+
+I1 worst-link · I2 карантин поглощающий · I3 веса post-gate · I4 no-federate
+(exclusion + worst-link на экспорте рёбер) · I5 capture scoped/идемпотентен/
+uniform-404/append-only/volume-cap · I6 apply rank-only · I7 decay rank-only ·
+I8 консолидация intra-project+provenance+авто-supersedes за флагом · I9 sidecar
+default-OFF.
+
+### Анти-потеря (процессные правила комитета)
+
+Рекомендация АрхКома → GitHub issue ≤ 48 часов (без issue не существует);
+любая вычистка очереди требует disposition на каждый item (issue | declined |
+merged-into); dev-plan = derived state из issues/ADR с сохранением
+wave-аннотаций (S/M/L, зависимости); сверка «рекомендации ↔ трекер» при
+онбординге task-manager.
+
+
 ## 5. Лог проблем
 
 Формат открытых: проблема → приоритет → план. Живые статусы — в трекере;
@@ -517,7 +590,7 @@ flowchart TD
 | P1 | [#197](https://github.com/Korrnals/mnemos/issues/197) | NM-трек (ADR-0021, инициатива владельца, Архком 2026-08-31, стейджинг): NM-0 model-quality gate → NM-1 nano-эмбеддер + снятие chromadb → NM-3 refiner deferred-gated | NM-0 — после волны P1-фиксов (DAG §4); NM-1 закрывает класс #180 |
 | P1 | [#308](https://github.com/Korrnals/mnemos/issues/308) | Эпик многоконтекстной памяти (АрхКом 2026-09-14, accept-staged, ADR-0027): Ф0 композиция без схемы → Ф1 эксперимент-гейт (S5, руки A/B/C) → Ф2 task-примитив за флагом → Ф3 docs-as-memory | план §4b; Ф0 — следующая волна после id-tiebreak-волны эпика #280 |
 | P2 | [#190](https://github.com/Korrnals/mnemos/issues/190) | Hard hook automation для произвольных харнессов (за пределами instruction-дисциплины) | по мере волн (директива владельца) |
-| P2 | [#172](https://github.com/Korrnals/mnemos/issues/172) | D2-граф: каскад цитирований + CCR-индекс (хвост линии ADR-0018) | после БФ-волн |
+| P2 | [#172](https://github.com/Korrnals/mnemos/issues/172) | D2-граф: каскад цитирований + CCR-индекс — слит в эпик «Memory Graph» как downstream-слайс (§4c, ADR-0030) | после A1 (по рёберному топливу) |
 | P2 | [#173–#176](https://github.com/Korrnals/mnemos/issues/173) | Мелкие остатки реестра ADR-0018 (B5 tier-2 margin-straddle — мониторится; B4 management-plane exclusion и др.) | по мере волн |
 | P2 | [#181](https://github.com/Korrnals/mnemos/issues/181) | Style-долг (постоянный фон) | параллельно всегда |
 | P2 | [#182](https://github.com/Korrnals/mnemos/issues/182) | Owner-infra: docker+buildx vs контейнерный раннер конвейера | ждёт решения владельца (§5.2) |
@@ -539,6 +612,7 @@ flowchart TD
 | [#191](https://github.com/Korrnals/mnemos/issues/191) — имя пакета на PyPI | Эпик доставки (#191) не может публиковаться без имени; артефакты обещаны с 3.1.0 | `mnemos-memory-server` (TL): говорящее, свободно на PyPI — проверить перед регистрацией |
 | 28 устаревших развёрнутых скилл-файлов | Обновление skill-пака перезапишет локальные правки | Принять перезапись или явно зафиксировать набор |
 | Судьба K3s-варианта конвейера | Альтернативная форма раннера | Не срочно — вернуться после #182/#183 |
+| Релиз 4.3.0 (search-v2 + short-token guard) + `backfill-embedding-ids --apply` живой БД | main содержит поисковую линию (86fcc19); конвейер подключён (68fdb02); backfill вернёт диагностическую ценность `embedding_id` (1662 строки NULL) | Да обоим: релиз кластерным конвейером (боевая проверка §2a-канона GCW), backfill после dry-run |
 
 ## 6. Шаблон волна-отчёта (фиксированный)
 
