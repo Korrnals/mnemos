@@ -206,6 +206,12 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
 # E501 rationale class as generate_report.py).
 "benchmarks/strata/e2_d/conflict_pairs.py" = ["E501"]
 "benchmarks/strata/e2_d/replay224.py" = ["E501"]
+# src/mnemos/storage/sqlite_store.py: the search-v2 short-token guard
+# (issue #314) carries the RU half of the `_FTS_STOPWORDS` frozenset and
+# RU examples in its docstrings — that IS the intended content (same
+# rationale as the synthetic RU corpus files); RUF001/RUF002 lookalike
+# warnings are noise for genuinely Russian words like «его».
+"src/mnemos/storage/sqlite_store.py" = ["RUF001", "RUF002"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

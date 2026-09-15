@@ -126,6 +126,90 @@ _FTS_NO_MATCH_PLACEHOLDER: Final[str] = "__mnemos_fts5_no_match_placeholder__"
 # shrink the result set).
 _FTS_TERM_CAP: Final[int] = 8
 
+# RU/EN stopword list for the short-token guard (issue #314). Exact
+# lowercase entries only — the guard lowercases a candidate before the
+# membership check UNLESS the token is fully uppercase (`isupper()`),
+# because all-caps tokens are acronyms in this technical corpus (IT, QA,
+# DB, CI, ML, GWS — and an AND-as-literal must survive as a literal).
+# Identifier-shaped tokens (v2, x1, p0, m15, e3) never collide with this
+# alpha-only list, so they need no carve-out of their own.
+_FTS_STOPWORDS: Final[frozenset[str]] = frozenset(
+    {
+        # EN function words
+        "and",
+        "the",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "into",
+        "not",
+        "but",
+        "are",
+        "was",
+        "is",
+        "it",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "by",
+        "or",
+        "an",
+        "if",
+        "as",
+        "be",
+        "no",
+        "so",
+        "we",
+        "all",
+        "any",
+        "its",
+        "has",
+        "had",
+        "will",
+        # RU function words
+        "не",
+        "на",
+        "по",
+        "из",
+        "от",
+        "до",
+        "за",
+        "же",
+        "ли",
+        "бы",
+        "для",
+        "как",
+        "что",
+        "это",
+        "или",
+        "при",
+        "без",
+        "где",
+        "кто",
+        "его",
+        "её",
+        "их",
+        "есть",
+        "быть",
+        "был",
+        "была",
+        "было",
+        "были",
+        "оно",
+        "она",
+        "они",
+        "этот",
+        "эта",
+        "эти",
+        "чем",
+        "тот",
+    }
+)
+
 
 def _fts_quote_prefix(token: str) -> str:
     """Emit one sanitised token as a quoted FTS5 prefix term `"tok"*`.
@@ -155,6 +239,42 @@ def _fts_tokenize(user_query: str) -> list[str]:
             seen.add(tok)
             tokens.append(tok)
     return tokens
+
+
+def _fts_guard_tokens(tokens: list[str]) -> list[str]:
+    """Drop degenerate tokens from a SANITISED token list (issue #314).
+
+    Two drop rules, both relevance-only (no correctness gate depends on
+    them — quarantined/admissibility/scoping still apply to whatever
+    rows the wider AND matches):
+
+      * length — 1-char tokens (`a`, `b`, `x`, `и`, `в`, `с`) are
+        unambiguous noise in RU and EN: they match nearly every row, so
+        their bm25 idf collapses toward 0 and one such token inside an
+        AND query degraded the whole result to LIMIT rows ordered by
+        id-tiebreak noise;
+      * stopwords — the `_FTS_STOPWORDS` RU/EN list, checked as
+        ``token.lower()`` UNLESS ``token.isupper()``: fully-uppercase
+        tokens are acronyms in this technical corpus (IT, QA, DB, CI,
+        ML, GWS), never function words. This drops sentence-initial
+        «Как»/«The» while preserving every acronym.
+
+    Identifier-shaped tokens (v2, x1, p0, m15, e3) survive structurally:
+    they are >= 2 chars and can never equal an alpha-only stopword — no
+    digit-scanning carve-out exists by design.
+
+    NEVER-EMPTY fallback: if the rules would drop EVERY token, the
+    ORIGINAL list is returned — the user's explicit degenerate query
+    wins over the builder silently turning it into the no-match
+    placeholder. An empty input stays empty (the placeholder path is
+    unchanged).
+    """
+    guarded = [
+        tok
+        for tok in tokens
+        if len(tok) >= 2 and (tok.isupper() or tok.lower() not in _FTS_STOPWORDS)
+    ]
+    return guarded or tokens
 
 
 def _fts_expand_hyphen(token: str) -> str:
@@ -191,8 +311,18 @@ def fts_query_terms(user_query: str) -> list[str]:
     hyphen-expanded OR-alternative (``("tok-a"* OR "tok"*)``). Truncated
     to ``_FTS_TERM_CAP``. The empty list means "no match" (sanitisation
     emptied the input).
+
+    Short-token guard (issue #314): degenerate tokens — 1-char tokens
+    and RU/EN stopwords — are dropped by ``_fts_guard_tokens`` BEFORE
+    the cap, so they neither constrain the AND nor consume cap budget.
+    Fully-uppercase tokens are exempt (acronym literals); if the guard
+    would drop every token, the original list is kept (never-empty
+    fallback — the user's explicit degenerate query wins).
     """
-    return [_fts_expand_hyphen(tok) for tok in _fts_tokenize(user_query)[:_FTS_TERM_CAP]]
+    return [
+        _fts_expand_hyphen(tok)
+        for tok in _fts_guard_tokens(_fts_tokenize(user_query))[:_FTS_TERM_CAP]
+    ]
 
 
 def fts_query_v2(user_query: str) -> str:
@@ -210,6 +340,11 @@ def fts_query_v2(user_query: str) -> str:
       * hyphenated identifiers get an OR-alternative per term (the
         unicode61 tokenizer splits on hyphens — see
         ``_fts_expand_hyphen``);
+      * degenerate short tokens are dropped before the join (issue
+        #314): 1-char tokens and RU/EN stopwords match nearly every row
+        and collapse bm25 idf to 0; fully-uppercase tokens are exempt
+        (acronyms) and an all-degenerate query keeps its tokens
+        (never-empty fallback — see ``_fts_guard_tokens``);
       * the term count is capped (``_FTS_TERM_CAP``) — long queries
         truncate instead of building a runaway conjunctive expression.
 

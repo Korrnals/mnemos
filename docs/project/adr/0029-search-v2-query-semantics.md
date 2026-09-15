@@ -2,7 +2,8 @@
 
 **Status:** Accepted (independent review 2026-09-15: graph-leg gates F1/F2
 fixed in 7d9ca4c with mutation-verified regression tests; ADR amendments
-F3/F4 landed; short-token follow-up filed as #314)
+F3/F4 landed; short-token follow-up #314 landed — the guard is described
+in «Costs and accepted residuals»)
 **Deciders:** Tech Lead (slice assignment), Senior System Engineer (implementation)
 **Scope:** the FTS5 MATCH expression built from user input (the single
 chokepoint), the FTS OR fallback, the project soft-fallback retry, the
@@ -175,10 +176,24 @@ No edges → the leg is a no-op; an edge-lookup failure is non-fatal.
 
 **Costs and accepted residuals:**
 
-- Prefix terms widen recall; a very short query (`a`) can match more
-  noise than the exact-phrase era. Accepted: bm25 ranks, and the term
-  cap bounds runaway conjunctions. OR fallback widens further — but
-  only after AND proved empty, and once.
+- Prefix terms widen recall, and a degenerate short token (`a`, `the`,
+  «как») matched nearly every row — its bm25 idf collapsed to 0, and any
+  AND query containing one degraded to `LIMIT` rows ordered by id-tiebreak
+  noise. CLOSED by the #314 short-token guard (`_fts_guard_tokens`,
+  applied between tokenisation and the term cap in `fts_query_terms`):
+  1-char tokens are dropped; RU/EN stopwords are dropped via a
+  module-level frozenset unless the token is fully uppercase (acronyms —
+  IT, QA, DB, CI, ML, GWS, and an AND-as-literal — survive); digit-bearing
+  identifiers (`v2`, `x1`, `p0`) survive structurally (≥2 chars, never
+  alpha stopwords — no digit-scanning code); if the guard would drop
+  EVERY token the original list is kept (the user's explicit degenerate
+  query wins — the builder must not introduce silent zeros); and the cap
+  applies to the guarded list, so dropped tokens consume no cap budget.
+  REMAINING residual: 3+-char non-stopword high-frequency tokens still
+  collapse idf — the "correct" fix is the idf-floor query-time guard
+  (option 3 in #314), which needs a corpus-statistics read path that
+  does not exist today; it stays unbuilt. OR fallback widens further —
+  but only after AND proved empty, and once.
 - The soft-fallback can return cross-project rows for a scoped request;
   the tag + counter make it explicit, but a caller ignoring
   `project_scope_fallback` sees foreign slugs. Accepted: the

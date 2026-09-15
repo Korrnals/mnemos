@@ -201,8 +201,10 @@ class TestFts5Escaping:
         # Every emitted AND term is a quoted token — unquoted user text
         # can never reach the MATCH expression. A user-typed `AND` here
         # becomes a QUOTED literal token (`"AND"`), losing operator power.
+        # The 1-char token `x` is dropped by the #314 short-token guard
+        # (length rule) — absent from MATCH is strictly safer than quoted.
         multi = SQLiteStore._build_fts_query('x" AND (col:"y')
-        assert multi == '"x"* AND "AND"* AND "col y"*'
+        assert multi == '"AND"* AND "col y"*'
 
     def test_fts_build_empty_input(self) -> None:
         """Empty / whitespace input must not raise and must produce safe MATCH."""
