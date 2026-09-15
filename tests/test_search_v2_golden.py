@@ -317,6 +317,15 @@ class TestGoldenDegenerateShortTokens:
         (IT, QA, DB, CI, ML, GWS) — never function words."""
         assert fts_query_terms("IT infrastructure") == ['"IT"*', '"infrastructure"*']
 
+    def test_cyrillic_isupper_acronym_exemption(self) -> None:
+        """Cyrillic isupper() acronyms are exempt too: «ИТ» (RU for IT)
+        survives. The «ИХ» case is the discriminating one — lowercase
+        «их» IS a stopword, so an .isascii() "fix" to the exemption
+        would drop it from a multi-token query (review follow-up to
+        issue #314)."""
+        assert fts_query_terms("ИТ инфраструктура") == ['"ИТ"*', '"инфраструктура"*']
+        assert fts_query_terms("ИХ инфраструктура") == ['"ИХ"*', '"инфраструктура"*']
+
     def test_en_stopword_dropped(self) -> None:
         assert fts_query_terms("the release runbook") == ['"release"*', '"runbook"*']
 
@@ -331,6 +340,12 @@ class TestGoldenDegenerateShortTokens:
 
     def test_never_empty_stopword_query(self) -> None:
         assert fts_query_terms("the") == ['"the"*']
+
+    def test_never_empty_is_whole_list(self) -> None:
+        # All-degenerate MULTI-token input keeps ALL its tokens — the
+        # never-empty fallback resurrects the whole original list, not
+        # just the first token (review follow-up to issue #314).
+        assert fts_query_terms("a the") == ['"a"*', '"the"*']
 
     def test_guard_runs_before_cap(self) -> None:
         """Dropped tokens consume no cap budget: 7 droppable tokens + 1
