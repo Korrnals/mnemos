@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import sqlite3
 import threading
@@ -3233,11 +3234,17 @@ class SQLiteStore:
         (from, to, kind) primary key).
 
         Raises:
-            ValueError: self-edge (``from == to``), unknown ``kind``, or
-                empty ``provenance``. A memory superseding itself is
-                meaningless and signals a caller bug — rejected here
-                with a friendly error; the SQL CHECK constraint is the
-                defence-in-depth backstop.
+            ValueError: self-edge (``from == to``), unknown ``kind``,
+                empty ``provenance``, or a non-finite / non-positive
+                ``weight``. A memory superseding itself is meaningless
+                and signals a caller bug — rejected here with a
+                friendly error; the SQL CHECK constraint is the
+                defence-in-depth backstop. Weight validation (#324
+                scope-addition from the #336 review): negative / 0 /
+                +inf / NaN weights are rejected BEFORE the bind — a
+                NaN would otherwise bind to SQL NULL and fail the
+                column's NOT NULL constraint with a confusing
+                IntegrityError instead of a caller-actionable message.
             sqlite3.IntegrityError: either memory id does not exist
                 (foreign key, ``PRAGMA foreign_keys=ON``).
         """
@@ -3247,6 +3254,14 @@ class SQLiteStore:
             raise ValueError("self-edges are not allowed (from_memory_id == to_memory_id)")
         if not provenance:
             raise ValueError("provenance must be a non-empty string ('declared' or a rule id)")
+        # ``math.isfinite`` covers NaN and ±inf in one check; the <= 0
+        # arm covers negative and zero weights (a zero-weight edge is a
+        # no-op claim — write it when it means something).
+        if not math.isfinite(weight) or weight <= 0.0:
+            raise ValueError(
+                f"weight must be a finite positive number, got {weight!r} "
+                "(negative/0/inf/NaN are rejected at the write boundary)"
+            )
         conn = self._get_conn()
         cur = conn.execute(
             "INSERT OR IGNORE INTO memory_edges "
