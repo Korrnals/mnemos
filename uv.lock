@@ -1960,7 +1960,7 @@ wheels = [
 
 [[package]]
 name = "mnemos-memory-server"
-version = "4.1.0"
+version = "4.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
