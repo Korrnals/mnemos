@@ -370,12 +370,16 @@ def fts_join_or(terms: list[str]) -> str:
     return " OR ".join(terms)
 
 
-# ADR-0018 Phase 1 — the memory_edges table supports exactly one edge
-# kind. Expanding this set requires updating the SQL CHECK constraint on
-# memory_edges (schema migration), this whitelist, and the manager
-# wrappers — by design the surface stays minimal until on_context_rewrite
-# (#125) arrives with Phase 2.
-_EDGE_KINDS: Final[set[str]] = {"supersedes"}
+# ADR-0018 Phase 1 shipped exactly one edge kind; ADR-0030 A0 (issue
+# #321) extends the set to the final shape while the table is empty (live
+# probe 2026-09-15: 0 edges on 1662 memories — the one-shot window).
+# 'supersedes' is the semantic replacement claim (context_rewrite);
+# 'relates_to' is the honest weaker claim auto-minted by near-dup
+# detection (A0 minting slice, provenance 'auto-dedupe'). Expanding this
+# set requires updating the SQL CHECK constraint on memory_edges (schema
+# migration), this whitelist, and the manager wrappers — in the same
+# change, by design.
+_EDGE_KINDS: Final[set[str]] = {"supersedes", "relates_to"}
 
 # ── TTL in-memory cache ───────────────────────────────────────────────────────
 
@@ -787,17 +791,28 @@ CREATE TRIGGER IF NOT EXISTS ccr_cache_au AFTER UPDATE ON ccr_cache BEGIN
     VALUES (new.rowid, new.hash, new.original);
 END;
 
--- ADR-0018 Phase 1 groundwork: minimal memory graph edges. Only
--- kind='supersedes' exists in Phase 1 (no expansion, no MCP surface —
--- on_context_rewrite arrives with mnemos #125). PK (from, to, kind)
--- makes add_edge idempotent (INSERT OR IGNORE). Self-edges are rejected
--- both here (CHECK) and in add_memory_edge (friendly ValueError).
--- ON DELETE CASCADE keeps edges consistent when memories are deleted.
+-- ADR-0018 Phase 1 groundwork, extended by ADR-0030 A0 (issue #321)
+-- into the FINAL shape while the table was empty (0 edges on 1662
+-- memories, live probe 2026-09-15 — after minting starts a rebuild
+-- becomes a real migration). Kinds: 'supersedes' (semantic replacement
+-- claim, context_rewrite) and 'relates_to' (near-dup affinity, auto-
+-- minted). weight DEFAULT 1.0 — minting may raise it, feedback factors
+-- (A1) multiply at read time, never at store time. provenance:
+-- 'declared' (explicit caller) or the auto-dedupe rule id. Scope
+-- columns are NULL for global edges and carry the I5 feedback scope
+-- later. PK (from, to, kind) makes add_edge idempotent (INSERT OR
+-- IGNORE). Self-edges are rejected both here (CHECK) and in
+-- add_memory_edge (friendly ValueError). ON DELETE CASCADE keeps edges
+-- consistent when memories are deleted.
 CREATE TABLE IF NOT EXISTS memory_edges (
     from_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
     to_memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-    kind           TEXT NOT NULL CHECK (kind IN ('supersedes')),
+    kind           TEXT NOT NULL CHECK (kind IN ('supersedes', 'relates_to')),
     created_at     TEXT NOT NULL,
+    weight         REAL NOT NULL DEFAULT 1.0,
+    provenance     TEXT NOT NULL DEFAULT 'declared',
+    scope_project  TEXT,
+    scope_agent    TEXT,
     PRIMARY KEY (from_memory_id, to_memory_id, kind),
     CHECK (from_memory_id <> to_memory_id)
 );
@@ -931,6 +946,24 @@ CREATE TABLE ccr_cache_a1_rebuild (
 )
 """
 
+# ADR-0030 A0 (issue #321) — rebuild target for the memory_edges
+# edge-kinds migration (SQLite CHECK constraints cannot be ALTERed).
+# Shape mirrors the memory_edges DDL in _DB_SCHEMA exactly.
+_EDGES_REBUILD_DDL: Final[str] = """
+CREATE TABLE memory_edges_a0_rebuild (
+    from_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    to_memory_id   TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    kind           TEXT NOT NULL CHECK (kind IN ('supersedes', 'relates_to')),
+    created_at     TEXT NOT NULL,
+    weight         REAL NOT NULL DEFAULT 1.0,
+    provenance     TEXT NOT NULL DEFAULT 'declared',
+    scope_project  TEXT,
+    scope_agent    TEXT,
+    PRIMARY KEY (from_memory_id, to_memory_id, kind),
+    CHECK (from_memory_id <> to_memory_id)
+)
+"""
+
 
 # ── SQLiteStore ───────────────────────────────────────────────────────────────
 
@@ -1009,6 +1042,8 @@ class SQLiteStore:
         SQLiteStore._migrate_m3_backfill_rewrite_event_key(conn)
         # ── ADR-0019 Phase B (B1): pipeline_state backfill ──
         SQLiteStore._migrate_b1_backfill_pipeline_state(conn)
+        # ── ADR-0030 A0 (issue #321): memory_edges edge-kinds rebuild ──
+        SQLiteStore._migrate_a0_edges_kinds(conn)
 
     @staticmethod
     def _migrate_c8_drop_turns_fts(conn: sqlite3.Connection) -> None:
@@ -1188,6 +1223,72 @@ class SQLiteStore:
                 n_refined,
                 n_pending,
             )
+
+    @staticmethod
+    def _migrate_a0_edges_kinds(conn: sqlite3.Connection) -> None:
+        """A0 (ADR-0030, issue #321) — rebuild ``memory_edges`` onto the final shape.
+
+        SQLite CHECK constraints cannot be ALTERed, so the supersedes-only
+        table (ADR-0018 Phase 1) is rebuilt with the two-kind CHECK
+        (``supersedes``, ``relates_to``) plus ``weight`` / ``provenance`` /
+        ``scope_project`` / ``scope_agent``. Detection is by column shape
+        (PRAGMA table_info): fresh DBs (created in the final shape by
+        _DB_SCHEMA) and already-migrated DBs skip; a missing table (no
+        memory_edges at all) is left to _DB_SCHEMA. Production carried 0
+        rows (live probe 2026-09-15) — the copy path still runs in full so
+        an older non-empty install survives: legacy rows copy with the
+        column defaults (weight 1.0, provenance 'declared', scopes NULL),
+        which is exactly what those rows meant.
+
+        CRASH SAFETY: create+copy+drop+rename run inside ONE explicit
+        transaction (the A1 pattern — SQLite DDL is transactional); a
+        crash before COMMIT rolls back to the intact legacy table, and the
+        leading ``DROP TABLE IF EXISTS`` converges an orphan rebuild table
+        from a pre-transactional crash. The post-rename schema re-exec
+        stays OUTSIDE the transaction (idempotent, self-healing) and
+        restores the two edge indexes in one place.
+        """
+        info = conn.execute("PRAGMA table_info(memory_edges)").fetchall()
+        cols = {str(row[1]) for row in info}
+        if "weight" in cols or not cols:
+            # Final shape already (fresh/migrated) or no table — nothing
+            # to rebuild; still converge a possible orphan from a crash.
+            conn.execute("DROP TABLE IF EXISTS memory_edges_a0_rebuild")
+            conn.commit()
+            return
+        total = int(conn.execute("SELECT COUNT(*) FROM memory_edges").fetchone()[0])
+        try:
+            # B608: the script is composed EXCLUSIVELY of static module
+            # constants and literals — no user-controlled fragment ever
+            # enters it. One transaction so the DDL is atomic.
+            conn.executescript(
+                "BEGIN IMMEDIATE;\n"  # nosec B608 - static literal
+                "DROP TABLE IF EXISTS memory_edges_a0_rebuild;\n"  # nosec B608
+                + _EDGES_REBUILD_DDL.rstrip()
+                + ";\n"  # nosec B608 - static literal
+                + "INSERT INTO memory_edges_a0_rebuild "  # nosec B608 - static copy stmt
+                "(from_memory_id, to_memory_id, kind, created_at, weight, "
+                " provenance, scope_project, scope_agent) "
+                "SELECT from_memory_id, to_memory_id, kind, created_at, 1.0, "
+                "       'declared', NULL, NULL FROM memory_edges;\n"
+                "DROP TABLE memory_edges;\n"
+                "ALTER TABLE memory_edges_a0_rebuild RENAME TO memory_edges;\n"
+                "COMMIT;"
+            )
+        except Exception:
+            # Roll the half-run script back so the next connect sees the
+            # intact legacy table and re-runs cleanly; re-raise as-is.
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        # Restore the edge indexes (and re-assert the rest of the schema).
+        conn.executescript(_DB_SCHEMA)
+        conn.commit()
+        logger.info(
+            "A0 edge-kinds migration: memory_edges rebuilt with "
+            "relates_to/weight/provenance/scope: %d rows kept",
+            total,
+        )
 
     @staticmethod
     def _migrate_a1_ccr_composite_pk(conn: sqlite3.Connection) -> None:
@@ -3047,18 +3148,30 @@ class SQLiteStore:
         to_memory_id: str,
         *,
         kind: str = "supersedes",
+        weight: float = 1.0,
+        provenance: str = "declared",
+        scope_project: str | None = None,
+        scope_agent: str | None = None,
     ) -> bool:
         """Add a directed edge between two memories (idempotent).
+
+        ADR-0030 A0 (issue #321): alongside the two kinds the edge
+        carries ``weight`` (DEFAULT 1.0 — auto-minted near-dup edges may
+        raise it; feedback factors multiply at read time, never here),
+        ``provenance`` ('declared' for explicit callers, the auto-dedupe
+        rule id for minted edges) and the nullable ``scope_project`` /
+        ``scope_agent`` columns reserved for I5 scoped feedback.
 
         Returns ``True`` when a new edge was inserted, ``False`` when an
         identical edge already existed (INSERT OR IGNORE on the
         (from, to, kind) primary key).
 
         Raises:
-            ValueError: self-edge (``from == to``) or unknown ``kind``.
-                A memory superseding itself is meaningless and signals a
-                caller bug — rejected here with a friendly error; the
-                SQL CHECK constraint is the defence-in-depth backstop.
+            ValueError: self-edge (``from == to``), unknown ``kind``, or
+                empty ``provenance``. A memory superseding itself is
+                meaningless and signals a caller bug — rejected here
+                with a friendly error; the SQL CHECK constraint is the
+                defence-in-depth backstop.
             sqlite3.IntegrityError: either memory id does not exist
                 (foreign key, ``PRAGMA foreign_keys=ON``).
         """
@@ -3066,11 +3179,23 @@ class SQLiteStore:
             raise ValueError(f"unknown edge kind {kind!r}; supported kinds: {sorted(_EDGE_KINDS)}")
         if from_memory_id == to_memory_id:
             raise ValueError("self-edges are not allowed (from_memory_id == to_memory_id)")
+        if not provenance:
+            raise ValueError("provenance must be a non-empty string ('declared' or a rule id)")
         conn = self._get_conn()
         cur = conn.execute(
             "INSERT OR IGNORE INTO memory_edges "
-            "(from_memory_id, to_memory_id, kind, created_at) VALUES (?,?,?,?)",
-            (from_memory_id, to_memory_id, kind, datetime.now(UTC).isoformat()),
+            "(from_memory_id, to_memory_id, kind, created_at, weight, provenance, "
+            " scope_project, scope_agent) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                from_memory_id,
+                to_memory_id,
+                kind,
+                datetime.now(UTC).isoformat(),
+                weight,
+                provenance,
+                scope_project,
+                scope_agent,
+            ),
         )
         conn.commit()
         return cur.rowcount > 0
