@@ -298,7 +298,8 @@ async def test_auto_collect_status_touches_no_manager_data_method() -> None:
 
 async def test_no_brand_env_canonical_manifest_only() -> None:
     """Without MNEMOS_MCP_BRAND the manifest stays 27 canonical mnemos_ tools."""
-    tools = await list_tools()
+    with patch("mnemos.mcp_server._MCP_BRAND", ""):
+        tools = await list_tools()
     names = [t.name for t in tools]
     assert len(names) == 27
     assert all(n.startswith("mnemos_") for n in names)
@@ -332,3 +333,26 @@ async def test_canonicalize_known_alias_and_unknown_passthrough() -> None:
         assert _canonicalize_tool_name("vesmaro_unknown_tool") == "vesmaro_unknown_tool"
         assert _canonicalize_tool_name("mnemos_search") == "mnemos_search"
         assert _canonicalize_tool_name("other_tool") == "other_tool"
+
+
+async def test_brand_alias_harvest_matches_manifest() -> None:
+    """Harvest invariant: harvested names == manifest names (lockstep guard)."""
+    from mnemos.mcp_server import _canonical_tool_names, _canonical_tools
+
+    manifest = {t.name for t in await _canonical_tools()}
+    assert manifest == set(_canonical_tool_names())
+    # digits are aliasable too (regex covers [a-z0-9_])
+    assert all("_" in n or n.replace("mnemos_", "").isalpha() for n in manifest)
+
+
+async def test_brand_self_alias_and_invalid_brand_rejected() -> None:
+    """brand='mnemos' (self-alias) and malformed brands degrade to canonical-only."""
+    from mnemos.mcp_server import _canonical_tools
+
+    with patch("mnemos.mcp_server._MCP_BRAND", "mnemos"):
+        tools = await list_tools()
+    assert len(tools) == 27  # no doubling
+
+    with patch("mnemos.mcp_server._MCP_BRAND", "Bad Brand!"):
+        tools = await _canonical_tools()
+    assert len(tools) == 27  # malformed brand is a no-op

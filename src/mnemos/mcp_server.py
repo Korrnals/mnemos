@@ -69,12 +69,24 @@ _auto_collect_state = {
 # archcom 2026-09-14; legacy prefix retires no earlier than 6.0). Aliased
 # calls are normalised to the canonical mnemos_ name before dispatch, so the
 # handler bodies below keep the canonical spellings untouched.
-_MCP_BRAND = os.environ.get("MNEMOS_MCP_BRAND", "").strip().lower()
+_BRAND_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+_raw_brand = os.environ.get("MNEMOS_MCP_BRAND", "").strip().lower()
+# Self-alias guard: brand "mnemos" would double every manifest entry.
+_MCP_BRAND = _raw_brand if _raw_brand != "mnemos" and _BRAND_RE.match(_raw_brand) else ""
+if _raw_brand and not _MCP_BRAND:
+    logger.warning(
+        "MNEMOS_MCP_BRAND=%r rejected — must match ^[a-z][a-z0-9_]{0,30}$ and not be 'mnemos'",
+        _raw_brand,
+    )
 
 
 def _brand_alias(canonical: str) -> str | None:
-    """Return the branded alias for a canonical tool name, or None."""
-    if _MCP_BRAND and canonical.startswith("mnemos_"):
+    """Return the branded alias for a canonical tool name, or None.
+
+    Brand ``mnemos`` is refused (self-alias would duplicate every manifest
+    entry under an identical name).
+    """
+    if _MCP_BRAND and _MCP_BRAND != "mnemos" and canonical.startswith("mnemos_"):
         return f"{_MCP_BRAND}_{canonical[len('mnemos_') :]}"
     return None
 
@@ -85,9 +97,9 @@ def _canonicalize_tool_name(name: str) -> str:
     Only aliases whose canonical counterpart actually exists are
     normalised — an unknown branded name falls through untouched so the
     dispatch error reports the name the caller actually used. The
-    canonical-name set is harvested from this module's source (single
-    source of truth: the dispatch literals), so a new tool added below is
-    automatically aliasable without touching this helper.
+    canonical-name set mirrors the manifest built by ``_canonical_tools``
+    (kept in lockstep by ``test_brand_alias_harvest_matches_manifest``),
+    so a new tool added there is automatically aliasable.
     """
     if _MCP_BRAND and name.startswith(f"{_MCP_BRAND}_"):
         candidate = f"mnemos_{name[len(_MCP_BRAND) + 1 :]}"
@@ -98,9 +110,12 @@ def _canonicalize_tool_name(name: str) -> str:
 
 @functools.lru_cache(maxsize=1)
 def _canonical_tool_names() -> frozenset[str]:
-    """Canonical tool names, harvested from this module's own source."""
+    """Canonical tool names, harvested from this module's own source.
+
+    Harvest regex covers digits too (``mnemos_v2_*`` stays aliasable).
+    """
     source = inspect.getsource(sys.modules[__name__])
-    return frozenset(re.findall(r'name="(mnemos_[a-z_]+)"', source))
+    return frozenset(re.findall(r'name="(mnemos_[a-z0-9_]+)"', source))
 
 
 def _is_canonical_tool(name: str) -> bool:
