@@ -291,3 +291,44 @@ async def test_auto_collect_status_touches_no_manager_data_method() -> None:
     ]
     for method_name in data_methods:
         getattr(mock_mgr, method_name).assert_not_called()
+
+
+# ── Brand aliasing (rebrand mnemos → vesmaro, archcom 2026-09-14) ────────────
+
+
+async def test_no_brand_env_canonical_manifest_only() -> None:
+    """Without MNEMOS_MCP_BRAND the manifest stays 27 canonical mnemos_ tools."""
+    tools = await list_tools()
+    names = [t.name for t in tools]
+    assert len(names) == 27
+    assert all(n.startswith("mnemos_") for n in names)
+
+
+async def test_brand_env_appends_vesmaro_aliases() -> None:
+    """MNEMOS_MCP_BRAND=vesmaro doubles the manifest: 27 canonical + 27 aliases."""
+    from mnemos.mcp_server import _canonical_tools
+
+    with patch("mnemos.mcp_server._MCP_BRAND", "vesmaro"):
+        tools = await list_tools()
+    names = [t.name for t in tools]
+    assert len(names) == 54
+    aliases = [n for n in names if n.startswith("vesmaro_")]
+    assert len(aliases) == 27
+    assert "vesmaro_search" in aliases
+    assert "vesmaro_retrieve" in aliases
+    # aliases share the canonical schema objects (same Tool input_schema object)
+    canonical = {t.name: t for t in await _canonical_tools()}
+    aliased = next(t for t in tools if t.name == "vesmaro_search")
+    assert aliased.input_schema == canonical["mnemos_search"].input_schema
+
+
+async def test_canonicalize_known_alias_and_unknown_passthrough() -> None:
+    """Known vesmaro_* aliases normalise; unknown branded names fall through."""
+    from mnemos.mcp_server import _canonicalize_tool_name
+
+    with patch("mnemos.mcp_server._MCP_BRAND", "vesmaro"):
+        assert _canonicalize_tool_name("vesmaro_search") == "mnemos_search"
+        assert _canonicalize_tool_name("vesmaro_save_context") == "mnemos_save_context"
+        assert _canonicalize_tool_name("vesmaro_unknown_tool") == "vesmaro_unknown_tool"
+        assert _canonicalize_tool_name("mnemos_search") == "mnemos_search"
+        assert _canonicalize_tool_name("other_tool") == "other_tool"
