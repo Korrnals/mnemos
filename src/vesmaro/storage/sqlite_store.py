@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from sys import getsizeof
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 from vesmaro.models import (
     Memory,
@@ -380,6 +380,33 @@ def fts_join_or(terms: list[str]) -> str:
 # migration), this whitelist, and the manager wrappers — in the same
 # change, by design.
 _EDGE_KINDS: Final[set[str]] = {"supersedes", "relates_to"}
+
+# ADR-0030 A0 (issue #323) — used/rejected feedback event kinds for the
+# edge_stats capture table. Kept in lockstep with the SQL CHECK on
+# edge_stats (the same rule _EDGE_KINDS applies to memory_edges):
+# 'used' = a search citation was consumed by the caller, 'rejected' =
+# the caller dismissed it. Expanding this set requires the SQL CHECK
+# migration and this whitelist in the same change.
+_EDGE_STATS_KINDS: Final[frozenset[str]] = frozenset({"used", "rejected"})
+
+#: I5 volume cap (ADR-0030, issue #323) — maximum captured events per
+#: principal ``(project, agent)`` bucket. A storage-DoS and APPLY
+#: pre-poisoning guard: a hostile or runaway reporter can wedge at most
+#: this many rows into the table per identity. Enforced in
+#: ``record_edge_stat_event`` — the over-cap event is DROPPED (a normal
+#: outcome in the report dict), never an error. A bounded overshoot
+#: under a concurrent-writer race is accepted: the guard bounds storage,
+#: it is not an exact quota (single-process SQLite, one connection).
+EDGE_STATS_EVENTS_PER_PRINCIPAL_CAP: Final[int] = 10_000
+
+#: I5 bounded counter clamp (ADR-0030, issue #323) — the maximum value
+#: any per-memory counter derived from edge_stats can reach
+#: (``get_edge_stats_counters``). Capture must not drift before APPLY
+#: (#325) exists: whatever the table accumulates, the readable counters
+#: stay bounded, so APPLY inherits a bounded signal — never an
+#: unbounded one — even if a volume-cap race or a future minting bug
+#: lets extra rows in.
+EDGE_STATS_COUNTER_CLAMP: Final[int] = 1_000
 
 # ── TTL in-memory cache ───────────────────────────────────────────────────────
 
@@ -819,6 +846,45 @@ CREATE TABLE IF NOT EXISTS memory_edges (
 
 CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_memory_id, kind);
 CREATE INDEX IF NOT EXISTS idx_memory_edges_to   ON memory_edges(to_memory_id, kind);
+
+-- ADR-0030 A0 (issue #323) — used/rejected feedback CAPTURE (I5).
+-- FINAL schema from day one (the #321 one-shot-window lesson): scope
+-- fields (project/agent) ride the FIRST event — a retrofit loses the
+-- project/agent boundary. One row per (report, memory): ``event_id``
+-- is the PK, so an agent retrying the same report inserts nothing
+-- (INSERT OR IGNORE in record_edge_stat_event — no double weight).
+-- ``memory_id`` is the citation id from the search response
+-- (SearchResult.memory.id) and deliberately carries NO foreign key:
+-- this is an audit trail and audit rows outlive their subject —
+-- deleting a memory must neither fail nor rewrite history. Dangling
+-- rows are inert (counters read joins them away). The two triggers
+-- below make append-only a DATABASE guarantee, not a convention:
+-- UPDATE and DELETE abort. ``kind``: 'used' (citation consumed) |
+-- 'rejected' (citation dismissed). Counters derived from this table
+-- are clamped at EDGE_STATS_COUNTER_CLAMP; per-principal volume is
+-- capped at EDGE_STATS_EVENTS_PER_PRINCIPAL_CAP in
+-- record_edge_stat_event (I5: storage-DoS + APPLY pre-poisoning).
+-- CAPTURE ONLY — zero ranking influence in A0 (APPLY is #325).
+CREATE TABLE IF NOT EXISTS edge_stats (
+    event_id    TEXT PRIMARY KEY,
+    memory_id   TEXT NOT NULL,
+    kind        TEXT NOT NULL CHECK (kind IN ('used', 'rejected')),
+    project     TEXT NOT NULL DEFAULT '',
+    agent       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_edge_stats_memory ON edge_stats(memory_id, kind);
+CREATE INDEX IF NOT EXISTS idx_edge_stats_scope  ON edge_stats(project, agent);
+
+CREATE TRIGGER IF NOT EXISTS edge_stats_no_update BEFORE UPDATE ON edge_stats
+BEGIN
+    SELECT RAISE(ABORT, 'edge_stats is append-only (ADR-0030 I5)');
+END;
+CREATE TRIGGER IF NOT EXISTS edge_stats_no_delete BEFORE DELETE ON edge_stats
+BEGIN
+    SELECT RAISE(ABORT, 'edge_stats is append-only (ADR-0030 I5)');
+END;
 """
 
 _MIGRATIONS: list[tuple[str, str]] = [
@@ -3243,6 +3309,111 @@ class SQLiteStore:
             (to_memory_id, kind),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── edge_stats: used/rejected feedback capture (ADR-0030 A0, #323) ─────
+
+    def record_edge_stat_event(
+        self,
+        event_id: str,
+        memory_id: str,
+        *,
+        kind: str,
+        project: str = "",
+        agent: str = "",
+    ) -> Literal["inserted", "duplicate", "cap_dropped"]:
+        """Append one used/rejected feedback event (idempotent, capped).
+
+        I5 mechanics (ADR-0030 A0, issue #323) — the gates live in the
+        manager wrapper (``MemoryManager.report_search_feedback``); this
+        method is the pure storage leg:
+
+        * ``event_id`` PK idempotency — ``INSERT OR IGNORE``: re-recording
+          the same event (an agent retry) returns ``"duplicate"`` and
+          contributes no second row, hence no double weight;
+        * volume-cap per principal — when the ``(project, agent)`` bucket
+          already holds ``EDGE_STATS_EVENTS_PER_PRINCIPAL_CAP`` rows the
+          event is DROPPED (``"cap_dropped"``), never an error: the cap
+          is a storage-DoS / APPLY pre-poisoning guard (I5), not a
+          caller-facing quota. The cap is checked BEFORE the insert
+          (append-only leaves no take-back), so a duplicate event id
+          arriving while the bucket sits at cap reports
+          ``"cap_dropped"`` rather than ``"duplicate"`` — both are
+          no-op drops;
+        * append-only — there is no UPDATE/DELETE path on edge_stats
+          anywhere (the schema triggers abort both; the audit trail is a
+          database guarantee).
+
+        Args:
+            event_id: Row id; the manager derives retry-stable ids from
+                the caller's logical report id.
+            memory_id: The cited memory id (from the search response).
+            kind: ``'used'`` or ``'rejected'``.
+            project: Reporting principal's project (scope from the
+                FIRST event — the table never learns it later).
+            agent: Reporting principal's agent.
+
+        Returns:
+            ``"inserted"`` | ``"duplicate"`` | ``"cap_dropped"``.
+
+        Raises:
+            ValueError: unknown ``kind`` or empty ``event_id``.
+        """
+        if kind not in _EDGE_STATS_KINDS:
+            raise ValueError(
+                f"unknown feedback kind {kind!r}; supported kinds: {sorted(_EDGE_STATS_KINDS)}"
+            )
+        if not event_id:
+            raise ValueError("event_id must be a non-empty string (idempotency key)")
+        conn = self._get_conn()
+        principal_rows = conn.execute(
+            "SELECT COUNT(*) FROM edge_stats WHERE project = ? AND agent = ?",
+            (project, agent),
+        ).fetchone()[0]
+        if int(principal_rows) >= EDGE_STATS_EVENTS_PER_PRINCIPAL_CAP:
+            return "cap_dropped"
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO edge_stats "
+            "(event_id, memory_id, kind, project, agent, created_at) VALUES (?,?,?,?,?,?)",
+            (event_id, memory_id, kind, project, agent, datetime.now(UTC).isoformat()),
+        )
+        conn.commit()
+        return "inserted" if cur.rowcount > 0 else "duplicate"
+
+    def get_edge_stats_counters(self, memory_id: str) -> dict[str, int]:
+        """Per-memory used/rejected counters, clamped (I5 bounded clamp).
+
+        The APPLY-ready read surface (#325 consumes this when feedback
+        starts influencing rank). Clamped from day one at
+        ``EDGE_STATS_COUNTER_CLAMP``: whatever the table accumulates, no
+        counter exceeds the clamp — capture cannot drift before APPLY
+        exists. Always returns both keys (0 for absent kinds).
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT kind, COUNT(*) AS n FROM edge_stats WHERE memory_id = ? GROUP BY kind",
+            (memory_id,),
+        ).fetchall()
+        counters = {"used": 0, "rejected": 0}
+        for row in rows:
+            counters[str(row["kind"])] = min(int(row["n"]), EDGE_STATS_COUNTER_CLAMP)
+        return counters
+
+    def count_edge_stats(self, *, kind: str | None = None) -> int:
+        """Durable edge_stats row count (telemetry; optional kind filter).
+
+        ``MemoryManager.feedback_capture_stats`` reads the durable
+        captured-event totals here — the A0-review D-behavioral signal
+        must survive restarts, so it is counted from the table, not from
+        an in-memory counter.
+        """
+        conn = self._get_conn()
+        if kind is None:
+            row = conn.execute("SELECT COUNT(*) FROM edge_stats").fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM edge_stats WHERE kind = ?", (kind,)
+            ).fetchone()
+        return int(row[0])
 
     def get_memory_id_by_rewrite_event_key(self, event_key: str) -> str | None:
         """Return the memory id carrying ``rewrite_event_key``.

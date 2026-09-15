@@ -58,6 +58,7 @@ from vesmaro.pipeline import (
 )
 from vesmaro.policy.engine import PolicyAction
 from vesmaro.storage.sqlite_store import (
+    _EDGE_STATS_KINDS,
     FTS_SNIPPET_ELLIPSIS,
     FTS_SNIPPET_END_MARK,
     FTS_SNIPPET_START_MARK,
@@ -71,6 +72,23 @@ logger = logging.getLogger(__name__)
 # Hard cap on redirect hops for per-hop SSRF re-validation (v2 posture).
 # Each hop is validated by _validate_url before the next request is issued.
 _MAX_REDIRECTS: int = 5
+
+
+def _derive_feedback_event_id(event_id: str, memory_id: str) -> str:
+    """Deterministic per-row event id from the caller's logical report id.
+
+    ADR-0030 A0 (issue #323, I5 idempotency): length-prefixed SHA-256
+    over ``(event_id, memory_id)`` — injective for arbitrary caller
+    strings (the ``compute_event_key`` pattern from context_rewrite: a
+    delimiter scheme could be spoofed by an id containing the
+    delimiter). Retrying the same report with the same ``event_id``
+    re-derives the same row ids, so ``INSERT OR IGNORE`` drops them —
+    an agent retry contributes no double weight. The hash also keeps
+    the raw caller string out of the PK namespace: a hostile caller
+    cannot squat a predictable id shape.
+    """
+    canonical = f"{len(event_id)}:{event_id}{len(memory_id)}:{memory_id}"
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 # heal_stale_embeddings (review P2): a dead/erroring embedder must not
 # walk the whole refined set in one background tick. `limit` bounds the
@@ -362,6 +380,20 @@ class MemoryManager:
             "results_counts": [],
         }
         self._search_stats_lock = threading.Lock()
+        # ADR-0030 A0 (issue #323) — in-memory feedback-capture window
+        # counters (operational health of the capture leg: drops,
+        # duplicates, errors). The VOLUME signal (captured totals) is
+        # durable and read from the edge_stats table itself in
+        # feedback_capture_stats() — it must survive restarts for
+        # A0-review; these here reset with the process by design.
+        self._feedback_stats: dict[str, int] = {
+            "reports_total": 0,
+            "duplicates_ignored_total": 0,
+            "out_of_scope_dropped_total": 0,
+            "cap_dropped_total": 0,
+            "errors_total": 0,
+        }
+        self._feedback_stats_lock = threading.Lock()
         self._processor_thread: threading.Thread | None = None
         self._processor_stop: threading.Event | None = None
         # P1-5/T3: CCR cleanup cycle counter — cleanup runs every
@@ -2565,6 +2597,172 @@ class MemoryManager:
             "avg_results": avg_results,
         }
 
+    # ── used/rejected feedback capture (ADR-0030 A0, issue #323) ──────────
+
+    def report_search_feedback(
+        self,
+        memory_ids: list[str],
+        *,
+        kind: str,
+        project: str | None = None,
+        agent: str | None = None,
+        event_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Report used/rejected feedback for search citations (I5-capture).
+
+        CAPTURE ONLY (ADR-0030 A0, issue #323): the event lands in the
+        append-only ``edge_stats`` table and influences NOTHING — no
+        ranking, no status, no eligibility. APPLY (rank-only, bounded Δ
+        per principal) is slice A1 (#325).
+
+        The report binds to the existing search call by design: the ids
+        are the citation ids already riding the search response
+        (``SearchResult.memory.id``), so the harness computes nothing
+        new. ``used`` is NEVER auto-inferred from a search call itself —
+        only an explicit report through this method captures.
+
+        I5 gates (scoped, uniform-404): every id is validated under the
+        SAME gates that would surface it in a search — the A9
+        authoritative project guard plus the ADR-0018 context-admissible
+        default set (published/processed; quarantine excluded absolutely
+        by ADR-0019 §5). A nonexistent id, a cross-project id, an
+        inadmissible-status id and a quarantined id ALL land in the same
+        ``out_of_scope`` bucket: the response carries no per-id reason,
+        so it is not an existence oracle.
+
+        Idempotency (I5): pass a retry-stable ``event_id`` — per-row ids
+        are derived from it, so an agent retrying the same report
+        inserts nothing (``duplicates`` counts the idempotent drops).
+        Without ``event_id`` each report mints fresh uuids (no
+        cross-call idempotency — retrying callers must pass one).
+        Residual (A0): validation uses the DEFAULT issuance gates;
+        feedback on rows received via the documented widenings
+        (``include_raw`` / explicit ``status=``) stays out of scope
+        until APPLY (#325) needs it.
+
+        Failure isolation: a capture-side failure (store error) never
+        propagates — the method returns normally with the partial
+        outcome and the error is counted + logged. Only caller bugs
+        (unknown ``kind``) raise ``ValueError`` at this boundary.
+
+        Behind the ``vesmaro.search.feedback_capture_enabled`` flag
+        (DEFAULT OFF): flag off → zero writes, zero telemetry.
+
+        Returns:
+            ``{"kind", "flag_enabled", "reported", "captured",
+            "duplicates", "out_of_scope", "cap_dropped"}`` — counts
+            only, no per-id detail (uniform-404).
+        """
+        if kind not in _EDGE_STATS_KINDS:
+            raise ValueError(
+                f"unknown feedback kind {kind!r}; supported kinds: {sorted(_EDGE_STATS_KINDS)}"
+            )
+        # One event row per memory — duplicate ids within one report are
+        # the same citation reported twice, not two events.
+        unique_ids = list(dict.fromkeys(memory_ids))
+        outcome: dict[str, Any] = {
+            "kind": kind,
+            "flag_enabled": bool(self.settings.search.feedback_capture_enabled),
+            "reported": len(unique_ids),
+            "captured": 0,
+            "duplicates": 0,
+            "out_of_scope": 0,
+            "cap_dropped": 0,
+        }
+        if not outcome["flag_enabled"]:
+            return outcome
+        with self._feedback_stats_lock:
+            self._feedback_stats["reports_total"] += 1
+        try:
+            for mid in unique_ids:
+                if not self._feedback_target_visible(mid, project=project):
+                    outcome["out_of_scope"] += 1
+                    continue
+                row_event_id = (
+                    _derive_feedback_event_id(event_id, mid) if event_id else str(uuid.uuid4())
+                )
+                result = self.sqlite.record_edge_stat_event(
+                    row_event_id,
+                    mid,
+                    kind=kind,
+                    project=project or "",
+                    agent=agent or "",
+                )
+                if result == "inserted":
+                    outcome["captured"] += 1
+                elif result == "duplicate":
+                    outcome["duplicates"] += 1
+                else:  # "cap_dropped" — I5 volume cap, not an error
+                    outcome["cap_dropped"] += 1
+        except Exception as exc:
+            # Failure isolation (I5): a capture-side failure must never
+            # fail the caller — count, log, return the partial outcome.
+            with self._feedback_stats_lock:
+                self._feedback_stats["errors_total"] += 1
+            logger.warning("feedback capture failed (non-fatal), kind=%s: %s", kind, exc)
+            return outcome
+        with self._feedback_stats_lock:
+            self._feedback_stats["duplicates_ignored_total"] += int(outcome["duplicates"])
+            self._feedback_stats["out_of_scope_dropped_total"] += int(outcome["out_of_scope"])
+            self._feedback_stats["cap_dropped_total"] += int(outcome["cap_dropped"])
+        if outcome["captured"] or outcome["cap_dropped"]:
+            logger.info(
+                "feedback capture: kind=%s captured=%d duplicates=%d "
+                "out_of_scope=%d cap_dropped=%d",
+                kind,
+                int(outcome["captured"]),
+                int(outcome["duplicates"]),
+                int(outcome["out_of_scope"]),
+                int(outcome["cap_dropped"]),
+            )
+        return outcome
+
+    def _feedback_target_visible(self, memory_id: str, *, project: str | None) -> bool:
+        """I5 scoping for feedback capture: would a search under the
+        caller's scope surface this id?
+
+        Same gates as the fused search legs: the A9 authoritative
+        project guard (``project`` None/empty = the explicit global
+        mode, mirroring search) and ``is_context_admissible`` — the
+        ADR-0018 default issuance set with the ADR-0019 §5 absolute
+        quarantine exclusion. Returns a bool ONLY: the caller must not
+        learn WHY an id is invisible (uniform-404, no existence oracle).
+        """
+        mem = self.sqlite.get(memory_id)
+        if mem is None:
+            return False
+        if project and (mem.project or "") != project:
+            return False  # A9 authoritative guard — feedback never widens a scope
+        return is_context_admissible(mem)
+
+    def feedback_capture_stats(self) -> dict[str, Any]:
+        """Feedback-capture telemetry (ADR-0030 A0, issue #323).
+
+        ``events_total`` / ``captured_used_total`` /
+        ``captured_rejected_total`` are DURABLE — read from the
+        edge_stats table, so the A0-review D-behavioral signal survives
+        restarts. ``since_restart`` is the in-memory window breakdown
+        (drops, duplicates, errors): operational health of the capture
+        leg, not volume.
+        """
+        enabled = bool(self.settings.search.feedback_capture_enabled)
+        try:
+            used = self.sqlite.count_edge_stats(kind="used")
+            rejected = self.sqlite.count_edge_stats(kind="rejected")
+            events_total = self.sqlite.count_edge_stats()
+        except Exception as exc:
+            logger.warning("feedback capture stats read failed: %s", exc)
+            used = rejected = events_total = 0
+        with self._feedback_stats_lock:
+            window = dict(self._feedback_stats)
+        return {
+            "enabled": enabled,
+            "events_total": events_total,
+            "captured_used_total": used,
+            "captured_rejected_total": rejected,
+            "since_restart": window,
+        }
+
     def dashboard_stats(self) -> dict[str, Any]:
         """Structured JSON for the mnemos-eyes dashboard.
 
@@ -2573,6 +2771,7 @@ class MemoryManager:
         by_status = self.sqlite.count_by_status()
         filter_stats = self.sqlite.get_filter_stats()
         s_stats = self.search_stats()
+        fb_stats = self.feedback_capture_stats()
         sessions = self.sqlite.count_sessions()
         # Pipeline counts derived from status + DLQ.
         processed_total = int(by_status.get("processed", 0)) + int(by_status.get("published", 0))
@@ -2605,6 +2804,16 @@ class MemoryManager:
                 "project_scope_fallback_total": s_stats["project_scope_fallback_total"],
                 "avg_latency_ms": s_stats["avg_latency_ms"],
                 "avg_results": s_stats["avg_results"],
+            },
+            # ADR-0030 A0 (issue #323) — durable captured-event counters
+            # (the D-behavioral telemetry the A0-review reads). Compact
+            # projection of feedback_capture_stats(); the flag is OFF by
+            # default, so the zeros shown before enablement are honest.
+            "feedback_capture": {
+                "enabled": fb_stats["enabled"],
+                "events_total": fb_stats["events_total"],
+                "captured_used_total": fb_stats["captured_used_total"],
+                "captured_rejected_total": fb_stats["captured_rejected_total"],
             },
             "vectors": {
                 "indexed_total": self.vectors.count(),

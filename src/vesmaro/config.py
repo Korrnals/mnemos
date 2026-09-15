@@ -119,6 +119,15 @@ class SearchConfig(BaseModel):
     # regimes: governance +5.2pp (nano) / +1.04pp (lexical), knowledge
     # recall@5 +3.9pp (nano) / +3.7pp (lexical), zero G-neg displacement.
     hybrid_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
+    # ADR-0030 A0 (issue #323) — used/rejected feedback CAPTURE into the
+    # append-only ``edge_stats`` table (I5). DEFAULT OFF: every leg of
+    # the memory-graph line ships dark until validated (ADR-0030
+    # Decision 2, "Acceptance and guards"). Capture only — feedback has
+    # ZERO ranking influence in A0; APPLY (rank-only, bounded Δ) is
+    # slice A1 (#325). Flag off = ``report_search_feedback`` performs no
+    # writes and no telemetry (zero behavior). Env:
+    # ``VESMARO_SEARCH__FEEDBACK_CAPTURE_ENABLED``.
+    feedback_capture_enabled: bool = False
 
 
 class ApiConfig(BaseModel):
