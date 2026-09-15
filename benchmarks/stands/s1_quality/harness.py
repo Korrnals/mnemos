@@ -25,6 +25,15 @@ Measured axes:
 4. the ADR-0018 pair — replace-hit-rate / replace-regret-rate over the
    scripted rewrite scenario (see ``rewrite_scenario.py`` for the exact
    numerators/denominators).
+
+ADR-0029 interplay (#315 search v2): every A9 leg runs the FULL modern
+pipeline, soft project fallback included — a scoped query that returns
+zero rows is retried once without the scope and surfaces cross-project
+rows TAGGED ``project_scope_fallback=True``. Those rows are by-design
+retrievals, not resolve-guard leaks: ``foreign_project_surfaced`` counts
+UNTAGGED foreign rows only (the zero-tolerance invariant), tagged rows
+are visible in ``foreign_project_fallback_surfaced`` and belt-checked
+for all-or-nothing tagging (``scope_fallback_*`` metrics).
 """
 
 from __future__ import annotations
@@ -175,9 +184,18 @@ def vector_predicate_off() -> Iterator[None]:
     Wraps ``VectorStore.search`` so the ``project`` kwarg is dropped —
     candidates come from the WHOLE store at global rank (pre-A9
     behaviour). The manager-side authoritative resolve guard remains
-    active, so no foreign row leaks into results; what changes is which
-    candidates fill the leg's contribution depth (global ranking instead
-    of project-scoped ranking) — exactly the recall-relevant difference.
+    active, so no UNTAGGED foreign row leaks into results; what changes
+    is which candidates fill the leg's contribution depth (global
+    ranking instead of project-scoped ranking) — exactly the
+    recall-relevant difference.
+
+    ADR-0029 note: this emulation predates the #315 soft project
+    fallback and runs INSIDE the full modern pipeline — a scoped query
+    that zeroes out (the pre-A9 x2 depth makes that contour reachable)
+    is retried without the scope and surfaces cross-project rows TAGGED
+    ``project_scope_fallback=True``. Tagged rows are by-design ADR-0029
+    behavior (see ``SearchMetrics``): the zero-tolerance invariant guards
+    the resolve path only.
     """
     original = VectorStore.search
 
@@ -235,6 +253,9 @@ class QueryMeasurement:
     expected: frozenset[str]
     result_slugs: list[str] = field(default_factory=list)
     search_types: list[str] = field(default_factory=list)
+    # Per-row ``project_scope_fallback`` (ADR-0029), parallel to
+    # ``result_slugs`` — appended in lockstep, hence ``strict=True`` zips.
+    result_fallback: list[bool] = field(default_factory=list)
 
 
 @dataclass
@@ -247,7 +268,20 @@ class SearchMetrics:
     judged_queries: int = 0
     probe_queries: int = 0
     non_admissible_surfaced: int = 0
+    # UNTAGGED out-of-project rows only — the resolve-guard invariant
+    # (must stay 0). ADR-0029 soft-fallback rows carry
+    # ``project_scope_fallback=True`` and are by-design cross-project
+    # retrievals; they are counted separately right below so the A0-review
+    # telemetry keeps its visibility.
     foreign_project_surfaced: int = 0
+    foreign_project_fallback_surfaced: int = 0
+    # ADR-0029 belts: result sets that came from the fallback retry (any
+    # tagged row), the manager-side ``project_scope_fallback_total``
+    # counter delta over the same window, and result sets whose tagging
+    # is not all-or-nothing (the retry tags EVERY row it surfaces).
+    scope_fallback_queries: int = 0
+    scope_fallback_events: int = 0
+    scope_fallback_tagging_violations: int = 0
     hybrid_queries: int = 0
     planted_appearances: int = 0
     planted_leaks: int = 0
@@ -269,6 +303,7 @@ def _measure_queries(
             if slug is not None:
                 m.result_slugs.append(slug)
                 m.search_types.append(r.search_type)
+                m.result_fallback.append(r.project_scope_fallback)
         out.append(m)
     return out
 
@@ -308,9 +343,17 @@ def measure_search(
     *,
     label: str,
 ) -> SearchMetrics:
-    """Run the golden queries and aggregate one variant's metrics."""
+    """Run the golden queries and aggregate one variant's metrics.
+
+    ADR-0029 split (#315): ``foreign_project_surfaced`` counts UNTAGGED
+    out-of-project rows (the resolve-guard invariant); fallback-tagged
+    rows land in ``foreign_project_fallback_surfaced``, with the
+    ``scope_fallback_*`` belts proving every surfaced fallback row is
+    tagged (all-or-nothing per result set, counter parity).
+    """
     from benchmarks.corpus.corpus import NON_ADMISSIBLE_SLUGS
 
+    fallback_events_before = int(mgr.search_stats()["project_scope_fallback_total"])
     measurements = _measure_queries(mgr, slug_to_id)
     metrics = SearchMetrics(label=label)
     prec_sums: dict[int, float] = {k: 0.0 for k in K_VALUES}
@@ -325,13 +368,24 @@ def measure_search(
         metrics.non_admissible_surfaced += sum(
             1 for s in m.result_slugs if s in NON_ADMISSIBLE_SLUGS
         )
+        tagged_rows = sum(1 for fb in m.result_fallback if fb)
+        if tagged_rows:
+            metrics.scope_fallback_queries += 1
+            if tagged_rows != len(m.result_fallback):
+                # ADR-0029: the fallback retry tags EVERY row it surfaces
+                # (manager.search) — a mixed set is a tagging bug, not a
+                # scope decision.
+                metrics.scope_fallback_tagging_violations += 1
         if m.project is not None:
-            foreign = {
-                s
-                for s in m.result_slugs
-                if _project_of(s) is not None and _project_of(s) != m.project
-            }
-            metrics.foreign_project_surfaced += len(foreign)
+            foreign_untagged: set[str] = set()
+            foreign_fallback: set[str] = set()
+            for slug, fb in zip(m.result_slugs, m.result_fallback, strict=True):
+                slug_project = _project_of(slug)
+                if slug_project is None or slug_project == m.project:
+                    continue
+                (foreign_fallback if fb else foreign_untagged).add(slug)
+            metrics.foreign_project_surfaced += len(foreign_untagged)
+            metrics.foreign_project_fallback_surfaced += len(foreign_fallback)
         if any(st == "hybrid" for st in m.search_types):
             metrics.hybrid_queries += 1
         appearances, leaks = _issue_and_check_injection(mgr, slug_to_id, m)
@@ -348,6 +402,9 @@ def measure_search(
     for k in K_VALUES:
         metrics.precision[k] = prec_sums[k] / metrics.judged_queries
         metrics.recall[k] = rec_sums[k] / metrics.judged_queries
+    metrics.scope_fallback_events = (
+        int(mgr.search_stats()["project_scope_fallback_total"]) - fallback_events_before
+    )
     return metrics
 
 
