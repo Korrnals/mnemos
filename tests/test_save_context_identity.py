@@ -35,12 +35,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from mnemos.api import main as api_main
-from mnemos.api.main import app, lifespan
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager, SessionAgentMismatchError
-from mnemos.mcp_server import _dispatch
-from mnemos.models import (
+from vesmaro.api import main as api_main
+from vesmaro.api.main import app, lifespan
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager, SessionAgentMismatchError
+from vesmaro.mcp_server import _dispatch
+from vesmaro.models import (
     CHECKPOINT_FIELDS,
     CHECKPOINT_STAMP_KEYS,
     Memory,
@@ -91,7 +91,7 @@ async def _save(mgr: MemoryManager, **overrides: object) -> str:
     """Dispatch mnemos_save_context against a real manager, return the text."""
     args: dict[str, object] = {"project": "p251", "goals": "ship #251"}
     args.update(overrides)
-    with patch("mnemos.mcp_server.get_manager", return_value=mgr):
+    with patch("vesmaro.mcp_server.get_manager", return_value=mgr):
         result = await _dispatch("mnemos_save_context", dict(args))
     assert isinstance(result, str)
     return result

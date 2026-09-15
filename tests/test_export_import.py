@@ -17,17 +17,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.cli.export import (
+from vesmaro.cli.export import (
     CompressMode,
     ExportFilter,
     ExportFormat,
     decrypt,
     run_export,
 )
-from mnemos.cli.import_ import ImportMode, run_import
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus, Project
+from vesmaro.cli.import_ import ImportMode, run_import
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus, Project
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -113,7 +113,7 @@ class TestExportJSON:
 
     def test_json_export_no_traces(self, mgr, tmp_path):
         """Traces are NEVER included in export (owner decision)."""
-        from mnemos.models import Trace
+        from vesmaro.models import Trace
 
         mgr.sqlite.save_trace(Trace(task_label="cluster", project="mnemos", step="embed"))
         _add_memory(mgr, "x")

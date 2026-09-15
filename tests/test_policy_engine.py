@@ -15,24 +15,24 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import Memory, MemoryStatus
-from mnemos.policy.dlq import dlq_add, dlq_discard, dlq_list, dlq_retry
-from mnemos.policy.engine import (
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import Memory, MemoryStatus
+from vesmaro.policy.dlq import dlq_add, dlq_discard, dlq_list, dlq_retry
+from vesmaro.policy.engine import (
     PolicyAction,
     PolicyCondition,
     PolicyRule,
     evaluate_rules,
     load_rules_from_dict,
 )
-from mnemos.policy.scheduler import (
+from vesmaro.policy.scheduler import (
     auto_cluster,
     auto_publish,
     auto_synthesize,
     dlq_retry_scheduler,
 )
-from mnemos.policy.triggers import on_memory_saved, on_status_changed
+from vesmaro.policy.triggers import on_memory_saved, on_status_changed
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -647,7 +647,7 @@ class TestTriggersCoverage:
         """If a settings-like object has no `policies` attribute, _get_rules returns []."""
         from unittest.mock import MagicMock
 
-        from mnemos.policy.triggers import _get_rules
+        from vesmaro.policy.triggers import _get_rules
 
         # settings has no `policies` attribute at all → getattr returns None
         mgr = MagicMock(spec=["settings"])  # only 'settings' attr available
@@ -659,7 +659,7 @@ class TestTriggersCoverage:
         """If `policies` is a list of PolicyRule, _get_rules returns it as-is."""
         from unittest.mock import MagicMock
 
-        from mnemos.policy.triggers import _get_rules
+        from vesmaro.policy.triggers import _get_rules
 
         mgr = MagicMock()
         mgr.settings.policies = [PolicyRule(name="r", actions=[PolicyAction(action="defer")])]
@@ -671,7 +671,7 @@ class TestTriggersCoverage:
         """An unexpected type (e.g. int) for `policies` returns []."""
         from unittest.mock import MagicMock
 
-        from mnemos.policy.triggers import _get_rules
+        from vesmaro.policy.triggers import _get_rules
 
         mgr = MagicMock()
         mgr.settings.policies = 42

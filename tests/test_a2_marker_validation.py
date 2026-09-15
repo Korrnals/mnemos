@@ -35,14 +35,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import mnemos.mcp_server as mcp_mod
-from mnemos.api import main as api_main
-from mnemos.api.main import app, lifespan
-from mnemos.ccr import content_hash, parse_marker
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
-from mnemos.storage.sqlite_store import SQLiteStore
+import vesmaro.mcp_server as mcp_mod
+from vesmaro.api import main as api_main
+from vesmaro.api.main import app, lifespan
+from vesmaro.ccr import content_hash, parse_marker
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.storage.sqlite_store import SQLiteStore
 
 PROJECT = "a2-proj"
 OTHER_PROJECT = "a2-other"
@@ -797,7 +797,7 @@ def test_strict_hash_only_legacy_allowed_with_warn(
     resistance)."""
     stamped = strict_manager.compress_content(CONTENT, project=PROJECT)  # identity-less
     assert stamped["cached"] is True
-    with caplog.at_level(logging.WARNING, logger="mnemos.manager"):
+    with caplog.at_level(logging.WARNING, logger="vesmaro.manager"):
         result = strict_manager.retrieve_content(stamped["hash"], project=PROJECT)
     assert result["found"] is True
     assert result.get("refused") is not True

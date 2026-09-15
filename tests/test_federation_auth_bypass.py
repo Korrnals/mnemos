@@ -5,9 +5,9 @@ Background
 ----------
 The federation mediated-pull endpoint ``POST /api/v1/federation/pull`` is
 authenticated by a **per-peer bearer token** (``mnk_fed_<peer_id>_*``,
-ADR-0016) verified inside :func:`mnemos.federation_server.handle_pull`.
+ADR-0016) verified inside :func:`vesmaro.federation_server.handle_pull`.
 The global operator session (TOTP/api-key) enforced by
-:class:`mnemos.api.middleware.AuthMiddleware` is a *different* auth layer
+:class:`vesmaro.api.middleware.AuthMiddleware` is a *different* auth layer
 — it guards the operator API surface, not server-to-server federation.
 
 Before this fix, when ``api.auth_enabled=true`` the middleware returned
@@ -25,7 +25,7 @@ the bypass is verified end-to-end:
 * AC2 — pull with no per-peer bearer returns 401/403 (``handle_pull``
   still rejects — the bypass is fail-closed).
 * AC3 — ``access_log_path`` in :class:`FederationConfig` is honoured by
-  :func:`mnemos.api.federation.get_access_log` (custom path used, not
+  :func:`vesmaro.api.federation.get_access_log` (custom path used, not
   the default ``~/.mnemos/logs/federation-access.jsonl``).
 """
 
@@ -41,20 +41,20 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import mnemos.api.main as api_main
-from mnemos.api.federation import get_access_log
-from mnemos.api.main import lifespan
-from mnemos.api.middleware import AuthMiddleware
-from mnemos.config import FederationConfig, PeerConfig, Settings
-from mnemos.federation_access_log import FederationAccessLog
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemoryStatus
-from mnemos.trigger_codes import TriggerCode
+import vesmaro.api.main as api_main
+from vesmaro.api.federation import get_access_log
+from vesmaro.api.main import lifespan
+from vesmaro.api.middleware import AuthMiddleware
+from vesmaro.config import FederationConfig, PeerConfig, Settings
+from vesmaro.federation_access_log import FederationAccessLog
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemoryStatus
+from vesmaro.trigger_codes import TriggerCode
 
 # RFC-reserved constants — never real credentials.
 PEER_A = "mnemos-A"
 PROJECT = "project-mnemos"
-TOKEN_ENV = "MNEMOS_FED_PEER_MNEMOS_A_TOKEN"
+TOKEN_ENV = "VESMARO_FED_PEER_VESMARO_A_TOKEN"
 TOKEN_VALUE = "mnk_fed_mnemos-A_exampletoken123"
 
 
@@ -248,7 +248,7 @@ class TestFederationAccessLogPath:
         override hook ``get_access_log`` checks. The module singleton is
         reset so the configured path is re-read.
         """
-        import mnemos.api.federation as fed_mod
+        import vesmaro.api.federation as fed_mod
 
         custom_path = tmp_path / "data" / "federation-access.jsonl"
         settings = Settings(
@@ -289,8 +289,8 @@ class TestFederationAccessLogPath:
 
     def test_default_access_log_path_when_unset(self, tmp_path: Path) -> None:
         """AC3 (default): when ``access_log_path`` is None, the default is used."""
-        import mnemos.api.federation as fed_mod
-        from mnemos.federation_access_log import DEFAULT_LOG_PATH
+        import vesmaro.api.federation as fed_mod
+        from vesmaro.federation_access_log import DEFAULT_LOG_PATH
 
         settings = Settings(
             mnemos={
@@ -325,7 +325,7 @@ class TestFederationAccessLogPath:
         """AC3 (write): an append through the configured-path log lands on disk."""
         from datetime import UTC, datetime
 
-        from mnemos.federation_access_log import AccessLogEntry
+        from vesmaro.federation_access_log import AccessLogEntry
 
         custom_path = tmp_path / "data" / "federation-access.jsonl"
         log = FederationAccessLog(custom_path)

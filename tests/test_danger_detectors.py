@@ -8,10 +8,10 @@ fail-closed publication gate:
 * ``secret`` — high-confidence delegation to ``detect_secrets`` (the
   ``high-entropy`` heuristic must NOT be a gate signal);
 * fail-closed contract — a scanner error is a RESULT (``error`` set),
-  never an exception out of :func:`mnemos.danger_detectors.detect`;
+  never an exception out of :func:`vesmaro.danger_detectors.detect`;
 * enumerated-set invariants — every reported class is in
   ``DETECTOR_CLASSES``; the high-confidence secret set tracks the
-  pattern names of :mod:`mnemos.secrets_detector` (rename drift guard).
+  pattern names of :mod:`vesmaro.secrets_detector` (rename drift guard).
 
 All secret-looking fixtures are OBVIOUSLY FAKE (per
 sensitive-data.instructions.md); no real credentials appear here.
@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import pytest
 
-import mnemos.danger_detectors as dd
-from mnemos.secrets_detector import _PATTERNS as SECRETS_PATTERNS
+import vesmaro.danger_detectors as dd
+from vesmaro.secrets_detector import _PATTERNS as SECRETS_PATTERNS
 
 # Fake fixtures (synthetic, no relation to any real credential):
 #   AKIA + "T"*16                — aws-key shape
@@ -108,7 +108,7 @@ class TestSecretClass:
         and the issuance redaction path — it must not hard-block
         publication (only the enumerated high-confidence set does)."""
         span = "qP9zX2mK7vN4cR8tW3jH6fD1sL5bG0yA"  # entropy-only fixture
-        from mnemos.secrets_detector import detect_secrets
+        from vesmaro.secrets_detector import detect_secrets
 
         assert any(f.pattern_name == "high-entropy" for f in detect_secrets(span)), (
             "fixture sanity: the span must trip the entropy heuristic"
@@ -178,6 +178,6 @@ class TestEnumeratedSet:
     def test_single_source_of_truth_with_import_screen(self) -> None:
         """The import validation screen imports the same pattern table
         (moved, not duplicated — ADR-0019 Phase A)."""
-        from mnemos.cli.import_ import _PROMPT_INJECTION_PATTERNS
+        from vesmaro.cli.import_ import _PROMPT_INJECTION_PATTERNS
 
         assert _PROMPT_INJECTION_PATTERNS is dd.PROMPT_INJECTION_PATTERNS

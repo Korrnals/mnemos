@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from mnemos.secrets_detector import (
+from vesmaro.secrets_detector import (
     SecretFinding,
     detect_secrets,
     findings_by_pattern,

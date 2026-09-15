@@ -11,7 +11,7 @@
 #   3. Pins --passphrase-env to PASSPHRASE_ENV_NAME — the caller cannot inject
 #      an arbitrary env var name to read another secret.
 #   4. Appends an audit line to AUDIT_LOG for every invocation (§6).
-#   5. Resolves the mnemos CLI on B via MNEMOS_SYNC_REMOTE_MNEMOS_BIN or PATH.
+#   5. Resolves the mnemos CLI on B via VESMARO_SYNC_REMOTE_MNEMOS_BIN or PATH.
 #
 # mnemos itself stays offline — this runs on B's host SSH layer. Per ArchCom
 # 2026-07-20 (mnemos memory 4dc7d96e).
@@ -26,14 +26,26 @@
 set -euo pipefail
 
 # ── config ────────────────────────────────────────────────────────────────────
-# INCOMING_DIR MUST match MNEMOS_SYNC_REMOTE_IMPORT_DIR on A and rsync-wrapper.sh.
+# INCOMING_DIR MUST match VESMARO_SYNC_REMOTE_IMPORT_DIR on A and rsync-wrapper.sh.
 # PASSPHRASE_ENV_NAME is the env var name that `mnemos sync import` reads the
 # passphrase from on B. Provision the VALUE on B's systemd environment — never
 # on A and never inline in this file. Override via /etc/mnemos/import-wrapper.env.
-INCOMING_DIR="${MNEMOS_SYNC_INCOMING_DIR:-/var/lib/mnemos-sync/incoming}"
-PASSPHRASE_ENV_NAME="${MNEMOS_SYNC_PASSPHRASE_ENV:-MNEMOS_EXPORT_PASSPHRASE}"
-AUDIT_LOG="${MNEMOS_SYNC_AUDIT_LOG:-/var/log/mnemos-sync.log}"
-MNEMOS_BIN="${MNEMOS_SYNC_REMOTE_MNEMOS_BIN:-}"
+# ── legacy env compatibility (ADR-0031 dual period) ─────────────────────────
+for _v in INCOMING_DIR AUDIT_LOG PASSPHRASE_ENV REMOTE_IMPORT_DIR \
+          REMOTE_VESMARO_BIN; do
+    _new="VESMARO_SYNC_${_v}"
+    _old="MNEMOS_SYNC_${_v}"
+    if [ -z "${!_new:-}" ] && [ -n "${!_old:-}" ]; then
+        eval "export $_new=\${!_old}"
+    fi
+done
+if [ -z "${VESMARO_EXPORT_PASSPHRASE:-}" ] && [ -n "${MNEMOS_EXPORT_PASSPHRASE:-}" ]; then
+    export VESMARO_EXPORT_PASSPHRASE="$MNEMOS_EXPORT_PASSPHRASE"
+fi
+INCOMING_DIR="${VESMARO_SYNC_INCOMING_DIR:-/var/lib/mnemos-sync/incoming}"
+PASSPHRASE_ENV_NAME="${VESMARO_SYNC_PASSPHRASE_ENV:-MNEMOS_EXPORT_PASSPHRASE}"
+AUDIT_LOG="${VESMARO_SYNC_AUDIT_LOG:-/var/log/mnemos-sync.log}"
+MNEMOS_BIN="${VESMARO_SYNC_REMOTE_MNEMOS_BIN:-}"
 
 # ── audit helper (§6) ─────────────────────────────────────────────────────────
 _audit() {
@@ -75,7 +87,7 @@ if [[ -z "$MNEMOS_BIN" ]]; then
     elif [[ -x /opt/mnemos/.venv/bin/mnemos ]]; then
         MNEMOS_BIN=/opt/mnemos/.venv/bin/mnemos
     else
-        _err "mnemos CLI not found on B. Set MNEMOS_SYNC_REMOTE_MNEMOS_BIN."
+        _err "mnemos CLI not found on B. Set VESMARO_SYNC_REMOTE_MNEMOS_BIN."
         exit 2
     fi
 fi

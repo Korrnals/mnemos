@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib.metadata import version as pkg_version
 
-from mnemos import __version__
+from vesmaro import __version__
 
 
 def test_version_is_string() -> None:

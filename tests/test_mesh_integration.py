@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-from mnemos.mesh_client import (
+from vesmaro.mesh_client import (
     MeshClient,
     MeshUnavailableError,
     MeshUnimplementedError,
@@ -261,7 +261,7 @@ def test_write_memory_unimplemented(mesh_binary: str) -> None:
     The client must surface this as MeshUnimplementedError so the caller can
     degrade gracefully (fall back to local storage).
     """
-    from mnemos.compact import CompactRecord
+    from vesmaro.compact import CompactRecord
 
     record = CompactRecord(
         id="fed:test-agent:uuid-1",

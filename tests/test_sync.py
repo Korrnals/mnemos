@@ -1,13 +1,13 @@
 """Tests for federation Phase 0 batch sync CLI (#85 part 2b).
 
-Covers :mod:`mnemos.cli.sync` (``mnemos sync export/import``) and
-:mod:`mnemos.audit` (sync audit log). Reuses:
+Covers :mod:`vesmaro.cli.sync` (``mnemos sync export/import``) and
+:mod:`vesmaro.audit` (sync audit log). Reuses:
 
-* :func:`mnemos.compact.build_compact_payload` (#85 Part 2a) — the
+* :func:`vesmaro.compact.build_compact_payload` (#85 Part 2a) — the
   compact format builder. Moderation is invoked inside it.
-* :func:`mnemos.cli.import_.validate_import_record` (#86) — per-record
+* :func:`vesmaro.cli.import_.validate_import_record` (#86) — per-record
   import validation, adapted for the compact record shape.
-* :func:`mnemos.cli.export._encrypt` / :func:`decrypt` (#84) — AES-256-GCM
+* :func:`vesmaro.cli.export._encrypt` / :func:`decrypt` (#84) — AES-256-GCM
   passphrase encryption helpers.
 
 All secret/PII fixtures use RFC-reserved values (per
@@ -26,15 +26,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.cli.export import _encrypt, decrypt, is_encrypted
-from mnemos.cli.sync import (
+from vesmaro.cli.export import _encrypt, decrypt, is_encrypted
+from vesmaro.cli.sync import (
     run_sync_export,
     run_sync_import,
 )
-from mnemos.compact import COMPACT_SCHEMA, CompactRecord, build_compact_payload
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import (
+from vesmaro.compact import COMPACT_SCHEMA, CompactRecord, build_compact_payload
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import (
     NO_FEDERATE_TAG,
     Memory,
     MemoryCreate,
@@ -88,11 +88,11 @@ def _isolated_audit_log(monkeypatch, tmp_path: Path) -> Path:
     call) to return a path under the test's ``tmp_path``. Because
     :func:`log_sync_audit` calls :func:`sync_audit_path` at call time
     (not import time), this redirects every audit write — both the ones
-    from :mod:`mnemos.cli.sync` and the ones from direct
+    from :mod:`vesmaro.cli.sync` and the ones from direct
     :func:`log_sync_audit` calls in :class:`TestAuditModule`.
     """
     audit_path = tmp_path / "audit" / "sync-audit.jsonl"
-    import mnemos.audit as audit_mod
+    import vesmaro.audit as audit_mod
 
     monkeypatch.setattr(audit_mod, "sync_audit_path", lambda: audit_path)
     return audit_path
@@ -223,9 +223,9 @@ class TestSyncExport:
         assert not out.exists()
 
     def test_sync_export_encrypt(self, mgr: MemoryManager, tmp_path: Path, monkeypatch) -> None:
-        """--encrypt with MNEMOS_EXPORT_PASSPHRASE → encrypted file written."""
+        """--encrypt with VESMARO_EXPORT_PASSPHRASE → encrypted file written."""
         _add_memory(mgr, "encryptable clean memory")
-        monkeypatch.setenv("MNEMOS_EXPORT_PASSPHRASE", _TEST_PASSPHRASE)
+        monkeypatch.setenv("VESMARO_EXPORT_PASSPHRASE", _TEST_PASSPHRASE)
         out = tmp_path / "sync.enc"
         result = run_sync_export(mgr, output=out, shared_projects_arg="mnemos", encrypt=True)
         assert result.encrypted is True
@@ -241,9 +241,9 @@ class TestSyncExport:
     def test_sync_export_encrypt_missing_passphrase(
         self, mgr: MemoryManager, tmp_path: Path, monkeypatch
     ) -> None:
-        """--encrypt without MNEMOS_EXPORT_PASSPHRASE → error, no file written."""
+        """--encrypt without VESMARO_EXPORT_PASSPHRASE → error, no file written."""
         _add_memory(mgr, "clean memory")
-        monkeypatch.delenv("MNEMOS_EXPORT_PASSPHRASE", raising=False)
+        monkeypatch.delenv("VESMARO_EXPORT_PASSPHRASE", raising=False)
         out = tmp_path / "sync.enc"
         result = run_sync_export(mgr, output=out, shared_projects_arg="mnemos", encrypt=True)
         assert result.encrypted is False
@@ -390,7 +390,7 @@ class TestSyncImport:
     def test_sync_import_encrypted_default_env(
         self, mgr: MemoryManager, tmp_path: Path, monkeypatch
     ) -> None:
-        """Encrypted import without --passphrase-env falls back to MNEMOS_EXPORT_PASSPHRASE."""
+        """Encrypted import without --passphrase-env falls back to VESMARO_EXPORT_PASSPHRASE."""
         mem = Memory(
             id="55555555-5555-5555-5555-555555555555",
             content="default-env decision",
@@ -404,7 +404,7 @@ class TestSyncImport:
         src = tmp_path / "sync.enc"
         src.write_bytes(_encrypt(raw, _TEST_PASSPHRASE))
 
-        monkeypatch.setenv("MNEMOS_EXPORT_PASSPHRASE", _TEST_PASSPHRASE)
+        monkeypatch.setenv("VESMARO_EXPORT_PASSPHRASE", _TEST_PASSPHRASE)
         result = run_sync_import(mgr, source=src)
         assert result.errors == []
         assert result.records_imported == 1
@@ -416,7 +416,7 @@ class TestSyncImport:
         # Schema drift: wrong schema string.
         bad = tmp_path / "bad.json"
         bad.write_text(
-            json.dumps({"schema": "mnemos.federation.evil", "records": [], "stats": {}}),
+            json.dumps({"schema": "vesmaro.federation.evil", "records": [], "stats": {}}),
             encoding="utf-8",
         )
         result = run_sync_import(mgr, source=bad)
@@ -561,13 +561,13 @@ class TestSyncAuditLog:
 class TestAuditModule:
     def test_sync_audit_path_constant(self) -> None:
         """The audit log filename is the documented relative path."""
-        from mnemos.audit import SYNC_AUDIT_FILENAME
+        from vesmaro.audit import SYNC_AUDIT_FILENAME
 
         assert SYNC_AUDIT_FILENAME == ".mnemos/logs/sync-audit.jsonl"
 
     def test_log_sync_audit_appends_jsonl(self, tmp_path: Path, monkeypatch) -> None:
         """log_sync_audit writes one JSON object per line, adds timestamp."""
-        import mnemos.audit as audit_mod
+        import vesmaro.audit as audit_mod
 
         # Use a private log path distinct from the autouse fixture's path.
         log_path = tmp_path / "audit-module.jsonl"

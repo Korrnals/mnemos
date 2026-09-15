@@ -21,10 +21,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import (
-    MNEMOS_TAG_SUBTYPES,
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import (
+    VESMARO_TAG_SUBTYPES,
     MemoryCreate,
     MemorySource,
     MemoryStatus,
@@ -98,7 +98,7 @@ def _add_gcw_memory(mgr: MemoryManager, *, subtype: str = "decision") -> str:
 
 class TestSynthesizedSubtype:
     def test_synthesized_in_whitelist(self) -> None:
-        assert "synthesized" in MNEMOS_TAG_SUBTYPES
+        assert "synthesized" in VESMARO_TAG_SUBTYPES
 
     def test_validate_accepts_mnemos_synthesized(self) -> None:
         tags = ["project:p", "agent:a", "mnemos:synthesized"]
@@ -319,7 +319,7 @@ class TestMcpAndHttp:
     def test_mcp_dispatch_tags_rename(self, tmp_manager: MemoryManager, monkeypatch) -> None:
         """The MCP _dispatch handles mnemos_tags_rename."""
         from mnemos import mcp_server
-        from mnemos.mcp_server import _dispatch
+        from vesmaro.mcp_server import _dispatch
 
         _add_gcw_memory(tmp_manager)
         # Patch the MCP server's get_manager to return our isolated manager.

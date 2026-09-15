@@ -19,9 +19,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import (
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import (
     AgentRecallQuery,
     Memory,
     MemoryCreate,
@@ -175,13 +175,13 @@ class TestMcpSearchStatusParam:
         """mnemos_search dispatch passes status to manager.search()."""
         from unittest.mock import patch
 
-        from mnemos.mcp_server import _dispatch
+        from vesmaro.mcp_server import _dispatch
 
         mock_mgr = MagicMock()
         mock_mgr.search.return_value = []
         mock_mgr.settings.mnemos.strict_tag_contract = False
 
-        with patch("mnemos.mcp_server.get_manager", return_value=mock_mgr):
+        with patch("vesmaro.mcp_server.get_manager", return_value=mock_mgr):
             await _dispatch("mnemos_search", {"query": "test", "status": "raw"})
 
         # Verify status was converted to MemoryStatus and passed
@@ -193,13 +193,13 @@ class TestMcpSearchStatusParam:
         """Without status param, None is passed (not an error)."""
         from unittest.mock import patch
 
-        from mnemos.mcp_server import _dispatch
+        from vesmaro.mcp_server import _dispatch
 
         mock_mgr = MagicMock()
         mock_mgr.search.return_value = []
         mock_mgr.settings.mnemos.strict_tag_contract = False
 
-        with patch("mnemos.mcp_server.get_manager", return_value=mock_mgr):
+        with patch("vesmaro.mcp_server.get_manager", return_value=mock_mgr):
             await _dispatch("mnemos_search", {"query": "test"})
 
         call_kwargs = mock_mgr.search.call_args.kwargs

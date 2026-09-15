@@ -17,9 +17,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate
 
 
 @pytest.fixture
@@ -136,14 +136,14 @@ class TestPathTraversalResistance:
     """Path operations must not escape intended directories."""
 
     def test_vault_sanitizes_filename(self) -> None:
-        from mnemos.storage.vault import VaultManager
+        from vesmaro.storage.vault import VaultManager
 
         vm = VaultManager.__new__(VaultManager)
         assert vm._sanitize_filename("../../../etc/passwd") == "_________etc_passwd"
         assert vm._sanitize_filename("hello/world") == "hello_world"
 
     def test_path_scoped_uses_resolve(self, tmp_path) -> None:
-        from mnemos.watchers.path_scoped import parse_rule_file
+        from vesmaro.watchers.path_scoped import parse_rule_file
 
         # Create a file with a safe name
         f = tmp_path / "test.instructions.md"
@@ -192,7 +192,7 @@ class TestFts5Escaping:
         char from user input survives into the emitted expression
         outside OUR OWN quoting/star scaffolding.
         """
-        from mnemos.storage.sqlite_store import SQLiteStore
+        from vesmaro.storage.sqlite_store import SQLiteStore
 
         out = SQLiteStore._build_fts_query('"a*b(c):d"')
         # v2 shape: one sanitised token, quoted, with the builder-owned
@@ -208,7 +208,7 @@ class TestFts5Escaping:
 
     def test_fts_build_empty_input(self) -> None:
         """Empty / whitespace input must not raise and must produce safe MATCH."""
-        from mnemos.storage.sqlite_store import SQLiteStore
+        from vesmaro.storage.sqlite_store import SQLiteStore
 
         # FTS5's literal empty phrase '""' is a syntax error. We degrade to a
         # unique nonsense phrase that yields zero rows without raising.
@@ -249,7 +249,7 @@ class TestFts5EscapingV2:
         """Built MATCH expression must be valid FTS5 for ANY user input."""
         import sqlite3
 
-        from mnemos.storage.sqlite_store import fts_query_v2
+        from vesmaro.storage.sqlite_store import fts_query_v2
 
         con = sqlite3.connect(":memory:")
         con.execute('CREATE VIRTUAL TABLE t USING fts5(c, tokenize="unicode61")')
@@ -280,7 +280,7 @@ class TestFts5EscapingV2:
         by rebuilding each sanitised token's quoted form and requiring
         it to appear in the expression.
         """
-        from mnemos.storage.sqlite_store import _fts_guard_tokens, _fts_tokenize, fts_query_v2
+        from vesmaro.storage.sqlite_store import _fts_guard_tokens, _fts_tokenize, fts_query_v2
 
         expr = fts_query_v2(hostile)
         # #314: tokens dropped by the short-token guard are ABSENT from the
@@ -301,7 +301,7 @@ class TestFts5EscapingV2:
         inside its hyphen OR-alternatives). This is what keeps user
         input from minting prefix/NEAR operators.
         """
-        from mnemos.storage.sqlite_store import fts_query_terms
+        from vesmaro.storage.sqlite_store import fts_query_terms
 
         for hostile in ["anything* NEAR whatever", '"* OR "*', "a*b*c"]:
             expr_terms = fts_query_terms(hostile)
@@ -368,7 +368,7 @@ class TestSqlInjectionSafe:
 
     def test_update_fields_uses_whitelist_dispatch(self) -> None:
         """The static `_FIELD_UPDATERS` dict is the only source of column names."""
-        from mnemos.storage import sqlite_store
+        from vesmaro.storage import sqlite_store
 
         # Whitelist must contain exactly the documented columns.
         expected_keys = {
@@ -420,7 +420,7 @@ class TestHfHubPinning:
 
     def test_onnx_provider_requires_revision_kwarg(self) -> None:
         """Omitting `revision` must raise — fail-closed by design."""
-        from mnemos.embeddings import ONNXHubProvider
+        from vesmaro.embeddings import ONNXHubProvider
 
         with pytest.raises(ValueError, match="requires an explicit `revision`"):
             ONNXHubProvider(
@@ -430,7 +430,7 @@ class TestHfHubPinning:
 
     def test_onnx_provider_passes_revision_to_every_download(self) -> None:
         """All three `hf_hub_download` calls must carry the same `revision=`."""
-        from mnemos.embeddings import ONNXHubProvider
+        from vesmaro.embeddings import ONNXHubProvider
 
         sentinel_revision = "deadbeefcafebabe" * 2  # 32-hex-char-looking SHA
         download_calls: list[dict] = []
@@ -475,7 +475,7 @@ class TestHfHubPinning:
     def test_onnx_provider_revision_on_fallback_path(self) -> None:
         """If the configured onnx_file is missing, the fallback download must
         also carry the revision (B615 fires on every call)."""
-        from mnemos.embeddings import ONNXHubProvider
+        from vesmaro.embeddings import ONNXHubProvider
 
         sentinel_revision = "feedface" * 4
         download_calls: list[dict] = []
@@ -515,8 +515,8 @@ class TestHfHubPinning:
 
     def test_create_provider_threads_hf_revision_from_config(self) -> None:
         """`create_embedding_provider` must read `cfg.hf_revision` for onnx."""
-        from mnemos.config import EmbeddingConfig
-        from mnemos.embeddings import create_embedding_provider
+        from vesmaro.config import EmbeddingConfig
+        from vesmaro.embeddings import create_embedding_provider
 
         cfg = EmbeddingConfig(
             provider="onnx",
@@ -538,7 +538,7 @@ class TestHfHubPinning:
             captured["onnx_file"] = onnx_file
             captured["revision"] = revision
 
-        with patch("mnemos.embeddings.ONNXHubProvider.__init__", fake_init):
+        with patch("vesmaro.embeddings.ONNXHubProvider.__init__", fake_init):
             create_embedding_provider(cfg)
 
         assert captured["revision"] == cfg.hf_revision
@@ -552,7 +552,7 @@ class TestHfHubPinning:
         secure default (CWE-494 mitigation) — a fabricated placeholder SHA
         would give a false sense of pinning without a verifiable provenance.
         """
-        from mnemos.config import EmbeddingConfig
+        from vesmaro.config import EmbeddingConfig
 
         cfg = EmbeddingConfig()
         assert isinstance(cfg.hf_revision, str)
@@ -585,7 +585,7 @@ class TestSsrfBlocklist:
         """
         import inspect
 
-        from mnemos.manager import MemoryManager
+        from vesmaro.manager import MemoryManager
 
         source = inspect.getsource(MemoryManager._validate_url)
         # The blocklist must still contain "0.0.0.0".

@@ -33,25 +33,25 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mnemos.config import FederationConfig, PeerConfig, Settings
-from mnemos.federation_access_log import AccessLogEntry, FederationAccessLog, hash_topic
-from mnemos.federation_server import (
+from vesmaro.config import FederationConfig, PeerConfig, Settings
+from vesmaro.federation_access_log import AccessLogEntry, FederationAccessLog, hash_topic
+from vesmaro.federation_server import (
     PullRequest,
     PullResponse,
     RateLimiter,
     handle_pull,
     verify_mtls_fingerprint,
 )
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemoryStatus
-from mnemos.trigger_codes import TriggerCode
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemoryStatus
+from vesmaro.trigger_codes import TriggerCode
 
 # RFC-reserved constants — never real credentials / identifiers.
 PEER_A = "mnemos-A"
 PEER_B = "mnemos-B"
 PROJECT = "project-mnemos"
 SECRET_PROJECT = "project-secret"
-TOKEN_ENV = "MNEMOS_FED_PEER_MNEMOS_A_TOKEN"
+TOKEN_ENV = "VESMARO_FED_PEER_VESMARO_A_TOKEN"
 TOKEN_VALUE = "mnk_fed_mnemos-A_exampletoken123"
 FAKE_AWS_KEY = "AKIA" + "T" * 16  # obviously fake
 # Long fake OpenAI-style key (sk- + 100 alnum). Used by the refusal test to
@@ -666,7 +666,7 @@ class TestTriggerCodeSelection:
         # A falls back to local search; PARTIAL means A may refine
         # against shipped records. With 0 records there is nothing to
         # refine, so PARTIAL would be misleading.
-        from mnemos.federation_server import _select_trigger_code
+        from vesmaro.federation_server import _select_trigger_code
 
         assert (
             _select_trigger_code(

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mnemos-memory-server"
+name = "vesmaro"
 version = "4.2.0"
 description = "Standalone memory & knowledge server for AI agents — forked from ai-brain"
 readme = "README.md"
@@ -34,7 +34,7 @@ dependencies = [
     # surface — the SDK ships in core so the base install can serve agents.
     # stdio transport only; the upstream [cli] extra adds nothing for us
     # (typer + python-dotenv were already core). Import isolation: the SDK is
-    # imported ONLY by mnemos.mcp_server via the CLI subcommand handler
+    # imported ONLY by vesmaro.mcp_server via the CLI subcommand handler
     # (guard test test_mcp_core_isolation).
     "mcp>=2.0,<3.0",
     # Transitive CVE closure (M15.5.1) — pinned directly to force resolver
@@ -115,7 +115,7 @@ mcp = [
     # (#185 history: mcp_server.py was ported off the 1.x runtime-decorator
     # API; the >=2.0,<3.0 floor moved to `dependencies` unchanged). This extra
     # remains as a no-op alias so legacy commands like
-    # `pip install "mnemos-memory-server[mcp]"` keep resolving.
+    # `pip install "vesmaro[mcp]"` keeps resolving (the old `mnemos-memory-server` extra matrix gets a deprecation pointer release).
 ]
 pdf = [
     "pymupdf>=1.24",
@@ -142,12 +142,17 @@ dev = [
     "types-PyYAML",
 ]
 all = [
-    "mnemos-memory-server[anthropic,openai,gemini,azure,ollama,mcp,pdf,docx,dev]",
+    "vesmaro[anthropic,openai,gemini,azure,ollama,mcp,pdf,docx,dev]",
 ]
 
 [project.scripts]
-mnemos = "mnemos.cli.main:app"
-mnemos-train = "mnemos.train_entry:main"
+# Canonical + short hook (owner-approved, GWS card #331 amendment)
+vesmaro = "vesmaro.cli.main:app"
+vesma = "vesmaro.cli.main:app"
+vesmaro-train = "vesmaro.train_entry:main"
+# Legacy compatibility commands (dual-import period; retire no earlier than 6.0)
+mnemos = "vesmaro.cli.main:app"
+mnemos-train = "vesmaro.train_entry:main"
 
 # Korrnals/release-pipeline symlinks (local pipeline mode) must never enter
 # the sdist: their absolute symlink targets break sdist extraction during
@@ -163,7 +168,7 @@ mnemos-train = "mnemos.train_entry:main"
 exclude = ["scripts/run-release-local.sh", "scripts/local-ci", "benchmarks", "training"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mnemos"]
+packages = ["src/vesmaro", "src/mnemos"]
 exclude = ["benchmarks", "training"]
 
 # Ship the integration pack (instructions, skills, prompts, targets.yaml) inside
@@ -172,12 +177,12 @@ exclude = ["benchmarks", "training"]
 # `mnemos/integrations/` so it is reachable via `importlib.resources.files(
 # "mnemos") / "integrations"`.
 [tool.hatch.build.targets.wheel.force-include]
-"integrations" = "mnemos/integrations"
+"integrations" = "vesmaro/integrations"
 # Ship the setup scripts (mcp-setup.sh, install.sh, deploy.sh, setup-distrobox.sh)
 # inside the wheel so `mnemos integration setup` can find mcp-setup.sh from a
 # pip-installed package, not just from a source checkout. Mapped to
 # `mnemos/scripts/` — reachable via `importlib.resources.files("mnemos") / "scripts"`.
-"scripts" = "mnemos/scripts"
+"scripts" = "vesmaro/scripts"
 
 [tool.ruff]
 target-version = "py311"
@@ -211,7 +216,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
 # RU examples in its docstrings — that IS the intended content (same
 # rationale as the synthetic RU corpus files); RUF001/RUF002 lookalike
 # warnings are noise for genuinely Russian words like «его».
-"src/mnemos/storage/sqlite_store.py" = ["RUF001", "RUF002"]
+"src/vesmaro/storage/sqlite_store.py" = ["RUF001", "RUF002"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -240,7 +245,7 @@ warn_unused_ignores = true
 # constructor-registration port keeps the override for the remaining untyped
 # call sites in the SDK boundary.)
 [[tool.mypy.overrides]]
-module = "mnemos.mcp_server"
+module = "vesmaro.mcp_server"
 disallow_untyped_decorators = false
 disallow_untyped_calls = false
 

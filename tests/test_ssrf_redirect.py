@@ -25,8 +25,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import _MAX_REDIRECTS, MemoryManager
+from vesmaro.config import Settings
+from vesmaro.manager import _MAX_REDIRECTS, MemoryManager
 
 # ---------------------------------------------------------------------------
 # Fixtures

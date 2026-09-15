@@ -8,10 +8,10 @@
 #
 # Flags:
 #   --scope SCOPE       VS Code config scope: user | workspace (default: user)
-#   --data-dir PATH     MNEMOS_DATA_DIR (default: ~/.mnemos/data)
-#   --vault PATH        MNEMOS_VAULT__VAULT_PATH (default: ~/.mnemos/vault)
+#   --data-dir PATH     VESMARO_DATA_DIR (default: ~/.mnemos/data)
+#   --vault PATH        VESMARO_VAULT__VAULT_PATH (default: ~/.mnemos/vault)
 #   --command CMD       Command to launch mnemos (default: auto-detect: venv → system → mnemos)
-#   --auto-collect      Set MNEMOS_AUTO_COLLECT=1 (nag agent to save context)
+#   --auto-collect      Set VESMARO_AUTO_COLLECT=1 (nag agent to save context)
 #   --force             Overwrite an existing 'mnemos' entry even if already present
 #   --dry-run           Show what would be written, don't modify files
 #   --help              Show this help
@@ -88,8 +88,8 @@ if [[ ! -f "$MCP_FILE" ]]; then
       "command": "${MNEMOS_CMD}",
       "args": ["mcp-server"],
       "env": {
-        "MNEMOS_DATA_DIR": "${DATA_DIR}",
-        "MNEMOS_VAULT__VAULT_PATH": "${VAULT_PATH}"$( [[ "$AUTO_COLLECT" == true ]] && echo -e '\n        "MNEMOS_AUTO_COLLECT": "1"' )
+        "VESMARO_DATA_DIR": "${DATA_DIR}",
+        "VESMARO_VAULT__VAULT_PATH": "${VAULT_PATH}"$( [[ "$AUTO_COLLECT" == true ]] && echo -e '\n        "VESMARO_AUTO_COLLECT": "1"' )
       }
     }
   }
@@ -117,7 +117,7 @@ with open('$MCP_FILE') as f:
     cfg = json.load(f)
 cfg.setdefault('servers', {})['mnemos'] = {
     'type': 'stdio', 'command': '$MNEMOS_CMD', 'args': ['mcp-server'],
-    'env': {'MNEMOS_DATA_DIR': '$DATA_DIR', 'MNEMOS_VAULT__VAULT_PATH': '$VAULT_PATH'$([ "$AUTO_COLLECT" == true ] && echo ", 'MNEMOS_AUTO_COLLECT': '1'")}
+    'env': {'VESMARO_DATA_DIR': '$DATA_DIR', 'VESMARO_VAULT__VAULT_PATH': '$VAULT_PATH'$([ "$AUTO_COLLECT" == true ] && echo ", 'VESMARO_AUTO_COLLECT': '1'")}
 }
 print(json.dumps(cfg, indent=2))
 " | info "[dry-run] Would write:\n$(cat)"
@@ -128,7 +128,7 @@ with open('$MCP_FILE') as f:
     cfg = json.load(f)
 cfg.setdefault('servers', {})['mnemos'] = {
     'type': 'stdio', 'command': '$MNEMOS_CMD', 'args': ['mcp-server'],
-    'env': {'MNEMOS_DATA_DIR': '$DATA_DIR', 'MNEMOS_VAULT__VAULT_PATH': '$VAULT_PATH'$([ "$AUTO_COLLECT" == true ] && echo ", 'MNEMOS_AUTO_COLLECT': '1'")}
+    'env': {'VESMARO_DATA_DIR': '$DATA_DIR', 'VESMARO_VAULT__VAULT_PATH': '$VAULT_PATH'$([ "$AUTO_COLLECT" == true ] && echo ", 'VESMARO_AUTO_COLLECT': '1'")}
 }
 with open('$MCP_FILE', 'w') as f:
     json.dump(cfg, f, indent=2); f.write('\n')
@@ -141,7 +141,7 @@ with open('$MCP_FILE', 'w') as f:
       info "[dry-run] Would insert mnemos entry."
     else
       sed -i.bak "/\"servers\"[[:space:]]*:[[:space:]]*{/a\\
-    \"mnemos\": { \"type\": \"stdio\", \"command\": \"${MNEMOS_CMD}\", \"args\": [\"mcp-server\"], \"env\": { \"MNEMOS_DATA_DIR\": \"${DATA_DIR}\", \"MNEMOS_VAULT__VAULT_PATH\": \"${VAULT_PATH}\" } },
+    \"mnemos\": { \"type\": \"stdio\", \"command\": \"${MNEMOS_CMD}\", \"args\": [\"mcp-server\"], \"env\": { \"VESMARO_DATA_DIR\": \"${DATA_DIR}\", \"VESMARO_VAULT__VAULT_PATH\": \"${VAULT_PATH}\" } },
 " "$MCP_FILE"
       ok "Inserted 'mnemos' into ${MCP_FILE} (backup: ${MCP_FILE}.bak)"
     fi

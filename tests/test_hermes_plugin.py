@@ -10,14 +10,14 @@ We install minimal stubs into ``sys.modules`` (mirroring how
 ``conftest.py`` stubs the optional ``mcp`` package) so the plugin can be
 imported and its pure-Python surface tested without a running Hermes
 installation. Since the W5 migration the plugin is a THIN shim over
-``mnemos.adapters.hermes.HermesMemoryAdapter``; the adapter's own behavior
+``vesmaro.adapters.hermes.HermesMemoryAdapter``; the adapter's own behavior
 (write-sparing policy, tag contract, scans, hooks) is pinned IN-PROCESS by
 ``tests/test_hermes_adapter.py`` — this suite pins the SHIM: registration,
 tool schemas, config surface, lifecycle delegation (via a mocked adapter —
 no manager is constructed here), the harness-never-blocks guard, and
 session rebinding.
 
-NOTE: the plugin imports ``mnemos.adapters.hermes`` — run the suite with
+NOTE: the plugin imports ``vesmaro.adapters.hermes`` — run the suite with
 the working-tree ``src/`` first on ``sys.path`` (the repo CI layout); the
 ``tests/test_hermes_adapter.py`` bootstrap does this for the whole run.
 """
@@ -177,20 +177,20 @@ class TestToolSchemas:
 
 class TestConfigLoading:
     def test_default_project_and_agent(self, monkeypatch):
-        for var in ("MNEMOS_PROJECT", "MNEMOS_AGENT"):
+        for var in ("VESMARO_PROJECT", "VESMARO_AGENT"):
             monkeypatch.delenv(var, raising=False)
         cfg = _load_config()
         assert cfg["project"] == "hermes"
         assert cfg["agent"] == "hermes-default"
 
     def test_default_sync_interval(self, monkeypatch):
-        monkeypatch.delenv("MNEMOS_SYNC_INTERVAL", raising=False)
+        monkeypatch.delenv("VESMARO_SYNC_INTERVAL", raising=False)
         cfg = _load_config()
         assert cfg["sync_interval"] == 10
 
     def test_default_store_paths_empty(self, monkeypatch):
         """Empty data_dir/vault_path = mnemos defaults (no HTTP base_url)."""
-        for var in ("MNEMOS_DATA_DIR", "MNEMOS_VAULT__VAULT_PATH"):
+        for var in ("VESMARO_DATA_DIR", "VESMARO_VAULT__VAULT_PATH"):
             monkeypatch.delenv(var, raising=False)
         cfg = _load_config()
         assert cfg["data_dir"] == ""
@@ -199,7 +199,7 @@ class TestConfigLoading:
         assert "api_key" not in cfg
 
     def test_default_publish_on_write_true(self, monkeypatch):
-        monkeypatch.delenv("MNEMOS_PUBLISH_ON_WRITE", raising=False)
+        monkeypatch.delenv("VESMARO_PUBLISH_ON_WRITE", raising=False)
         cfg = _load_config()
         assert cfg["publish_on_write"] is True
 
@@ -243,7 +243,7 @@ class TestConfigSchema:
 
 class TestSaveConfig:
     def test_writes_to_memory_mnemos(self, tmp_path):
-        """save_config must write under memory.mnemos, not plugins.mnemos."""
+        """save_config must write under memory.mnemos, not plugins.vesmaro."""
         p = _make_provider()
         hermes_home = str(tmp_path)
         values = {"project": "test", "agent": "hermes-main"}

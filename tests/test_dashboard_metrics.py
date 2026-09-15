@@ -19,10 +19,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from mnemos.api import main as api_main
-from mnemos.api.main import app, lifespan
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
+from vesmaro.api import main as api_main
+from vesmaro.api.main import app, lifespan
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
 
 # ---------------------------------------------------------------------------
 # Fixtures (mirror tests/test_api.py)

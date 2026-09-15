@@ -1,7 +1,7 @@
 """Integration tests for the ``mnemos_export`` MCP tool (#84).
 
 Covers the federation export surface exposed through MCP. The tool is a
-thin wrapper over :func:`mnemos.cli.export.run_export`; these tests drive
+thin wrapper over :func:`vesmaro.cli.export.run_export`; these tests drive
 the real dispatch path (``_dispatch("mnemos_export", ...)``) against an
 isolated tmp DB so the #86 redaction / no-federate exclusion is verified
 end-to-end through the MCP surface.
@@ -22,10 +22,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.mcp_server import _dispatch
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.mcp_server import _dispatch
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
 
 # ---------------------------------------------------------------------------
 # Fixtures — mirror tests/test_no_federate.py conventions (isolated tmp DB).
@@ -59,25 +59,25 @@ def mgr(tmp_settings: Settings) -> MemoryManager:
 
 @pytest.fixture(autouse=True)
 def _scrub_export_passphrase() -> Generator[None, None, None]:
-    """Ensure MNEMOS_EXPORT_PASSPHRASE never leaks across tests."""
-    saved = os.environ.pop("MNEMOS_EXPORT_PASSPHRASE", None)
+    """Ensure VESMARO_EXPORT_PASSPHRASE never leaks across tests."""
+    saved = os.environ.pop("VESMARO_EXPORT_PASSPHRASE", None)
     yield
     if saved is not None:
-        os.environ["MNEMOS_EXPORT_PASSPHRASE"] = saved
+        os.environ["VESMARO_EXPORT_PASSPHRASE"] = saved
     else:
-        os.environ.pop("MNEMOS_EXPORT_PASSPHRASE", None)
+        os.environ.pop("VESMARO_EXPORT_PASSPHRASE", None)
 
 
 @pytest.fixture(autouse=True)
 def _patch_manager(mgr: MemoryManager, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch ``mnemos.mcp_server.get_manager`` to return the test's isolated ``mgr``.
+    """Patch ``vesmaro.mcp_server.get_manager`` to return the test's isolated ``mgr``.
 
     ``_dispatch`` calls the module-level ``get_manager()`` singleton which would
     otherwise resolve to a real MemoryManager backed by ``~/.mnemos``. We point
     it at the per-test ``mgr`` fixture so export/import drives the isolated
     tmp DB.
     """
-    import mnemos.mcp_server as mcp_server
+    import vesmaro.mcp_server as mcp_server
 
     monkeypatch.setattr(mcp_server, "get_manager", lambda: mgr)
 
@@ -263,7 +263,7 @@ class TestExportEncrypt:
         _add(mgr, "secret memory")
         out = tmp_path / "encrypted.bin"
         # OBVIOUSLY FAKE passphrase per sensitive-data.instructions.md.
-        monkeypatch.setenv("MNEMOS_EXPORT_PASSPHRASE", "test-passphrase-EXAMPLE")
+        monkeypatch.setenv("VESMARO_EXPORT_PASSPHRASE", "test-passphrase-EXAMPLE")
 
         result = await _export(mgr, output_path=str(out), encrypt=True)
 
@@ -278,12 +278,12 @@ class TestExportEncrypt:
     ) -> None:
         _add(mgr, "secret memory")
         out = tmp_path / "encrypted.bin"
-        monkeypatch.delenv("MNEMOS_EXPORT_PASSPHRASE", raising=False)
+        monkeypatch.delenv("VESMARO_EXPORT_PASSPHRASE", raising=False)
 
         result = await _export(mgr, output_path=str(out), encrypt=True)
 
         assert "error" in result
-        assert "MNEMOS_EXPORT_PASSPHRASE" in result["error"]
+        assert "VESMARO_EXPORT_PASSPHRASE" in result["error"]
         assert not out.exists(), "no file should be written when passphrase is missing"
 
 

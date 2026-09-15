@@ -34,9 +34,9 @@ from benchmarks.corpus.deterministic_embedder import LexicalHashEmbedder
 from benchmarks.strata.e2_gov.checkpoints import CHECKPOINT_ENTRIES
 from benchmarks.strata.e2_gov.profile import experimental_corpus
 from benchmarks.strata.e2_gov.records import GOV_RECORDS
-from mnemos.embeddings import EmbeddingProvider
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.embeddings import EmbeddingProvider
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
 
 _SOURCE_TO_ENUM: dict[str, MemorySource] = {s.value: s for s in MemorySource}
 _STATUS_TO_ENUM: dict[str, MemoryStatus] = {

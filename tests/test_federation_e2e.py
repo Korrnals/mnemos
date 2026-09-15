@@ -29,11 +29,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.cli.sync import run_sync_import
-from mnemos.compact import build_compact_payload
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.cli.sync import run_sync_import
+from vesmaro.compact import build_compact_payload
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
 
 
 def _make_settings(home: Path) -> Settings:
@@ -98,7 +98,7 @@ def _write_payload(path: Path, memories: list, *, source_agent: str) -> dict:
 def _isolated_audit_log(monkeypatch, tmp_path: Path) -> Path:
     """Redirect sync audit log writes to tmp_path (mirrors test_sync.py)."""
     audit_path = tmp_path / "audit" / "sync-audit.jsonl"
-    import mnemos.audit as audit_mod
+    import vesmaro.audit as audit_mod
 
     monkeypatch.setattr(audit_mod, "sync_audit_path", lambda: audit_path)
     return audit_path
@@ -126,7 +126,7 @@ class TestFederationE2E:
             # 3. Build the compact payload and dump to a tmp file.
             payload_file = tmp_path / "compact.json"
             payload = _write_payload(payload_file, memories, source_agent="test-a")
-            assert payload["schema"] == "mnemos.federation.v1"
+            assert payload["schema"] == "vesmaro.federation.v1"
             assert len(payload["records"]) >= 1
 
             # 4. Import into B.

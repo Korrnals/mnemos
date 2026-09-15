@@ -101,7 +101,7 @@ class TestS1mRootIsolation:
         """
         import numpy as np
 
-        from mnemos.storage.vector_store import VectorStore
+        from vesmaro.storage.vector_store import VectorStore
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

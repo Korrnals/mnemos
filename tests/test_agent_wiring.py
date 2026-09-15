@@ -28,16 +28,16 @@ import frontmatter
 import pytest
 from typer.testing import CliRunner
 
-from mnemos.cli.agent_wiring import (
-    MNEMOS_TOOLS,
-    MNEMOS_WILDCARD,
+from vesmaro.cli.agent_wiring import (
+    VESMARO_TOOLS,
+    VESMARO_WILDCARD,
     WireStatus,
     detect_agents,
     verify_agents,
     wire_agent,
 )
-from mnemos.cli.integration import Target, TargetsConfig
-from mnemos.cli.main import app
+from vesmaro.cli.integration import Target, TargetsConfig
+from vesmaro.cli.main import app
 
 runner = CliRunner()
 
@@ -98,7 +98,7 @@ def agents_dir(tmp_path: Path) -> Path:
         directory,
         "tech-lead.agent.md",
         name="GCW: Tech Lead",
-        tools=["read", "search", "execute", MNEMOS_WILDCARD],
+        tools=["read", "search", "execute", VESMARO_WILDCARD],
     )
 
     # Agent with tool_profile — should be skipped.
@@ -122,7 +122,7 @@ def agents_dir(tmp_path: Path) -> Path:
         directory,
         "mnemos-curator.agent.md",
         name="GCW: Mnemos Curator",
-        tools=["read", "search", MNEMOS_TOOLS[0], MNEMOS_TOOLS[1]],
+        tools=["read", "search", VESMARO_TOOLS[0], VESMARO_TOOLS[1]],
     )
 
     return directory
@@ -139,8 +139,8 @@ def _isolate_copilot_target(
     ``~/.copilot/instructions`` and ``~/.copilot/skills`` paths, which do
     not exist on CI runners — causing the CLI to exit early before reaching
     agent wiring. This fixture creates the detect/deploy dirs under
-    ``tmp_path`` and patches ``load_targets`` in both ``mnemos.cli.util``
-    and ``mnemos.cli.integration`` so the copilot target is always "detected".
+    ``tmp_path`` and patches ``load_targets`` in both ``vesmaro.cli.util``
+    and ``vesmaro.cli.integration`` so the copilot target is always "detected".
     """
     instructions_dir = tmp_path / "copilot" / "instructions"
     skills_dir = tmp_path / "copilot" / "skills"
@@ -154,9 +154,9 @@ def _isolate_copilot_target(
         format="copy",
     )
     config = TargetsConfig(targets=(copilot_target,))
-    monkeypatch.setattr("mnemos.cli.util.load_targets", lambda config_path=None, home=None: config)
+    monkeypatch.setattr("vesmaro.cli.util.load_targets", lambda config_path=None, home=None: config)
     monkeypatch.setattr(
-        "mnemos.cli.integration.load_targets", lambda config_path=None, home=None: config
+        "vesmaro.cli.integration.load_targets", lambda config_path=None, home=None: config
     )
 
 
@@ -287,11 +287,11 @@ class TestWireAgent:
         result = wire_agent(path, mode="wildcard")
 
         assert result.status == WireStatus.WIRED
-        assert MNEMOS_WILDCARD in result.tools_added
+        assert VESMARO_WILDCARD in result.tools_added
 
         post = frontmatter.load(path)
         tools = post.metadata["tools"]
-        assert MNEMOS_WILDCARD in tools
+        assert VESMARO_WILDCARD in tools
         # Original tools preserved.
         assert "read" in tools
         assert "search" in tools
@@ -302,11 +302,11 @@ class TestWireAgent:
         result = wire_agent(path, mode="precise")
 
         assert result.status == WireStatus.WIRED
-        assert len(result.tools_added) == len(MNEMOS_TOOLS)
+        assert len(result.tools_added) == len(VESMARO_TOOLS)
 
         post = frontmatter.load(path)
         tools = post.metadata["tools"]
-        for tool in MNEMOS_TOOLS:
+        for tool in VESMARO_TOOLS:
             assert tool in tools
 
     def test_idempotent_wildcard(self, agents_dir: Path) -> None:
@@ -320,7 +320,7 @@ class TestWireAgent:
 
         post = frontmatter.load(path)
         tools = post.metadata["tools"]
-        assert tools.count(MNEMOS_WILDCARD) == 1
+        assert tools.count(VESMARO_WILDCARD) == 1
 
     def test_idempotent_precise(self, agents_dir: Path) -> None:
         """Re-running precise mode does not duplicate tokens."""
@@ -333,7 +333,7 @@ class TestWireAgent:
 
         post = frontmatter.load(path)
         tools = post.metadata["tools"]
-        for tool in MNEMOS_TOOLS:
+        for tool in VESMARO_TOOLS:
             assert tools.count(tool) == 1
 
     def test_already_wired_wildcard(self, agents_dir: Path) -> None:
@@ -356,7 +356,7 @@ class TestWireAgent:
 
         # The individual tokens were missing (only wildcard was present).
         assert result.status == WireStatus.WIRED
-        assert len(result.tools_added) == len(MNEMOS_TOOLS)
+        assert len(result.tools_added) == len(VESMARO_TOOLS)
 
     def test_skips_tool_profile(self, agents_dir: Path) -> None:
         """Agents with ``tool_profile`` are skipped, not modified."""
@@ -380,7 +380,7 @@ class TestWireAgent:
         post = frontmatter.load(path)
         tools = post.metadata["tools"]
         assert isinstance(tools, list)
-        assert MNEMOS_WILDCARD in tools
+        assert VESMARO_WILDCARD in tools
 
     def test_dry_run_does_not_modify(self, agents_dir: Path) -> None:
         """``--dry-run`` reports the change without writing."""
@@ -390,7 +390,7 @@ class TestWireAgent:
         result = wire_agent(path, mode="wildcard", dry_run=True)
 
         assert result.status == WireStatus.DRY_RUN
-        assert MNEMOS_WILDCARD in result.tools_added
+        assert VESMARO_WILDCARD in result.tools_added
         # File untouched.
         assert path.read_text(encoding="utf-8") == original
 
@@ -463,7 +463,7 @@ class TestVerifyAgents:
         _write_agent(
             directory,
             "a.agent.md",
-            tools=["read", MNEMOS_WILDCARD],
+            tools=["read", VESMARO_WILDCARD],
         )
         _write_agent(
             directory,
@@ -502,8 +502,8 @@ class TestCliSetupWireAgents:
         _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents --all`` wires all unwired agents."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
@@ -522,11 +522,11 @@ class TestCliSetupWireAgents:
 
         # agent-architect should now have mnemos/*.
         post = frontmatter.load(agents_dir / "agent-architect.agent.md")
-        assert MNEMOS_WILDCARD in post.metadata["tools"]
+        assert VESMARO_WILDCARD in post.metadata["tools"]
 
         # concierge (no tools) should now have tools with mnemos/*.
         post = frontmatter.load(agents_dir / "concierge.agent.md")
-        assert MNEMOS_WILDCARD in post.metadata["tools"]
+        assert VESMARO_WILDCARD in post.metadata["tools"]
 
         # cr-critic (tool_profile) should NOT have tools added.
         post = frontmatter.load(agents_dir / "cr-critic.agent.md")
@@ -539,8 +539,8 @@ class TestCliSetupWireAgents:
         _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents --select name`` wires only the specified agent."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
@@ -560,7 +560,7 @@ class TestCliSetupWireAgents:
 
         # agent-architect wired.
         post = frontmatter.load(agents_dir / "agent-architect.agent.md")
-        assert MNEMOS_WILDCARD in post.metadata["tools"]
+        assert VESMARO_WILDCARD in post.metadata["tools"]
 
         # concierge NOT wired (was not selected).
         post = frontmatter.load(agents_dir / "concierge.agent.md")
@@ -573,8 +573,8 @@ class TestCliSetupWireAgents:
         _isolate_copilot_target: None,
     ) -> None:
         """``--no-wire-agents`` skips agent wiring entirely."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         original_architect = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
 
@@ -603,8 +603,8 @@ class TestCliSetupWireAgents:
         _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents --all --precise`` uses individual tool names."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
@@ -624,10 +624,10 @@ class TestCliSetupWireAgents:
 
         post = frontmatter.load(agents_dir / "agent-architect.agent.md")
         tools = post.metadata["tools"]
-        for tool in MNEMOS_TOOLS:
+        for tool in VESMARO_TOOLS:
             assert tool in tools
         # Wildcard should NOT be present in precise mode.
-        assert MNEMOS_WILDCARD not in tools
+        assert VESMARO_WILDCARD not in tools
 
     def test_wire_agents_dry_run(
         self,
@@ -636,8 +636,8 @@ class TestCliSetupWireAgents:
         _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents --all --dry-run`` does not modify files."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         original = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
 
@@ -665,8 +665,8 @@ class TestCliSetupWireAgents:
         _isolate_copilot_target: None,
     ) -> None:
         """``--wire-agents`` and ``--no-wire-agents`` are mutually exclusive."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
@@ -698,8 +698,8 @@ class TestCliVerifyAgentsSection:
         _isolate_copilot_target: None,
     ) -> None:
         """``integration verify`` prints an agents wiring summary."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
@@ -718,8 +718,8 @@ class TestCliVerifyAgentsSection:
         _isolate_copilot_target: None,
     ) -> None:
         """Unwired agent names appear in the verify output."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(
             app,
@@ -742,7 +742,7 @@ class TestDoctorAgentWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``doctor`` runs the agent wiring check and reports status."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(app, ["doctor", "--json"])
 
@@ -757,7 +757,7 @@ class TestDoctorAgentWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Doctor reports WARN when agents are unwired."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
 
         result = runner.invoke(app, ["doctor", "--json"])
         # The agent wiring check should mention "unwired".
@@ -769,7 +769,7 @@ class TestDoctorAgentWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Doctor reports WARN (not crash) when no agents directory exists."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", tmp_path / "no-agents")
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", tmp_path / "no-agents")
 
         result = runner.invoke(app, ["doctor", "--json"])
         assert "Agent wiring" in result.stdout

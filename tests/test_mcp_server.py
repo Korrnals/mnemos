@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mnemos.mcp_server import _dispatch, call_tool, list_tools
+from vesmaro.mcp_server import _dispatch, call_tool, list_tools
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -122,9 +122,9 @@ async def test_routing_all_tools_recognized(tool_name: str) -> None:
     """_dispatch must route every registered tool - must NOT return 'Unknown tool: ...'."""
     mock_mgr = _make_mock_manager()
     with (
-        patch("mnemos.mcp_server.get_manager", return_value=mock_mgr),
+        patch("vesmaro.mcp_server.get_manager", return_value=mock_mgr),
         patch(
-            "mnemos.mcp_server.validate_tag_contract",
+            "vesmaro.mcp_server.validate_tag_contract",
             side_effect=lambda tags, **_kw: tags,
         ),
     ):
@@ -136,7 +136,7 @@ async def test_routing_all_tools_recognized(tool_name: str) -> None:
             if tool_name == "mnemos_export":
                 from pathlib import Path
 
-                from mnemos.cli.export import CompressMode, ExportFormat, ExportResult
+                from vesmaro.cli.export import CompressMode, ExportFormat, ExportResult
 
                 fake = ExportResult(
                     path=Path("/tmp/smoke-export.json"),
@@ -147,13 +147,13 @@ async def test_routing_all_tools_recognized(tool_name: str) -> None:
                     project_count=0,
                     bytes_written=0,
                 )
-                with patch("mnemos.cli.export.run_export", return_value=fake):
+                with patch("vesmaro.cli.export.run_export", return_value=fake):
                     result = await _dispatch(tool_name, _TOOL_ARGS[tool_name])
             else:  # mnemos_import
-                from mnemos.cli.import_ import ImportResult
+                from vesmaro.cli.import_ import ImportResult
 
                 fake = ImportResult(mode="merge", dry_run=False)
-                with patch("mnemos.cli.import_.run_import", return_value=fake):
+                with patch("vesmaro.cli.import_.run_import", return_value=fake):
                     result = await _dispatch(tool_name, _TOOL_ARGS[tool_name])
         else:
             result = await _dispatch(tool_name, _TOOL_ARGS[tool_name])
@@ -171,7 +171,7 @@ async def test_routing_all_tools_recognized(tool_name: str) -> None:
 async def test_dispatch_unknown_tool_returns_error_string() -> None:
     """_dispatch with an unregistered name must return the 'Unknown tool: ...' sentinel."""
     mock_mgr = _make_mock_manager()
-    with patch("mnemos.mcp_server.get_manager", return_value=mock_mgr):
+    with patch("vesmaro.mcp_server.get_manager", return_value=mock_mgr):
         result = await _dispatch("nonexistent_tool", {})
 
     assert isinstance(result, str), "Expected str return for unknown tool"
@@ -187,7 +187,7 @@ async def test_dispatch_unknown_tool_returns_error_string() -> None:
 async def test_call_tool_unknown_wraps_error_in_text_content() -> None:
     """call_tool() with an unregistered name returns TextContent with 'Unknown tool: ...'."""
     mock_mgr = _make_mock_manager()
-    with patch("mnemos.mcp_server.get_manager", return_value=mock_mgr):
+    with patch("vesmaro.mcp_server.get_manager", return_value=mock_mgr):
         contents = await call_tool("nonexistent_tool", {})
 
     assert len(contents) == 1
@@ -231,9 +231,9 @@ async def test_routing_invokes_correct_manager_method(tool_name: str) -> None:
     expected_method, forbidden_methods = _ROUTING_MAP[tool_name]
     mock_mgr = _make_mock_manager()
     with (
-        patch("mnemos.mcp_server.get_manager", return_value=mock_mgr),
+        patch("vesmaro.mcp_server.get_manager", return_value=mock_mgr),
         patch(
-            "mnemos.mcp_server.validate_tag_contract",
+            "vesmaro.mcp_server.validate_tag_contract",
             side_effect=lambda tags, **_kw: tags,
         ),
     ):
@@ -254,9 +254,9 @@ async def test_save_context_routes_to_save_checkpoint_not_add_or_search() -> Non
     """mnemos_save_context must route to mgr.save_checkpoint - not mgr.add/search."""
     mock_mgr = _make_mock_manager()
     with (
-        patch("mnemos.mcp_server.get_manager", return_value=mock_mgr),
+        patch("vesmaro.mcp_server.get_manager", return_value=mock_mgr),
         patch(
-            "mnemos.mcp_server.validate_tag_contract",
+            "vesmaro.mcp_server.validate_tag_contract",
             side_effect=lambda tags, **_kw: tags,
         ),
     ):
@@ -276,7 +276,7 @@ async def test_save_context_routes_to_save_checkpoint_not_add_or_search() -> Non
 async def test_auto_collect_status_touches_no_manager_data_method() -> None:
     """mnemos_auto_collect_status must read only module-level state - zero mgr data method calls."""
     mock_mgr = _make_mock_manager()
-    with patch("mnemos.mcp_server.get_manager", return_value=mock_mgr):
+    with patch("vesmaro.mcp_server.get_manager", return_value=mock_mgr):
         await _dispatch("mnemos_auto_collect_status", _TOOL_ARGS["mnemos_auto_collect_status"])
 
     data_methods = [
@@ -297,8 +297,8 @@ async def test_auto_collect_status_touches_no_manager_data_method() -> None:
 
 
 async def test_no_brand_env_canonical_manifest_only() -> None:
-    """Without MNEMOS_MCP_BRAND the manifest stays 27 canonical mnemos_ tools."""
-    with patch("mnemos.mcp_server._MCP_BRAND", ""):
+    """Without VESMARO_MCP_BRAND the manifest stays 27 canonical mnemos_ tools."""
+    with patch("vesmaro.mcp_server._MCP_BRAND", ""):
         tools = await list_tools()
     names = [t.name for t in tools]
     assert len(names) == 27
@@ -306,10 +306,10 @@ async def test_no_brand_env_canonical_manifest_only() -> None:
 
 
 async def test_brand_env_appends_vesmaro_aliases() -> None:
-    """MNEMOS_MCP_BRAND=vesmaro doubles the manifest: 27 canonical + 27 aliases."""
-    from mnemos.mcp_server import _canonical_tools
+    """VESMARO_MCP_BRAND=vesmaro doubles the manifest: 27 canonical + 27 aliases."""
+    from vesmaro.mcp_server import _canonical_tools
 
-    with patch("mnemos.mcp_server._MCP_BRAND", "vesmaro"):
+    with patch("vesmaro.mcp_server._MCP_BRAND", "vesmaro"):
         tools = await list_tools()
     names = [t.name for t in tools]
     assert len(names) == 54
@@ -325,9 +325,9 @@ async def test_brand_env_appends_vesmaro_aliases() -> None:
 
 async def test_canonicalize_known_alias_and_unknown_passthrough() -> None:
     """Known vesmaro_* aliases normalise; unknown branded names fall through."""
-    from mnemos.mcp_server import _canonicalize_tool_name
+    from vesmaro.mcp_server import _canonicalize_tool_name
 
-    with patch("mnemos.mcp_server._MCP_BRAND", "vesmaro"):
+    with patch("vesmaro.mcp_server._MCP_BRAND", "vesmaro"):
         assert _canonicalize_tool_name("vesmaro_search") == "mnemos_search"
         assert _canonicalize_tool_name("vesmaro_save_context") == "mnemos_save_context"
         assert _canonicalize_tool_name("vesmaro_unknown_tool") == "vesmaro_unknown_tool"
@@ -337,7 +337,7 @@ async def test_canonicalize_known_alias_and_unknown_passthrough() -> None:
 
 async def test_brand_alias_harvest_matches_manifest() -> None:
     """Harvest invariant: harvested names == manifest names (lockstep guard)."""
-    from mnemos.mcp_server import _canonical_tool_names, _canonical_tools
+    from vesmaro.mcp_server import _canonical_tool_names, _canonical_tools
 
     manifest = {t.name for t in await _canonical_tools()}
     assert manifest == set(_canonical_tool_names())
@@ -347,12 +347,12 @@ async def test_brand_alias_harvest_matches_manifest() -> None:
 
 async def test_brand_self_alias_and_invalid_brand_rejected() -> None:
     """brand='mnemos' (self-alias) and malformed brands degrade to canonical-only."""
-    from mnemos.mcp_server import _canonical_tools
+    from vesmaro.mcp_server import _canonical_tools
 
-    with patch("mnemos.mcp_server._MCP_BRAND", "mnemos"):
+    with patch("vesmaro.mcp_server._MCP_BRAND", "mnemos"):
         tools = await list_tools()
     assert len(tools) == 27  # no doubling
 
-    with patch("mnemos.mcp_server._MCP_BRAND", "Bad Brand!"):
+    with patch("vesmaro.mcp_server._MCP_BRAND", "Bad Brand!"):
         tools = await _canonical_tools()
     assert len(tools) == 27  # malformed brand is a no-op

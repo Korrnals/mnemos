@@ -35,11 +35,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.assemble import assemble_context
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
-from mnemos.storage.vector_store import VectorStore
+from vesmaro.assemble import assemble_context
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.storage.vector_store import VectorStore
 
 PROJECT_A = "proj-alpha"
 PROJECT_B = "proj-beta"

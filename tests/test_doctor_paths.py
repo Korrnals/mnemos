@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from mnemos.cli.doctor import _collect_paths, doctor_app
-from mnemos.config import Settings
+from vesmaro.cli.doctor import _collect_paths, doctor_app
+from vesmaro.config import Settings
 
 runner = CliRunner()
 
