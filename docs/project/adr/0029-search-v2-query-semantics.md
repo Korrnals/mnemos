@@ -217,6 +217,14 @@ No edges → the leg is a no-op; an edge-lookup failure is non-fatal.
   recall@10 0.9398 → 0.9503; S1m (production embedder) recall@5
   0.9023 → 0.9285. corpus/model fingerprints unchanged — the deltas are
   the semantics, not the embedder.
+- S1/S1m baselines re-recorded again for the #314 short-token guard
+  (same ADR-0020 procedure): the guard widens ANDs that contained
+  stopword tokens, so recall moved up — reference recall@5
+  0.9366 → 0.9409 / recall@10 0.9503 → 0.9642 (planted appearances
+  202 → 221); S1m recall@5 0.9275 → 0.9484. Fingerprints unchanged —
+  the delta is the guard semantics, not the corpus or the embedder.
+  Keeping the pre-guard baseline would have lent the corridor upside
+  slack that masks a future regression back down to pre-guard noise.
 - The SC-S2 `supersede-refind` gone-probe changed form, not meaning:
   the pre-v2 probe ("weekly Mondays cadence" as one whole-input phrase)
   only held because the phrase semantics hid the token "cadence",
