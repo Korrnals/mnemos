@@ -3275,12 +3275,16 @@ class SQLiteStore:
         """Return direct outgoing edges for ``from_memory_id`` (no expansion).
 
         One hop only — graph traversal/expansion is Phase 2 (ADR-0018).
-        Returns ``[{"from_memory_id","to_memory_id","kind","created_at"}]``
-        ordered by creation time ascending.
+        Returns ``[{"from_memory_id","to_memory_id","kind","created_at",
+        "weight","provenance"}]`` ordered by creation time ascending.
+        ADR-0030 A0 (issue #322): ``weight``/``provenance`` ride along so
+        minted (``auto-dedupe``) edges are distinguishable from declared
+        ones at read time — the keys are additive; existing consumers
+        read by name and are unaffected.
         """
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT from_memory_id, to_memory_id, kind, created_at "
+            "SELECT from_memory_id, to_memory_id, kind, created_at, weight, provenance "
             "FROM memory_edges WHERE from_memory_id = ? AND kind = ? "
             "ORDER BY created_at ASC",
             (from_memory_id, kind),
@@ -3299,11 +3303,12 @@ class SQLiteStore:
         directions of ``supersedes`` — a fused hit surfaces the newer
         version that replaced it (incoming, this method) AND the older
         sibling it replaced (outgoing, ``get_direct_edges``). Same shape
-        and ordering contract as ``get_direct_edges``.
+        and ordering contract as ``get_direct_edges`` (weight/provenance
+        included per ADR-0030 A0, issue #322).
         """
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT from_memory_id, to_memory_id, kind, created_at "
+            "SELECT from_memory_id, to_memory_id, kind, created_at, weight, provenance "
             "FROM memory_edges WHERE to_memory_id = ? AND kind = ? "
             "ORDER BY created_at ASC",
             (to_memory_id, kind),

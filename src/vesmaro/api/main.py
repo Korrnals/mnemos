@@ -309,6 +309,22 @@ def _prometheus_text(mgr: MemoryManager) -> str:
     lines.append("# HELP mnemos_search_avg_latency_ms Average search latency in ms")
     lines.append("# TYPE mnemos_search_avg_latency_ms gauge")
     lines.append(f"mnemos_search_avg_latency_ms {search['avg_latency_ms']}")
+    # ADR-0030 A0 (issue #322) — relates_to auto-minting rate telemetry
+    # (in-memory counters, since restart; '' buckets unscoped writes).
+    graph = data["graph"]
+    lines.append(
+        "# HELP mnemos_graph_auto_dedupe_edges_total "
+        "relates_to edges minted by the auto-dedupe rule since restart"
+    )
+    lines.append("# TYPE mnemos_graph_auto_dedupe_edges_total counter")
+    lines.append(f"mnemos_graph_auto_dedupe_edges_total {graph['auto_dedupe_edges_total']}")
+    lines.append(
+        "# HELP mnemos_graph_auto_dedupe_edges_by_project "
+        "Auto-minted relates_to edges by project since restart"
+    )
+    lines.append("# TYPE mnemos_graph_auto_dedupe_edges_by_project counter")
+    for p, c in graph["auto_dedupe_edges_by_project"].items():
+        lines.append(f'mnemos_graph_auto_dedupe_edges_by_project{{project="{p}"}} {c}')
     lines.append("# HELP mnemos_vectors_indexed_total Indexed vectors")
     lines.append("# TYPE mnemos_vectors_indexed_total gauge")
     lines.append(f"mnemos_vectors_indexed_total {vectors['indexed_total']}")

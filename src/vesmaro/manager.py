@@ -33,10 +33,18 @@ from vesmaro import __version__
 from vesmaro.config import Settings
 from vesmaro.danger_detectors import DetectionResult, detect
 from vesmaro.embeddings import EmbeddingProvider, create_embedding_provider
+from vesmaro.graph_minting import (
+    AUTO_DEDUPE_CANDIDATE_POOL,
+    AUTO_DEDUPE_EDGE_KIND,
+    AUTO_DEDUPE_EDGE_WEIGHT,
+    AUTO_DEDUPE_PROVENANCE,
+    select_auto_dedupe_candidates,
+)
 from vesmaro.models import (
     CHECKPOINT_FIELDS,
     CHECKPOINT_STAMP_KEYS,
     CONTEXT_ADMISSIBLE_STATUSES,
+    NO_FEDERATE_TAG,
     AgentRecallQuery,
     Memory,
     MemoryCreate,
@@ -421,6 +429,14 @@ class MemoryManager:
         # restart re-stamps every session on its next assembly.
         self._retrieval_iso: dict[str, str] = {}
         self._retrieval_iso_lock: threading.Lock = threading.Lock()
+        # ADR-0030 A0 (issue #322) — in-memory relates_to auto-minting
+        # instrumentation (same accepted trade-off as ``_search_stats``:
+        # not persisted, no history, resets on restart — the minting RATE
+        # the A0-review needs is derivable from the deltas). Keyed by
+        # project slug ('' for unscoped writes); counts NEW edges only
+        # (idempotent re-mints contribute nothing).
+        self._graph_mint_stats: dict[str, int] = {}
+        self._graph_mint_stats_lock: threading.Lock = threading.Lock()
 
     @property
     def embedder(self) -> EmbeddingProvider:
@@ -673,6 +689,7 @@ class MemoryManager:
         agent: str = "",
         trusted_rewrite_provenance: bool = False,
         trusted_checkpoint_stamps: bool = False,
+        mint_relates_to: bool = True,
     ) -> Memory:
         """Create a new memory entry.
 
@@ -703,6 +720,17 @@ class MemoryManager:
         ``data.metadata`` with a warning — a forged
         ``checkpoint_dedup_key`` on a generic create must never satisfy
         a later genuine checkpoint dedup (CWE-346/345 spoofed source).
+
+        ``mint_relates_to`` (#322 review M2, TL decision) — minting
+        fuel is ORGANIC USER WRITES only. Internal machine-driven
+        ``add`` callers (checkpoint saves, mesh ingest, migrate import)
+        pass ``False``: their content mechanically cites existing
+        memories (checkpoints re-state what they reference; bulk
+        imports re-state a whole corpus) and would flood the graph with
+        high-cosine infra churn instead of near-duplicate signal. Every
+        user-facing surface (MCP / REST / SDK / CLI add, the
+        ``context_rewrite`` channel — the fuel target of ADR-0030) and
+        the file watchers keep the default ``True``.
 
         ADR-0019 §2 (B2b) — for records created WITHOUT an explicit
         ``status``, the ``vesmaro.visibility`` policy decides the initial
@@ -837,6 +865,22 @@ class MemoryManager:
                 self.upsert_embedding(memory)
             except Exception as exc:
                 logger.warning("Vector embed failed (non-fatal): %s", exc)
+
+        # ── ADR-0030 A0 (issue #322): deterministic relates_to minting ──
+        # Best-effort by contract (ADR-0030 Decision 2): the edge is an
+        # enhancement, never part of the write contract — a minting
+        # failure is logged and swallowed; the write itself MUST succeed.
+        # Runs AFTER the embed upsert so the search legs see the new row
+        # in the index it was just written to (the row itself is then
+        # excluded as a candidate by id). ``mint_relates_to=False``
+        # (review M2): internal machine writes never mint.
+        if mint_relates_to:
+            try:
+                self._mint_relates_to_edges(memory)
+            except Exception as exc:
+                logger.warning(
+                    "graph auto-mint failed (non-fatal) for %s: %s", memory.id[:8], exc
+                )
 
         logger.info("add: id=%s project=%s agent=%s", memory.id[:8], project, agent)
         return memory
@@ -1836,6 +1880,142 @@ class MemoryManager:
         neighbours.discard(memory_id)  # self-edges are rejected at write time
         return neighbours
 
+    # ── ADR-0030 A0: relates_to auto-minting on write (issue #322) ────────
+
+    def _mint_relates_to_edges(self, memory: Memory) -> int:
+        """Mint ``relates_to`` edges from ``memory`` to near-duplicates.
+
+        ADR-0030 Decision 2 — the write-path fuel leg. ONE synchronous
+        retrieval over the EXISTING legs (one query embed + one
+        cosine-scored, project-scoped ``VectorStore.search`` — the same
+        primitives the hybrid search's vector leg uses; the FTS leg is
+        deliberately not consulted for qualification, measured decision
+        recorded in ``vesmaro.graph_minting``: its AND semantics
+        structurally miss the re-add direction). Candidate ids resolve
+        through the SQLite authority; the pure selector then applies the
+        exclusion set (I4 no-federate, §5 quarantine absolute,
+        admissible statuses, intra-project, self, ``via_graph``), the
+        cosine similarity threshold and the top-1..3 cap; each survivor
+        becomes a ``relates_to`` edge ``memory → candidate`` with the
+        raised weight and provenance ``auto-dedupe`` (idempotent per the
+        ``(from, to, kind)`` primary key — INSERT OR IGNORE; a re-mint
+        of the same memory inserts nothing and counts nothing).
+
+        Determinism (ADR-0028, review L2 qualification): GIVEN the
+        retrieved pool, selection is a pure function — the selector
+        re-sorts survivors by ``(score desc, id asc)``, so the
+        vector store's tie order never leaks INTO the choice. The pool
+        cut itself (``VectorStore.search`` top-k via argpartition)
+        applies no id tiebreak beyond the pool boundary: with MORE than
+        ``AUTO_DEDUPE_CANDIDATE_POOL`` equal-score candidates (an
+        exact-duplicate flood) the pool membership is position-
+        dependent. The residual is bounded — at most the pool size is
+        considered and at most 3 edges mint — and the pool exists to
+        bound exactly that flood.
+
+        No supersede decisions, no LLM, no status/visibility mutations —
+        similarity only ever mints the weaker ``relates_to`` claim.
+
+        Returns the number of NEW edges inserted (0 when the flag is
+        off, the projection is empty, nothing passed the gates, or every
+        edge already existed). Retrieval failures propagate to the
+        ``add`` call site's best-effort wrapper; insert failures are
+        contained per-edge below.
+        """
+        if not self.settings.mnemos.graph_auto_mint:
+            return 0
+        # ── Review M1: FROM-side gates. The selector validates the
+        # CANDIDATES; these two checks validate the NEW memory as an
+        # endpoint — the exclusion contract binds BOTH sides of an edge.
+        # (a) I4: a no-federate node is never an endpoint, either side.
+        #     The write-path scanner may have auto-tagged this very row
+        #     (a secret-positive write) — it must not mint FROM itself.
+        if NO_FEDERATE_TAG in memory.tags:
+            return 0
+        # (b) General gates: a RAW/processing (publish-gate refusal,
+        #     explicit raw) or quarantined new row is invisible content —
+        #     minting from it would leave permanent graph edges with no
+        #     cleanup when the row is later quarantined. Invisible
+        #     writes are not fuel.
+        if not is_context_admissible(memory):
+            return 0
+        # The near-duplicate query is ``_embedding_text(memory)`` — the
+        # EXACT text the memory itself was embedded with, so the query
+        # lives in the stored vectors' space (self-cosine 1.0; a
+        # near-dup shares the content AND the tag-contract tokens, and a
+        # far row's shared tags alone stay well under the threshold).
+        query_text = self._embedding_text(memory)
+        if not query_text.strip():
+            return 0
+        q_emb = self.embedder.embed(query_text)
+        vector_pairs = self.vectors.search(
+            q_emb,
+            limit=AUTO_DEDUPE_CANDIDATE_POOL,
+            project=memory.project or None,
+        )
+        resolved: list[SearchResult] = []
+        for mid, cosine in vector_pairs:
+            row = self.sqlite.get(mid)
+            if row is None:
+                continue  # deleted between the index and the resolve
+            resolved.append(SearchResult(memory=row, score=cosine, search_type="semantic"))
+        minted = 0
+        # ── Review L1: orientation-aware mint idempotency. The PK
+        # (from, to, kind) treats A→B and B→A as distinct rows, but for
+        # MINTED fuel the pair is semantically undirected — a re-mint of
+        # the older end (backfill tools, A0-review re-runs) must not
+        # duplicate the pair in reverse (#324's bidirectional walk would
+        # double-count both orientations). Mint-specific guard: a
+        # DECLARED reverse edge stays insertable — direction can be
+        # semantic for explicit callers, only the auto-dedupe rule is
+        # held to the undirected-pair contract.
+        incoming_from: set[str] = {
+            str(e["from_memory_id"])
+            for e in self.sqlite.get_incoming_edges(memory.id, kind=AUTO_DEDUPE_EDGE_KIND)
+        }
+        for candidate in select_auto_dedupe_candidates(memory, resolved):
+            if candidate.memory.id in incoming_from:
+                logger.debug(
+                    "graph auto-mint: reverse pair exists, skipping from=%s to=%s",
+                    memory.id[:8],
+                    candidate.memory.id[:8],
+                )
+                continue
+            try:
+                inserted = self.add_memory_edge(
+                    memory.id,
+                    candidate.memory.id,
+                    kind=AUTO_DEDUPE_EDGE_KIND,
+                    weight=AUTO_DEDUPE_EDGE_WEIGHT,
+                    provenance=AUTO_DEDUPE_PROVENANCE,
+                )
+            except Exception as exc:
+                # Per-edge isolation: a candidate deleted between search
+                # and insert (FK miss) or a store hiccup must not abort
+                # the remaining candidates — logged, skipped.
+                logger.warning(
+                    "graph auto-mint: edge insert failed (non-fatal) from=%s to=%s: %s",
+                    memory.id[:8],
+                    candidate.memory.id[:8],
+                    exc,
+                )
+                continue
+            if inserted:
+                minted += 1
+        if minted:
+            with self._graph_mint_stats_lock:
+                project_key = memory.project or ""
+                self._graph_mint_stats[project_key] = (
+                    self._graph_mint_stats.get(project_key, 0) + minted
+                )
+            logger.info(
+                "graph auto-mint: id=%s project=%s new_edges=%d — relates_to (auto-dedupe)",
+                memory.id[:8],
+                memory.project or "",
+                minted,
+            )
+        return minted
+
     def agent_recall(self, query: AgentRecallQuery) -> list[SearchResult]:
         """M3 — per-agent recall: recent entries + optional hybrid search.
 
@@ -2031,7 +2211,11 @@ class MemoryManager:
             metadata=metadata,
         )
         memory = self.add(
-            data, project=project, agent=resolved_agent, trusted_checkpoint_stamps=True
+            data,
+            project=project,
+            agent=resolved_agent,
+            trusted_checkpoint_stamps=True,
+            mint_relates_to=False,  # #322 review M2: checkpoint saves are not fuel
         )
         return memory, False
 
@@ -2763,6 +2947,21 @@ class MemoryManager:
             "since_restart": window,
         }
 
+    def graph_mint_stats(self) -> dict[str, Any]:
+        """Return in-memory ``relates_to`` auto-minting instrumentation.
+
+        ADR-0030 A0 (issue #322) — the minting-rate telemetry the
+        A0-review reads: per-project NEW-edge counts since restart
+        (in-memory like ``search_stats``; resets on restart, the rate is
+        derivable from the deltas). ``''`` buckets unscoped writes.
+        """
+        with self._graph_mint_stats_lock:
+            by_project = dict(self._graph_mint_stats)
+        return {
+            "auto_dedupe_edges_total": sum(by_project.values()),
+            "auto_dedupe_edges_by_project": by_project,
+        }
+
     def dashboard_stats(self) -> dict[str, Any]:
         """Structured JSON for the mnemos-eyes dashboard.
 
@@ -2772,6 +2971,7 @@ class MemoryManager:
         filter_stats = self.sqlite.get_filter_stats()
         s_stats = self.search_stats()
         fb_stats = self.feedback_capture_stats()
+        g_stats = self.graph_mint_stats()
         sessions = self.sqlite.count_sessions()
         # Pipeline counts derived from status + DLQ.
         processed_total = int(by_status.get("processed", 0)) + int(by_status.get("published", 0))
@@ -2814,6 +3014,13 @@ class MemoryManager:
                 "events_total": fb_stats["events_total"],
                 "captured_used_total": fb_stats["captured_used_total"],
                 "captured_rejected_total": fb_stats["captured_rejected_total"],
+            },
+            # ADR-0030 A0 (issue #322) — the minting-rate leg: flag state
+            # plus per-project NEW-edge counters (in-memory, since restart).
+            "graph": {
+                "auto_mint_enabled": self.settings.mnemos.graph_auto_mint,
+                "auto_dedupe_edges_total": g_stats["auto_dedupe_edges_total"],
+                "auto_dedupe_edges_by_project": g_stats["auto_dedupe_edges_by_project"],
             },
             "vectors": {
                 "indexed_total": self.vectors.count(),

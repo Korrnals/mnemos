@@ -476,7 +476,9 @@ class MnemosCoreServicer:
             source=MemorySource.MCP,
             metadata={"fed_id": compact.id, "fed_source_agent": compact.source_agent},
         )
-        memory = self._manager.add(data, project=project, agent=agent)
+        memory = self._manager.add(
+            data, project=project, agent=agent, mint_relates_to=False
+        )  # #322 review M2: mesh ingest is machine traffic, not minting fuel
         logger.info(
             "mesh_server: WriteMemory wrote id=%s fed_id=%s project=%s",
             memory.id,
