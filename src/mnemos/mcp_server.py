@@ -17,9 +17,13 @@ between the handler contract and the SDK request/response models.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 import logging
 import os
+import re
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,6 +62,65 @@ _manager: Any = None  # MemoryManager — lazy init to avoid import-time side-ef
 _auto_collect_state = {
     "enabled": os.environ.get("MNEMOS_AUTO_COLLECT", "").lower() in ("true", "1", "yes", "on"),
 }
+
+# ── Brand aliasing (rebrand mnemos → vesmaro, 2026-09-15) ────────────────────
+# When MNEMOS_MCP_BRAND=vesmaro, every tool is additionally exposed under a
+# ``vesmaro_`` name (mnemos_ originals stay live — dual-prefix contract,
+# archcom 2026-09-14; legacy prefix retires no earlier than 6.0). Aliased
+# calls are normalised to the canonical mnemos_ name before dispatch, so the
+# handler bodies below keep the canonical spellings untouched.
+_BRAND_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+_raw_brand = os.environ.get("MNEMOS_MCP_BRAND", "").strip().lower()
+# Self-alias guard: brand "mnemos" would double every manifest entry.
+_MCP_BRAND = _raw_brand if _raw_brand != "mnemos" and _BRAND_RE.match(_raw_brand) else ""
+if _raw_brand and not _MCP_BRAND:
+    logger.warning(
+        "MNEMOS_MCP_BRAND=%r rejected — must match ^[a-z][a-z0-9_]{0,30}$ and not be 'mnemos'",
+        _raw_brand,
+    )
+
+
+def _brand_alias(canonical: str) -> str | None:
+    """Return the branded alias for a canonical tool name, or None.
+
+    Brand ``mnemos`` is refused (self-alias would duplicate every manifest
+    entry under an identical name).
+    """
+    if _MCP_BRAND and _MCP_BRAND != "mnemos" and canonical.startswith("mnemos_"):
+        return f"{_MCP_BRAND}_{canonical[len('mnemos_') :]}"
+    return None
+
+
+def _canonicalize_tool_name(name: str) -> str:
+    """Map a branded alias back to its canonical mnemos_ name.
+
+    Only aliases whose canonical counterpart actually exists are
+    normalised — an unknown branded name falls through untouched so the
+    dispatch error reports the name the caller actually used. The
+    canonical-name set mirrors the manifest built by ``_canonical_tools``
+    (kept in lockstep by ``test_brand_alias_harvest_matches_manifest``),
+    so a new tool added there is automatically aliasable.
+    """
+    if _MCP_BRAND and name.startswith(f"{_MCP_BRAND}_"):
+        candidate = f"mnemos_{name[len(_MCP_BRAND) + 1 :]}"
+        if _is_canonical_tool(candidate):
+            return candidate
+    return name
+
+
+@functools.lru_cache(maxsize=1)
+def _canonical_tool_names() -> frozenset[str]:
+    """Canonical tool names, harvested from this module's own source.
+
+    Harvest regex covers digits too (``mnemos_v2_*`` stays aliasable).
+    """
+    source = inspect.getsource(sys.modules[__name__])
+    return frozenset(re.findall(r'name="(mnemos_[a-z0-9_]+)"', source))
+
+
+def _is_canonical_tool(name: str) -> bool:
+    return name in _canonical_tool_names()
+
 
 # ── Auto-checkpoint tracking ───────────────────────────────────────────────────
 _checkpoint_tracker = {
@@ -223,6 +286,19 @@ def _steering_suffix(args: dict[str, Any], settings: Any) -> str:
 
 
 async def list_tools() -> list[Tool]:
+    """Manifest with brand aliases appended (see _MCP_BRAND)."""
+    tools = await _canonical_tools()
+    if _MCP_BRAND:
+        tools = tools + [
+            Tool(name=alias, description=t.description, input_schema=t.input_schema)
+            for t in tools
+            for alias in (_brand_alias(t.name),)
+            if alias
+        ]
+    return tools
+
+
+async def _canonical_tools() -> list[Tool]:
     """Return the tool manifest (27 tools — stable model-visible contract).
 
     Pre-2.x this was decorated with ``@server.list_tools()``; the port keeps
@@ -1409,12 +1485,18 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     Pre-2.x this was decorated with ``@server.call_tool()``; the port keeps
     the callable importable with the same ``(name, arguments)`` signature
     (the test suite drives it directly).
+
+    Branded aliases (``vesmaro_*`` when ``MNEMOS_MCP_BRAND=vesmaro``) are
+    normalised to their canonical ``mnemos_`` spellings before dispatch —
+    handlers below stay on the canonical names (dual-prefix contract,
+    archcom 2026-09-14; legacy retires no earlier than 6.0).
     """
-    _track_call(is_save=(name == "mnemos_save_context"))
+    canonical_name = _canonicalize_tool_name(name)
+    _track_call(is_save=(canonical_name == "mnemos_save_context"))
     reminder = _checkpoint_reminder()
 
     try:
-        result = await _dispatch(name, arguments)
+        result = await _dispatch(canonical_name, arguments)
     except TagContractError as exc:
         return [TextContent(type="text", text=f"❌ Tag contract violation:\n{exc}")]
     except Exception as exc:
