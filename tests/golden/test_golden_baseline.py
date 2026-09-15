@@ -8,7 +8,8 @@ Structure:
 
 * ``test_golden_determinism``        — two full measurements must agree
                                         exactly (byte-level float equality);
-* ``test_hard_invariants``           — status gate, A9 project purity,
+* ``test_hard_invariants``           — status gate, A9 project purity
+                                        (ADR-0029-aware, see below),
                                         injection-acceptance = 1.0 on both
                                         the search channel and the
                                         assemble_context path, rewrite
@@ -29,6 +30,15 @@ Structure:
 The measured numbers of THIS commit are recorded in
 benchmarks/baselines/BASELINE.md (generated from s1.json); the corpus
 and harness live in benchmarks/ (ADR-0020 root catalog, BF-1).
+
+ADR-0029 note (#315 search v2): every leg runs the full modern pipeline,
+soft project fallback included — a scoped query that zeroes out is
+retried once without the scope and surfaces cross-project rows TAGGED
+``project_scope_fallback=True``. Tagged rows are by-design retrievals,
+not resolve-guard leaks: ``foreign_project_surfaced`` counts UNTAGGED
+foreign rows only (must stay 0), tagged rows stay visible via
+``foreign_project_fallback_surfaced`` and the ``scope_fallback_*``
+belts (all-or-nothing tagging + manager counter parity).
 """
 
 from __future__ import annotations
@@ -136,6 +146,9 @@ def _snapshot(result: FullMeasurement) -> str:
             [
                 f"nonadm={m.non_admissible_surfaced}",
                 f"foreign={m.foreign_project_surfaced}",
+                f"fbforeign={m.foreign_project_fallback_surfaced}",
+                f"fbq={m.scope_fallback_queries}",
+                f"fbev={m.scope_fallback_events}",
                 f"hybrid={m.hybrid_queries}",
                 f"planted={m.planted_appearances}",
                 f"leaks={m.planted_leaks}",
@@ -181,7 +194,24 @@ def test_hard_invariants() -> None:
             f"[{m.label}] raw/non-admissible entries surfaced in search results"
         )
         assert m.foreign_project_surfaced == 0, (
-            f"[{m.label}] out-of-project rows surfaced in a scoped search"
+            f"[{m.label}] out-of-project rows surfaced in a scoped search "
+            "WITHOUT the project_scope_fallback tag — resolve-guard leak "
+            "(ADR-0029 fallback rows are tagged, counted separately)"
+        )
+        # ADR-0029 belts (#315): the soft fallback tags EVERY row it
+        # surfaces, and the tagged result sets must agree with the
+        # manager's project_scope_fallback_total counter. Together with
+        # the untagged count above this makes "surfaced fallback rows
+        # are 100% tagged" airtight on every leg (the tagged rows
+        # themselves are visible in foreign_project_fallback_surfaced
+        # and are by-design cross-project retrievals, not leaks).
+        assert m.scope_fallback_tagging_violations == 0, (
+            f"[{m.label}] fallback tagging is not all-or-nothing per result set"
+        )
+        assert m.scope_fallback_events == m.scope_fallback_queries, (
+            f"[{m.label}] project_scope_fallback_total events "
+            f"({m.scope_fallback_events}) != tagged result sets "
+            f"({m.scope_fallback_queries}) — counter/observability drift"
         )
         assert m.planted_leaks == 0, f"[{m.label}] planted secret leaked at issuance"
         assert m.planted_appearances >= 8, (
