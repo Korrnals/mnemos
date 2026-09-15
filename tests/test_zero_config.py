@@ -23,34 +23,34 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-import mnemos.api.main as api_main
-import mnemos.manager as manager_module
-from mnemos.api.main import _check_non_loopback_auth, app
-from mnemos.cli import _manager as cli_manager_module
-from mnemos.cli.main import app as cli_app
-from mnemos.config import ApiConfig, find_config_file, load_settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
-from mnemos.scanner_runtime import reset_scanner
+import vesmaro.api.main as api_main
+import vesmaro.manager as manager_module
+from vesmaro.api.main import _check_non_loopback_auth, app
+from vesmaro.cli import _manager as cli_manager_module
+from vesmaro.cli.main import app as cli_app
+from vesmaro.config import ApiConfig, find_config_file, load_settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.scanner_runtime import reset_scanner
 
 _VALID_TAGS = ["project:demo", "agent:user", "mnemos:learning"]
 
 
 def _clear_mnemos_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove every MNEMOS_* env var so tests start from a clean slate.
+    """Remove every VESMARO_* env var so tests start from a clean slate.
 
-    pydantic-settings maps ``MNEMOS_API__HOST`` etc. onto ``Settings``; a
+    pydantic-settings maps ``VESMARO_API__HOST`` etc. onto ``Settings``; a
     leftover variable from the developer shell would silently change the
     defaults under test.
     """
     for key in list(os.environ):
-        if key.startswith("MNEMOS_"):
+        if key.startswith("VESMARO_"):
             monkeypatch.delenv(key, raising=False)
 
 
 @pytest.fixture
 def clean_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Simulate a clean install: fresh HOME, empty cwd, no MNEMOS_* env.
+    """Simulate a clean install: fresh HOME, empty cwd, no VESMARO_* env.
 
     Resets the CLI / API manager singletons and the scanner singleton so
     each test constructs its own stores under the temporary home.
@@ -126,11 +126,11 @@ class TestZeroConfigDefaults:
     def test_non_loopback_env_override_still_refuses(self, clean_home):
         """Acceptance 2: env override to a non-loopback bind + no auth → refuse.
 
-        ``MNEMOS_API__HOST`` is exactly how ``mnemos serve --host 0.0.0.0``
+        ``VESMARO_API__HOST`` is exactly how ``mnemos serve --host 0.0.0.0``
         propagates the bind into the app process; the guard must fire.
         """
         monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setenv("MNEMOS_API__HOST", "0.0.0.0")
+        monkeypatch.setenv("VESMARO_API__HOST", "0.0.0.0")
         try:
             settings = load_settings()
             assert settings.api.host == "0.0.0.0"

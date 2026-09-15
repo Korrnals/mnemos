@@ -42,12 +42,12 @@ from benchmarks.stands.s1_quality.harness import (
     _entry_tags,
     golden_settings,
 )
-from mnemos.config import Settings
-from mnemos.danger_detectors import DETECTOR_CLASSES, detect
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemoryStatus, MemoryUpdate
-from mnemos.pipeline.refine import refine_single
-from mnemos.storage.vector_store import VectorStore
+from vesmaro.config import Settings
+from vesmaro.danger_detectors import DETECTOR_CLASSES, detect
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemoryStatus, MemoryUpdate
+from vesmaro.pipeline.refine import refine_single
+from vesmaro.storage.vector_store import VectorStore
 
 #: The §5 retraction render format (cause-neutral — anything else is a
 #: render-neutrality violation, e.g. a leaked reason).

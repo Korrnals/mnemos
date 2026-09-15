@@ -15,10 +15,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import AgentRecallQuery, Memory, MemoryCreate, MemoryStatus
-from mnemos.storage.sqlite_store import SQLiteStore
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import AgentRecallQuery, Memory, MemoryCreate, MemoryStatus
+from vesmaro.storage.sqlite_store import SQLiteStore
 
 # ---------------------------------------------------------------------------
 # Fixtures

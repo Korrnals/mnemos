@@ -110,10 +110,10 @@ def test_render_neutrality_invariant_catches_reason_leak(
     checker flags it — the ADR-0019 §5 compromise is enforced by a
     checker that demonstrably catches the defect class.
     """
-    import mnemos.manager as manager_mod
+    import vesmaro.manager as manager_mod
 
     def leaky_render(memory: object) -> str:
-        from mnemos.models import render_retraction
+        from vesmaro.models import render_retraction
 
         reason = getattr(memory, "quarantine_reason", "secret")
         return f"{render_retraction(memory)[:-1]} reason={reason}]"  # type: ignore[arg-type]
@@ -288,7 +288,7 @@ def test_skip_semantics_green_by_default_red_when_required(
     monkeypatch.setenv(s1m_contour.REQUIRED_ENV, "1")
     skipped_required = s1m_contour.run_model_contour(None, skip_reason=reason)
     assert not skipped_required["gate"]["pass"]
-    assert any("MNEMOS_BENCH_S1M_REQUIRED" in f for f in skipped_required["gate"]["failures"])
+    assert any("VESMARO_BENCH_S1M_REQUIRED" in f for f in skipped_required["gate"]["failures"])
 
     # the gate honours the skip verdict (and the flag) end-to-end
     monkeypatch.delenv(s1m_contour.REQUIRED_ENV, raising=False)

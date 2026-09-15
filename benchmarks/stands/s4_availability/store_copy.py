@@ -38,7 +38,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from mnemos.config import Settings
+from vesmaro.config import Settings
 
 
 def store_files(settings: Settings) -> dict[str, str]:

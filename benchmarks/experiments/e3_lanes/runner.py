@@ -80,9 +80,9 @@ from benchmarks.strata.e2_gov import profile as prof  # noqa: E402
 from benchmarks.strata.e2_gov.loader import fresh_experimental_manager  # noqa: E402
 from benchmarks.strata.e2_gov.queries import NEG_QUERIES  # noqa: E402
 from benchmarks.strata.e2_gov.records import GOV_RECORDS  # noqa: E402
-from mnemos import __version__ as mnemos_version  # noqa: E402
-from mnemos.assemble import DEFAULT_BUDGET, assemble_context  # noqa: E402
-from mnemos.lanes import B0_TYPE_BOOST_FACTOR  # noqa: E402
+from vesmaro import __version__ as mnemos_version  # noqa: F401 — variable name kept for the dual-period  # noqa: E402
+from vesmaro.assemble import DEFAULT_BUDGET, assemble_context  # noqa: E402
+from vesmaro.lanes import B0_TYPE_BOOST_FACTOR  # noqa: E402
 
 RUNNER_VERSION = "e3-lanes-runner-2"
 #: Manifest schema version that started pinning ``retrieval.hybrid_alpha``

@@ -1,4 +1,4 @@
-"""Tests for mnemos.logging_setup — logging configuration from settings.
+"""Tests for vesmaro.logging_setup — logging configuration from settings.
 
 Covers:
 - setup_logging() configures root logger with correct level
@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.logging_setup import setup_logging
+from vesmaro.config import Settings
+from vesmaro.logging_setup import setup_logging
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settin
     settings = Settings()
     settings.mnemos.data_dir = tmp_path / "data"
     settings.mnemos.vault_path = tmp_path / "vault"
-    settings.logging.log_file = tmp_path / "logs" / "mnemos.log"
+    settings.logging.log_file = tmp_path / "logs" / "vesmaro.log"
     settings.resolve_paths()
     return settings
 
@@ -98,7 +98,7 @@ def test_setup_logging_creates_file_handler(
     root = logging.getLogger()
     file_handlers = [h for h in root.handlers if isinstance(h, RotatingFileHandler)]
     assert len(file_handlers) == 1
-    assert file_handlers[0].baseFilename == str(tmp_path / "logs" / "mnemos.log")
+    assert file_handlers[0].baseFilename == str(tmp_path / "logs" / "vesmaro.log")
 
 
 def test_setup_logging_creates_log_directory(
@@ -121,7 +121,7 @@ def test_setup_logging_writes_to_file(
     # Flush all handlers
     for h in logging.getLogger().handlers:
         h.flush()
-    log_content = (tmp_path / "logs" / "mnemos.log").read_text()
+    log_content = (tmp_path / "logs" / "vesmaro.log").read_text()
     assert "test log message" in log_content
 
 

@@ -18,7 +18,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from mnemos.cli.integration import (
+from vesmaro.cli.integration import (
     DeployStatus,
     IntegrationManager,
     Target,
@@ -28,7 +28,7 @@ from mnemos.cli.integration import (
     read_stamp,
     stamp_content,
 )
-from mnemos.cli.main import app
+from vesmaro.cli.main import app
 
 runner = CliRunner()
 
@@ -569,7 +569,7 @@ class TestCLI:
         """
         manager.deploy(detected_target)
 
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: manager)
         monkeypatch.setattr(
@@ -1171,7 +1171,7 @@ class TestFindMcpSetupScript:
 
         # Monkeypatch __file__ inside the integration module so the helper
         # resolves relative to our fake location.
-        import mnemos.cli.integration as mod
+        import vesmaro.cli.integration as mod
 
         monkeypatch.setattr(mod, "__file__", str(fake_module))
 
@@ -1212,7 +1212,7 @@ class TestFindMcpSetupScript:
         fake_module = fake_cli / "integration.py"
         fake_module.write_text("# fake\n")
 
-        import mnemos.cli.integration as mod
+        import vesmaro.cli.integration as mod
 
         monkeypatch.setattr(mod, "__file__", str(fake_module))
 
@@ -1256,7 +1256,7 @@ class TestCLISetupUpdateUninstall:
         cfg = load_targets(fake_pack / "targets.yaml")
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
 
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
@@ -1280,7 +1280,7 @@ class TestCLISetupUpdateUninstall:
         cfg = load_targets(fake_pack / "targets.yaml")
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
 
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
@@ -1303,7 +1303,7 @@ class TestCLISetupUpdateUninstall:
 
         new_mgr = IntegrationManager(version="9.9.9", pack_root=fake_pack, targets_config=cfg)
 
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: new_mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
@@ -1322,7 +1322,7 @@ class TestCLISetupUpdateUninstall:
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
         mgr.deploy("test-harness")
 
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
@@ -1342,7 +1342,7 @@ class TestCLISetupUpdateUninstall:
         mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
         mgr.deploy("test-harness")
 
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
@@ -1359,7 +1359,7 @@ class TestCLISetupUpdateUninstall:
     ) -> None:
         """CLI `integration setup --target all` with no detected harnesses exits 0
         and prints a 'no harnesses' message."""
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         # Empty config with no detected targets.
         empty_cfg = TargetsConfig(targets=())
@@ -1374,7 +1374,7 @@ class TestCLISetupUpdateUninstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """CLI `integration verify --target all` with no detected harnesses exits 0."""
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         empty_cfg = TargetsConfig(targets=())
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: empty_cfg)
@@ -1387,7 +1387,7 @@ class TestCLISetupUpdateUninstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """CLI `integration detect` with no detected harnesses prints a message."""
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         empty_cfg = TargetsConfig(targets=())
         monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: empty_cfg)
@@ -1403,7 +1403,7 @@ class TestCLISetupUpdateUninstall:
     ) -> None:
         """CLI `integration setup --target X` where X exists in config but is not
         detected should exit 0 with a 'not detected' warning."""
-        import mnemos.cli.util as util_mod
+        import vesmaro.cli.util as util_mod
 
         cfg = TargetsConfig(
             targets=(
@@ -1579,7 +1579,7 @@ class TestVersionStampFormat:
 
     def test_stamp_format_regex_matches(self) -> None:
         """The stamp matches the STAMP_PATTERN regex."""
-        from mnemos.cli.integration import STAMP_PATTERN
+        from vesmaro.cli.integration import STAMP_PATTERN
 
         stamp = make_stamp("1.2.3")
         match = STAMP_PATTERN.search(stamp)
@@ -1749,7 +1749,7 @@ class TestDetectAllAndDeployableTargets:
     """Cover the module-level convenience functions."""
 
     def test_detect_all_returns_list(self, fake_pack: Path) -> None:
-        from mnemos.cli.integration import detect_all
+        from vesmaro.cli.integration import detect_all
 
         cfg = load_targets(fake_pack / "targets.yaml")
         detected = detect_all(cfg)
@@ -1758,20 +1758,20 @@ class TestDetectAllAndDeployableTargets:
         assert detected[0].name == "test-harness"
 
     def test_deployable_targets_returns_all_names(self, fake_pack: Path) -> None:
-        from mnemos.cli.integration import deployable_targets
+        from vesmaro.cli.integration import deployable_targets
 
         cfg = load_targets(fake_pack / "targets.yaml")
         names = deployable_targets(cfg)
         assert "test-harness" in names
 
     def test_detect_all_with_empty_config(self) -> None:
-        from mnemos.cli.integration import detect_all
+        from vesmaro.cli.integration import detect_all
 
         empty = TargetsConfig(targets=())
         assert detect_all(empty) == []
 
     def test_deployable_targets_empty_config(self) -> None:
-        from mnemos.cli.integration import deployable_targets
+        from vesmaro.cli.integration import deployable_targets
 
         empty = TargetsConfig(targets=())
         assert deployable_targets(empty) == []
@@ -1880,7 +1880,7 @@ class TestUniversalTargets:
         entry = data["mcp"]["servers"]["mnemos"]
         assert entry["command"] == "/bin/mnemos"
         assert entry["args"] == ["mcp-server"]
-        assert entry["env"]["MNEMOS_DATA_DIR"] == str(fake_home / ".mnemos/data")
+        assert entry["env"]["VESMARO_DATA_DIR"] == str(fake_home / ".mnemos/data")
 
     def test_register_mcp_zcode_preserves_existing_env(
         self, universal_manager: IntegrationManager, fake_home: Path
@@ -1895,7 +1895,7 @@ class TestUniversalTargets:
                         "servers": {
                             "mnemos": {
                                 "command": "old",
-                                "env": {"MNEMOS_DATA_DIR": "/custom/data"},
+                                "env": {"VESMARO_DATA_DIR": "/custom/data"},
                             }
                         }
                     }
@@ -1906,8 +1906,8 @@ class TestUniversalTargets:
         ok, _ = universal_manager.register_mcp("zcode", mnemos_bin="/bin/mnemos")
         assert ok
         entry = json.loads(cfg_path.read_text(encoding="utf-8"))["mcp"]["servers"]["mnemos"]
-        assert entry["env"]["MNEMOS_DATA_DIR"] == "/custom/data"  # user tuning kept
-        assert entry["env"]["MNEMOS_VAULT__VAULT_PATH"] == str(fake_home / ".mnemos/vault")
+        assert entry["env"]["VESMARO_DATA_DIR"] == "/custom/data"  # user tuning kept
+        assert entry["env"]["VESMARO_VAULT__VAULT_PATH"] == str(fake_home / ".mnemos/vault")
         assert entry["command"] == "/bin/mnemos"  # command refreshed
 
     def test_register_mcp_agents_creates_file(

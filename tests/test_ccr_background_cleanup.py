@@ -16,21 +16,21 @@ from unittest.mock import patch
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
 
 
 @pytest.fixture(autouse=True)
 def _restore_compat_env_aliases() -> Iterator[None]:
     """Restore the #139 compat env aliases after each test.
 
-    ``_make_settings`` writes ``MNEMOS_DATA_DIR`` / ``MNEMOS_VAULT__VAULT_PATH``
+    ``_make_settings`` writes ``VESMARO_DATA_DIR`` / ``VESMARO_VAULT__VAULT_PATH``
     directly into ``os.environ``. Since the #139 compat shim made these names
     live, a leak would bleed into later modules (e.g. ``test_config_layout``
     asserts default paths under a fake home). Snapshot and restore around
     every test in this module.
     """
-    names = ("MNEMOS_DATA_DIR", "MNEMOS_VAULT__VAULT_PATH")
+    names = ("VESMARO_DATA_DIR", "VESMARO_VAULT__VAULT_PATH")
     saved = {name: os.environ.get(name) for name in names}
     yield
     for name, value in saved.items():
@@ -50,8 +50,8 @@ def _make_settings(tmp_path: Path, **ccr_overrides: object) -> Settings:
     within the config bounds. Timing-sensitive tests manipulate
     ``_ccr_cleanup_last_ts`` directly instead of waiting real seconds.
     """
-    os.environ["MNEMOS_DATA_DIR"] = str(tmp_path / "data")
-    os.environ["MNEMOS_VAULT__VAULT_PATH"] = str(tmp_path / "vault")
+    os.environ["VESMARO_DATA_DIR"] = str(tmp_path / "data")
+    os.environ["VESMARO_VAULT__VAULT_PATH"] = str(tmp_path / "vault")
     Path(tmp_path / "data").mkdir(parents=True, exist_ok=True)
     Path(tmp_path / "vault").mkdir(parents=True, exist_ok=True)
     ccr = {
@@ -199,7 +199,7 @@ class TestExceptionDoesNotCrashProcessor:
 
 class TestIntervalConfigRespected:
     def test_ccr_cleanup_interval_sec_default(self) -> None:
-        from mnemos.config import CCRConfig
+        from vesmaro.config import CCRConfig
 
         cfg = CCRConfig()
         assert cfg.ccr_cleanup_interval_sec == 1200
@@ -207,7 +207,7 @@ class TestIntervalConfigRespected:
     def test_ccr_cleanup_interval_sec_min_60(self) -> None:
         from pydantic import ValidationError
 
-        from mnemos.config import CCRConfig
+        from vesmaro.config import CCRConfig
 
         with pytest.raises(ValidationError):
             CCRConfig(ccr_cleanup_interval_sec=30)
@@ -215,13 +215,13 @@ class TestIntervalConfigRespected:
     def test_ccr_cleanup_interval_sec_max_86400(self) -> None:
         from pydantic import ValidationError
 
-        from mnemos.config import CCRConfig
+        from vesmaro.config import CCRConfig
 
         with pytest.raises(ValidationError):
             CCRConfig(ccr_cleanup_interval_sec=100000)
 
     def test_ccr_cleanup_interval_sec_custom(self) -> None:
-        from mnemos.config import CCRConfig
+        from vesmaro.config import CCRConfig
 
         cfg = CCRConfig(ccr_cleanup_interval_sec=600)
         assert cfg.ccr_cleanup_interval_sec == 600
@@ -245,7 +245,7 @@ class TestCleanupLogsWhenNonzero:
                     "ccr_cleanup",
                     return_value={"ttl_deleted": 5, "lru_evicted": 2},
                 ),
-                caplog.at_level("INFO", logger="mnemos.manager"),
+                caplog.at_level("INFO", logger="vesmaro.manager"),
             ):
                 mgr._maybe_run_ccr_cleanup()
             # The log message must mention both counts.
@@ -270,7 +270,7 @@ class TestCleanupLogsWhenNonzero:
                     "ccr_cleanup",
                     return_value={"ttl_deleted": 0, "lru_evicted": 0},
                 ),
-                caplog.at_level("INFO", logger="mnemos.manager"),
+                caplog.at_level("INFO", logger="vesmaro.manager"),
             ):
                 mgr._maybe_run_ccr_cleanup()
             assert not any("ttl_deleted=" in r.message for r in caplog.records), [
@@ -292,7 +292,7 @@ class TestCleanupLogsWhenNonzero:
                     "ccr_cleanup",
                     return_value={"ttl_deleted": 3, "lru_evicted": 0},
                 ),
-                caplog.at_level("INFO", logger="mnemos.manager"),
+                caplog.at_level("INFO", logger="vesmaro.manager"),
             ):
                 mgr._maybe_run_ccr_cleanup()
             assert any(

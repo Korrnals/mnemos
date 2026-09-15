@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from mnemos.cli.migrate import migrate_from_ai_brain
-from mnemos.config import load_settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryStatus
+from vesmaro.cli.migrate import migrate_from_ai_brain
+from vesmaro.config import load_settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryStatus
 
 
 @pytest.fixture

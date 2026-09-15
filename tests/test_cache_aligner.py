@@ -15,10 +15,10 @@ from pathlib import Path
 
 import pytest
 
-from mnemos.cache_aligner import align
-from mnemos.ccr import build_marker, parse_marker
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
+from vesmaro.cache_aligner import align
+from vesmaro.ccr import build_marker, parse_marker
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

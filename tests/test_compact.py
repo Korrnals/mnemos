@@ -1,8 +1,8 @@
 """Unit tests for the compact exchange format (federation Phase 0, issue #85 part 2a).
 
-Covers :mod:`mnemos.compact` — the ``mnemos.federation.v1`` compact
+Covers :mod:`vesmaro.compact` — the ``vesmaro.federation.v1`` compact
 record builder (ArchCom 2026-07-17 federation contract §2.3). The
-builder runs the moderation pipeline (:func:`mnemos.moderation.moderate`,
+builder runs the moderation pipeline (:func:`vesmaro.moderation.moderate`,
 #85 Part 1) first and reuses its verdict:
 
 * ``allow``  → record built from original content.
@@ -23,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from mnemos.compact import (
+from vesmaro.compact import (
     COMPACT_SCHEMA,
     MAX_KEY_POINTS,
     MAX_SUMMARY_LEN,
@@ -35,7 +35,7 @@ from mnemos.compact import (
     extract_key_points,
     summarize_content,
 )
-from mnemos.models import NO_FEDERATE_TAG, Memory
+from vesmaro.models import NO_FEDERATE_TAG, Memory
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -306,9 +306,9 @@ class TestTagsStripping:
 
 class TestBuildCompactPayload:
     def test_build_compact_payload_schema(self) -> None:
-        """payload has 'schema': 'mnemos.federation.v1'."""
+        """payload has 'schema': 'vesmaro.federation.v1'."""
         payload = build_compact_payload([], source_agent="gcw-tech-lead")
-        assert payload["schema"] == COMPACT_SCHEMA == "mnemos.federation.v1"
+        assert payload["schema"] == COMPACT_SCHEMA == "vesmaro.federation.v1"
 
     def test_build_compact_payload_stats(self) -> None:
         """payload has stats with correct counts (total/exported/refused/...)."""

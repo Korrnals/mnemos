@@ -12,7 +12,7 @@ from __future__ import annotations
 from contextlib import suppress
 from importlib.metadata import PackageNotFoundError, version
 
-from mnemos import __version__
+from vesmaro import __version__
 
 
 def _installed(name: str) -> str | None:
@@ -22,11 +22,11 @@ def _installed(name: str) -> str | None:
 
 
 def main() -> None:
-    v = _installed("mnemos-memory-server") or _installed("mnemos")
+    v = _installed("vesmaro") or _installed("mnemos-memory-server") or _installed("mnemos")
     if v is None:
         raise SystemExit(
             "check-version: no distribution metadata found for "
-            "mnemos-memory-server (or legacy mnemos) — install with `pip install -e .`"
+            "vesmaro (or legacy mnemos-memory-server) — install with `pip install -e .`"
         )
     assert __version__ == v, f"mismatch: __init__={__version__}, metadata={v}"
     print(f"✓ version {v} consistent")

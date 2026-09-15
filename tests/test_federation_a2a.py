@@ -28,8 +28,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import PeerConfig, Settings
-from mnemos.federation_a2a import (
+from vesmaro.config import PeerConfig, Settings
+from vesmaro.federation_a2a import (
     A2AIntent,
     A2AResponse,
     build_share_finding_payload,
@@ -37,16 +37,16 @@ from mnemos.federation_a2a import (
     handle_share_finding,
     mediate_pull_a_side,
 )
-from mnemos.federation_access_log import FederationAccessLog
-from mnemos.federation_server import PullResponse
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemoryStatus
-from mnemos.trigger_codes import TriggerCode
+from vesmaro.federation_access_log import FederationAccessLog
+from vesmaro.federation_server import PullResponse
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemoryStatus
+from vesmaro.trigger_codes import TriggerCode
 
 PEER_A = "mnemos-A"
 PEER_B = "mnemos-B"
 PROJECT = "project-mnemos"
-TOKEN_ENV = "MNEMOS_FED_PEER_MNEMOS_A_TOKEN"
+TOKEN_ENV = "VESMARO_FED_PEER_VESMARO_A_TOKEN"
 TOKEN_VALUE = "mnk_fed_mnemos-A_exampletoken123"
 FAKE_AWS_KEY = "AKIA" + "T" * 16
 
@@ -276,7 +276,7 @@ class TestASideShareFinding:
         def local_search(_resp: PullResponse) -> list:
             raise RuntimeError("boom")
 
-        with caplog.at_level(logging.WARNING, logger="mnemos.federation_a2a"):
+        with caplog.at_level(logging.WARNING, logger="vesmaro.federation_a2a"):
             action = handle_share_finding(resp, local_search=local_search)
 
         assert action["action"] == "fallback_local"
@@ -301,9 +301,9 @@ class TestMediatePullASide:
     ) -> None:
         # mediate_pull_a_side with use_a2a=True should fall back to HTTP
         # transport (Phase 2 does not wire the live MCP server).
-        os.environ["MNEMOS_FED_PEER_MNEMOS_A_URL"] = "https://example.invalid"
+        os.environ["VESMARO_FED_PEER_VESMARO_A_URL"] = "https://example.invalid"
 
-        from mnemos.federation_client import pull_from_peer as real_pull
+        from vesmaro.federation_client import pull_from_peer as real_pull
 
         captured: dict = {}
 
@@ -311,7 +311,7 @@ class TestMediatePullASide:
             captured["called"] = True
             return real_pull(*args, **kwargs)
 
-        monkeypatch.setattr("mnemos.federation_a2a.pull_from_peer", fake_pull)
+        monkeypatch.setattr("vesmaro.federation_a2a.pull_from_peer", fake_pull)
         result = mediate_pull_a_side(
             PEER_A,
             "query",
@@ -329,7 +329,7 @@ class TestMediatePullASide:
 
 class TestBuildPayload:
     def test_payload_records_are_compact_dict(self) -> None:
-        from mnemos.compact import CompactRecord
+        from vesmaro.compact import CompactRecord
 
         rec = CompactRecord(
             id="fed:mnemos-B:11111111-1111-1111-1111-111111111111",

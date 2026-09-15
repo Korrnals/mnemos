@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from mnemos.config import (
+from vesmaro.config import (
     FederationConfig,
     LoggingConfig,
     MnemosConfig,
@@ -34,7 +34,7 @@ def test_default_vault_path_is_consolidated() -> None:
 
 
 def test_default_data_dir_is_consolidated() -> None:
-    """Default data_dir should be ~/.mnemos/data, not ~/.mnemos."""
+    """Default data_dir should be ~/.mnemos/data, not ~/.vesmaro."""
     cfg = MnemosConfig()
     assert str(cfg.data_dir) == "~/.mnemos/data"
 
@@ -255,7 +255,7 @@ def test_load_settings_calls_migrate_layout(
 # per sensitive-data.instructions.md — never real tokens.
 
 # Dummy env var NAME (not value) per sensitive-data.instructions.md.
-_DUMMY_TOKEN_ENV = "MNEMOS_FED_PEER_A_TOKEN"
+_DUMMY_TOKEN_ENV = "VESMARO_FED_PEER_A_TOKEN"
 # Dummy SHA-256 fingerprint (SHA-256 of empty string).
 _DUMMY_FINGERPRINT = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 

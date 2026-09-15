@@ -2,7 +2,7 @@
 
 Coverage map (one section per B2b deliverable):
 
-* **Immediate visibility + policy (§2)** — the ``mnemos.visibility``
+* **Immediate visibility + policy (§2)** — the ``vesmaro.visibility``
   config knob (``immediate`` default / ``curated``); records created
   WITHOUT an explicit ``status`` pass the SAME Phase A gate at ingest
   (``path=ingest``): clean ⇒ PUBLISHED + ``pipeline_state='pending'``
@@ -43,15 +43,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-import mnemos.mcp_server as mcp_mod
-from mnemos.api import main as api_main
-from mnemos.api.main import app, lifespan
-from mnemos.cli.import_ import _reembed
-from mnemos.cli.sync import run_sync_export, run_sync_import
-from mnemos.config import MnemosConfig, Settings
-from mnemos.danger_detectors import DetectionResult
-from mnemos.manager import MemoryManager
-from mnemos.models import (
+import vesmaro.mcp_server as mcp_mod
+from vesmaro.api import main as api_main
+from vesmaro.api.main import app, lifespan
+from vesmaro.cli.import_ import _reembed
+from vesmaro.cli.sync import run_sync_export, run_sync_import
+from vesmaro.config import MnemosConfig, Settings
+from vesmaro.danger_detectors import DetectionResult
+from vesmaro.manager import MemoryManager
+from vesmaro.models import (
     Memory,
     MemoryCreate,
     MemorySource,
@@ -170,9 +170,9 @@ class TestVisibilityConfig:
             MnemosConfig(visibility="curved")
 
     def test_env_override_canonical_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("MNEMOS_MNEMOS__VISIBILITY", "curated")
+        monkeypatch.setenv("VESMARO_MNEMOS__VISIBILITY", "curated")
         assert Settings().mnemos.visibility == "curated"
-        monkeypatch.setenv("MNEMOS_MNEMOS__VISIBILITY", "immediate")
+        monkeypatch.setenv("VESMARO_MNEMOS__VISIBILITY", "immediate")
         assert Settings().mnemos.visibility == "immediate"
 
 
@@ -185,7 +185,7 @@ class TestImmediateIngest:
     ) -> None:
         """§2: clean content ⇒ PUBLISHED + pipeline_state=pending, and
         the row is findable IMMEDIATELY (the FTS leg — no sleeps)."""
-        with caplog.at_level("INFO", logger="mnemos.manager"):
+        with caplog.at_level("INFO", logger="vesmaro.manager"):
             mem = _add(manager, "immediate visibility probe about axolotl")
         assert mem.status == MemoryStatus.PUBLISHED
         assert mem.pipeline_state == PipelineState.PENDING
@@ -205,7 +205,7 @@ class TestImmediateIngest:
     ) -> None:
         """Ingest refusal: stored RAW, pipeline_state NULL, invisible;
         the content itself is kept (zero-loss) and audited."""
-        with caplog.at_level("WARNING", logger="mnemos.manager"):
+        with caplog.at_level("WARNING", logger="vesmaro.manager"):
             mem = _add(manager, f"deploy note with api key {FAKE_AWS_KEY} inline")
         assert mem.status == MemoryStatus.RAW
         assert mem.pipeline_state is None
@@ -226,7 +226,7 @@ class TestImmediateIngest:
         self, manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "mnemos.manager.detect",
+            "vesmaro.manager.detect",
             lambda content, title=None: DetectionResult(error="boom"),
         )
         mem = _add(manager, "clean body but the scanner is down")
@@ -258,7 +258,7 @@ class TestImmediateIngest:
         assert body["id"] in {item["id"] for item in found}
 
     def test_mcp_add_inherits_policy(self, manager: MemoryManager) -> None:
-        from mnemos.mcp_server import _dispatch
+        from vesmaro.mcp_server import _dispatch
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(mcp_mod, "_manager", manager)
@@ -289,8 +289,8 @@ class TestCuratedVisibility:
         # Lone entry ⇒ honest noop; the completion still owes the
         # publication verdict → clean ⇒ PUBLISHED now.
         with (
-            caplog.at_level("INFO", logger="mnemos.pipeline.refine"),
-            caplog.at_level("INFO", logger="mnemos.manager"),
+            caplog.at_level("INFO", logger="vesmaro.pipeline.refine"),
+            caplog.at_level("INFO", logger="vesmaro.manager"),
         ):
             summary = mgr.refine_pending()
         assert summary["refined_noop"] == 1
@@ -500,7 +500,7 @@ class TestRetraction:
     def test_mcp_retrieve_serves_render_for_quarantined_source(
         self, manager: MemoryManager
     ) -> None:
-        from mnemos.mcp_server import _dispatch
+        from vesmaro.mcp_server import _dispatch
 
         payload = ("mcp quarantine ccr original about egret — " + "filler line. " * 80)[:2000]
         mem = _add(manager, payload)
@@ -611,7 +611,7 @@ class TestF8RefinedContentEditRequeues:
         self, manager: MemoryManager, caplog: pytest.LogCaptureFixture
     ) -> None:
         row = self._refined_row(manager, "f8 refined body about goral")
-        with caplog.at_level("INFO", logger="mnemos.manager"):
+        with caplog.at_level("INFO", logger="vesmaro.manager"):
             updated = manager.update(
                 row.id, MemoryUpdate(content="f8 edited clean body about goral")
             )

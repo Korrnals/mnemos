@@ -15,7 +15,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-import mnemos
+import mnemos, vesmaro  # noqa: E402 — canonical + dual-period shim
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,7 +33,7 @@ def test_version_file_matches_pyproject() -> None:
 
 
 def test_mnemos_import_provenance_pinned_to_checkout() -> None:
-    """`import mnemos` must resolve to THIS checkout's src/mnemos (#288).
+    """`import vesmaro` must resolve to THIS checkout's src/vesmaro (#288).
 
     A shadow import (user-site editable install / .venv / another checkout
     on PYTHONPATH) once made the suite silently test a stale build and
@@ -41,9 +41,15 @@ def test_mnemos_import_provenance_pinned_to_checkout() -> None:
     conftest front-pin normally prevents this; this assert documents the
     invariant at test level and fails loud if the pin is ever bypassed.
     """
-    resolved = Path(mnemos.__file__).resolve()
-    expected = (REPO_ROOT / "src" / "mnemos" / "__init__.py").resolve()
+    resolved = Path(vesmaro.__file__).resolve()
+    expected = (REPO_ROOT / "src" / "vesmaro" / "__init__.py").resolve()
     assert resolved == expected, (
-        f"mnemos shadow-imported from {resolved} — expected {expected}. "
+        f"vesmaro shadow-imported from {resolved} — expected {expected}. "
         "The suite MUST run against this checkout's src/ (#288)."
+    )
+    # Dual-import period (ADR-0031): the mnemos shim resolves into this
+    # checkout too — the shim file sits alongside the canonical package.
+    shim = Path(mnemos.__file__).resolve()
+    assert shim == (REPO_ROOT / "src" / "mnemos" / "__init__.py").resolve(), (
+        f"mnemos shim resolved from {shim} — expected src/mnemos/__init__.py."
     )

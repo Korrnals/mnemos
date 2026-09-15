@@ -66,10 +66,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import mnemos.mcp_server as mcp_mod
-from mnemos.api import main as api_main
-from mnemos.api.main import app, lifespan
-from mnemos.awareness import (
+import vesmaro.mcp_server as mcp_mod
+from vesmaro.api import main as api_main
+from vesmaro.api.main import app, lifespan
+from vesmaro.awareness import (
     ABSTENTION_TASK_LABEL,
     AWARENESS_DISCLAIMER,
     AWARENESS_LANE,
@@ -87,13 +87,13 @@ from mnemos.awareness import (
     record_abstention,
     render_awareness_section,
 )
-from mnemos.compact import CompactRecord
-from mnemos.config import Settings
-from mnemos.hooks import dispatch_hook
-from mnemos.lanes import AWARENESS_CURSOR_PREFIX, awareness_cursor_key, read_awareness_cursor
-from mnemos.manager import MemoryManager
-from mnemos.mcp_server import _dispatch, list_tools
-from mnemos.models import Memory, MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.compact import CompactRecord
+from vesmaro.config import Settings
+from vesmaro.hooks import dispatch_hook
+from vesmaro.lanes import AWARENESS_CURSOR_PREFIX, awareness_cursor_key, read_awareness_cursor
+from vesmaro.manager import MemoryManager
+from vesmaro.mcp_server import _dispatch, list_tools
+from vesmaro.models import Memory, MemoryCreate, MemorySource, MemoryStatus
 
 PROJECT = "awr-proj"
 AGENT = "awr-agent"
@@ -500,7 +500,7 @@ def _freeze_retrieval_clock(monkeypatch: pytest.MonkeyPatch, target: MemoryManag
     already cached for this session so the next assembly re-stamps
     frozen.
     """
-    monkeypatch.setattr("mnemos.manager.datetime", _FrozenDatetime)
+    monkeypatch.setattr("vesmaro.manager.datetime", _FrozenDatetime)
     target._retrieval_iso.pop(SESSION, None)
 
 
@@ -774,7 +774,7 @@ class TestNotPinnable:
     def test_no_federate_invariant_documented(self) -> None:
         """Any awareness-derived RECORD (v0 stores none) is born
         mnemos:no-federate — the invariant lives in the module contract."""
-        import mnemos.awareness as awareness_mod
+        import vesmaro.awareness as awareness_mod
 
         text = " ".join((awareness_mod.__doc__ or "").split())
         assert "mnemos:no-federate" in text
@@ -1247,7 +1247,7 @@ class TestRepairFederatedImportStamp:
     rows never read as LOCAL neighbors (CWE-359)."""
 
     def test_compact_sync_import_stamped_and_excluded(self, manager: MemoryManager) -> None:
-        from mnemos.cli.sync import _compact_record_to_memory_create
+        from vesmaro.cli.sync import _compact_record_to_memory_create
 
         record = CompactRecord(
             id="fed:peer-a:0001",

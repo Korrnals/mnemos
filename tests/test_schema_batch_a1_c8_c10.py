@@ -39,15 +39,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.context_rewrite import (
+from vesmaro.config import Settings
+from vesmaro.context_rewrite import (
     SOURCE_CONTEXT_REWRITE,
     ContextRewriteRateLimitError,
     context_rewrite,
 )
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource
-from mnemos.storage.sqlite_store import SQLiteStore
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource
+from vesmaro.storage.sqlite_store import SQLiteStore
 
 # ── Legacy DDL (the schema this migration window must consume) ────────────────
 
@@ -829,7 +829,7 @@ class TestA1MigrationCrashSafety:
         # Force a mid-script failure: sabotage the CREATE with invalid SQL
         # (unbalanced paren) — the script dies INSIDE the open transaction.
         monkeypatch.setattr(
-            "mnemos.storage.sqlite_store._CCR_REBUILD_DDL",
+            "vesmaro.storage.sqlite_store._CCR_REBUILD_DDL",
             "CREATE TABLE ccr_cache_a1_rebuild (bad_col TEXT",
         )
         with pytest.raises(sqlite3.OperationalError):
@@ -934,8 +934,8 @@ class TestRewriteColumnForgeryGate:
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        from mnemos.api import main as api_main
-        from mnemos.api.main import app, lifespan
+        from vesmaro.api import main as api_main
+        from vesmaro.api.main import app, lifespan
 
         mgr = _manager(_settings(tmp_path))
         api_main._manager = mgr
@@ -974,7 +974,7 @@ class TestRewriteColumnForgeryGate:
         mgr.close()
 
     def test_generic_update_preserves_trusted_columns(self, tmp_path: Path) -> None:
-        from mnemos.models import MemoryUpdate
+        from vesmaro.models import MemoryUpdate
 
         mgr = _manager(_settings(tmp_path))
         receipt = _rewrite_event(mgr, session="keep-sess", n=1)

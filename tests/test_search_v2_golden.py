@@ -36,10 +36,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
-from mnemos.storage.sqlite_store import (
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.storage.sqlite_store import (
     SQLiteStore,
     fts_join_or,
     fts_query_terms,

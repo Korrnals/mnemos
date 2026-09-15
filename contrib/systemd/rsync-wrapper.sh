@@ -24,11 +24,23 @@
 set -euo pipefail
 
 # ── config ────────────────────────────────────────────────────────────────────
-# INCOMING_DIR MUST match MNEMOS_SYNC_REMOTE_IMPORT_DIR on A and the dir
+# INCOMING_DIR MUST match VESMARO_SYNC_REMOTE_IMPORT_DIR on A and the dir
 # created per ssh-sync-hardening.md §1. Override via /etc/mnemos/rsync-wrapper.env
 # if your layout differs.
-INCOMING_DIR="${MNEMOS_SYNC_INCOMING_DIR:-/var/lib/mnemos-sync/incoming}"
-AUDIT_LOG="${MNEMOS_SYNC_AUDIT_LOG:-/var/log/mnemos-sync.log}"
+# ── legacy env compatibility (ADR-0031 dual period) ─────────────────────────
+for _v in INCOMING_DIR AUDIT_LOG PASSPHRASE_ENV REMOTE_IMPORT_DIR \
+          REMOTE_VESMARO_BIN; do
+    _new="VESMARO_SYNC_${_v}"
+    _old="MNEMOS_SYNC_${_v}"
+    if [ -z "${!_new:-}" ] && [ -n "${!_old:-}" ]; then
+        eval "export $_new=\${!_old}"
+    fi
+done
+if [ -z "${VESMARO_EXPORT_PASSPHRASE:-}" ] && [ -n "${MNEMOS_EXPORT_PASSPHRASE:-}" ]; then
+    export VESMARO_EXPORT_PASSPHRASE="$MNEMOS_EXPORT_PASSPHRASE"
+fi
+INCOMING_DIR="${VESMARO_SYNC_INCOMING_DIR:-/var/lib/mnemos-sync/incoming}"
+AUDIT_LOG="${VESMARO_SYNC_AUDIT_LOG:-/var/log/mnemos-sync.log}"
 RSYNC_BIN="${RSYNC_BIN:-rsync}"
 
 # ── audit helper (§6) ─────────────────────────────────────────────────────────

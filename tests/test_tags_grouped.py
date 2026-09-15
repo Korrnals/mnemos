@@ -25,9 +25,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
 
 # ---------------------------------------------------------------------------
 # Fixtures — isolated MemoryManager per test (mirrors test_tags_rename.py)
@@ -276,7 +276,7 @@ class TestTagsAdd:
         """Adding a tag with an invalid mnemos: subtype is rejected per memory.
 
         Strict validation rejects the resulting set because ``bogus_subtype``
-        is not in ``MNEMOS_TAG_SUBTYPES``. The memory is reported as an error,
+        is not in ``VESMARO_TAG_SUBTYPES``. The memory is reported as an error,
         nothing is written, and the store is left untouched.
         """
         _add_memory(tmp_manager, tags=["project:p", "agent:a", "mnemos:decision"])
@@ -334,7 +334,7 @@ class TestRenameViaSharedCommit:
 class TestMcpDispatch:
     @staticmethod
     def _dispatch(name: str, args: dict) -> dict:
-        from mnemos.mcp_server import _dispatch
+        from vesmaro.mcp_server import _dispatch
 
         return asyncio.run(_dispatch(name, args))
 

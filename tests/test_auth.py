@@ -22,13 +22,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-import mnemos.api.main as api_main
-from mnemos.api.auth import decrypt_totp_secret, encrypt_totp_secret
-from mnemos.api.auth_store import AuthStore, hash_token
-from mnemos.api.main import app, lifespan
-from mnemos.api.middleware import AuthMiddleware
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
+import vesmaro.api.main as api_main
+from vesmaro.api.auth import decrypt_totp_secret, encrypt_totp_secret
+from vesmaro.api.auth_store import AuthStore, hash_token
+from vesmaro.api.main import app, lifespan
+from vesmaro.api.middleware import AuthMiddleware
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -90,7 +90,7 @@ def client_with_auth(tmp_settings):
 @pytest.fixture
 def client_auth_enabled(tmp_settings, tmp_dir):
     """TestClient with auth_enabled=True, using a dedicated in-memory AuthStore."""
-    from mnemos.api.middleware import AuthMiddleware
+    from vesmaro.api.middleware import AuthMiddleware
 
     mgr = MemoryManager(tmp_settings)
     mock_embedder = MagicMock()
@@ -279,12 +279,12 @@ class TestAuthEndpoints:
             store.set_totp_secret(token_id, encrypted)
 
             # Patch the load_settings binding inside the auth router module
-            # (not mnemos.config, because auth.py uses `from ... import load_settings`).
-            import mnemos.api.auth as auth_mod
+            # (not vesmaro.config, because auth.py uses `from ... import load_settings`).
+            import vesmaro.api.auth as auth_mod
 
             orig_load = auth_mod.load_settings
 
-            from mnemos.config import Settings
+            from vesmaro.config import Settings
 
             def mock_load_settings(_path=None):  # type: ignore[misc]
                 s = Settings(
@@ -327,13 +327,13 @@ class TestAuthEndpoints:
             encrypted = encrypt_totp_secret(totp_secret, master_key)
             store.set_totp_secret(token_id, encrypted)
 
-            # Patch auth router's own load_settings binding (not mnemos.config)
-            import mnemos.api.auth as auth_mod
+            # Patch auth router's own load_settings binding (not vesmaro.config)
+            import vesmaro.api.auth as auth_mod
 
             orig_load = auth_mod.load_settings
 
             def mock_load(path=None):  # type: ignore[misc]
-                from mnemos.config import Settings
+                from vesmaro.config import Settings
 
                 s = Settings(
                     mnemos={

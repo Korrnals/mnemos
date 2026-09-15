@@ -14,7 +14,7 @@ from typing import ClassVar
 import pytest
 from pydantic import ValidationError
 
-from mnemos.models import (
+from vesmaro.models import (
     Memory,
     TagContract,
     TagContractError,

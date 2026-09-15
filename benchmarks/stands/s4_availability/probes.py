@@ -40,7 +40,7 @@ from typing import Any
 
 from benchmarks.corpus.deterministic_embedder import LexicalHashEmbedder
 from benchmarks.stands.s4_availability.fixture import PROBE_TOKENS, fixture_settings
-from mnemos.manager import MemoryManager
+from vesmaro.manager import MemoryManager
 
 #: The §5 retraction render shape (mirrors models.render_retraction).
 _RETRACTION_PREFIX = "[retracted: "

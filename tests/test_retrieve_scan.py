@@ -28,10 +28,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import CONTEXT_ADMISSIBLE_STATUSES, MemoryStatus
-from mnemos.secrets_detector import detect_secrets
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import CONTEXT_ADMISSIBLE_STATUSES, MemoryStatus
+from vesmaro.secrets_detector import detect_secrets
 
 # ── Fake (EXAMPLE-style) secrets from the detector's own regexes ──────────────
 
@@ -270,7 +270,7 @@ class TestRefuseMode:
 
 class TestStatusGate:
     def _add(self, mgr: MemoryManager, content: str, status: MemoryStatus):
-        from mnemos.models import MemoryCreate
+        from vesmaro.models import MemoryCreate
 
         data = MemoryCreate(
             content=content,

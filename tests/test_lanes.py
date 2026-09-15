@@ -34,9 +34,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mnemos.assemble import _budget_stage, _Candidate
-from mnemos.config import Settings
-from mnemos.lanes import (
+from vesmaro.assemble import _budget_stage, _Candidate
+from vesmaro.config import Settings
+from vesmaro.lanes import (
     AWARENESS_CURSOR_PREFIX,
     B0_TYPE_BOOST_FACTOR,
     Lane,
@@ -47,8 +47,8 @@ from mnemos.lanes import (
     read_awareness_cursor,
     write_awareness_cursor,
 )
-from mnemos.manager import MemoryManager
-from mnemos.models import (
+from vesmaro.manager import MemoryManager
+from vesmaro.models import (
     Memory,
     MemoryCreate,
     MemorySource,
@@ -203,7 +203,7 @@ def _freeze_assemble_clock(monkeypatch: pytest.MonkeyPatch, target: MemoryManage
     registry entry, preserving the frozen-clock byte-identity guarantees
     these tests exist to hold.
     """
-    monkeypatch.setattr("mnemos.manager.datetime", _FrozenDatetime)
+    monkeypatch.setattr("vesmaro.manager.datetime", _FrozenDatetime)
     # Sessions already stamped (a manager pre-warmed by an earlier call
     # in the same test) must also freeze — drop their registry entries so
     # the next assembly re-stamps under the frozen clock.
@@ -491,7 +491,7 @@ class TestFlagOffEquivalence:
         assert Settings().lanes.enabled is False, "LanesConfig.enabled must default to False"
 
     def test_env_override_enables_lanes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("MNEMOS_LANES__ENABLED", "true")
+        monkeypatch.setenv("VESMARO_LANES__ENABLED", "true")
         assert Settings().lanes.enabled is True
 
     def test_config_model_is_single_switch(self) -> None:
@@ -501,7 +501,7 @@ class TestFlagOffEquivalence:
         one of A/B0/B), not a way to also turn lanes on — the two are
         mutually exclusive by model validator (next test), both default
         off, and both-off stays the byte-identical pre-E1 path."""
-        from mnemos.config import LanesConfig
+        from vesmaro.config import LanesConfig
 
         assert set(LanesConfig.model_fields) == {"enabled", "type_boost"}
         assert LanesConfig().enabled is False
@@ -512,15 +512,15 @@ class TestFlagOffEquivalence:
         is an unregistered fourth leg: refused at the config boundary."""
         import pydantic
 
-        from mnemos.config import LanesConfig
+        from vesmaro.config import LanesConfig
 
         with pytest.raises(pydantic.ValidationError, match="mutually exclusive"):
             LanesConfig(enabled=True, type_boost=True)
 
     def test_type_boost_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Canonical env override for the B0 treatment, mirroring the
-        ``MNEMOS_LANES__ENABLED`` override test above."""
-        monkeypatch.setenv("MNEMOS_LANES__TYPE_BOOST", "true")
+        ``VESMARO_LANES__ENABLED`` override test above."""
+        monkeypatch.setenv("VESMARO_LANES__TYPE_BOOST", "true")
         assert Settings().lanes.type_boost is True
         assert Settings().lanes.enabled is False
 
@@ -674,14 +674,14 @@ class TestCascadeReadyContracts:
     def test_collapse_level_convention_documented(self) -> None:
         """The collapse cascade's ``collapse_level`` key convention lives in
         the lanes.py docstring: metadata key, never tags, never schema."""
-        import mnemos.lanes as lanes_mod
+        import vesmaro.lanes as lanes_mod
 
         text = " ".join((lanes_mod.__doc__ or "").split())
         assert "collapse_level" in text
         assert "the metadata key is exactly" in text
 
     def test_tag_contract_not_extended(self) -> None:
-        from mnemos.models import ALLOWED_OPTIONAL_PREFIXES
+        from vesmaro.models import ALLOWED_OPTIONAL_PREFIXES
 
         assert "area" not in ALLOWED_OPTIONAL_PREFIXES, "tag contract must stay closed in v0"
 
@@ -708,7 +708,7 @@ class TestAwarenessContracts:
     def test_cursor_key_no_tuple_aliasing(self) -> None:
         """The crafted-tuple alias: distinct tuples whose plain ":"-joins
         coincide must produce DISTINCT keys (session ids may contain ":")."""
-        from mnemos.lanes import awareness_cursor_key
+        from vesmaro.lanes import awareness_cursor_key
 
         first = awareness_cursor_key(project="a", agent="b:c", session="d")
         second = awareness_cursor_key(project="a:b", agent="c", session="d")
@@ -756,7 +756,7 @@ class TestAwarenessContracts:
             assert_foreign_lanes_tail_only(["synthesized", "rules"])
 
     def test_awareness_conventions_documented(self) -> None:
-        import mnemos.lanes as lanes_mod
+        import vesmaro.lanes as lanes_mod
 
         text = lanes_mod.__doc__ or ""
         # Per-agent delta slot (one agent = max one delta block)…

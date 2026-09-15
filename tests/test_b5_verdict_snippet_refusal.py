@@ -30,8 +30,8 @@ from typing import Any
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
 
 # aws-key pattern: AKIA + 16 chars of [0-9A-Z].
 FAKE_AWS_KEY = "AKIAEXAMPLEABCDEFGH1"

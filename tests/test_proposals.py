@@ -20,9 +20,9 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from mnemos.cli.agent_wiring import MNEMOS_WILDCARD
-from mnemos.cli.integration import IntegrationManager, load_targets
-from mnemos.cli.main import app
+from vesmaro.cli.agent_wiring import VESMARO_WILDCARD
+from vesmaro.cli.integration import IntegrationManager, load_targets
+from vesmaro.cli.main import app
 
 runner = CliRunner()
 
@@ -32,8 +32,8 @@ runner = CliRunner()
 
 @pytest.fixture
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point MNEMOS_CONFIG at an empty YAML so the CLI uses tmp_path."""
-    cfg = tmp_path / "mnemos.yaml"
+    """Point VESMARO_CONFIG at an empty YAML so the CLI uses tmp_path."""
+    cfg = tmp_path / "vesmaro.yaml"
     cfg.write_text(
         f"mnemos:\n"
         f"  vault_path: {tmp_path / 'vault'}\n"
@@ -43,7 +43,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"  provider: nano\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
+    monkeypatch.setenv("VESMARO_CONFIG", str(cfg))
     return cfg
 
 
@@ -86,7 +86,7 @@ def agents_dir(tmp_path: Path) -> Path:
         directory,
         "tech-lead.agent.md",
         name="GCW: Tech Lead",
-        tools=["read", "search", "execute", MNEMOS_WILDCARD],
+        tools=["read", "search", "execute", VESMARO_WILDCARD],
     )
     return directory
 
@@ -136,21 +136,21 @@ def fake_pack(tmp_path: Path) -> Path:
 def _patch_integration(monkeypatch: pytest.MonkeyPatch, fake_pack: Path) -> None:
     """Patch the CLI util and integration modules to use the fake pack.
 
-    Patches ``load_targets`` in BOTH ``mnemos.cli.util`` and
-    ``mnemos.cli.integration`` because ``_fix_integration_stale`` in
+    Patches ``load_targets`` in BOTH ``vesmaro.cli.util`` and
+    ``vesmaro.cli.integration`` because ``_fix_integration_stale`` in
     ``doctor.py`` imports ``load_targets`` directly from
-    ``mnemos.cli.integration`` at call time (not via the util module).
+    ``vesmaro.cli.integration`` at call time (not via the util module).
     """
     cfg = load_targets(fake_pack / "targets.yaml")
     mgr = IntegrationManager(version="1.2.0", pack_root=fake_pack, targets_config=cfg)
 
-    import mnemos.cli.util as util_mod
+    import vesmaro.cli.util as util_mod
 
     monkeypatch.setattr(util_mod, "_manager", lambda pack_root=None, home=None: mgr)
     monkeypatch.setattr(util_mod, "load_targets", lambda config_path=None, home=None: cfg)
     # doctor._fix_integration_stale imports load_targets from integration module.
     monkeypatch.setattr(
-        "mnemos.cli.integration.load_targets", lambda config_path=None, home=None: cfg
+        "vesmaro.cli.integration.load_targets", lambda config_path=None, home=None: cfg
     )
 
 
@@ -167,8 +167,8 @@ class TestSetupDefaultWiringPrompt:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Non-interactive terminal (no TTY) → skip wiring, don't modify agents."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         original = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
@@ -197,15 +197,15 @@ class TestSetupDefaultWiringPrompt:
         """
         import frontmatter
 
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         # Simulate 'Y' answer: prompt returns all unwired agents.
         def _yes_prompt(agents):
             return [a for a in agents if not a.has_mnemos and not a.uses_tool_profile]
 
-        monkeypatch.setattr("mnemos.cli.util._prompt_wire_agents_default", _yes_prompt)
+        monkeypatch.setattr("vesmaro.cli.util._prompt_wire_agents_default", _yes_prompt)
 
         result = runner.invoke(
             app,
@@ -214,7 +214,7 @@ class TestSetupDefaultWiringPrompt:
 
         assert result.exit_code == 0, result.output
         post = frontmatter.load(agents_dir / "agent-architect.agent.md")
-        assert MNEMOS_WILDCARD in post.metadata["tools"]
+        assert VESMARO_WILDCARD in post.metadata["tools"]
 
     def test_interactive_no_skips_wiring(
         self,
@@ -223,11 +223,11 @@ class TestSetupDefaultWiringPrompt:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Interactive terminal + 'n' answer → skip wiring."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
         # Simulate 'n' answer: prompt returns empty list.
-        monkeypatch.setattr("mnemos.cli.util._prompt_wire_agents_default", lambda agents: [])
+        monkeypatch.setattr("vesmaro.cli.util._prompt_wire_agents_default", lambda agents: [])
 
         original = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
 
@@ -248,8 +248,8 @@ class TestSetupDefaultWiringPrompt:
         """``--wire-agents --all`` still wires without prompting."""
         import frontmatter
 
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         result = runner.invoke(
@@ -267,7 +267,7 @@ class TestSetupDefaultWiringPrompt:
 
         assert result.exit_code == 0, result.output
         post = frontmatter.load(agents_dir / "agent-architect.agent.md")
-        assert MNEMOS_WILDCARD in post.metadata["tools"]
+        assert VESMARO_WILDCARD in post.metadata["tools"]
 
     def test_no_wire_agents_flag_still_works(
         self,
@@ -276,8 +276,8 @@ class TestSetupDefaultWiringPrompt:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--no-wire-agents`` still skips without prompting."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        monkeypatch.setattr("mnemos.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.util.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         original = (agents_dir / "agent-architect.agent.md").read_text(encoding="utf-8")
@@ -421,7 +421,7 @@ class TestDoctorFix:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--fix --dry-run`` previews fixes without executing."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         result = runner.invoke(app, ["doctor", "--fix", "--dry-run", "--json"])
@@ -434,7 +434,7 @@ class TestDoctorFix:
 
     def test_fix_action_for_known_checks(self) -> None:
         """``_fix_action_for`` returns actions for Integration, Agent wiring, MCP."""
-        from mnemos.cli.doctor import _fix_action_for
+        from vesmaro.cli.doctor import _fix_action_for
 
         assert _fix_action_for("Integration") is not None
         assert _fix_action_for("Agent wiring") is not None
@@ -442,7 +442,7 @@ class TestDoctorFix:
 
     def test_fix_action_for_unknown_check_returns_none(self) -> None:
         """``_fix_action_for`` returns None for non-fixable checks."""
-        from mnemos.cli.doctor import _fix_action_for
+        from vesmaro.cli.doctor import _fix_action_for
 
         assert _fix_action_for("Config") is None
         assert _fix_action_for("SQLite DB") is None
@@ -456,15 +456,15 @@ class TestDoctorFix:
         """``_fix_agent_wiring`` wires all unwired agents."""
         import frontmatter
 
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
-        from mnemos.cli.doctor import _fix_agent_wiring
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        from vesmaro.cli.doctor import _fix_agent_wiring
 
         ok, note = _fix_agent_wiring()
         assert ok is True
         assert "wired" in note
         # agent-architect now has mnemos/*.
         post = frontmatter.load(agents_dir / "agent-architect.agent.md")
-        assert MNEMOS_WILDCARD in post.metadata["tools"]
+        assert VESMARO_WILDCARD in post.metadata["tools"]
 
     def test_fix_integration_stale_updates(
         self,
@@ -473,7 +473,7 @@ class TestDoctorFix:
     ) -> None:
         """``_fix_integration_stale`` runs update and reports success."""
         _patch_integration(monkeypatch, fake_pack)
-        from mnemos.cli.doctor import _fix_integration_stale
+        from vesmaro.cli.doctor import _fix_integration_stale
 
         ok, note = _fix_integration_stale()
         assert ok is True
@@ -486,7 +486,7 @@ class TestDoctorFix:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``doctor --fix --json`` includes the ``fixed`` array in output."""
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         result = runner.invoke(app, ["doctor", "--fix", "--json"])
@@ -503,7 +503,7 @@ class TestDoctorFix:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--fix`` does not attempt to fix FAIL-level checks."""
-        from mnemos.cli.doctor import CheckStatus, _fix_action_for
+        from vesmaro.cli.doctor import CheckStatus, _fix_action_for
 
         # FAIL-level checks have no fix action.
         for fail_check in ("Config", "Data dir", "Vault", "SQLite DB", "Vector store"):
@@ -523,14 +523,14 @@ class TestDoctorFix:
         After fixing all WARN-level issues, re-running ``doctor --fix``
         should find nothing to fix and exit 0.
         """
-        monkeypatch.setattr("mnemos.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
+        monkeypatch.setattr("vesmaro.cli.agent_wiring.DEFAULT_AGENTS_DIR", agents_dir)
         _patch_integration(monkeypatch, fake_pack)
 
         # First run fixes the warnings.
         runner.invoke(app, ["doctor", "--fix", "--json"])
 
         # Wire the remaining unwired agent manually so all agents are wired.
-        from mnemos.cli.doctor import _fix_agent_wiring
+        from vesmaro.cli.doctor import _fix_agent_wiring
 
         _fix_agent_wiring()
 

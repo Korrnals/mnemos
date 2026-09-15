@@ -11,16 +11,16 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from mnemos.cli.main import app
-from mnemos.models import Trace
-from mnemos.storage.sqlite_store import SQLiteStore
+from vesmaro.cli.main import app
+from vesmaro.models import Trace
+from vesmaro.storage.sqlite_store import SQLiteStore
 
 runner = CliRunner()
 
 
 @pytest.fixture
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    cfg = tmp_path / "mnemos.yaml"
+    cfg = tmp_path / "vesmaro.yaml"
     cfg.write_text(
         f"mnemos:\n"
         f"  vault_path: {tmp_path / 'vault'}\n"
@@ -29,14 +29,14 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"embedding:\n"
         f"  provider: nano\n"
     )
-    monkeypatch.setenv("MNEMOS_CONFIG", str(cfg))
+    monkeypatch.setenv("VESMARO_CONFIG", str(cfg))
     return cfg
 
 
 @pytest.fixture
 def traces_db(isolated_config: Path) -> SQLiteStore:
     """Seed the isolated DB with a few traces."""
-    from mnemos.config import load_settings
+    from vesmaro.config import load_settings
 
     settings = load_settings(str(isolated_config))
     settings.resolve_paths()

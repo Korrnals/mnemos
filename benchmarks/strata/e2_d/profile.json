@@ -1,7 +1,7 @@
 {
   "stratum_version": "e2-d-2",
   "e0_spec": "docs/experiments/e0-meta-level.md \u00a72.6-\u00a72.10, \u00a73.6, \u00a73.7, \u00a75.4",
-  "corpus_fingerprint": "6649c245cb07f4d9183381c14a580775a70a493d65a7b5d8f9d93ca4aaa665d9",
+  "corpus_fingerprint": "93b7fc7b7dab6f714676285943ec9e449ab47af6a64a036e694121ecd783c56a",
   "seed": "deterministic (index-driven combinatorics, no RNG)",
   "counts": {
     "conflict_pairs": 120,
@@ -25,7 +25,7 @@
     "presence_window_sec": 900,
     "delta_max_window_sec": 3600,
     "goal_charset": "ASCII (single line, <= 120 chars)",
-    "note": "threshold registered in E0 \u00a78 rev. 2 exactly as implemented (mnemos.awareness.CONFLICT_HINT_MIN_SHARED_TOKENS = 2)"
+    "note": "threshold registered in E0 \u00a78 rev. 2 exactly as implemented (vesmaro.awareness.CONFLICT_HINT_MIN_SHARED_TOKENS = 2)"
   },
   "distribution": {
     "replay224_checkpoint_share": 0.579186,

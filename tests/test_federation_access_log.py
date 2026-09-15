@@ -17,12 +17,12 @@ from pathlib import Path
 import pydantic
 import pytest
 
-from mnemos.federation_access_log import (
+from vesmaro.federation_access_log import (
     AccessLogEntry,
     FederationAccessLog,
     hash_topic,
 )
-from mnemos.trigger_codes import TriggerCode
+from vesmaro.trigger_codes import TriggerCode
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

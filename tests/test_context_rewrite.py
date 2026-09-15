@@ -48,14 +48,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import mnemos.mcp_server as mcp_mod
-from mnemos.api import main as api_main
-from mnemos.api.main import app, lifespan
-from mnemos.config import Settings
-from mnemos.context_rewrite import ContextRewriteRateLimitError
-from mnemos.manager import MemoryManager
-from mnemos.mcp_server import _dispatch
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus, MemoryUpdate
+import vesmaro.mcp_server as mcp_mod
+from vesmaro.api import main as api_main
+from vesmaro.api.main import app, lifespan
+from vesmaro.config import Settings
+from vesmaro.context_rewrite import ContextRewriteRateLimitError
+from vesmaro.manager import MemoryManager
+from vesmaro.mcp_server import _dispatch
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus, MemoryUpdate
 
 # ── Fake (EXAMPLE-style) secret from the detector's own regexes ───────────────
 
@@ -626,7 +626,7 @@ class TestSizeCaps:
         assert receipt["status"] == "stored"
 
     def test_documented_defaults(self) -> None:
-        from mnemos.config import MnemosConfig
+        from vesmaro.config import MnemosConfig
 
         cfg = MnemosConfig()
         assert cfg.context_rewrite_rate_limit_per_minute == 30

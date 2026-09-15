@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from mnemos.cli.integration import (
+from vesmaro.cli.integration import (
     DeployStatus,
     IntegrationManager,
     Target,
@@ -482,7 +482,7 @@ class TestOpenCodeTarget:
         assert entry["type"] == "local"
         assert entry["command"][1] == "mcp-server"
         assert entry["enabled"] is True
-        assert entry["environment"]["MNEMOS_DATA_DIR"] == str(manager.home / ".mnemos/data")
+        assert entry["environment"]["VESMARO_DATA_DIR"] == str(manager.home / ".mnemos/data")
 
     def test_register_mcp_opencode_preserves_existing_content(
         self, manager: IntegrationManager, opencode_target: Target
@@ -514,7 +514,7 @@ class TestOpenCodeTarget:
     ) -> None:
         cfg_path = Path(str(opencode_target.mcp_config))
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        tuned = {"MNEMOS_DATA_DIR": "/custom/data"}
+        tuned = {"VESMARO_DATA_DIR": "/custom/data"}
         cfg_path.write_text(
             json.dumps(
                 {"mcp": {"mnemos": {"type": "local", "command": ["old"], "environment": tuned}}}
@@ -526,8 +526,8 @@ class TestOpenCodeTarget:
         assert ok
 
         entry = json.loads(cfg_path.read_text(encoding="utf-8"))["mcp"]["mnemos"]
-        assert entry["environment"]["MNEMOS_DATA_DIR"] == "/custom/data"
-        assert entry["environment"]["MNEMOS_VAULT__VAULT_PATH"] == str(
+        assert entry["environment"]["VESMARO_DATA_DIR"] == "/custom/data"
+        assert entry["environment"]["VESMARO_VAULT__VAULT_PATH"] == str(
             manager.home / ".mnemos/vault"
         )
         assert entry["command"][0] != "old"  # command refreshed from pack defaults
@@ -684,7 +684,7 @@ class TestReviewHardening:
         self, manager: IntegrationManager, agents_target: Target, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """If the final rename fails, the user's file is untouched and no temp remains (P2)."""
-        import mnemos.cli.integration as mod
+        import vesmaro.cli.integration as mod
 
         dest = agents_target.deploy_map["agents_md"]
         dest.parent.mkdir(parents=True)

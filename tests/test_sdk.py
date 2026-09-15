@@ -24,10 +24,10 @@ from typing import Any
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemoryStatus, TagContractError
-from mnemos.sdk import MnemosSDK
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemoryStatus, TagContractError
+from vesmaro.sdk import MnemosSDK
 
 PROJECT = "sdk-proj"
 AGENT = "sdk-agent"

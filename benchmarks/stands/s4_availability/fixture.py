@@ -22,9 +22,9 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.corpus.deterministic_embedder import LexicalHashEmbedder
-from mnemos.config import Settings
-from mnemos.manager import MemoryManager
-from mnemos.models import MemoryCreate, MemorySource, MemoryStatus
+from vesmaro.config import Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.models import MemoryCreate, MemorySource, MemoryStatus
 
 STAND_VERSION = "s4-1"
 BASELINE_VERSION = 1

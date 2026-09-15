@@ -1,6 +1,6 @@
 """Unit tests for the MnemosCore gRPC server (#105 M4.0).
 
-Exercises :class:`mnemos.mesh_server.MeshServer` end-to-end over a real
+Exercises :class:`vesmaro.mesh_server.MeshServer` end-to-end over a real
 gRPC Unix socket on a ``tmp_path`` — no mocks on the gRPC layer. The
 tests cover:
 
@@ -29,12 +29,12 @@ from unittest.mock import MagicMock
 import grpc
 import pytest
 
-from mnemos import _mesh_gen
-from mnemos.compact import CompactRecord
-from mnemos.config import FederationConfig, PeerConfig, Settings
-from mnemos.manager import MemoryManager
-from mnemos.mesh_server import MeshServer
-from mnemos.models import MemoryCreate, MemorySource
+from vesmaro import _mesh_gen
+from vesmaro.compact import CompactRecord
+from vesmaro.config import FederationConfig, PeerConfig, Settings
+from vesmaro.manager import MemoryManager
+from vesmaro.mesh_server import MeshServer
+from vesmaro.models import MemoryCreate, MemorySource
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ _AGENT = "gcw-test-agent"
 #: Bearer token env var name — value is irrelevant for the mesh server
 #: (auth is via the Unix socket + filesystem perms, not bearer tokens),
 #: but :class:`PeerConfig` requires the field.
-_TOKEN_ENV = "MNEMOS_FED_PEER_TEST_TOKEN"
+_TOKEN_ENV = "VESMARO_FED_PEER_TEST_TOKEN"
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────

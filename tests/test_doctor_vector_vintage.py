@@ -18,9 +18,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from mnemos.cli.doctor import CheckStatus, _check_vector_store, doctor_app
-from mnemos.config import Settings
-from mnemos.embeddings import config_fingerprint
+from vesmaro.cli.doctor import CheckStatus, _check_vector_store, doctor_app
+from vesmaro.config import Settings
+from vesmaro.embeddings import config_fingerprint
 
 runner = CliRunner()
 

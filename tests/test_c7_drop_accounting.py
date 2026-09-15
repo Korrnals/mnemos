@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from mnemos.config import Settings
-from mnemos.filter.pipeline import _sample_json_array, apply_filter
-from mnemos.manager import MemoryManager
+from vesmaro.config import Settings
+from vesmaro.filter.pipeline import _sample_json_array, apply_filter
+from vesmaro.manager import MemoryManager
 
 PROJECT = "c7-proj"
 
