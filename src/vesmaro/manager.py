@@ -4761,15 +4761,31 @@ class MemoryManager:
         to_memory_id: str,
         *,
         kind: str = "supersedes",
+        weight: float = 1.0,
+        provenance: str = "declared",
+        scope_project: str | None = None,
+        scope_agent: str | None = None,
     ) -> bool:
-        """Record that ``from_memory_id`` supersedes ``to_memory_id``.
+        """Record a directed edge ``from_memory_id`` → ``to_memory_id``.
 
         Thin wrapper over ``SQLiteStore.add_memory_edge`` (validation and
-        constraints live there). Returns ``True`` when inserted, ``False``
-        when the edge already existed (idempotent). No MCP surface and no
-        graph expansion in Phase 1 — on_context_rewrite arrives with #125.
+        constraints live there). ADR-0030 A0 (issue #321): ``kind`` now
+        also accepts ``relates_to``, and the edge carries ``weight`` /
+        ``provenance`` / ``scope_project`` / ``scope_agent`` with the
+        contract defaults (1.0 / 'declared' / NULL / NULL). Returns
+        ``True`` when inserted, ``False`` when the edge already existed
+        (idempotent). Still no MCP surface — minting arrives with the A0
+        fuel slice.
         """
-        return self.sqlite.add_memory_edge(from_memory_id, to_memory_id, kind=kind)
+        return self.sqlite.add_memory_edge(
+            from_memory_id,
+            to_memory_id,
+            kind=kind,
+            weight=weight,
+            provenance=provenance,
+            scope_project=scope_project,
+            scope_agent=scope_agent,
+        )
 
     def get_memory_edges(
         self,
