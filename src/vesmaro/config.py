@@ -44,6 +44,16 @@ class MnemosConfig(BaseModel):
     #     gate (refusal at that point enters the lane-(b) quarantine).
     # Canonical env override: VESMARO_MNEMOS__VISIBILITY=curated.
     visibility: Literal["immediate", "curated"] = "immediate"
+    # ADR-0030 A0 (issue #322) — deterministic relates_to auto-minting on
+    # write: after every add, ONE synchronous hybrid search through the
+    # EXISTING FTS+vector legs mints up to 3 `relates_to` edges to
+    # near-duplicate candidates (provenance 'auto-dedupe', raised weight;
+    # exclusions per ADR-0030 I4/§5/intra-project). Default OFF until
+    # validated on the live corpus — ADR-0030 Decision 2, "Acceptance and
+    # guards": each leg ships default-off behind a flag. Minting is
+    # best-effort: a minting failure never fails the write.
+    # Canonical env override: VESMARO_MNEMOS__GRAPH_AUTO_MINT=true.
+    graph_auto_mint: bool = False
     # mnemos #96: workflow lifecycle guardrails. Stale-lock threshold governs
     # how long a lock survives before a different actor can take it over
     # without ``force`` (guardrail 2). Rate limit caps transitions per memory
