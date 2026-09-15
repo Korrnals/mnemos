@@ -201,8 +201,10 @@ class TestFts5Escaping:
         # Every emitted AND term is a quoted token — unquoted user text
         # can never reach the MATCH expression. A user-typed `AND` here
         # becomes a QUOTED literal token (`"AND"`), losing operator power.
+        # The 1-char token `x` is dropped by the #314 short-token guard
+        # (length rule) — absent from MATCH is strictly safer than quoted.
         multi = SQLiteStore._build_fts_query('x" AND (col:"y')
-        assert multi == '"x"* AND "AND"* AND "col y"*'
+        assert multi == '"AND"* AND "col y"*'
 
     def test_fts_build_empty_input(self) -> None:
         """Empty / whitespace input must not raise and must produce safe MATCH."""
@@ -278,10 +280,13 @@ class TestFts5EscapingV2:
         by rebuilding each sanitised token's quoted form and requiring
         it to appear in the expression.
         """
-        from mnemos.storage.sqlite_store import _fts_tokenize, fts_query_v2
+        from mnemos.storage.sqlite_store import _fts_guard_tokens, _fts_tokenize, fts_query_v2
 
         expr = fts_query_v2(hostile)
-        for tok in _fts_tokenize(hostile):
+        # #314: tokens dropped by the short-token guard are ABSENT from the
+        # MATCH expression — an absent token cannot carry operator power,
+        # so the invariant is asserted for the tokens that actually survive.
+        for tok in _fts_guard_tokens(_fts_tokenize(hostile)):
             assert f'"{tok}"' in expr, (tok, expr)
         # NEAR is only ever a quoted literal token, never an operator:
         # an operator NEAR would have to appear outside quotes.

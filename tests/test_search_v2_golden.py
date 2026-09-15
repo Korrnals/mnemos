@@ -21,6 +21,10 @@ a v2 defect has regressed:
      text).
   7. No single-token regression — single-token searches behave exactly
      as before (a prefix term is a superset of the old exact phrase).
+  8. Degenerate short tokens (issue #314) — 1-char tokens and RU/EN
+     stopwords are dropped before the AND join (they match nearly every
+     row and collapse bm25 idf to 0); acronyms (isupper) and digit
+     identifiers survive; an all-degenerate query keeps its tokens.
 """
 
 from __future__ import annotations
@@ -281,3 +285,89 @@ class TestGoldenSingleTokenNoRegression:
     def test_russian_single_token_no_regression(self, manager) -> None:
         row = _add(manager, "регламент конвейера обновлён на этой неделе")
         assert row.id in {r.memory.id for r in manager.search("конвейер", limit=5)}
+
+
+# ── 8. Degenerate short tokens (issue #314) ─────────────────────────────────
+
+
+class TestGoldenDegenerateShortTokens:
+    """Issue #314 — degenerate tokens must not constrain the AND join.
+
+    A 1-char token (`a`) or a function word (`the`, «как») matches
+    nearly every row, so its bm25 idf collapses to 0 and one such token
+    inside an AND query degraded the result to LIMIT rows ordered by
+    id-tiebreak noise. The guard drops them BEFORE the cap; acronyms
+    (fully uppercase) and digit-bearing identifiers survive on merit.
+    """
+
+    def test_one_char_token_dropped(self) -> None:
+        assert fts_query_terms("a конвейер") == ['"конвейер"*']
+
+    def test_digit_identifiers_survive(self) -> None:
+        """v2/p0/m15-class tokens are >=2 chars and never alpha
+        stopwords — they survive without a digit-scanning carve-out."""
+        assert fts_query_terms("v2 p0 конвейер") == ['"v2"*', '"p0"*', '"конвейер"*']
+
+    def test_short_non_stopword_latin_survives(self) -> None:
+        # 'qa' is 2 chars and not in the stopword list — survives.
+        assert fts_query_terms("qa gates") == ['"qa"*', '"gates"*']
+
+    def test_acronym_exemption_isupper(self) -> None:
+        """Fully-uppercase tokens are acronyms in this technical corpus
+        (IT, QA, DB, CI, ML, GWS) — never function words."""
+        assert fts_query_terms("IT infrastructure") == ['"IT"*', '"infrastructure"*']
+
+    def test_cyrillic_isupper_acronym_exemption(self) -> None:
+        """Cyrillic isupper() acronyms are exempt too: «ИТ» (RU for IT)
+        survives. The «ИХ» case is the discriminating one — lowercase
+        «их» IS a stopword, so an .isascii() "fix" to the exemption
+        would drop it from a multi-token query (review follow-up to
+        issue #314)."""
+        assert fts_query_terms("ИТ инфраструктура") == ['"ИТ"*', '"инфраструктура"*']
+        assert fts_query_terms("ИХ инфраструктура") == ['"ИХ"*', '"инфраструктура"*']
+
+    def test_en_stopword_dropped(self) -> None:
+        assert fts_query_terms("the release runbook") == ['"release"*', '"runbook"*']
+
+    def test_ru_sentence_initial_stopword_dropped(self) -> None:
+        # «Как» is title-case, not isupper → lowercased check drops it.
+        assert fts_query_terms("Как настроить конвейер") == ['"настроить"*', '"конвейер"*']
+
+    def test_never_empty_single_char_query(self) -> None:
+        """All-degenerate input keeps its tokens — the user's explicit
+        query wins over a silent no-match placeholder."""
+        assert fts_query_terms("a") == ['"a"*']
+
+    def test_never_empty_stopword_query(self) -> None:
+        assert fts_query_terms("the") == ['"the"*']
+
+    def test_never_empty_is_whole_list(self) -> None:
+        # All-degenerate MULTI-token input keeps ALL its tokens — the
+        # never-empty fallback resurrects the whole original list, not
+        # just the first token (review follow-up to issue #314).
+        assert fts_query_terms("a the") == ['"a"*', '"the"*']
+
+    def test_guard_runs_before_cap(self) -> None:
+        """Dropped tokens consume no cap budget: 7 droppable tokens + 1
+        real one leaves exactly 1 term (cap 8 never bites)."""
+        assert len(fts_query_terms("a the and for with that this конвейер")) == 1
+
+    def test_degenerate_term_no_longer_constrains_the_and(self, manager) -> None:
+        """Recall preserved WITHOUT the OR retry: 'a' is dropped, so the
+        AND is a single real term and a row with no Latin-'a'-prefixed
+        token (CORPUS_B is all-Cyrillic) is still found by the AND."""
+        row = _add(manager, CORPUS_B)
+        manager.vectors.wipe()  # pin the leg: the FTS AND must find it alone
+        results = manager.search("a конвейер", limit=5)
+        assert row.id in {r.memory.id for r in results}
+
+    def test_digit_identifier_stays_discriminative(self, manager) -> None:
+        """The guard must not over-drop: 'v2' survives and still
+        constrains the AND — a row with «конвейер» but no v2-token is
+        NOT returned by the 'v2 конвейер' AND query."""
+        both = _add(manager, "v2 конвейер поставки обновлён по регламенту")
+        no_v2 = _add(manager, CORPUS_B)
+        manager.vectors.wipe()  # pin the leg: only the FTS AND decides
+        ids = {r.memory.id for r in manager.search("v2 конвейер", limit=5)}
+        assert both.id in ids
+        assert no_v2.id not in ids
