@@ -309,6 +309,14 @@ def _prometheus_text(mgr: MemoryManager) -> str:
     lines.append("# HELP mnemos_search_avg_latency_ms Average search latency in ms")
     lines.append("# TYPE mnemos_search_avg_latency_ms gauge")
     lines.append(f"mnemos_search_avg_latency_ms {search['avg_latency_ms']}")
+    lines.append(
+        "# HELP mnemos_search_graph_enriched_requests_total "
+        "Search requests whose page carries at least one via_graph row since restart"
+    )
+    lines.append("# TYPE mnemos_search_graph_enriched_requests_total counter")
+    lines.append(
+        f"mnemos_search_graph_enriched_requests_total {search['graph_enriched_requests_total']}"
+    )
     # ADR-0030 A0 (issue #322) — relates_to auto-minting rate telemetry
     # (in-memory counters, since restart; '' buckets unscoped writes).
     graph = data["graph"]

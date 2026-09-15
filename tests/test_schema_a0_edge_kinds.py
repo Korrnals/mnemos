@@ -219,6 +219,56 @@ class TestFreshInstallSchema:
         with pytest.raises(ValueError, match="provenance"):
             store.add_memory_edge("m-a", "m-b", provenance="")
 
+    # ── weight validation (#324 scope-addition from the #336 review) ──────
+
+    def test_weight_validation_rejects_nonfinite_and_nonpositive(
+        self, store: SQLiteStore
+    ) -> None:
+        """Negative / 0 / +inf / NaN weights are rejected at the write
+        boundary with a caller-actionable ValueError. The NaN case is the
+        motivating one: sqlite3 binds float('nan') to SQL NULL, so without
+        this check the row would fail the column's NOT NULL constraint
+        with a confusing IntegrityError instead of naming the caller's
+        argument. -inf rides the same isfinite arm as NaN/+inf.
+        """
+        store.save(_make_memory("m-a"))
+        store.save(_make_memory("m-b"))
+        for bad in (-1.0, 0.0, float("inf"), float("-inf"), float("nan")):
+            with pytest.raises(ValueError, match="weight"):
+                store.add_memory_edge("m-a", "m-b", weight=bad)
+        assert store._get_conn().execute("SELECT COUNT(*) FROM memory_edges").fetchone()[0] == 0
+
+    def test_weight_validation_subthreshold_positive_accepted(
+        self, store: SQLiteStore
+    ) -> None:
+        """I3 companion: a positive weight below 1.0 is a VALID edge — the
+        validation must not become an eligibility pre-filter (weights never
+        remove eligibility, only scale ranking post-gate in A1)."""
+        store.save(_make_memory("m-a"))
+        store.save(_make_memory("m-b"))
+        assert store.add_memory_edge("m-a", "m-b", weight=0.25) is True
+        row = store._get_conn().execute("SELECT weight FROM memory_edges").fetchone()
+        assert row["weight"] == 0.25
+
+    def test_weight_validation_reaches_the_manager_wrapper(self, tmp_path: Path) -> None:
+        """The manager wrapper (the path explicit callers and the auto-mint
+        rule write through) inherits the store's rejection unchanged."""
+        settings = Settings(
+            mnemos={
+                "vault_path": str(tmp_path / "vault"),
+                "data_dir": str(tmp_path / "data"),
+                "db_name": "test.db",
+            },
+            scanner={"enabled": False},  # type: ignore[arg-type]
+        )
+        settings.resolve_paths()
+        mgr = MemoryManager(settings)
+        try:
+            with pytest.raises(ValueError, match="weight"):
+                mgr.add_memory_edge("x-a", "x-b", weight=float("nan"))
+        finally:
+            mgr.close()
+
 
 # ── CHECK ↔ _EDGE_KINDS whitelist sync (DB level, not just the wrapper) ───────
 
@@ -351,6 +401,40 @@ class TestLegacyUpgrade:
 
 
 class TestMigrationCrashSafety:
+    def test_orphan_converges_on_final_shape_early_return(self, tmp_path: Path) -> None:
+        """#324 scope-addition from the #336 review: the early-return
+        branch (final-shape table — the ``weight`` column is present, so
+        the rebuild script never runs) must still converge a seeded
+        orphan rebuild table. ``test_orphan_rebuild_table_converges``
+        below covers the rebuild-script branch's leading DROP; this pins
+        the EARLY-RETURN branch's own DROP (a crash orphan on an
+        already-migrated DB would otherwise sit in the schema forever,
+        and the next legacy→final migration window would be shadowed).
+        """
+        db = tmp_path / "final_shape_orphan.db"
+        _seeded_db(db)  # store-written: final shape, one edge row
+        conn = sqlite3.connect(str(db))
+        assert "weight" in {str(r[1]) for r in conn.execute("PRAGMA table_info(memory_edges)")}
+        conn.execute("CREATE TABLE memory_edges_a0_rebuild (from_memory_id TEXT, junk TEXT)")
+        conn.execute("INSERT INTO memory_edges_a0_rebuild VALUES ('x', 'stale partial copy')")
+        conn.commit()
+        conn.close()
+
+        store = SQLiteStore(db)  # early-return path: no rebuild script runs
+        conn = store._get_conn()
+        assert not _object_exists(conn, "memory_edges_a0_rebuild"), (
+            "the early-return branch must DROP the orphan, not skip past it"
+        )
+        # The final-shape table was untouched: shape and rows intact.
+        assert "weight" in _columns(conn, "memory_edges")
+        rows = conn.execute(
+            "SELECT from_memory_id, to_memory_id, kind FROM memory_edges"
+        ).fetchall()
+        assert [(r["from_memory_id"], r["to_memory_id"], r["kind"]) for r in rows] == [
+            ("m-new", "m-old", "supersedes")
+        ]
+        store.close()
+
     def test_orphan_rebuild_table_converges(self, tmp_path: Path) -> None:
         db = tmp_path / "crash.db"
         _seeded_db(db)

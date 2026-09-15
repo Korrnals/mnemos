@@ -54,6 +54,18 @@ class MnemosConfig(BaseModel):
     # best-effort: a minting failure never fails the write.
     # Canonical env override: VESMARO_MNEMOS__GRAPH_AUTO_MINT=true.
     graph_auto_mint: bool = False
+    # ADR-0030 A0 (issue #324) — the 1-hop ``relates_to`` walk in the
+    # search graph leg: the leg extends from ``supersedes`` (both
+    # directions, unchanged) to also expand ``relates_to`` neighbours,
+    # behind the SAME gates as the fused rows (status F1, project scope
+    # F2, ADR-0019 §4/§5) and the existing decay rule. Invariants
+    # I1-I3 are codified as mutation-verified contract tests
+    # (tests/test_graph_walk_invariants.py) — the Security condition
+    # for letting minted fuel reach search. Default OFF until validated
+    # on the live corpus (ADR-0030 Decision 2, "Acceptance and guards":
+    # each leg ships default-off behind a flag).
+    # Canonical env override: VESMARO_MNEMOS__GRAPH_WALK=true.
+    graph_walk: bool = False
     # mnemos #96: workflow lifecycle guardrails. Stale-lock threshold governs
     # how long a lock survives before a different actor can take it over
     # without ``force`` (guardrail 2). Rate limit caps transitions per memory

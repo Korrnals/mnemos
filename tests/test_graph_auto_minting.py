@@ -263,10 +263,12 @@ class TestMinting:
         assert len(_out_edges(mint_manager, sixth.id)) == 3
 
     def test_minted_edges_are_inert_for_search(self, mint_manager: MemoryManager) -> None:
-        """ADR-0030 clause 2 item 4: ``relates_to`` edges are INERT until
-        the I1-I3 walk tests exist (#324). Mutation-verified: the same
-        corpus searched with and without the minted edges answers
-        byte-identically (ids, scores, provenance)."""
+        """ADR-0030 clause 2 item 4: with the walk flag OFF (the shipped
+        default), ``relates_to`` edges stay INERT for search. The I1-I3
+        walk tests exist as of #324 (tests/test_graph_walk_invariants.py)
+        and the flag-on traversal is covered there. Mutation-verified:
+        the same corpus searched with and without the minted edges
+        answers byte-identically (ids, scores, provenance)."""
         _add(mint_manager, NEAR_DUP_A)
         b = _add(mint_manager, NEAR_DUP_B)
         assert _relates_to_rows(mint_manager), "fixture: edges were minted"
