@@ -58,6 +58,8 @@ documented elsewhere, or anything that fits in a code comment.
 | [0027](0027-multi-context-memory.md) | Multi-context memory: compose existing context levels now; task primitive behind a pre-registered experiment gate | Accepted | 2026-09-14 |
 | [0028](0028-cache-contract.md) | Cache contract: prefix-stable content supply, tail discipline, and the harness boundary | Accepted | 2026-09-14 |
 | [0029](0029-search-v2-query-semantics.md) | Search v2 query semantics: per-token prefix AND, soft project fallback, graph leg, embedding_id stamp | Accepted | 2026-09-15 |
+| [0030](0030-memory-graph-self-fueling.md) | Memory Graph — the self-fueling graph (search graph line continuation) | Accepted | 2026-09-15 |
+| [0031](0031-rebrand-mnemos-to-vesmaro.md) | Rebrand — mnemos → vesmaro (additive dual-prefix; legacy retires in 6.0) | Accepted | 2026-09-15 |
 
 ## Themes
 
