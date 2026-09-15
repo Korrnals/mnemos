@@ -18,7 +18,14 @@ weight). Covered here:
   The exclusion fixtures use one-token-off twins (measured cosine
   ~0.97, comfortably above the threshold) so the EXCLUSION is what
   drops them, not a weak similarity;
-* idempotency per (from, to, provenance): re-minting inserts nothing;
+* idempotency per (from, to, provenance): re-minting inserts nothing,
+  and minted PAIRS are undirected (review L1 — a backfill re-mint of
+  the older end never duplicates the pair in reverse; a declared
+  reverse edge stays insertable);
+* from-side gates (review M1): a no-federate write and a raw write
+  mint nothing — the endpoint exclusions bind BOTH sides of an edge;
+* fuel policy (review M2, TL decision): organic user writes only —
+  checkpoint saves and ``mint_relates_to=False`` adds never mint;
 * failure isolation: a broken vector leg, embedder or edge insert NEVER
   fails the write (best-effort, logged);
 * determinism (ADR-0028): the same write over the same corpus mints
@@ -642,6 +649,156 @@ class TestDeterminism:
         second = build()
         assert first, "fixture: something was minted"
         assert first == second
+
+
+# ── From-side gates (review M1): endpoint exclusions bind BOTH sides ─────────
+
+
+class TestFromSideGates:
+    """Review M1: the selector validates CANDIDATES; the hook validates
+    the NEW memory from-side. A no-federate row (including one the
+    write-path scanner just auto-tagged) and a non-admissible row
+    (raw/processing/quarantined) mint NOTHING — invisible or
+    non-exportable content gets no permanent graph edges."""
+
+    def test_no_federate_new_memory_mints_nothing(self, mint_manager: MemoryManager) -> None:
+        """The twins pattern: the tagged write sits at ~0.98 cosine to
+        the clean twin (the happy-path pair proves that cosine mints) —
+        only the from-side gate can be what drops it."""
+        twin = _add(mint_manager, NEAR_DUP_A)
+        tagged = _add(mint_manager, NEAR_DUP_B, extra_tags=[NO_FEDERATE_TAG])
+        assert _relates_to_rows(mint_manager) == [], "a no-federate write minted FROM itself"
+
+        # Fixture sanity: the twin IS mintable-to — a later clean write
+        # links it, and the tagged row is never an endpoint on either side.
+        third = _add(mint_manager, f"{NEAR_DUP_B} again")
+        to_ids = {e["to_memory_id"] for e in _out_edges(mint_manager, third.id)}
+        assert twin.id in to_ids
+        assert tagged.id not in to_ids
+
+    def test_raw_new_memory_mints_nothing(self, mint_manager: MemoryManager) -> None:
+        """RAW writes (publish-gate refusals, explicit raw) are invisible
+        content — no permanent edges from them."""
+        a = _add(mint_manager, NEAR_DUP_A)
+        raw_write = _add(mint_manager, NEAR_DUP_B, status=MemoryStatus.RAW)
+        assert _relates_to_rows(mint_manager) == []
+
+        # Sanity: minting is alive — a published near-dup links only `a`
+        # (the raw row stays excluded on the candidate side as well).
+        third = _add(mint_manager, f"{NEAR_DUP_B} again")
+        assert {e["to_memory_id"] for e in _out_edges(mint_manager, third.id)} == {a.id}
+        assert raw_write.id not in {
+            r["from_memory_id"] for r in _relates_to_rows(mint_manager)
+        }
+
+
+# ── Fuel policy (review M2): organic user writes only ────────────────────────
+
+
+class TestFuelPolicy:
+    """Review M2 (TL decision): minting fuel is ORGANIC USER WRITES
+    only — internal machine-driven ``add`` callers pass
+    ``mint_relates_to=False`` (checkpoint saves, mesh ingest, migrate
+    import); their mechanical self-citation is infra churn, not
+    near-duplicate signal."""
+
+    def test_checkpoint_save_mints_nothing(self, mint_manager: MemoryManager) -> None:
+        """Two near-identical checkpoints (same project, same agent,
+        one edited field) are high-cosine same-project rows — exactly
+        what the minting leg would link if checkpoints were fuel. The
+        M2 gate keeps them out of the graph."""
+        base = {
+            "goals": f"stabilise the {NEAR_DUP_A}",
+            "completed": "aligned the packing line gate",
+            "decisions": "keep the conveyor revision",
+            "context": "station seven quality gate",
+        }
+        cp1, _ = mint_manager.save_checkpoint(base, project=PROJECT, agent=AGENT)
+        near = dict(base)
+        near["goals"] = f"stabilise the {NEAR_DUP_A} now"
+        cp2, dup = mint_manager.save_checkpoint(near, project=PROJECT, agent=AGENT)
+        assert dup is False, "fixture: the second checkpoint is a NEW write"
+        assert cp2.id != cp1.id
+        assert _relates_to_rows(mint_manager) == [], "checkpoint saves must never mint"
+
+    def test_mint_relates_to_false_skips_the_hook(self, mint_manager: MemoryManager) -> None:
+        """The parameter contract: an explicit ``mint_relates_to=False``
+        add mints nothing even though the corpus holds a 0.98-cosine
+        twin (the mesh/migrate call sites ride this)."""
+        _add(mint_manager, NEAR_DUP_A)
+        data = MemoryCreate(
+            content=NEAR_DUP_B,
+            tags=[f"project:{PROJECT}", f"agent:{AGENT}", "mnemos:test"],
+            source=MemorySource.MCP,
+            status=MemoryStatus.PUBLISHED,
+        )
+        b = mint_manager.add(data, project=PROJECT, agent=AGENT, mint_relates_to=False)
+        assert _out_edges(mint_manager, b.id) == []
+        assert _relates_to_rows(mint_manager) == []
+
+
+# ── Reverse-pair guard (review L1): minted pairs are undirected ───────────────
+
+
+class TestReversePairGuard:
+    def test_backfill_remin_of_older_end_mints_no_reverse(
+        self, mint_manager: MemoryManager
+    ) -> None:
+        """The PK treats A→B and B→A as distinct rows; the minting rule
+        holds the PAIR undirected — a re-mint of the older end (backfill
+        tools, A0-review re-runs) must not duplicate it in reverse."""
+        a = _add(mint_manager, NEAR_DUP_A)
+        b = _add(mint_manager, NEAR_DUP_B)  # mints b→a
+        rows = _relates_to_rows(mint_manager)
+        assert [(r["from_memory_id"], r["to_memory_id"]) for r in rows] == [(b.id, a.id)]
+
+        reloaded = mint_manager.sqlite.get(a.id)
+        assert reloaded is not None
+        assert mint_manager._mint_relates_to_edges(reloaded) == 0  # a→b blocked
+        assert len(_relates_to_rows(mint_manager)) == 1  # no reverse duplicate
+
+    def test_declared_reverse_edge_still_insertable(self, mint_manager: MemoryManager) -> None:
+        """The guard is mint-specific: a DECLARED reverse edge stays
+        legal — direction can be semantic for explicit callers."""
+        _add(mint_manager, NEAR_DUP_A)
+        b = _add(mint_manager, NEAR_DUP_B)  # mints b→a (auto-dedupe)
+        a_id = _relates_to_rows(mint_manager)[0]["to_memory_id"]
+        assert (
+            mint_manager.add_memory_edge(a_id, b.id, kind="relates_to", provenance="declared")
+            is True
+        )
+
+
+# ── Flag-off spy (review INFO): the early-return fires BEFORE retrieval ──────
+
+
+class TestFlagOffSpy:
+    def test_flag_off_never_touches_the_vector_leg(
+        self, plain_manager: MemoryManager, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pins the early-return placement: with the flag off, a write
+        pays ZERO minting rent — no vector search, and exactly one
+        embed per published row (the upsert itself)."""
+        searches: list[object] = []
+        embeds: list[str] = []
+        real_search = plain_manager.vectors.search
+        real_embed = plain_manager.embedder.embed
+
+        def spy_search(*args: object, **kwargs: object) -> list[tuple[str, float]]:
+            searches.append(args)
+            return real_search(*args, **kwargs)  # type: ignore[arg-type]
+
+        def spy_embed(text: str) -> list[float]:
+            embeds.append(text)
+            return real_embed(text)
+
+        monkeypatch.setattr(plain_manager.vectors, "search", spy_search)
+        monkeypatch.setattr(plain_manager.embedder, "embed", spy_embed)
+        _add(plain_manager, NEAR_DUP_A)
+        _add(plain_manager, NEAR_DUP_B)
+        assert searches == [], "flag off: the mint hook must return before any retrieval"
+        assert len(embeds) == 2, "one embed per published add (the upsert) — no minting rent"
+        assert _relates_to_rows(plain_manager) == []
 
 
 # ── Telemetry: the A0-review minting-rate surface ─────────────────────────────

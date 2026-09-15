@@ -221,7 +221,9 @@ def migrate_from_ai_brain(
                     "unknown",
                 )
                 if not dry_run:
-                    manager.add(data, project=project, agent=agent)
+                    manager.add(
+                        data, project=project, agent=agent, mint_relates_to=False
+                    )  # #322 review M2: bulk import is machine traffic, not fuel
                 summary["memories_migrated"] += 1
             except Exception as exc:
                 logger.warning("Failed to migrate memory %s: %s", row.get("id", "?"), exc)

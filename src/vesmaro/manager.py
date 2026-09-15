@@ -44,6 +44,7 @@ from vesmaro.models import (
     CHECKPOINT_FIELDS,
     CHECKPOINT_STAMP_KEYS,
     CONTEXT_ADMISSIBLE_STATUSES,
+    NO_FEDERATE_TAG,
     AgentRecallQuery,
     Memory,
     MemoryCreate,
@@ -688,6 +689,7 @@ class MemoryManager:
         agent: str = "",
         trusted_rewrite_provenance: bool = False,
         trusted_checkpoint_stamps: bool = False,
+        mint_relates_to: bool = True,
     ) -> Memory:
         """Create a new memory entry.
 
@@ -718,6 +720,17 @@ class MemoryManager:
         ``data.metadata`` with a warning — a forged
         ``checkpoint_dedup_key`` on a generic create must never satisfy
         a later genuine checkpoint dedup (CWE-346/345 spoofed source).
+
+        ``mint_relates_to`` (#322 review M2, TL decision) — minting
+        fuel is ORGANIC USER WRITES only. Internal machine-driven
+        ``add`` callers (checkpoint saves, mesh ingest, migrate import)
+        pass ``False``: their content mechanically cites existing
+        memories (checkpoints re-state what they reference; bulk
+        imports re-state a whole corpus) and would flood the graph with
+        high-cosine infra churn instead of near-duplicate signal. Every
+        user-facing surface (MCP / REST / SDK / CLI add, the
+        ``context_rewrite`` channel — the fuel target of ADR-0030) and
+        the file watchers keep the default ``True``.
 
         ADR-0019 §2 (B2b) — for records created WITHOUT an explicit
         ``status``, the ``vesmaro.visibility`` policy decides the initial
@@ -859,11 +872,15 @@ class MemoryManager:
         # failure is logged and swallowed; the write itself MUST succeed.
         # Runs AFTER the embed upsert so the search legs see the new row
         # in the index it was just written to (the row itself is then
-        # excluded as a candidate by id).
-        try:
-            self._mint_relates_to_edges(memory)
-        except Exception as exc:
-            logger.warning("graph auto-mint failed (non-fatal) for %s: %s", memory.id[:8], exc)
+        # excluded as a candidate by id). ``mint_relates_to=False``
+        # (review M2): internal machine writes never mint.
+        if mint_relates_to:
+            try:
+                self._mint_relates_to_edges(memory)
+            except Exception as exc:
+                logger.warning(
+                    "graph auto-mint failed (non-fatal) for %s: %s", memory.id[:8], exc
+                )
 
         logger.info("add: id=%s project=%s agent=%s", memory.id[:8], project, agent)
         return memory
@@ -1884,9 +1901,17 @@ class MemoryManager:
         ``(from, to, kind)`` primary key — INSERT OR IGNORE; a re-mint
         of the same memory inserts nothing and counts nothing).
 
-        Determinism (ADR-0028): the selector re-sorts survivors by
-        ``(score desc, id asc)`` — the same write over the same corpus
-        mints the same edges regardless of vector-store tie order.
+        Determinism (ADR-0028, review L2 qualification): GIVEN the
+        retrieved pool, selection is a pure function — the selector
+        re-sorts survivors by ``(score desc, id asc)``, so the
+        vector store's tie order never leaks INTO the choice. The pool
+        cut itself (``VectorStore.search`` top-k via argpartition)
+        applies no id tiebreak beyond the pool boundary: with MORE than
+        ``AUTO_DEDUPE_CANDIDATE_POOL`` equal-score candidates (an
+        exact-duplicate flood) the pool membership is position-
+        dependent. The residual is bounded — at most the pool size is
+        considered and at most 3 edges mint — and the pool exists to
+        bound exactly that flood.
 
         No supersede decisions, no LLM, no status/visibility mutations —
         similarity only ever mints the weaker ``relates_to`` claim.
@@ -1898,6 +1923,21 @@ class MemoryManager:
         contained per-edge below.
         """
         if not self.settings.mnemos.graph_auto_mint:
+            return 0
+        # ── Review M1: FROM-side gates. The selector validates the
+        # CANDIDATES; these two checks validate the NEW memory as an
+        # endpoint — the exclusion contract binds BOTH sides of an edge.
+        # (a) I4: a no-federate node is never an endpoint, either side.
+        #     The write-path scanner may have auto-tagged this very row
+        #     (a secret-positive write) — it must not mint FROM itself.
+        if NO_FEDERATE_TAG in memory.tags:
+            return 0
+        # (b) General gates: a RAW/processing (publish-gate refusal,
+        #     explicit raw) or quarantined new row is invisible content —
+        #     minting from it would leave permanent graph edges with no
+        #     cleanup when the row is later quarantined. Invisible
+        #     writes are not fuel.
+        if not is_context_admissible(memory):
             return 0
         # The near-duplicate query is ``_embedding_text(memory)`` — the
         # EXACT text the memory itself was embedded with, so the query
@@ -1920,7 +1960,27 @@ class MemoryManager:
                 continue  # deleted between the index and the resolve
             resolved.append(SearchResult(memory=row, score=cosine, search_type="semantic"))
         minted = 0
+        # ── Review L1: orientation-aware mint idempotency. The PK
+        # (from, to, kind) treats A→B and B→A as distinct rows, but for
+        # MINTED fuel the pair is semantically undirected — a re-mint of
+        # the older end (backfill tools, A0-review re-runs) must not
+        # duplicate the pair in reverse (#324's bidirectional walk would
+        # double-count both orientations). Mint-specific guard: a
+        # DECLARED reverse edge stays insertable — direction can be
+        # semantic for explicit callers, only the auto-dedupe rule is
+        # held to the undirected-pair contract.
+        incoming_from: set[str] = {
+            str(e["from_memory_id"])
+            for e in self.sqlite.get_incoming_edges(memory.id, kind=AUTO_DEDUPE_EDGE_KIND)
+        }
         for candidate in select_auto_dedupe_candidates(memory, resolved):
+            if candidate.memory.id in incoming_from:
+                logger.debug(
+                    "graph auto-mint: reverse pair exists, skipping from=%s to=%s",
+                    memory.id[:8],
+                    candidate.memory.id[:8],
+                )
+                continue
             try:
                 inserted = self.add_memory_edge(
                     memory.id,
@@ -2151,7 +2211,11 @@ class MemoryManager:
             metadata=metadata,
         )
         memory = self.add(
-            data, project=project, agent=resolved_agent, trusted_checkpoint_stamps=True
+            data,
+            project=project,
+            agent=resolved_agent,
+            trusted_checkpoint_stamps=True,
+            mint_relates_to=False,  # #322 review M2: checkpoint saves are not fuel
         )
         return memory, False
 

@@ -34,6 +34,20 @@ replacement; ``relates_to`` is the honest weaker claim (Security veto,
 ADR-0030 "Alternatives considered"). Minting never mutates visibility or
 status.
 
+Fuel policy (#322 review M2, TL decision): minting fuel is ORGANIC USER
+WRITES only. Internal machine-driven ``MemoryManager.add`` callers —
+checkpoint saves (checkpoints mechanically re-state the content they
+cite), mesh ingest and migrate import (bulk re-statements of a corpus) —
+pass ``mint_relates_to=False`` and never mint; their high-cosine
+self-citation would flood the graph with infra churn instead of
+near-duplicate signal. User surfaces (MCP / REST / SDK / CLI add), the
+``context_rewrite`` channel (the fuel target of ADR-0030) and the file
+watchers mint normally. The mint hook additionally validates the NEW
+memory from-side (review M1): a ``mnemos:no-federate`` row (including a
+write the scanner just auto-tagged) and a non-admissible row
+(raw/processing/quarantined) mint nothing — the endpoint exclusions bind
+BOTH sides of an edge.
+
 This module holds the CONSTANTS and the PURE candidate selector so the
 exclusion set (invariants I4 / §5 / intra-project / admissibility) is
 unit-testable without a store. The orchestration (retrieval, edge
@@ -108,12 +122,20 @@ def select_auto_dedupe_candidates(
 ) -> list[SearchResult]:
     """Pick the near-duplicate minting candidates from retrieval results.
 
-    Pure and deterministic: survivors are re-sorted by
-    ``(score desc, id asc)`` — the ADR-0028 id-tiebreak — so equal-score
-    candidates (e.g. exact duplicates of the new text) never depend on
-    the vector store's tie order; the output is a pure function of
-    ``(memory, results)``. ``result.score`` carries the VECTOR-leg
-    cosine similarity on the minting path.
+    Pure and deterministic GIVEN the input sequence: survivors are
+    re-sorted by ``(score desc, id asc)`` — the ADR-0028 id-tiebreak —
+    so the retrieval side's tie order never leaks into the choice, and
+    the output is a function of ``(memory, results)`` alone.
+    Qualification (review L2): the CALLER's pool is truncated at the
+    retrieval top-k (``VectorStore.search`` argpartition) with no id
+    tiebreak beyond the pool boundary — with more than
+    ``AUTO_DEDUPE_CANDIDATE_POOL`` equal-score candidates (an
+    exact-duplicate flood) the pool membership itself is position-
+    dependent. The residual is bounded by construction: at most the
+    pool size is ever considered and at most
+    ``AUTO_DEDUPE_MAX_CANDIDATES`` edges mint.
+    ``result.score`` carries the VECTOR-leg cosine similarity on the
+    minting path.
 
     Exclusion set (each is a hard ADR-0030/issue #322 requirement, and
     each is asserted here even where the retrieval side already gates it
